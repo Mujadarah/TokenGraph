@@ -1,0 +1,67 @@
+#!/usr/bin/env node
+import { access, readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+function fail(message) {
+  console.error(`TokenGraph plugin validation failed: ${message}`);
+  process.exit(1);
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    fail(message);
+  }
+}
+
+async function readJson(path) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    fail(`cannot read valid JSON at ${path}: ${error.message}`);
+  }
+}
+
+async function assertFile(path, label) {
+  try {
+    await access(path);
+  } catch {
+    fail(`${label} is missing at ${path}`);
+  }
+}
+
+const packageJsonPath = resolve(pluginRoot, "package.json");
+const manifestPath = resolve(pluginRoot, ".codex-plugin", "plugin.json");
+const mcpPath = resolve(pluginRoot, ".mcp.json");
+const skillPath = resolve(pluginRoot, "skills", "tokengraph", "SKILL.md");
+const distEntryPath = resolve(pluginRoot, "dist", "index.js");
+const distServerPath = resolve(pluginRoot, "dist", "server.js");
+
+const packageJson = await readJson(packageJsonPath);
+const manifest = await readJson(manifestPath);
+const mcp = await readJson(mcpPath);
+const skill = await readFile(skillPath, "utf8").catch((error) => fail(`cannot read TokenGraph skill: ${error.message}`));
+const distServer = await readFile(distServerPath, "utf8").catch((error) => fail(`cannot read built MCP server: ${error.message}`));
+
+assert(packageJson.name === "tokengraph", "package name must be tokengraph");
+assert(/^\d+\.\d+\.\d+$/.test(packageJson.version), "package version must be semver");
+assert(manifest.name === "tokengraph", "plugin manifest name must be tokengraph");
+assert(manifest.version === packageJson.version, "plugin manifest version must match package version");
+assert(manifest.skills === "./skills/", "plugin manifest must point skills to ./skills/");
+assert(manifest.mcpServers === "./.mcp.json", "plugin manifest must point mcpServers to ./.mcp.json");
+assert(mcp.mcpServers?.tokengraph?.command === "node", "tokengraph MCP command must be node");
+assert(
+  Array.isArray(mcp.mcpServers.tokengraph.args) && mcp.mcpServers.tokengraph.args.includes("./dist/index.js"),
+  "tokengraph MCP args must include ./dist/index.js"
+);
+assert(/^---\s*\nname:\s*tokengraph\s*\n/m.test(skill), "TokenGraph skill frontmatter must name tokengraph");
+assert(/description:\s*\S+/m.test(skill), "TokenGraph skill frontmatter must include a description");
+assert(distServer.includes("tokengraph_index_status"), "built MCP server must register tokengraph_index_status");
+assert(distServer.includes("tokengraph_reset_project"), "built MCP server must register tokengraph_reset_project");
+
+await assertFile(distEntryPath, "built MCP entry");
+await assertFile(distServerPath, "built MCP server");
+
+console.log(`TokenGraph plugin validation passed (${packageJson.version}).`);

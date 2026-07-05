@@ -1,0 +1,53 @@
+TokenGraph Proprietary Source-Available License
+Version 1.0
+
+Copyright (c) 2026 Mujadarah. All rights reserved.
+
+TokenGraph and all associated source code, documentation, plugin metadata,
+skills, tools, designs, names, and assets in this repository are proprietary
+works owned by Mujadarah unless a file states otherwise.
+
+This repository is published publicly for transparency, evaluation, and
+portfolio presentation. Public availability does not make this project open
+source and does not grant an open-source license.
+
+Permitted use:
+
+1. You may view the repository on GitHub.
+2. You may fork the repository only to the extent GitHub's Terms of Service
+   require for normal GitHub platform functionality.
+3. You may clone and run the project locally for personal, non-commercial
+   evaluation.
+
+Restrictions:
+
+1. You may not copy, redistribute, sublicense, sell, rent, host, publish,
+   package, or commercially exploit TokenGraph or derivative works.
+2. You may not use TokenGraph or derivative works in a commercial product,
+   service, plugin marketplace, SaaS offering, client engagement, or internal
+   business workflow without prior written permission from Mujadarah.
+3. You may not remove or alter copyright, ownership, or license notices.
+4. You may not claim ownership of TokenGraph or represent it as your own work.
+5. You may not use the TokenGraph name, branding, or project identity in a way
+   that suggests endorsement, ownership, or affiliation.
+
+Contributions:
+
+By submitting an issue, pull request, patch, comment, suggestion, or other
+contribution to this repository, you grant Mujadarah a perpetual, worldwide,
+irrevocable, royalty-free license to use, modify, distribute, sublicense, and
+commercialize that contribution as part of TokenGraph or related projects.
+You represent that you have the right to submit the contribution.
+
+No warranty:
+
+TokenGraph is provided "as is", without warranty of any kind, express or
+implied, including but not limited to warranties of merchantability, fitness
+for a particular purpose, and non-infringement. Mujadarah is not liable for any
+claim, damages, or other liability arising from use of this repository.
+
+Commercial licensing:
+
+For commercial use, redistribution, marketplace publication, hosted services,
+or private licensing, contact Mujadarah through the GitHub profile associated
+with this repository.

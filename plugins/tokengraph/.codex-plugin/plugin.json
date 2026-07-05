@@ -1,0 +1,42 @@
+{
+  "name": "tokengraph",
+  "version": "0.3.0",
+  "description": "Reduce wasted Codex context with local code, SQL, memory, and log routing.",
+  "author": {
+    "name": "TokenGraph"
+  },
+  "license": "Proprietary",
+  "keywords": [
+    "token-reduction",
+    "code-graph",
+    "sql-graph",
+    "memory",
+    "mcp",
+    "codex",
+    "context"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "TokenGraph",
+    "shortDescription": "Route Codex through compact local project context before raw files.",
+    "longDescription": "TokenGraph indexes the current project locally and gives Codex a compact code graph, SQL graph, memory graph, project map, index freshness status, reset controls, context planner, log compressor, and token savings report. It does not require a paid API key or cloud service.",
+    "developerName": "TokenGraph",
+    "category": "Developer Tools",
+    "capabilities": [
+      "MCP",
+      "Local Indexing",
+      "Code Intelligence",
+      "Index Freshness",
+      "SQL Graph",
+      "Memory",
+      "Log Compression"
+    ],
+    "defaultPrompt": [
+      "Index this project with TokenGraph.",
+      "Plan context before reading raw files.",
+      "Show TokenGraph token savings."
+    ],
+    "brandColor": "#2563EB"
+  },
+  "mcpServers": "./.mcp.json"
+}

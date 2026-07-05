@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.tokengraph/
+
+# Local/editor state
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+
+# Local binary planning artifacts
+*.docx
