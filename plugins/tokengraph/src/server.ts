@@ -98,16 +98,20 @@ function searchProject(project: ProjectIndex, query: string, limit: number) {
 function explain(project: ProjectIndex, target: string) {
   const file = project.files.find((candidate) => candidate.path === target);
   const symbols = project.symbols.filter((symbol) => symbol.filePath === target || symbol.name === target);
-  const imports = file ? project.imports.filter((edge) => edge.filePath === file.path) : [];
+  const targetPaths = new Set([file?.path, ...symbols.map((symbol) => symbol.filePath)].filter((path): path is string => Boolean(path)));
+  const outboundReferences = project.imports.filter((edge) => targetPaths.has(edge.filePath));
+  const inboundReferences = project.imports.filter((edge) => edge.resolvedPath !== undefined && targetPaths.has(edge.resolvedPath));
   return {
     target,
     file,
     symbols,
-    imports,
+    imports: outboundReferences,
+    inboundReferences,
+    outboundReferences,
     explanation: file
       ? `${target} is indexed as ${file.kind}${file.route ? ` for route ${file.route}` : ""}.`
       : symbols.length
-        ? `${target} is a symbol in ${symbols.map((symbol) => symbol.filePath).join(", ")}.`
+        ? `${target} is a symbol in ${symbols.map((symbol) => symbol.filePath).join(", ")} with ${inboundReferences.length} inbound reference(s).`
         : "No indexed file or symbol matched this target."
   };
 }
@@ -135,7 +139,7 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
 }
 
 export function createTokenGraphServer(): McpServer {
-  const server = new McpServer({ name: "tokengraph", version: "0.3.0" });
+  const server = new McpServer({ name: "tokengraph", version: "0.4.0" });
 
   server.registerTool(
     "tokengraph_index_project",

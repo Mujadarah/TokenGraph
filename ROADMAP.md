@@ -34,7 +34,7 @@ Status: complete
 
 ## v0.4 - Better Graph Intelligence
 
-Planned:
+Status: complete
 
 - Stronger import resolution for local aliases and relative paths.
 - Better React and Next.js route/component extraction.

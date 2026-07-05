@@ -14,10 +14,11 @@ For coding tasks in a project where TokenGraph MCP tools are available, use this
 1. Call `tokengraph_index_status` when available. If it reports `missing` or `stale`, call `tokengraph_index_project`.
 2. Call `tokengraph_project_map` for a compact overview.
 3. Call `tokengraph_plan_context` with the user's task before reading raw files.
-4. Read only the recommended first files or narrow snippets from the returned patch scope.
-5. If the task touches data, auth, reports, persistence, RLS, migrations, or database-backed UI, call `tokengraph_summarize_sql`.
-6. Compress long test, build, install, diff, or log output with `tokengraph_compress_output` before using it as context.
-7. Store durable project decisions only when they are deliberate and useful with `tokengraph_remember_decision`.
+4. Read only the recommended first files or narrow snippets from the returned patch scope, using `startLine`/`endLine` hints when present.
+5. Call `tokengraph_explain_symbol` before opening a file or symbol when inbound/outbound references would clarify the patch scope.
+6. If the task touches data, auth, reports, persistence, RLS, migrations, or database-backed UI, call `tokengraph_summarize_sql`.
+7. Compress long test, build, install, diff, or log output with `tokengraph_compress_output` before using it as context.
+8. Store durable project decisions only when they are deliberate and useful with `tokengraph_remember_decision`.
 
 If the TokenGraph MCP tools are not exposed in the current thread, say that briefly, then fall back to narrow `rg`/file reads. Do not pretend TokenGraph was used.
 
@@ -34,5 +35,6 @@ If the TokenGraph MCP tools are not exposed in the current thread, say that brie
 - "Use TokenGraph to index this project and show the project map."
 - "Use TokenGraph to check whether this project index is stale."
 - "Use TokenGraph to plan context for this task before reading files."
+- "Use TokenGraph to explain this symbol before reading the source file."
 - "Use TokenGraph to compress this failing test output."
 - "Use TokenGraph to remember this project decision."

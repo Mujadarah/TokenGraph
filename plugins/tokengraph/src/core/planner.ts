@@ -3,6 +3,7 @@ import type {
   CodeFile,
   ContextPlan,
   ContextPlanInput,
+  MemoryEntry,
   ProjectIndex,
   RankedFile,
   RankedSqlObject,
@@ -20,34 +21,68 @@ function classifyTask(task: string): TaskType {
   return "feature";
 }
 
-function textForFile(project: ProjectIndex, file: CodeFile): string {
-  const symbols = project.symbols.filter((symbol) => symbol.filePath === file.path).map((symbol) => symbol.name);
-  const imports = project.imports.filter((edge) => edge.filePath === file.path).map((edge) => edge.source);
-  return [file.path, file.kind, file.route ?? "", file.language, ...symbols, ...imports].join(" ");
-}
-
-function scoreText(text: string, terms: string[]): number {
+function scoreText(text: string, terms: string[], weight = 2): number {
   const haystack = tokenize(text);
   return terms.reduce((score, term) => {
     const matched = haystack.some((part) => part.includes(term) || term.includes(part));
-    return score + (matched ? 2 : 0);
+    return score + (matched ? weight : 0);
   }, 0);
+}
+
+function firstMatchingSymbol(project: ProjectIndex, file: CodeFile, terms: string[]) {
+  return project.symbols
+    .filter((symbol) => symbol.filePath === file.path)
+    .map((symbol) => ({ symbol, score: scoreText(`${symbol.name} ${symbol.kind}`, terms, 4) }))
+    .filter((entry) => entry.score > 0 && entry.symbol.startLine !== undefined)
+    .sort((a, b) => b.score - a.score || (a.symbol.startLine ?? 0) - (b.symbol.startLine ?? 0))[0]?.symbol;
 }
 
 function rankedFiles(project: ProjectIndex, terms: string[], includeTests: boolean): RankedFile[] {
   return project.files
     .filter((file) => (includeTests ? file.isTest : !file.isTest && file.kind !== "sql" && file.kind !== "doc"))
     .map((file) => {
-      const lexicalScore = scoreText(textForFile(project, file), terms);
-      const score = lexicalScore > 0 ? lexicalScore + (file.route ? 2 : 0) : 0;
+      const pathScore = scoreText(`${file.path} ${file.kind} ${file.route ?? ""}`, terms, 2);
+      const symbolScore = scoreText(
+        project.symbols
+          .filter((symbol) => symbol.filePath === file.path)
+          .map((symbol) => `${symbol.name} ${symbol.kind}`)
+          .join(" "),
+        terms,
+        4
+      );
+      const importScore = scoreText(
+        project.imports
+          .filter((edge) => edge.filePath === file.path)
+          .map((edge) => `${edge.source} ${edge.resolvedPath ?? ""}`)
+          .join(" "),
+        terms,
+        1
+      );
+      const lexicalScore = pathScore + symbolScore + importScore;
+      const score = lexicalScore > 0 ? lexicalScore + (file.route ? 2 : 0) + (includeTests ? 1 : 0) : 0;
+      const matchedSymbol = firstMatchingSymbol(project, file, terms);
       return {
         path: file.path,
         reason: lexicalScore > 0 ? `Matches task terms in ${file.kind} graph data.` : "Low lexical overlap with the task.",
-        score
+        score,
+        startLine: matchedSymbol?.startLine,
+        endLine: matchedSymbol?.endLine
       };
     })
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+}
+
+function rankedMemories(memories: MemoryEntry[], terms: string[], limit: number): MemoryEntry[] {
+  return memories
+    .map((memory) => ({
+      memory,
+      score: scoreText(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`, terms, 3)
+    }))
+    .filter((entry) => entry.score > 0 || terms.length === 0)
+    .sort((a, b) => b.score - a.score || b.memory.createdAt.localeCompare(a.memory.createdAt))
+    .slice(0, limit)
+    .map((entry) => entry.memory);
 }
 
 function rankedSql(project: ProjectIndex, terms: string[]): RankedSqlObject[] {
@@ -106,7 +141,7 @@ export async function buildContextPlan(input: ContextPlanInput): Promise<Context
   const relevantFiles = rankedFiles(input.project, terms, false).slice(0, input.budget.maxFiles);
   const relevantTests = rankedFiles(input.project, terms, true).slice(0, Math.max(1, Math.ceil(input.budget.maxFiles / 2)));
   const relevantSql = rankedSql(input.project, terms).slice(0, input.budget.maxSqlObjects);
-  const relevantMemories = input.memories.slice(0, input.budget.maxMemories);
+  const relevantMemories = rankedMemories(input.memories, terms, input.budget.maxMemories);
   const selectedPaths = new Set([...relevantFiles, ...relevantTests].map((file) => file.path));
   const recommendedFirstReads = relevantFiles.slice(0, Math.min(3, relevantFiles.length));
   const filesToAvoid = input.project.files

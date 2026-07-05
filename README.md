@@ -18,17 +18,20 @@ Large coding sessions often waste tokens by repeatedly reading files, logs, migr
 
 ## Current Version
 
-TokenGraph is currently at `0.3.0`.
+TokenGraph is currently at `0.4.0`.
 
 Highlights:
 
 - Local stdio MCP server in Node.js and TypeScript.
 - Codex plugin metadata and TokenGraph skill.
 - Project indexing for TypeScript, JavaScript, React, Next.js, PostgreSQL, and Supabase-style SQL migrations.
+- Resolved local import edges for relative imports and common `@/` or `~/` aliases.
+- Better React and Next.js route/component extraction, including `pages/**` routes and component line hints.
 - Root `.gitignore` support during scanning.
 - Project fingerprints and index freshness status.
 - Index-only reset that preserves memory by default.
-- Context planner for focused first reads, tests, SQL objects, and memories.
+- Context planner for focused first reads with line hints, tests, SQL objects, and ranked memories.
+- Symbol explanation with inbound and outbound import references.
 - JSON-RPC stdio smoke tests for the built MCP entry point.
 - Local plugin validator.
 

@@ -85,11 +85,20 @@ describe("TokenGraph MCP stdio server", () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
     await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
+    await writeFile(
+      join(root, "src", "patientPage.ts"),
+      [
+        "import { loadPatientSummary } from './patientSummary';",
+        "export function renderPatientPage() {",
+        "  return loadPatientSummary();",
+        "}"
+      ].join("\n")
+    );
 
     await request(1, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.3.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.4.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -123,7 +132,7 @@ describe("TokenGraph MCP stdio server", () => {
       status: "indexed",
       map: {
         counts: {
-          files: 1
+          files: 2
         }
       }
     });
@@ -137,7 +146,23 @@ describe("TokenGraph MCP stdio server", () => {
       hasIndex: true
     });
 
-    const reset = await request(6, "tools/call", {
+    const explanation = await request(6, "tools/call", {
+      name: "tokengraph_explain_symbol",
+      arguments: { root, target: "loadPatientSummary" }
+    });
+    expect(explanation.structuredContent).toMatchObject({
+      target: "loadPatientSummary",
+      inboundReferences: [
+        expect.objectContaining({
+          filePath: "src/patientPage.ts",
+          source: "./patientSummary",
+          resolvedPath: "src/patientSummary.ts"
+        })
+      ],
+      outboundReferences: []
+    });
+
+    const reset = await request(7, "tools/call", {
       name: "tokengraph_reset_project",
       arguments: { root, mode: "index" }
     });
@@ -146,7 +171,7 @@ describe("TokenGraph MCP stdio server", () => {
       mode: "index"
     });
 
-    const resetStatus = await request(7, "tools/call", {
+    const resetStatus = await request(8, "tools/call", {
       name: "tokengraph_index_status",
       arguments: { root }
     });

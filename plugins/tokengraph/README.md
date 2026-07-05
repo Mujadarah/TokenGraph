@@ -2,17 +2,20 @@
 
 TokenGraph is a local-first Codex plugin that reduces wasted context by routing tasks through a compact project map before raw file reads.
 
-## What v0.3 includes
+## What v0.4 includes
 
 - Codex plugin manifest and repo-local marketplace entry.
 - Local stdio MCP server in Node/TypeScript.
 - Project indexing for TypeScript, JavaScript, React, Next.js, PostgreSQL, and Supabase-style SQL migrations.
+- Local import resolution for relative paths and common `@/` or `~/` aliases.
+- Better React and Next.js graph metadata, including `pages/**` routes, component symbols, and symbol line hints.
 - Root `.gitignore` support during project scanning.
 - Project fingerprints stored with each index.
 - Index freshness status for missing, fresh, and stale persisted indexes.
 - Reset controls that clear only `index.json` by default or all `.tokengraph/` state when explicitly requested.
-- Context planner that returns likely files, tests, SQL objects, memories, first reads, files to avoid, and estimated token savings.
+- Context planner that returns likely files, tests, SQL objects, ranked memories, first reads with safe line hints, files to avoid, and estimated token savings.
 - Relevance scoring that avoids selecting unrelated route files with no task overlap.
+- Symbol explanation with inbound and outbound references from the resolved import graph.
 - Local memory storage in `.tokengraph/memory.json`.
 - Log/test/build/diff compression.
 - JSON-RPC stdio smoke coverage for the built MCP entry point.
@@ -47,7 +50,7 @@ Then install `tokengraph` from that marketplace and start a new Codex thread so 
 
 ## Privacy
 
-TokenGraph v0.3 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API.
+TokenGraph v0.4 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API.
 
 ## License
 

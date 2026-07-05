@@ -57,12 +57,71 @@ describe("scanProject", () => {
       isTest: false
     });
     expect(graph.symbols).toContainEqual(
-      expect.objectContaining({ name: "PatientPage", kind: "function", filePath: "app/patients/[id]/page.tsx" })
+      expect.objectContaining({ name: "PatientPage", kind: "component", filePath: "app/patients/[id]/page.tsx" })
     );
     expect(graph.imports).toContainEqual(
       expect.objectContaining({ source: "@/services/patientService", filePath: "app/patients/[id]/page.tsx" })
     );
     expect(graph.exclusions.some((entry) => entry.path === ".env" && entry.reason === "secret")).toBe(true);
+  });
+
+  it("resolves local imports and extracts React and Next.js route metadata", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "components"), { recursive: true });
+    await mkdir(join(root, "lib"), { recursive: true });
+    await mkdir(join(root, "pages", "patients"), { recursive: true });
+    await writeFile(
+      join(root, "components", "PatientCard.tsx"),
+      [
+        "export const PatientCard = () => {",
+        "  return <article>Patient</article>;",
+        "};"
+      ].join("\n")
+    );
+    await writeFile(join(root, "lib", "patients.ts"), "export function loadPatient() { return null; }");
+    await writeFile(
+      join(root, "pages", "patients", "[id].tsx"),
+      [
+        "import { PatientCard } from '@/components/PatientCard';",
+        "import { loadPatient } from '../../lib/patients';",
+        "export default function PatientPage() {",
+        "  return <PatientCard />;",
+        "}"
+      ].join("\n")
+    );
+
+    const graph = await scanProject(root);
+
+    expect(graph.files).toContainEqual(
+      expect.objectContaining({
+        path: "pages/patients/[id].tsx",
+        kind: "next-route",
+        route: "/patients/[id]"
+      })
+    );
+    expect(graph.symbols).toContainEqual(
+      expect.objectContaining({
+        name: "PatientCard",
+        kind: "component",
+        filePath: "components/PatientCard.tsx",
+        startLine: 1,
+        endLine: 3
+      })
+    );
+    expect(graph.imports).toContainEqual(
+      expect.objectContaining({
+        filePath: "pages/patients/[id].tsx",
+        source: "@/components/PatientCard",
+        resolvedPath: "components/PatientCard.tsx"
+      })
+    );
+    expect(graph.imports).toContainEqual(
+      expect.objectContaining({
+        filePath: "pages/patients/[id].tsx",
+        source: "../../lib/patients",
+        resolvedPath: "lib/patients.ts"
+      })
+    );
   });
 
   it("respects root .gitignore patterns before indexing files", async () => {
@@ -211,6 +270,57 @@ describe("buildContextPlan", () => {
     expect(plan.relevantMemories.map((item) => item.title)).toContain("Patient summaries stay tenant scoped");
     expect(plan.estimatedTokens.avoided).toBeGreaterThan(0);
     expect(plan.rawReadPolicy).toMatch(/targeted/i);
+  });
+
+  it("ranks memories by task relevance and adds line hints to first reads", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "services"), { recursive: true });
+    await writeFile(
+      join(root, "services", "patientSummary.ts"),
+      [
+        "export function loadPatientSummary() {",
+        "  return null;",
+        "}"
+      ].join("\n")
+    );
+
+    const project = await indexProject(root);
+    const memories = [
+      {
+        id: "mem_old",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        type: "convention" as const,
+        title: "Billing export naming",
+        body: "Billing reports use export suffixes.",
+        tags: ["billing"]
+      },
+      {
+        id: "mem_patient",
+        createdAt: "2026-07-06T00:01:00.000Z",
+        type: "architecture" as const,
+        title: "Patient summary scope",
+        body: "Patient summary loading must stay tenant scoped.",
+        tags: ["patients", "summary"]
+      }
+    ];
+
+    const plan = await buildContextPlan({
+      root,
+      task: "Fix patient summary loading",
+      project,
+      memories,
+      budget: { maxFiles: 3, maxSqlObjects: 0, maxMemories: 1 }
+    });
+
+    expect(plan.relevantMemories).toHaveLength(1);
+    expect(plan.relevantMemories[0].id).toBe("mem_patient");
+    expect(plan.recommendedFirstReads).toContainEqual(
+      expect.objectContaining({
+        path: "services/patientSummary.ts",
+        startLine: 1,
+        endLine: 3
+      })
+    );
   });
 
   it("does not rank unrelated routes when task terms only match other files", async () => {

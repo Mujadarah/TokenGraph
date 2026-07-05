@@ -26,11 +26,14 @@ export interface CodeSymbol {
   kind: "function" | "class" | "component" | "const" | "type" | "interface";
   filePath: string;
   exported: boolean;
+  startLine?: number;
+  endLine?: number;
 }
 
 export interface ImportEdge {
   filePath: string;
   source: string;
+  resolvedPath?: string;
 }
 
 export interface Exclusion {
@@ -138,6 +141,8 @@ export interface RankedFile {
   path: string;
   reason: string;
   score: number;
+  startLine?: number;
+  endLine?: number;
 }
 
 export interface RankedSqlObject {

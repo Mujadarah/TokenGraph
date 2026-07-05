@@ -60,6 +60,8 @@ assert(/^---\s*\nname:\s*tokengraph\s*\n/m.test(skill), "TokenGraph skill frontm
 assert(/description:\s*\S+/m.test(skill), "TokenGraph skill frontmatter must include a description");
 assert(distServer.includes("tokengraph_index_status"), "built MCP server must register tokengraph_index_status");
 assert(distServer.includes("tokengraph_reset_project"), "built MCP server must register tokengraph_reset_project");
+assert(distServer.includes("inboundReferences"), "built MCP server must expose inbound explain references");
+assert(distServer.includes("outboundReferences"), "built MCP server must expose outbound explain references");
 
 await assertFile(distEntryPath, "built MCP entry");
 await assertFile(distServerPath, "built MCP server");

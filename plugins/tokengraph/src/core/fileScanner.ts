@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { basename, extname, join, relative, sep } from "node:path";
+import { basename, dirname, extname, join, normalize, relative, sep } from "node:path";
 
 import type { Ignore } from "ignore";
 
@@ -70,15 +70,25 @@ function isTestPath(path: string): boolean {
 }
 
 function nextRouteForPath(path: string): string | undefined {
-  if (!path.startsWith("app/")) {
-    return undefined;
-  }
   const parts = path.split("/");
   const fileName = parts.at(-1) ?? "";
-  if (!/^(page|route|layout)\.[jt]sx?$/.test(fileName)) {
+  if (path.startsWith("app/")) {
+    if (!/^(page|route|layout)\.[jt]sx?$/.test(fileName)) {
+      return undefined;
+    }
+    const routeParts = parts.slice(1, -1).filter((part) => !part.startsWith("("));
+    return `/${routeParts.join("/")}`.replace(/\/$/, "") || "/";
+  }
+  if (!path.startsWith("pages/") || !/\.[jt]sx?$/.test(fileName) || fileName.startsWith("_")) {
     return undefined;
   }
-  const routeParts = parts.slice(1, -1).filter((part) => !part.startsWith("("));
+  const routeParts = parts.slice(1);
+  const leaf = routeParts.at(-1);
+  if (!leaf) return undefined;
+  routeParts[routeParts.length - 1] = leaf.replace(/\.[jt]sx?$/, "");
+  if (routeParts.at(-1) === "index") {
+    routeParts.pop();
+  }
   return `/${routeParts.join("/")}`.replace(/\/$/, "") || "/";
 }
 
@@ -104,6 +114,35 @@ function extractImports(filePath: string, content: string): ImportEdge[] {
   return imports;
 }
 
+function lineForIndex(content: string, index: number): number {
+  return content.slice(0, index).split(/\r?\n/).length;
+}
+
+function declarationEndLine(content: string, startLine: number): number {
+  const lines = content.split(/\r?\n/);
+  let braceDepth = 0;
+  for (let index = startLine - 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    braceDepth += (line.match(/\{/g) ?? []).length;
+    braceDepth -= (line.match(/\}/g) ?? []).length;
+    if (index === startLine - 1 && braceDepth <= 0) {
+      return startLine;
+    }
+    if (index > startLine - 1 && braceDepth <= 0 && /[};]\s*$/.test(line.trim())) {
+      return index + 1;
+    }
+  }
+  return startLine;
+}
+
+function isLikelyComponent(filePath: string, name: string, content: string, matchIndex: number): boolean {
+  if (!/\.[jt]sx$/.test(filePath) || !/^[A-Z]/.test(name)) {
+    return false;
+  }
+  const nearby = content.slice(matchIndex, Math.min(content.length, matchIndex + 500));
+  return /return\s*\(?\s*</.test(nearby) || /=>\s*\(?\s*</.test(nearby) || /<[A-Z_a-z][A-Za-z0-9.:-]*\b/.test(nearby);
+}
+
 function extractSymbols(filePath: string, content: string): CodeSymbol[] {
   const symbols: CodeSymbol[] = [];
   const patterns: Array<[RegExp, CodeSymbol["kind"]]> = [
@@ -117,10 +156,51 @@ function extractSymbols(filePath: string, content: string): CodeSymbol[] {
     for (const match of content.matchAll(pattern)) {
       const name = match[2];
       const exported = Boolean(match[1]);
-      symbols.push({ name, kind: baseKind, filePath, exported });
+      const startLine = lineForIndex(content, match.index ?? 0);
+      const kind = isLikelyComponent(filePath, name, content, match.index ?? 0) ? "component" : baseKind;
+      symbols.push({ name, kind, filePath, exported, startLine, endLine: declarationEndLine(content, startLine) });
     }
   }
   return symbols;
+}
+
+function candidateImportPaths(root: string, fromFile: string, source: string): string[] {
+  const basePath = source.startsWith("@/")
+    ? source.slice(2)
+    : source.startsWith("~/")
+      ? source.slice(2)
+      : source.startsWith(".")
+        ? normalize(join(dirname(fromFile), source))
+        : "";
+  if (!basePath) {
+    return [];
+  }
+  const normalized = normalizePath(basePath);
+  const extension = extname(normalized);
+  const candidates = extension ? [normalized] : [
+    normalized,
+    `${normalized}.ts`,
+    `${normalized}.tsx`,
+    `${normalized}.js`,
+    `${normalized}.jsx`,
+    `${normalized}.mjs`,
+    `${normalized}.cjs`,
+    `${normalized}/index.ts`,
+    `${normalized}/index.tsx`,
+    `${normalized}/index.js`,
+    `${normalized}/index.jsx`
+  ];
+  return candidates.map((candidate) => normalizePath(relative(root, join(root, candidate))));
+}
+
+function resolveLocalImports(root: string, graph: CodeGraph): void {
+  const indexedPaths = new Set(graph.files.map((file) => file.path));
+  for (const edge of graph.imports) {
+    const resolvedPath = candidateImportPaths(root, edge.filePath, edge.source).find((candidate) => indexedPaths.has(candidate));
+    if (resolvedPath) {
+      edge.resolvedPath = resolvedPath;
+    }
+  }
 }
 
 async function walk(root: string, current: string, graph: CodeGraph, ignoreMatcher: Ignore): Promise<void> {
@@ -202,6 +282,7 @@ export async function scanProject(root: string): Promise<CodeGraph> {
   };
   await walk(root, root, graph, ignoreMatcher);
   graph.files.sort((a, b) => a.path.localeCompare(b.path));
+  resolveLocalImports(root, graph);
   graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name));
   graph.imports.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.source.localeCompare(b.source));
   graph.exclusions.sort((a, b) => a.path.localeCompare(b.path));
