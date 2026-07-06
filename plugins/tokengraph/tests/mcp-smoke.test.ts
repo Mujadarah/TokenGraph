@@ -304,6 +304,34 @@ describe("TokenGraph MCP stdio server", () => {
     expect(JSON.stringify(response)).toMatch(/outside the allowed workspace/i);
   });
 
+  it("rejects outside roots when launched from a different plugin-shaped workspace", async () => {
+    const root = await makeRoot();
+    const outsideRoot = await makeRoot();
+    await mkdir(join(root, ".codex-plugin"), { recursive: true });
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, ".codex-plugin", "plugin.json"), "{}");
+    await writeFile(join(root, ".mcp.json"), "{}");
+    await writeFile(join(root, "src", "local.ts"), "export const localValue = true;");
+    await writeFile(join(outsideRoot, "outside.ts"), "export const outsideValue = true;");
+    await stopServer();
+    startServer(root);
+
+    await request(60, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const response = await request(61, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root: outsideRoot }
+    });
+
+    expect(response.isError).toBe(true);
+    expect(JSON.stringify(response)).toMatch(/outside the allowed workspace/i);
+  });
+
   it("accepts an explicit workspace root when launched from the installed plugin root", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });

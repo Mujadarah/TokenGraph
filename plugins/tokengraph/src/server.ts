@@ -1,6 +1,7 @@
 import process from "node:process";
 import { access, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
@@ -42,8 +43,14 @@ async function workspaceRoot(inputRoot?: string): Promise<string> {
   return resolvedRoot;
 }
 
+function ownPluginRoot(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..");
+}
+
 async function isPluginRoot(root: string): Promise<boolean> {
   try {
+    const [realRoot, realSelf] = await Promise.all([realpath(root), realpath(ownPluginRoot())]);
+    if (realRoot !== realSelf) return false;
     await access(join(root, ".codex-plugin", "plugin.json"));
     await access(join(root, ".mcp.json"));
     return true;
