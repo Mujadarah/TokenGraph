@@ -18,7 +18,7 @@ Large coding sessions often waste tokens by repeatedly reading files, logs, migr
 
 ## Current Version
 
-TokenGraph is currently at `0.5.0`.
+TokenGraph is currently at `0.6.0`.
 
 Highlights:
 
@@ -36,6 +36,8 @@ Highlights:
 - Supabase RLS policy summaries with command, roles, `using`, and `with check` clauses.
 - Ordered SQL object history across migration files.
 - JSON-RPC stdio smoke tests for the built MCP entry point.
+- CLI smoke command for validating the built MCP server outside Codex.
+- Fixture-backed scanner and planner regression projects.
 - Local plugin validator.
 
 ## Repository Layout
@@ -61,10 +63,13 @@ cd plugins/tokengraph
 pnpm install
 pnpm test
 pnpm build
+pnpm smoke -- --root . --json
 pnpm validate:plugin
 ```
 
 The MCP server entry point is `plugins/tokengraph/dist/index.js`, built from `plugins/tokengraph/src/index.ts`.
+
+`pnpm smoke -- --root <project>` starts the built stdio MCP server with `<project>` as its workspace, lists the TokenGraph tools, and calls the read-only project map/planner/token-savings tools. Run `pnpm build` first so `dist/index.js` is current.
 
 ## Codex Plugin Use
 
@@ -75,6 +80,15 @@ codex plugin marketplace add C:\Users\rabia\Desktop\TokenGraph
 ```
 
 Then install `tokengraph` from that marketplace and start a new Codex thread so the skill and MCP tools are loaded.
+
+When iterating on this local plugin, rebuild it and restart Codex or start a fresh thread so the updated skill, manifest, and MCP server are loaded.
+
+## Troubleshooting
+
+- Missing MCP tools: confirm the plugin is installed/enabled, run `pnpm build`, run `pnpm smoke -- --root . --json`, then restart Codex or open a fresh thread.
+- Stale indexes: call `tokengraph_index_status`; if stale, call `tokengraph_index_project` or `tokengraph_reset_project` with `mode: "index"`.
+- Plugin build failures: run `pnpm typecheck`, then `pnpm build`; fix TypeScript errors before running `pnpm validate:plugin`.
+- Marketplace not visible: confirm `.agents/plugins/marketplace.json` exists and that `source.path` points to `./plugins/tokengraph` relative to the repository root.
 
 ## MCP Tool Surface
 

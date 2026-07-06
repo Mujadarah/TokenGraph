@@ -54,7 +54,7 @@ Status: complete
 
 ## v0.6 - Developer Experience
 
-Planned:
+Status: complete
 
 - CLI smoke command for local validation outside Codex.
 - Example fixture projects for scanner and planner regression tests.

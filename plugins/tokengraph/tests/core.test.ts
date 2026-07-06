@@ -1,6 +1,6 @@
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compressOutput } from "../src/core/compressor.js";
@@ -41,6 +41,48 @@ describe("plugin configuration", () => {
 });
 
 describe("scanProject", () => {
+  it("indexes the Next.js Supabase fixture as a reusable regression project", async () => {
+    const root = resolve("tests", "fixtures", "next-supabase");
+
+    const graph = await scanProject(root);
+
+    expect(graph.files.map((file) => file.path)).toEqual([
+      "app/patients/[id]/page.tsx",
+      "components/PatientCard.tsx",
+      "services/patientService.test.ts",
+      "services/patientService.ts",
+      "supabase/migrations/001_patients.sql"
+    ]);
+    expect(graph.files).toContainEqual(
+      expect.objectContaining({
+        path: "app/patients/[id]/page.tsx",
+        kind: "next-route",
+        route: "/patients/[id]"
+      })
+    );
+    expect(graph.imports).toContainEqual(
+      expect.objectContaining({
+        filePath: "app/patients/[id]/page.tsx",
+        source: "@/components/PatientCard",
+        resolvedPath: "components/PatientCard.tsx"
+      })
+    );
+  });
+
+  it("keeps fixture-generated output out of scanner regression projects", async () => {
+    const root = resolve("tests", "fixtures", "ignored-output");
+
+    const graph = await scanProject(root);
+
+    expect(graph.files.map((file) => file.path)).toEqual(["src/real.ts"]);
+    expect(graph.exclusions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "coverage", reason: "ignored" }),
+        expect.objectContaining({ path: "generated", reason: "ignored" })
+      ])
+    );
+  });
+
   it("extracts compact TypeScript graph data and excludes secrets and dependency output", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "app", "patients", "[id]"), { recursive: true });
@@ -411,6 +453,29 @@ describe("index status and reset", () => {
 });
 
 describe("buildContextPlan", () => {
+  it("plans context from the Next.js Supabase fixture project", async () => {
+    const root = resolve("tests", "fixtures", "next-supabase");
+
+    const project = await indexProject(root);
+    const plan = await buildContextPlan({
+      root,
+      task: "Fix tenant active patient summary rollups on the patient page",
+      project,
+      memories: [],
+      budget: { maxFiles: 5, maxSqlObjects: 5, maxMemories: 0 }
+    });
+
+    expect(plan.recommendedFirstReads.map((item) => item.path)).toContain("app/patients/[id]/page.tsx");
+    expect(plan.relevantFiles.map((item) => item.path)).toContain("services/patientService.ts");
+    expect(plan.relevantTests.map((item) => item.path)).toContain("services/patientService.test.ts");
+    expect(plan.relevantSql).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "policy", name: "tenant can read active patients" }),
+        expect.objectContaining({ kind: "materializedView", name: "public.patient_rollups" })
+      ])
+    );
+  });
+
   it("returns a compact patch scope that connects task terms, memories, files, tests, and SQL", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "app", "patients", "[id]"), { recursive: true });

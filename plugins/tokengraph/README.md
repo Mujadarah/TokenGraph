@@ -2,7 +2,7 @@
 
 TokenGraph is a local-first Codex plugin that reduces wasted context by routing tasks through a compact project map before raw file reads.
 
-## What v0.5 includes
+## What v0.6 includes
 
 - Codex plugin manifest and repo-local marketplace entry.
 - Local stdio MCP server in Node/TypeScript.
@@ -23,6 +23,8 @@ TokenGraph is a local-first Codex plugin that reduces wasted context by routing 
 - Local memory storage in `.tokengraph/memory.json`.
 - Log/test/build/diff compression.
 - JSON-RPC stdio smoke coverage for the built MCP entry point.
+- CLI smoke command for local validation outside Codex.
+- Example fixture projects for scanner and planner regression tests.
 - Local plugin validation for manifest, MCP config, built output, and skill metadata.
 
 ## Local development
@@ -31,10 +33,13 @@ TokenGraph is a local-first Codex plugin that reduces wasted context by routing 
 pnpm install
 pnpm test
 pnpm build
+pnpm smoke -- --root . --json
 pnpm validate:plugin
 ```
 
 The MCP server entry point is `dist/index.js`, built from `src/index.ts`.
+
+`pnpm smoke -- --root <project>` starts the built MCP server over stdio, validates the required TokenGraph tools, and calls the project status, map, planner, and token-savings tools against the selected project root. Run `pnpm build` first.
 
 ## Codex install notes
 
@@ -50,11 +55,32 @@ After building the plugin, add this marketplace root to Codex if needed:
 codex plugin marketplace add C:\Users\rabia\Desktop\TokenGraph
 ```
 
-Then install `tokengraph` from that marketplace and start a new Codex thread so the skill and MCP tools are loaded.
+Then install `tokengraph` from that marketplace and start a new Codex thread so the skill and MCP tools are loaded. After changing plugin code, run `pnpm build`, run the smoke command, and restart Codex or open a fresh thread.
+
+## Troubleshooting
+
+### Missing MCP tools
+
+1. Confirm `tokengraph` is installed and enabled in Codex.
+2. Run `pnpm build` from `plugins/tokengraph`.
+3. Run `pnpm smoke -- --root . --json`.
+4. Restart Codex or open a fresh thread so plugin-provided MCP servers are reloaded.
+
+### Stale indexes
+
+Call `tokengraph_index_status` before trusting cached context. If it reports `stale`, call `tokengraph_index_project`. If the index looks corrupt, call `tokengraph_reset_project` with `mode: "index"`; this preserves memories by default.
+
+### Plugin build failures
+
+Run `pnpm typecheck` to get compiler errors, then `pnpm build`. `pnpm validate:plugin` expects the built `dist/index.js` and `dist/server.js` files to exist and match the current plugin metadata.
+
+### Marketplace visibility
+
+The repo marketplace file is `.agents/plugins/marketplace.json`. Its `source.path` must point to `./plugins/tokengraph` relative to the repository root, not relative to `.agents/plugins`.
 
 ## Privacy
 
-TokenGraph v0.5 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API.
+TokenGraph v0.6 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API.
 
 ## License
 
