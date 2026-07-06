@@ -124,6 +124,53 @@ describe("scanProject", () => {
     );
   });
 
+  it("resolves TypeScript source files imported with emitted JavaScript specifiers", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "server.ts"), "export function createServer() { return null; }");
+    await writeFile(
+      join(root, "src", "index.ts"),
+      [
+        "import { createServer } from './server.js';",
+        "export function start() {",
+        "  return createServer();",
+        "}"
+      ].join("\n")
+    );
+
+    const graph = await scanProject(root);
+
+    expect(graph.imports).toContainEqual(
+      expect.objectContaining({
+        filePath: "src/index.ts",
+        source: "./server.js",
+        resolvedPath: "src/server.ts"
+      })
+    );
+  });
+
+  it("does not classify TypeScript generics as React components", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(
+      join(root, "src", "repository.ts"),
+      [
+        "export async function loadRows<TRecord>(): Promise<TRecord[]> {",
+        "  return [];",
+        "}"
+      ].join("\n")
+    );
+
+    const graph = await scanProject(root);
+
+    expect(graph.files).toContainEqual(
+      expect.objectContaining({
+        path: "src/repository.ts",
+        kind: "module"
+      })
+    );
+  });
+
   it("respects root .gitignore patterns before indexing files", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "generated"), { recursive: true });

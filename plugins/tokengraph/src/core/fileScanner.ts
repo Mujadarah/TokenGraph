@@ -97,7 +97,8 @@ function detectFileKind(path: string, extension: string, content: string): FileK
   if (extension === ".sql") return "sql";
   if (extension === ".md" || extension === ".mdx") return "doc";
   if (nextRouteForPath(path)) return "next-route";
-  if (extension === ".tsx" || extension === ".jsx" || /<[A-Z][A-Za-z0-9]*\b/.test(content)) return "react-component";
+  if (extension === ".tsx" || extension === ".jsx") return "react-component";
+  if ((extension === ".js" || extension === ".mjs") && /<[A-Z_a-z][A-Za-z0-9.:-]*(\s|>|\/)/.test(content)) return "react-component";
   return "module";
 }
 
@@ -177,7 +178,15 @@ function candidateImportPaths(root: string, fromFile: string, source: string): s
   }
   const normalized = normalizePath(basePath);
   const extension = extname(normalized);
-  const candidates = extension ? [normalized] : [
+  const emittedJavaScriptCandidates =
+    extension === ".js"
+      ? [normalized, normalized.replace(/\.js$/, ".ts"), normalized.replace(/\.js$/, ".tsx")]
+      : extension === ".jsx"
+        ? [normalized, normalized.replace(/\.jsx$/, ".tsx")]
+        : extension === ".mjs" || extension === ".cjs"
+          ? [normalized, normalized.replace(/\.[cm]js$/, ".ts")]
+          : undefined;
+  const candidates = emittedJavaScriptCandidates ?? (extension ? [normalized] : [
     normalized,
     `${normalized}.ts`,
     `${normalized}.tsx`,
@@ -189,7 +198,7 @@ function candidateImportPaths(root: string, fromFile: string, source: string): s
     `${normalized}/index.tsx`,
     `${normalized}/index.js`,
     `${normalized}/index.jsx`
-  ];
+  ]);
   return candidates.map((candidate) => normalizePath(relative(root, join(root, candidate))));
 }
 
