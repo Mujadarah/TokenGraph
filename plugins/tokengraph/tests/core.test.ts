@@ -1,7 +1,7 @@
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compressOutput } from "../src/core/compressor.js";
 import { scanProject } from "../src/core/fileScanner.js";
@@ -183,6 +183,19 @@ describe("scanProject", () => {
 
     expect(graph.files.map((file) => file.path)).toEqual(["src/real.ts"]);
     expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "generated", reason: "ignored" }));
+  });
+
+  it("stops indexing once the configured file budget is reached", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "a.ts"), "export const a = true;");
+    await writeFile(join(root, "src", "b.ts"), "export const b = true;");
+    await writeFile(join(root, "src", "c.ts"), "export const c = true;");
+
+    const graph = await scanProject(root, { maxFiles: 2 });
+
+    expect(graph.files.map((file) => file.path)).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/c.ts", reason: "budget" }));
   });
 });
 
@@ -410,6 +423,19 @@ describe("compressOutput", () => {
     expect(compressed.keyLines).toContain("AssertionError: expected 2 to be 1");
     expect(compressed.keyLines).toContain("at services/patientService.test.ts:42:15");
     expect(compressed.estimatedTokens.avoided).toBeGreaterThan(0);
+  });
+
+  it("deduplicates actionable lines without quadratic Array index scans", () => {
+    const indexOfSpy = vi.spyOn(Array.prototype, "indexOf");
+    const noisyLog = Array.from({ length: 500 }, (_, index) => `Error: unique failure ${index}`).join("\n");
+
+    const compressed = compressOutput({ kind: "test", text: noisyLog, maxLines: 5 });
+    const indexOfCalls = indexOfSpy.mock.calls.length;
+    indexOfSpy.mockRestore();
+
+    expect(compressed.keyLines).toHaveLength(5);
+    expect(compressed.omittedLineCount).toBeGreaterThan(0);
+    expect(indexOfCalls).toBe(0);
   });
 });
 

@@ -1,8 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { indexProject } from "../src/core/projectIndexer.js";
 
 interface JsonRpcResponse {
   id?: number | string;
@@ -12,6 +14,7 @@ interface JsonRpcResponse {
 
 const tempRoots: string[] = [];
 let server: ChildProcessWithoutNullStreams | undefined;
+const serverEntry = resolve("dist/index.js");
 
 async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "tokengraph-mcp-"));
@@ -67,22 +70,43 @@ async function request(id: number, method: string, params?: Record<string, unkno
   return response.result as Record<string, unknown>;
 }
 
-beforeEach(() => {
-  server = spawn(process.execPath, ["dist/index.js"], {
-    cwd: process.cwd(),
+function startServer(cwd: string = process.cwd()) {
+  server = spawn(process.execPath, [serverEntry], {
+    cwd,
     stdio: ["pipe", "pipe", "pipe"]
   });
+}
+
+async function stopServer() {
+  if (!server) {
+    return;
+  }
+  const current = server;
+  server = undefined;
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(resolve, 1000);
+    current.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    current.kill();
+  });
+}
+
+beforeEach(() => {
+  startServer();
 });
 
 afterEach(async () => {
-  server?.kill();
-  server = undefined;
+  await stopServer();
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("TokenGraph MCP stdio server", () => {
   it("lists tools, reports index status, indexes, and resets over JSON-RPC stdio", async () => {
     const root = await makeRoot();
+    await stopServer();
+    startServer(root);
     await mkdir(join(root, "src"), { recursive: true });
     await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
     await writeFile(
@@ -178,6 +202,128 @@ describe("TokenGraph MCP stdio server", () => {
     expect(resetStatus.structuredContent).toMatchObject({
       state: "missing",
       hasIndex: false
+    });
+  });
+
+  it("rejects roots outside the launched workspace", async () => {
+    const root = await makeRoot();
+    const outsideRoot = await makeRoot();
+    await stopServer();
+    startServer(root);
+
+    await request(10, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.4.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const response = await request(11, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root: outsideRoot }
+    });
+
+    expect(response.isError).toBe(true);
+    expect(JSON.stringify(response)).toMatch(/outside the allowed workspace/i);
+  });
+
+  it("reindexes stale persisted indexes before serving read tools", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
+    await writeFile(
+      join(root, ".tokengraph", "index.json"),
+      JSON.stringify(
+        {
+          root,
+          scannedAt: "2026-07-06T00:00:00.000Z",
+          fingerprint: "stale-fingerprint",
+          frameworks: ["TypeScript"],
+          files: [],
+          symbols: [
+            {
+              name: "InjectedOutsideSymbol",
+              kind: "function",
+              filePath: "../../outside-secret.ts",
+              exported: true,
+              startLine: 1,
+              endLine: 1
+            }
+          ],
+          imports: [],
+          exclusions: [],
+          sql: { tables: [], relations: [], policies: [], indexes: [], triggers: [], functions: [], views: [] }
+        },
+        null,
+        2
+      )
+    );
+    await stopServer();
+    startServer(root);
+
+    await request(12, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.4.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const explanation = await request(13, "tools/call", {
+      name: "tokengraph_explain_symbol",
+      arguments: { target: "InjectedOutsideSymbol" }
+    });
+
+    expect(explanation.structuredContent).toMatchObject({
+      symbols: [],
+      explanation: "No indexed file or symbol matched this target."
+    });
+  });
+
+  it("ignores crafted persisted indexes even when they claim the current fingerprint", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
+    const current = await indexProject(root);
+    await writeFile(
+      join(root, ".tokengraph", "index.json"),
+      JSON.stringify(
+        {
+          ...current,
+          symbols: [
+            {
+              name: "InjectedOutsideSymbol",
+              kind: "function",
+              filePath: "../../outside-secret.ts",
+              exported: true,
+              startLine: 1,
+              endLine: 1
+            }
+          ]
+        },
+        null,
+        2
+      )
+    );
+    await stopServer();
+    startServer(root);
+
+    await request(14, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.4.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const explanation = await request(15, "tools/call", {
+      name: "tokengraph_explain_symbol",
+      arguments: { target: "InjectedOutsideSymbol" }
+    });
+
+    expect(explanation.structuredContent).toMatchObject({
+      symbols: [],
+      explanation: "No indexed file or symbol matched this target."
     });
   });
 });

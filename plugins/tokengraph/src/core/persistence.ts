@@ -20,11 +20,37 @@ export async function saveProjectIndex(root: string, index: ProjectIndex): Promi
   await writeFile(indexPath(root), `${JSON.stringify(index, null, 2)}\n`);
 }
 
+function isProjectIndex(value: unknown): value is ProjectIndex {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Partial<ProjectIndex>;
+  return (
+    typeof candidate.root === "string" &&
+    typeof candidate.scannedAt === "string" &&
+    typeof candidate.fingerprint === "string" &&
+    Array.isArray(candidate.files) &&
+    Array.isArray(candidate.symbols) &&
+    Array.isArray(candidate.imports) &&
+    Array.isArray(candidate.exclusions) &&
+    Array.isArray(candidate.frameworks) &&
+    Boolean(candidate.sql) &&
+    Array.isArray(candidate.sql?.tables) &&
+    Array.isArray(candidate.sql?.relations) &&
+    Array.isArray(candidate.sql?.policies) &&
+    Array.isArray(candidate.sql?.indexes) &&
+    Array.isArray(candidate.sql?.triggers) &&
+    Array.isArray(candidate.sql?.functions) &&
+    Array.isArray(candidate.sql?.views)
+  );
+}
+
 export async function loadProjectIndex(root: string): Promise<ProjectIndex | undefined> {
   try {
-    return JSON.parse(await readFile(indexPath(root), "utf8")) as ProjectIndex;
+    const parsed = JSON.parse(await readFile(indexPath(root), "utf8")) as unknown;
+    return isProjectIndex(parsed) ? parsed : undefined;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) {
       return undefined;
     }
     throw error;

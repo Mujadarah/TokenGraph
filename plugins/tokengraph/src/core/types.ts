@@ -38,7 +38,7 @@ export interface ImportEdge {
 
 export interface Exclusion {
   path: string;
-  reason: "dependency" | "build-output" | "secret" | "binary" | "large-file" | "hidden" | "unsupported" | "ignored";
+  reason: "dependency" | "build-output" | "secret" | "binary" | "large-file" | "hidden" | "unsupported" | "ignored" | "budget";
 }
 
 export interface CodeGraph {

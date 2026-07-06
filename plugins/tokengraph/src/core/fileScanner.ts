@@ -14,7 +14,26 @@ const SUPPORTED_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cj
 const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 const SECRET_FILE_PATTERNS = [/^\.env($|\.)/i, /\.pem$/i, /\.key$/i, /\.p12$/i, /^id_rsa$/i, /^id_ed25519$/i];
 const MAX_INDEXED_BYTES = 512 * 1024;
+const DEFAULT_SCAN_BUDGET = {
+  maxFiles: 5000,
+  maxDirectories: 1000,
+  maxDepth: 32,
+  maxTotalBytes: 50 * 1024 * 1024
+};
 const createIgnore = createRequire(import.meta.url)("ignore") as () => Ignore;
+
+export interface ScanBudget {
+  maxFiles?: number;
+  maxDirectories?: number;
+  maxDepth?: number;
+  maxTotalBytes?: number;
+}
+
+interface WalkState {
+  budget: Required<ScanBudget>;
+  directories: number;
+  totalBytes: number;
+}
 
 function normalizePath(path: string): string {
   return path.split(sep).join("/");
@@ -212,7 +231,16 @@ function resolveLocalImports(root: string, graph: CodeGraph): void {
   }
 }
 
-async function walk(root: string, current: string, graph: CodeGraph, ignoreMatcher: Ignore): Promise<void> {
+function budgetFromOptions(options?: ScanBudget): Required<ScanBudget> {
+  return {
+    maxFiles: options?.maxFiles ?? DEFAULT_SCAN_BUDGET.maxFiles,
+    maxDirectories: options?.maxDirectories ?? DEFAULT_SCAN_BUDGET.maxDirectories,
+    maxDepth: options?.maxDepth ?? DEFAULT_SCAN_BUDGET.maxDepth,
+    maxTotalBytes: options?.maxTotalBytes ?? DEFAULT_SCAN_BUDGET.maxTotalBytes
+  };
+}
+
+async function walk(root: string, current: string, graph: CodeGraph, ignoreMatcher: Ignore, state: WalkState, depth: number): Promise<void> {
   const entries = await readdir(current, { withFileTypes: true });
   entries.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -237,7 +265,12 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreMatch
       continue;
     }
     if (entry.isDirectory()) {
-      await walk(root, absolute, graph, ignoreMatcher);
+      if (depth + 1 > state.budget.maxDepth || state.directories >= state.budget.maxDirectories) {
+        graph.exclusions.push({ path: relativePath, reason: "budget" });
+        continue;
+      }
+      state.directories += 1;
+      await walk(root, absolute, graph, ignoreMatcher, state, depth + 1);
       continue;
     }
     if (!entry.isFile()) {
@@ -250,6 +283,10 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreMatch
       continue;
     }
     const fileStat = await stat(absolute);
+    if (graph.files.length >= state.budget.maxFiles || state.totalBytes + fileStat.size > state.budget.maxTotalBytes) {
+      graph.exclusions.push({ path: relativePath, reason: "budget" });
+      continue;
+    }
     if (fileStat.size > MAX_INDEXED_BYTES) {
       graph.exclusions.push({ path: relativePath, reason: "large-file" });
       continue;
@@ -272,6 +309,7 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreMatch
       isTest: isTestPath(relativePath)
     };
     graph.files.push(file);
+    state.totalBytes += fileStat.size;
 
     if (CODE_EXTENSIONS.has(extension)) {
       graph.imports.push(...extractImports(relativePath, content));
@@ -280,7 +318,7 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreMatch
   }
 }
 
-export async function scanProject(root: string): Promise<CodeGraph> {
+export async function scanProject(root: string, options?: ScanBudget): Promise<CodeGraph> {
   const ignoreMatcher = await loadRootIgnore(root);
   const graph: CodeGraph = {
     root,
@@ -289,7 +327,7 @@ export async function scanProject(root: string): Promise<CodeGraph> {
     imports: [],
     exclusions: []
   };
-  await walk(root, root, graph, ignoreMatcher);
+  await walk(root, root, graph, ignoreMatcher, { budget: budgetFromOptions(options), directories: 0, totalBytes: 0 }, 0);
   graph.files.sort((a, b) => a.path.localeCompare(b.path));
   resolveLocalImports(root, graph);
   graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name));

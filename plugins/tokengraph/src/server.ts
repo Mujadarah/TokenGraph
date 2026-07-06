@@ -1,10 +1,12 @@
 import process from "node:process";
+import { realpath } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import { compressOutput } from "./core/compressor.js";
-import { getIndexStatus } from "./core/indexStatus.js";
+import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
 import { MemoryStore } from "./core/memoryStore.js";
 import { buildContextPlan } from "./core/planner.js";
 import { indexProject } from "./core/projectIndexer.js";
@@ -18,8 +20,15 @@ const DEFAULT_BUDGET = {
   maxMemories: 4
 };
 
-function workspaceRoot(inputRoot?: string): string {
-  return inputRoot?.trim() || process.cwd();
+async function workspaceRoot(inputRoot?: string): Promise<string> {
+  const allowedRoot = await realpath(process.cwd());
+  const requested = inputRoot?.trim() ? resolve(allowedRoot, inputRoot.trim()) : allowedRoot;
+  const resolvedRoot = await realpath(requested);
+  const relativeToAllowed = relative(allowedRoot, resolvedRoot);
+  if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute(relativeToAllowed))) {
+    throw new Error(`Requested root is outside the allowed workspace: ${resolvedRoot}`);
+  }
+  return resolvedRoot;
 }
 
 function compactJson(value: unknown): string {
@@ -36,7 +45,12 @@ function ok<T extends object>(output: T) {
 async function ensureProject(root: string): Promise<ProjectIndex> {
   const existing = await loadProjectIndex(root);
   if (existing) {
-    return existing;
+    const current = await indexProject(root);
+    if (isFreshProjectIndex(existing, current)) {
+      return existing;
+    }
+    await saveProjectIndex(root, current);
+    return current;
   }
   const indexed = await indexProject(root);
   await saveProjectIndex(root, indexed);
@@ -152,7 +166,7 @@ export function createTokenGraphServer(): McpServer {
       })
     },
     async ({ root }) => {
-      const resolvedRoot = workspaceRoot(root);
+      const resolvedRoot = await workspaceRoot(root);
       const project = await indexProject(resolvedRoot);
       await saveProjectIndex(resolvedRoot, project);
       return ok({ status: "indexed", map: projectMap(project), exclusions: project.exclusions.slice(0, 25) });
@@ -169,7 +183,7 @@ export function createTokenGraphServer(): McpServer {
         root: z.string().optional().describe("Workspace root to check. Defaults to the MCP server current working directory.")
       })
     },
-    async ({ root }) => ok(await getIndexStatus(workspaceRoot(root)))
+    async ({ root }) => ok(await getIndexStatus(await workspaceRoot(root)))
   );
 
   server.registerTool(
@@ -184,7 +198,7 @@ export function createTokenGraphServer(): McpServer {
       })
     },
     async ({ root, mode }) => {
-      const resolvedRoot = workspaceRoot(root);
+      const resolvedRoot = await workspaceRoot(root);
       if (mode === "all") {
         await clearProjectState(resolvedRoot);
       } else {
@@ -203,7 +217,7 @@ export function createTokenGraphServer(): McpServer {
       inputSchema: z.object({ root: z.string().optional() })
     },
     async ({ root }) => {
-      const resolvedRoot = workspaceRoot(root);
+      const resolvedRoot = await workspaceRoot(root);
       const project = await ensureProject(resolvedRoot);
       const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
       const map = projectMap(project);
@@ -227,7 +241,7 @@ export function createTokenGraphServer(): McpServer {
       })
     },
     async ({ root, task, maxFiles, maxSqlObjects, maxMemories }) => {
-      const resolvedRoot = workspaceRoot(root);
+      const resolvedRoot = await workspaceRoot(root);
       const project = await ensureProject(resolvedRoot);
       const memory = new MemoryStore(memoryPath(resolvedRoot));
       const memories = await memory.search(task, maxMemories ?? DEFAULT_BUDGET.maxMemories);
@@ -259,7 +273,7 @@ export function createTokenGraphServer(): McpServer {
       })
     },
     async ({ root, query, limit }) => {
-      const project = await ensureProject(workspaceRoot(root));
+      const project = await ensureProject(await workspaceRoot(root));
       return ok({ query, results: searchProject(project, query, limit ?? 10) });
     }
   );
@@ -273,7 +287,7 @@ export function createTokenGraphServer(): McpServer {
       inputSchema: z.object({ root: z.string().optional(), target: z.string().min(1) })
     },
     async ({ root, target }) => {
-      const project = await ensureProject(workspaceRoot(root));
+      const project = await ensureProject(await workspaceRoot(root));
       return ok(explain(project, target));
     }
   );
@@ -287,7 +301,7 @@ export function createTokenGraphServer(): McpServer {
       inputSchema: z.object({ root: z.string().optional(), query: z.string().min(2), limit: z.number().int().min(1).max(50).optional() })
     },
     async ({ root, query, limit }) => {
-      const project = await ensureProject(workspaceRoot(root));
+      const project = await ensureProject(await workspaceRoot(root));
       return ok({ query, sql: sqlSummary(project, query, limit ?? 10) });
     }
   );
@@ -322,7 +336,7 @@ export function createTokenGraphServer(): McpServer {
       })
     },
     async ({ root, type, title, body, tags }) => {
-      const resolvedRoot = workspaceRoot(root);
+      const resolvedRoot = await workspaceRoot(root);
       const entry = await new MemoryStore(memoryPath(resolvedRoot)).add({ type, title, body, tags });
       return ok({ status: "remembered", memory: entry });
     }
@@ -337,7 +351,7 @@ export function createTokenGraphServer(): McpServer {
       inputSchema: z.object({ root: z.string().optional() })
     },
     async ({ root }) => {
-      const project = await ensureProject(workspaceRoot(root));
+      const project = await ensureProject(await workspaceRoot(root));
       const original = project.files.reduce((total, file) => total + file.estimatedTokens, 0);
       const compact = estimateTokens(compactJson(projectMap(project)));
       return ok({ original, compact, avoided: Math.max(0, original - compact), unit: "estimated tokens" });
