@@ -44,12 +44,13 @@ Status: complete
 
 ## v0.5 - SQL And Persistence Depth
 
-Planned:
+Status: complete
 
 - Broader PostgreSQL parser coverage for constraints, enums, extensions, grants, and materialized views.
 - Better Supabase RLS summaries, including policy command and using/check clauses.
 - Migration ordering and object history summaries.
-- Optional SQLite-backed local store while preserving the current MCP tool contracts.
+- JSON-backed local store preserved with the current MCP tool contracts.
+- Optional SQLite-backed local store deferred for a later persistence enhancement.
 
 ## v0.6 - Developer Experience
 

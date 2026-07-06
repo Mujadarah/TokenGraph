@@ -1,6 +1,6 @@
 {
   "name": "tokengraph",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Local-first Codex MCP plugin for compact project context routing.",
   "type": "module",
   "private": true,

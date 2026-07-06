@@ -122,7 +122,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(1, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.4.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.5.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -214,7 +214,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(10, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.4.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.5.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -225,6 +225,42 @@ describe("TokenGraph MCP stdio server", () => {
 
     expect(response.isError).toBe(true);
     expect(JSON.stringify(response)).toMatch(/outside the allowed workspace/i);
+  });
+
+  it("summarizes v0.5 SQL objects over JSON-RPC stdio", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await writeFile(
+      join(root, "supabase", "migrations", "001_patient_rollups.sql"),
+      `
+        create extension if not exists "uuid-ossp";
+        create table public.patients (id uuid primary key, tenant_id uuid, archived_at timestamptz);
+        create policy "tenant can read active patients" on public.patients for select to authenticated using (tenant_id = auth.uid() and archived_at is null);
+        create materialized view public.patient_rollups as select tenant_id, count(*) from public.patients group by tenant_id;
+      `
+    );
+    await stopServer();
+    startServer(root);
+
+    await request(16, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.5.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const summary = await request(17, "tools/call", {
+      name: "tokengraph_summarize_sql",
+      arguments: { query: "tenant active patient rollups authenticated", limit: 5 }
+    });
+
+    expect(summary.structuredContent).toMatchObject({
+      query: "tenant active patient rollups authenticated",
+      sql: expect.arrayContaining([
+        expect.objectContaining({ kind: "policy", name: "tenant can read active patients" }),
+        expect.objectContaining({ kind: "materializedView", name: "public.patient_rollups" })
+      ])
+    });
   });
 
   it("reindexes stale persisted indexes before serving read tools", async () => {
@@ -265,7 +301,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(12, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.4.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.5.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -312,7 +348,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(14, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.4.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.5.0" }
     });
     send({ method: "notifications/initialized" });
 

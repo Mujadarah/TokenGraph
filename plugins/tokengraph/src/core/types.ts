@@ -55,6 +55,15 @@ export interface SqlTable {
   filePath: string;
 }
 
+export interface SqlConstraint {
+  name: string;
+  table: string;
+  kind: "primary key" | "foreign key" | "unique" | "check" | "exclude" | "constraint";
+  columns?: string[];
+  expression?: string;
+  filePath: string;
+}
+
 export interface SqlRelation {
   fromTable: string;
   fromColumn: string;
@@ -67,6 +76,9 @@ export interface SqlPolicy {
   name: string;
   table: string;
   command?: string;
+  roles?: string[];
+  usingExpression?: string;
+  checkExpression?: string;
   filePath: string;
 }
 
@@ -94,14 +106,63 @@ export interface SqlView {
   filePath: string;
 }
 
+export interface SqlEnum {
+  name: string;
+  values: string[];
+  filePath: string;
+}
+
+export interface SqlExtension {
+  name: string;
+  filePath: string;
+}
+
+export interface SqlGrant {
+  privileges: string[];
+  objectType?: string;
+  objectName: string;
+  grantee: string;
+  filePath: string;
+}
+
+export interface SqlMaterializedView {
+  name: string;
+  filePath: string;
+}
+
+export interface SqlHistoryEntry {
+  kind:
+    | "table"
+    | "constraint"
+    | "policy"
+    | "index"
+    | "trigger"
+    | "function"
+    | "view"
+    | "enum"
+    | "extension"
+    | "grant"
+    | "materializedView";
+  name: string;
+  action: "create" | "alter" | "grant";
+  filePath: string;
+  order: number;
+}
+
 export interface SqlGraph {
   tables: SqlTable[];
   relations: SqlRelation[];
+  constraints: SqlConstraint[];
   policies: SqlPolicy[];
   indexes: SqlIndex[];
   triggers: SqlTrigger[];
   functions: SqlFunction[];
   views: SqlView[];
+  enums: SqlEnum[];
+  extensions: SqlExtension[];
+  grants: SqlGrant[];
+  materializedViews: SqlMaterializedView[];
+  history: SqlHistoryEntry[];
 }
 
 export interface ProjectIndex extends CodeGraph {
@@ -146,7 +207,18 @@ export interface RankedFile {
 }
 
 export interface RankedSqlObject {
-  kind: "table" | "policy" | "index" | "trigger" | "function" | "view";
+  kind:
+    | "table"
+    | "constraint"
+    | "policy"
+    | "index"
+    | "trigger"
+    | "function"
+    | "view"
+    | "enum"
+    | "extension"
+    | "grant"
+    | "materializedView";
   name: string;
   filePath: string;
   reason: string;

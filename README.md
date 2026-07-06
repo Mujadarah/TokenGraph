@@ -11,14 +11,14 @@ Large coding sessions often waste tokens by repeatedly reading files, logs, migr
 - Index the current workspace into a compact code graph.
 - Summarize project structure before raw reads.
 - Plan the smallest useful patch scope for a task.
-- Surface relevant SQL tables, policies, indexes, triggers, functions, and views.
+- Surface relevant SQL tables, policies, constraints, enums, extensions, grants, indexes, triggers, functions, views, materialized views, and migration history.
 - Store deliberate project decisions as local memory.
 - Compress long test, build, install, diff, and log output.
 - Detect stale indexes before Codex trusts cached context.
 
 ## Current Version
 
-TokenGraph is currently at `0.4.0`.
+TokenGraph is currently at `0.5.0`.
 
 Highlights:
 
@@ -32,6 +32,9 @@ Highlights:
 - Index-only reset that preserves memory by default.
 - Context planner for focused first reads with line hints, tests, SQL objects, and ranked memories.
 - Symbol explanation with inbound and outbound import references.
+- Broader PostgreSQL parser coverage for constraints, enums, extensions, grants, and materialized views.
+- Supabase RLS policy summaries with command, roles, `using`, and `with check` clauses.
+- Ordered SQL object history across migration files.
 - JSON-RPC stdio smoke tests for the built MCP entry point.
 - Local plugin validator.
 

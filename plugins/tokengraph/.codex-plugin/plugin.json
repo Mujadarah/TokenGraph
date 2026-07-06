@@ -1,6 +1,6 @@
 {
   "name": "tokengraph",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Reduce wasted Codex context with local code, SQL, memory, and log routing.",
   "author": {
     "name": "TokenGraph"
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "TokenGraph",
     "shortDescription": "Route Codex through compact local project context before raw files.",
-    "longDescription": "TokenGraph indexes the current project locally and gives Codex a compact code graph, resolved import graph, SQL graph, memory graph, project map, index freshness status, reset controls, context planner with line hints, reference explanation, log compressor, and token savings report. It does not require a paid API key or cloud service.",
+    "longDescription": "TokenGraph indexes the current project locally and gives Codex a compact code graph, resolved import graph, SQL graph with PostgreSQL object and RLS policy detail, memory graph, project map, index freshness status, reset controls, context planner with line hints, reference explanation, log compressor, and token savings report. It does not require a paid API key or cloud service.",
     "developerName": "TokenGraph",
     "category": "Developer Tools",
     "capabilities": [
@@ -29,6 +29,7 @@
       "Import References",
       "Index Freshness",
       "SQL Graph",
+      "RLS Policy Detail",
       "Memory",
       "Log Compression"
     ],

@@ -30,7 +30,7 @@ function detectFrameworks(files: { path: string }[]): string[] {
 export async function indexProject(root: string): Promise<ProjectIndex> {
   const graph = await scanProject(root);
   const sqlGraphs = [];
-  for (const file of graph.files.filter((candidate) => candidate.language === "sql")) {
+  for (const file of graph.files.filter((candidate) => candidate.language === "sql").sort((a, b) => a.path.localeCompare(b.path))) {
     const sql = await readFile(join(root, file.path), "utf8");
     sqlGraphs.push(parsePostgresMigration(file.path, sql));
   }

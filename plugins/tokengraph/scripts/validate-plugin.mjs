@@ -62,6 +62,9 @@ assert(distServer.includes("tokengraph_index_status"), "built MCP server must re
 assert(distServer.includes("tokengraph_reset_project"), "built MCP server must register tokengraph_reset_project");
 assert(distServer.includes("inboundReferences"), "built MCP server must expose inbound explain references");
 assert(distServer.includes("outboundReferences"), "built MCP server must expose outbound explain references");
+assert(distServer.includes("materializedViews"), "built MCP server must expose v0.5 materialized view SQL summaries");
+assert(distServer.includes("usingExpression"), "built MCP server must expose v0.5 RLS policy using expressions");
+assert(distServer.includes("constraints"), "built MCP server must expose v0.5 SQL constraints");
 
 await assertFile(distEntryPath, "built MCP entry");
 await assertFile(distServerPath, "built MCP server");

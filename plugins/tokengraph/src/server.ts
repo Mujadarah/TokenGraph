@@ -69,6 +69,11 @@ function projectMap(project: ProjectIndex) {
       imports: project.imports.length,
       tables: project.sql.tables.length,
       policies: project.sql.policies.length,
+      constraints: project.sql.constraints.length,
+      enums: project.sql.enums.length,
+      extensions: project.sql.extensions.length,
+      grants: project.sql.grants.length,
+      materializedViews: project.sql.materializedViews.length,
       memories: undefined as number | undefined
     },
     modules: project.files
@@ -77,7 +82,11 @@ function projectMap(project: ProjectIndex) {
       .map((file) => ({ path: file.path, kind: file.kind, route: file.route })),
     database: {
       tables: project.sql.tables.map((table) => ({ name: table.name, columns: table.columns.length })),
-      policies: project.sql.policies.map((policy) => ({ name: policy.name, table: policy.table }))
+      policies: project.sql.policies.map((policy) => ({ name: policy.name, table: policy.table, command: policy.command })),
+      constraints: project.sql.constraints.map((constraint) => ({ name: constraint.name, table: constraint.table, kind: constraint.kind })),
+      enums: project.sql.enums.map((enumObject) => ({ name: enumObject.name, values: enumObject.values.length })),
+      extensions: project.sql.extensions.map((extension) => ({ name: extension.name })),
+      materializedViews: project.sql.materializedViews.map((view) => ({ name: view.name }))
     }
   };
 }
@@ -103,7 +112,39 @@ function searchProject(project: ProjectIndex, query: string, limit: number) {
     path: table.filePath,
     score: score(`${table.name} ${table.columns.join(" ")}`)
   }));
-  return [...fileRows, ...symbolRows, ...sqlRows]
+  const v05SqlRows = [
+    ...project.sql.policies.map((policy) => ({
+      kind: "sql_policy",
+      name: policy.name,
+      path: policy.filePath,
+      score: score(`${policy.name} ${policy.table} ${policy.command ?? ""} ${policy.roles?.join(" ") ?? ""} ${policy.usingExpression ?? ""} ${policy.checkExpression ?? ""}`)
+    })),
+    ...project.sql.constraints.map((constraint) => ({
+      kind: "sql_constraint",
+      name: constraint.name,
+      path: constraint.filePath,
+      score: score(`${constraint.name} ${constraint.table} ${constraint.kind} ${constraint.columns?.join(" ") ?? ""} ${constraint.expression ?? ""}`)
+    })),
+    ...project.sql.enums.map((enumObject) => ({
+      kind: "sql_enum",
+      name: enumObject.name,
+      path: enumObject.filePath,
+      score: score(`${enumObject.name} ${enumObject.values.join(" ")}`)
+    })),
+    ...project.sql.extensions.map((extension) => ({
+      kind: "sql_extension",
+      name: extension.name,
+      path: extension.filePath,
+      score: score(extension.name)
+    })),
+    ...project.sql.materializedViews.map((view) => ({
+      kind: "sql_materialized_view",
+      name: view.name,
+      path: view.filePath,
+      score: score(view.name)
+    }))
+  ];
+  return [...fileRows, ...symbolRows, ...sqlRows, ...v05SqlRows]
     .filter((row) => row.score > 0)
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
     .slice(0, limit);
@@ -145,15 +186,50 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
       kind: "policy" as const,
       name: policy.name,
       filePath: policy.filePath,
-      reason: `Policy on ${policy.table}`,
-      score: score(`${policy.name} ${policy.table}`)
+      reason: `Policy on ${policy.table}${policy.command ? ` for ${policy.command}` : ""}`,
+      score: score(`${policy.name} ${policy.table} ${policy.command ?? ""} ${policy.roles?.join(" ") ?? ""} ${policy.usingExpression ?? ""} ${policy.checkExpression ?? ""}`)
+    })),
+    ...project.sql.constraints.map((constraint) => ({
+      kind: "constraint" as const,
+      name: constraint.name,
+      filePath: constraint.filePath,
+      reason: `${constraint.kind} constraint on ${constraint.table}`,
+      score: score(`${constraint.name} ${constraint.table} ${constraint.kind} ${constraint.columns?.join(" ") ?? ""} ${constraint.expression ?? ""}`)
+    })),
+    ...project.sql.enums.map((enumObject) => ({
+      kind: "enum" as const,
+      name: enumObject.name,
+      filePath: enumObject.filePath,
+      reason: `Enum values: ${enumObject.values.join(", ")}`,
+      score: score(`${enumObject.name} ${enumObject.values.join(" ")}`)
+    })),
+    ...project.sql.extensions.map((extension) => ({
+      kind: "extension" as const,
+      name: extension.name,
+      filePath: extension.filePath,
+      reason: "PostgreSQL extension",
+      score: score(extension.name)
+    })),
+    ...project.sql.grants.map((grant) => ({
+      kind: "grant" as const,
+      name: `${grant.objectName} to ${grant.grantee}`,
+      filePath: grant.filePath,
+      reason: `Grant ${grant.privileges.join(", ")} to ${grant.grantee}`,
+      score: score(`${grant.objectName} ${grant.grantee} ${grant.privileges.join(" ")} ${grant.objectType ?? ""}`)
+    })),
+    ...project.sql.materializedViews.map((view) => ({
+      kind: "materializedView" as const,
+      name: view.name,
+      filePath: view.filePath,
+      reason: "Materialized view",
+      score: score(view.name)
     }))
   ];
   return rows.filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
 export function createTokenGraphServer(): McpServer {
-  const server = new McpServer({ name: "tokengraph", version: "0.4.0" });
+  const server = new McpServer({ name: "tokengraph", version: "0.5.0" });
 
   server.registerTool(
     "tokengraph_index_project",

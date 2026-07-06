@@ -231,6 +231,81 @@ describe("parsePostgresMigration", () => {
     expect(graph.triggers).toContainEqual(expect.objectContaining({ name: "patients_touch", table: "public.patients" }));
     expect(graph.views).toContainEqual(expect.objectContaining({ name: "public.patient_summary" }));
   });
+
+  it("extracts v0.5 PostgreSQL objects and constraint metadata", () => {
+    const sql = `
+      create extension if not exists "uuid-ossp";
+      create type public.patient_status as enum ('active', 'archived');
+      create table public.patients (
+        id uuid constraint patients_pk primary key,
+        tenant_id uuid,
+        status public.patient_status not null,
+        full_name text not null,
+        constraint patients_tenant_name_unique unique (tenant_id, full_name),
+        constraint patients_tenant_fk foreign key (tenant_id) references public.tenants(id),
+        constraint patients_status_check check (status in ('active', 'archived'))
+      );
+      alter table public.patients add constraint patients_name_check check (length(full_name) > 0);
+      create materialized view public.patient_rollups as select tenant_id, count(*) from public.patients group by tenant_id;
+      grant select, insert on table public.patients to authenticated;
+    `;
+
+    const graph = parsePostgresMigration("supabase/migrations/001_patient_depth.sql", sql);
+
+    expect((graph as any).extensions).toContainEqual(expect.objectContaining({ name: "uuid-ossp" }));
+    expect((graph as any).enums).toContainEqual(
+      expect.objectContaining({ name: "public.patient_status", values: ["active", "archived"] })
+    );
+    expect((graph as any).constraints).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "patients_pk", table: "public.patients", kind: "primary key", columns: ["id"] }),
+        expect.objectContaining({
+          name: "patients_tenant_name_unique",
+          table: "public.patients",
+          kind: "unique",
+          columns: ["tenant_id", "full_name"]
+        }),
+        expect.objectContaining({ name: "patients_tenant_fk", table: "public.patients", kind: "foreign key" }),
+        expect.objectContaining({ name: "patients_name_check", table: "public.patients", kind: "check" })
+      ])
+    );
+    expect((graph as any).materializedViews).toContainEqual(expect.objectContaining({ name: "public.patient_rollups" }));
+    expect((graph as any).grants).toContainEqual(
+      expect.objectContaining({
+        privileges: ["select", "insert"],
+        objectType: "table",
+        objectName: "public.patients",
+        grantee: "authenticated"
+      })
+    );
+    expect(graph.relations).toContainEqual(
+      expect.objectContaining({ fromTable: "public.patients", fromColumn: "tenant_id", toTable: "public.tenants", toColumn: "id" })
+    );
+  });
+
+  it("extracts Supabase RLS policy roles and expressions", () => {
+    const sql = `
+      create policy "tenant can mutate patients"
+      on public.patients
+      for update
+      to authenticated
+      using ((tenant_id = auth.uid()) and archived_at is null)
+      with check ((tenant_id = auth.uid()) and full_name <> '');
+    `;
+
+    const graph = parsePostgresMigration("supabase/migrations/002_patient_rls.sql", sql);
+
+    expect(graph.policies).toContainEqual(
+      expect.objectContaining({
+        name: "tenant can mutate patients",
+        table: "public.patients",
+        command: "update",
+        roles: ["authenticated"],
+        usingExpression: "(tenant_id = auth.uid()) and archived_at is null",
+        checkExpression: "(tenant_id = auth.uid()) and full_name <> ''"
+      })
+    );
+  });
 });
 
 describe("indexProject", () => {
@@ -247,6 +322,31 @@ describe("indexProject", () => {
     expect(second.fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(second.fingerprint).not.toBe(first.fingerprint);
     expect(new Date(second.scannedAt).toISOString()).toBe(second.scannedAt);
+  });
+
+  it("records ordered SQL object history across migration files", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await writeFile(
+      join(root, "supabase", "migrations", "002_policy.sql"),
+      `create policy "tenant can read patients" on public.patients for select using (tenant_id = auth.uid());`
+    );
+    await writeFile(
+      join(root, "supabase", "migrations", "001_patients.sql"),
+      `create table public.patients (id uuid primary key, tenant_id uuid);`
+    );
+
+    const project = await indexProject(root);
+
+    expect((project.sql as any).history).toEqual([
+      expect.objectContaining({ filePath: "supabase/migrations/001_patients.sql", kind: "table", name: "public.patients", action: "create" }),
+      expect.objectContaining({
+        filePath: "supabase/migrations/002_policy.sql",
+        kind: "policy",
+        name: "tenant can read patients",
+        action: "create"
+      })
+    ]);
   });
 });
 
@@ -401,6 +501,35 @@ describe("buildContextPlan", () => {
 
     expect(plan.relevantFiles.map((item) => item.path)).toContain("services/patientSummary.ts");
     expect(plan.relevantFiles.map((item) => item.path)).not.toContain("app/billing/page.tsx");
+  });
+
+  it("ranks v0.5 SQL policy details and materialized views in context plans", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await writeFile(
+      join(root, "supabase", "migrations", "001_patient_rollups.sql"),
+      `
+        create table public.patients (id uuid primary key, tenant_id uuid, archived_at timestamptz);
+        create policy "tenant can read active patients" on public.patients for select to authenticated using (tenant_id = auth.uid() and archived_at is null);
+        create materialized view public.patient_rollups as select tenant_id, count(*) from public.patients group by tenant_id;
+      `
+    );
+
+    const project = await indexProject(root);
+    const plan = await buildContextPlan({
+      root,
+      task: "Review tenant active patient rollups RLS policy",
+      project,
+      memories: [],
+      budget: { maxFiles: 3, maxSqlObjects: 5, maxMemories: 0 }
+    });
+
+    expect(plan.relevantSql).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "policy", name: "tenant can read active patients" }),
+        expect.objectContaining({ kind: "materializedView", name: "public.patient_rollups" })
+      ])
+    );
   });
 });
 

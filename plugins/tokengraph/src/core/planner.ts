@@ -96,13 +96,25 @@ function rankedSql(project: ProjectIndex, terms: string[]): RankedSqlObject[] {
       score: scoreText(`${table.name} ${table.columns.join(" ")}`, terms)
     });
   }
+  for (const constraint of project.sql.constraints) {
+    rows.push({
+      kind: "constraint",
+      name: constraint.name,
+      filePath: constraint.filePath,
+      reason: `${constraint.kind} constraint on ${constraint.table}`,
+      score: scoreText(`${constraint.name} ${constraint.table} ${constraint.kind} ${constraint.columns?.join(" ") ?? ""} ${constraint.expression ?? ""}`, terms)
+    });
+  }
   for (const policy of project.sql.policies) {
     rows.push({
       kind: "policy",
       name: policy.name,
       filePath: policy.filePath,
-      reason: `Policy on ${policy.table}`,
-      score: scoreText(`${policy.name} ${policy.table} ${policy.command ?? ""}`, terms)
+      reason: `Policy on ${policy.table}${policy.command ? ` for ${policy.command}` : ""}`,
+      score: scoreText(
+        `${policy.name} ${policy.table} ${policy.command ?? ""} ${policy.roles?.join(" ") ?? ""} ${policy.usingExpression ?? ""} ${policy.checkExpression ?? ""}`,
+        terms
+      )
     });
   }
   for (const index of project.sql.indexes) {
@@ -128,6 +140,36 @@ function rankedSql(project: ProjectIndex, terms: string[]): RankedSqlObject[] {
   }
   for (const view of project.sql.views) {
     rows.push({ kind: "view", name: view.name, filePath: view.filePath, reason: "Database view", score: scoreText(view.name, terms) });
+  }
+  for (const enumObject of project.sql.enums) {
+    rows.push({
+      kind: "enum",
+      name: enumObject.name,
+      filePath: enumObject.filePath,
+      reason: `Enum values: ${enumObject.values.join(", ")}`,
+      score: scoreText(`${enumObject.name} ${enumObject.values.join(" ")}`, terms)
+    });
+  }
+  for (const extension of project.sql.extensions) {
+    rows.push({ kind: "extension", name: extension.name, filePath: extension.filePath, reason: "PostgreSQL extension", score: scoreText(extension.name, terms) });
+  }
+  for (const grant of project.sql.grants) {
+    rows.push({
+      kind: "grant",
+      name: `${grant.objectName} to ${grant.grantee}`,
+      filePath: grant.filePath,
+      reason: `Grant ${grant.privileges.join(", ")} to ${grant.grantee}`,
+      score: scoreText(`${grant.objectName} ${grant.grantee} ${grant.privileges.join(" ")} ${grant.objectType ?? ""}`, terms)
+    });
+  }
+  for (const materializedView of project.sql.materializedViews) {
+    rows.push({
+      kind: "materializedView",
+      name: materializedView.name,
+      filePath: materializedView.filePath,
+      reason: "Materialized view",
+      score: scoreText(materializedView.name, terms)
+    });
   }
   return rows.filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 }
@@ -164,6 +206,9 @@ export async function buildContextPlan(input: ContextPlanInput): Promise<Context
     ...input.project.files.map((file) => `${file.path} ${file.estimatedTokens}`),
     ...input.project.symbols.map((symbol) => `${symbol.filePath} ${symbol.name}`),
     ...input.project.sql.tables.map((table) => `${table.name} ${table.columns.join(" ")}`),
+    ...input.project.sql.policies.map((policy) => `${policy.name} ${policy.table} ${policy.usingExpression ?? ""} ${policy.checkExpression ?? ""}`),
+    ...input.project.sql.materializedViews.map((view) => view.name),
+    ...input.project.sql.history.map((entry) => `${entry.filePath} ${entry.kind} ${entry.name}`),
     ...input.memories.map((memory) => `${memory.title} ${memory.body}`)
   ].join("\n");
   const compact = planText(withoutEstimate);
