@@ -63,8 +63,8 @@ Highlights:
 ```powershell
 cd plugins/tokengraph
 pnpm install
-pnpm test
 pnpm build
+pnpm test
 pnpm smoke -- --root . --json
 pnpm validate:plugin
 ```

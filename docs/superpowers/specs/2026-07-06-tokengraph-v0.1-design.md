@@ -36,7 +36,7 @@ The v0.1 data model is intentionally simple. It stores a deterministic project s
 - `tokengraph_index_project`: scan the workspace and persist a local index.
 - `tokengraph_project_map`: return compact framework, module, symbol, SQL, and memory counts.
 - `tokengraph_plan_context`: classify a task and return a small patch scope, relevant SQL, relevant memory, first reads, files to avoid, tests, and token estimate.
-- `tokengraph_search_graph`: search indexed files, symbols, SQL objects, and memories.
+- `tokengraph_search_graph`: search indexed files, symbols, and SQL objects. Memory review is handled by memory-specific tools in later versions.
 - `tokengraph_explain_symbol`: explain why a file or symbol is relevant.
 - `tokengraph_summarize_sql`: return relevant database objects without dumping full migrations.
 - `tokengraph_compress_output`: compress test/build/install/diff/log output.
@@ -58,4 +58,3 @@ The build is verified with:
 - TypeScript compilation.
 - MCP server smoke checks where practical.
 - Codex plugin manifest validation.
-

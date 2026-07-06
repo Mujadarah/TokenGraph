@@ -1,5 +1,6 @@
 import { loadProjectIndex } from "./persistence.js";
 import { indexProject } from "./projectIndexer.js";
+import { scanProjectSignature } from "./fileScanner.js";
 import type { IndexStatus, ProjectIndex } from "./types.js";
 
 function comparableIndex(project: ProjectIndex) {
@@ -19,7 +20,7 @@ export function isFreshProjectIndex(stored: ProjectIndex, current: ProjectIndex)
 }
 
 export async function getIndexStatus(root: string): Promise<IndexStatus> {
-  const current = await indexProject(root);
+  const currentScanSignature = await scanProjectSignature(root);
   const stored = await loadProjectIndex(root);
 
   if (!stored) {
@@ -27,21 +28,27 @@ export async function getIndexStatus(root: string): Promise<IndexStatus> {
       root,
       state: "missing",
       hasIndex: false,
-      currentScannedAt: current.scannedAt,
-      currentFingerprint: current.fingerprint
+      currentScannedAt: new Date().toISOString(),
+      currentFingerprint: currentScanSignature,
+      currentScanSignature
     };
   }
 
   const storedFingerprint = typeof stored.fingerprint === "string" ? stored.fingerprint : undefined;
-  const state = isFreshProjectIndex(stored, current) ? "fresh" : "stale";
+  const storedScanSignature = stored.scanSignature;
+  const signatureFresh = storedScanSignature !== undefined && storedScanSignature === currentScanSignature;
+  const current = signatureFresh ? undefined : await indexProject(root, { scanSignature: currentScanSignature });
+  const state = signatureFresh || (current && isFreshProjectIndex(stored, current)) ? "fresh" : "stale";
 
   return {
     root,
     state,
     hasIndex: true,
     storedScannedAt: stored.scannedAt,
-    currentScannedAt: current.scannedAt,
+    currentScannedAt: current?.scannedAt ?? new Date().toISOString(),
     storedFingerprint,
-    currentFingerprint: current.fingerprint
+    currentFingerprint: current?.fingerprint ?? stored.fingerprint,
+    storedScanSignature,
+    currentScanSignature
   };
 }

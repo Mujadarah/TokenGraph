@@ -11,7 +11,7 @@ Use TokenGraph as the context router before raw repository exploration.
 
 For coding tasks in a project where TokenGraph MCP tools are available, use this order:
 
-1. Call `tokengraph_index_status` when available. If it reports `missing` or `stale`, call `tokengraph_index_project`.
+1. Call `tokengraph_index_status` when available. Pass the current workspace root explicitly when the tool schema offers `root`; plugin installs may launch the MCP server from the plugin directory rather than the user's project. If the tool says TokenGraph is running from its plugin directory, retry with the explicit workspace root. If the status reports `missing` or `stale`, call `tokengraph_index_project` with the same root.
 2. Call `tokengraph_project_map` for a compact overview.
 3. Call `tokengraph_plan_context` with the user's task before reading raw files.
 4. Read only the recommended first files or narrow snippets from the returned patch scope, using `startLine`/`endLine` hints when present.

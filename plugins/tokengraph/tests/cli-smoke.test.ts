@@ -66,4 +66,12 @@ describe("tokengraph CLI smoke command", () => {
       filesIndexed: 1
     });
   });
+
+  it("fails clearly when an option value is missing", async () => {
+    await expect(
+      execFileAsync(process.execPath, [resolve("scripts", "smoke.mjs"), "--root"], { cwd: process.cwd() })
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("--root requires a value")
+    });
+  });
 });

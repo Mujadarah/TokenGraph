@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -36,7 +36,9 @@ function readResponse(id: number, timeoutMs = 5000): Promise<JsonRpcResponse> {
 
     const onData = (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
-      for (const line of buffer.split(/\r?\n/)) {
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
         if (!line.trim()) continue;
         const parsed = JSON.parse(line) as JsonRpcResponse;
         if (parsed.id === id) {
@@ -49,14 +51,26 @@ function readResponse(id: number, timeoutMs = 5000): Promise<JsonRpcResponse> {
       cleanup();
       reject(error);
     };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      cleanup();
+      reject(new Error(`Server exited before JSON-RPC response ${id} (code ${code ?? "null"}, signal ${signal ?? "null"}). Stderr: ${stderrBuffer}`));
+    };
+    let stderrBuffer = "";
+    const onStderr = (chunk: Buffer) => {
+      stderrBuffer += chunk.toString("utf8");
+    };
     const cleanup = () => {
       clearTimeout(timeout);
       server?.stdout.off("data", onData);
+      server?.stderr.off("data", onStderr);
       server?.off("error", onError);
+      server?.off("exit", onExit);
     };
 
     server?.stdout.on("data", onData);
+    server?.stderr.on("data", onStderr);
     server?.once("error", onError);
+    server?.once("exit", onExit);
   });
 }
 
@@ -290,6 +304,39 @@ describe("TokenGraph MCP stdio server", () => {
     expect(JSON.stringify(response)).toMatch(/outside the allowed workspace/i);
   });
 
+  it("accepts an explicit workspace root when launched from the installed plugin root", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
+    await stopServer();
+    startServer(process.cwd());
+
+    await request(40, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const mapped = await request(41, "tools/call", {
+      name: "tokengraph_project_map",
+      arguments: { root }
+    });
+    expect(mapped.structuredContent).toMatchObject({
+      root,
+      counts: {
+        files: 1
+      }
+    });
+
+    const missingRoot = await request(42, "tools/call", {
+      name: "tokengraph_project_map",
+      arguments: {}
+    });
+    expect(missingRoot.isError).toBe(true);
+    expect(JSON.stringify(missingRoot)).toMatch(/pass the workspace root/i);
+  });
+
   it("summarizes v0.5 SQL objects over JSON-RPC stdio", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "supabase", "migrations"), { recursive: true });
@@ -424,5 +471,63 @@ describe("TokenGraph MCP stdio server", () => {
       symbols: [],
       explanation: "No indexed file or symbol matched this target."
     });
+  });
+
+  it("serves fresh persisted indexes without reindexing when the scan signature matches", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
+    const current = await indexProject(root);
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(
+      join(root, ".tokengraph", "index.json"),
+      JSON.stringify(
+        {
+          ...current,
+          scannedAt: "2000-01-01T00:00:00.000Z"
+        },
+        null,
+        2
+      )
+    );
+    await stopServer();
+    startServer(root);
+
+    await request(50, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const mapped = await request(51, "tools/call", {
+      name: "tokengraph_project_map",
+      arguments: { root }
+    });
+
+    expect(mapped.structuredContent).toMatchObject({
+      scannedAt: "2000-01-01T00:00:00.000Z"
+    });
+  });
+
+  it("returns a friendly error for missing workspace roots", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root);
+
+    await request(52, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const response = await request(53, "tools/call", {
+      name: "tokengraph_project_map",
+      arguments: { root: join(root, "missing") }
+    });
+
+    expect(response.isError).toBe(true);
+    expect(JSON.stringify(response)).toMatch(/does not exist or is not readable/i);
   });
 });

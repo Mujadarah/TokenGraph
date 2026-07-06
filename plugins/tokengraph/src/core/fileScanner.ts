@@ -27,12 +27,14 @@ export interface ScanBudget {
   maxDirectories?: number;
   maxDepth?: number;
   maxTotalBytes?: number;
+  onFileContent?: (file: { path: string; language: string; content: string }) => void;
 }
 
 interface WalkState {
-  budget: Required<ScanBudget>;
+  budget: Required<Omit<ScanBudget, "onFileContent">>;
   directories: number;
   totalBytes: number;
+  onFileContent?: (file: { path: string; language: string; content: string }) => void;
 }
 
 function normalizePath(path: string): string {
@@ -85,7 +87,7 @@ function languageForExtension(extension: string): string {
 }
 
 function isTestPath(path: string): boolean {
-  return /(^|[/.])(test|spec)\.[jt]sx?$/.test(path) || /(__tests__|tests)\//.test(path);
+  return /(^|[/.])(test|spec)\.[jt]sx?$/.test(path) || /(^|\/)(__tests__|tests)\//.test(path);
 }
 
 function nextRouteForPath(path: string): string | undefined {
@@ -117,16 +119,17 @@ function detectFileKind(path: string, extension: string, content: string): FileK
   if (extension === ".md" || extension === ".mdx") return "doc";
   if (nextRouteForPath(path)) return "next-route";
   if (extension === ".tsx" || extension === ".jsx") return "react-component";
-  if ((extension === ".js" || extension === ".mjs") && /<[A-Z_a-z][A-Za-z0-9.:-]*(\s|>|\/)/.test(content)) return "react-component";
+  if ((extension === ".js" || extension === ".mjs") && /\b(?:return|=>)\s*\(?\s*<[A-Z_a-z][A-Za-z0-9.:-]*(\s|>|\/)/.test(content)) return "react-component";
   return "module";
 }
 
 function extractImports(filePath: string, content: string): ImportEdge[] {
   const imports: ImportEdge[] = [];
-  const importPattern = /\bimport(?:\s+type)?[\s\S]*?\sfrom\s+["']([^"']+)["']/g;
-  const sideEffectPattern = /\bimport\s+["']([^"']+)["']/g;
-  const requirePattern = /\brequire\(["']([^"']+)["']\)/g;
-  for (const pattern of [importPattern, sideEffectPattern, requirePattern]) {
+  const importPattern = /^\s*import(?:\s+type)?[\s\S]*?\sfrom\s+["']([^"']+)["']/gm;
+  const sideEffectPattern = /^\s*import\s+["']([^"']+)["']/gm;
+  const requirePattern = /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g;
+  const dynamicImportPattern = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+  for (const pattern of [importPattern, sideEffectPattern, requirePattern, dynamicImportPattern]) {
     for (const match of content.matchAll(pattern)) {
       imports.push({ filePath, source: match[1] });
     }
@@ -139,7 +142,7 @@ function lineForIndex(content: string, index: number): number {
 }
 
 function declarationEndLine(content: string, startLine: number): number {
-  const lines = content.split(/\r?\n/);
+  const lines = maskCodeStringsAndComments(content).split(/\r?\n/);
   let braceDepth = 0;
   for (let index = startLine - 1; index < lines.length; index += 1) {
     const line = lines[index];
@@ -155,6 +158,67 @@ function declarationEndLine(content: string, startLine: number): number {
   return startLine;
 }
 
+function maskCodeStringsAndComments(content: string): string {
+  let masked = "";
+  let state: "code" | "single" | "double" | "template" | "line-comment" | "block-comment" = "code";
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    const next = content[index + 1];
+    if (state === "line-comment") {
+      if (char === "\n") {
+        state = "code";
+        masked += char;
+      } else {
+        masked += " ";
+      }
+      continue;
+    }
+    if (state === "block-comment") {
+      if (char === "*" && next === "/") {
+        masked += "  ";
+        index += 1;
+        state = "code";
+      } else {
+        masked += char === "\n" ? char : " ";
+      }
+      continue;
+    }
+    if (state === "single" || state === "double" || state === "template") {
+      const quote = state === "single" ? "'" : state === "double" ? '"' : "`";
+      if (char === "\\") {
+        masked += " ";
+        if (next) {
+          masked += next === "\n" ? "\n" : " ";
+          index += 1;
+        }
+        continue;
+      }
+      if (char === quote) {
+        state = "code";
+      }
+      masked += char === "\n" ? char : " ";
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      masked += "  ";
+      index += 1;
+      state = "line-comment";
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      masked += "  ";
+      index += 1;
+      state = "block-comment";
+      continue;
+    }
+    if (char === "'") state = "single";
+    if (char === '"') state = "double";
+    if (char === "`") state = "template";
+    masked += state === "code" ? char : " ";
+  }
+  return masked;
+}
+
 function isLikelyComponent(filePath: string, name: string, content: string, matchIndex: number): boolean {
   if (!/\.[jt]sx$/.test(filePath) || !/^[A-Z]/.test(name)) {
     return false;
@@ -166,7 +230,7 @@ function isLikelyComponent(filePath: string, name: string, content: string, matc
 function extractSymbols(filePath: string, content: string): CodeSymbol[] {
   const symbols: CodeSymbol[] = [];
   const patterns: Array<[RegExp, CodeSymbol["kind"]]> = [
-    [/\b(export\s+default\s+|export\s+)?function\s+([A-Z_a-z][$\w]*)/g, "function"],
+    [/\b(export\s+default\s+|export\s+)?(?:async\s+)?function\s+([A-Z_a-z][$\w]*)/g, "function"],
     [/\b(export\s+)?class\s+([A-Z_a-z][$\w]*)/g, "class"],
     [/\b(export\s+)?(?:const|let|var)\s+([A-Z_a-z][$\w]*)/g, "const"],
     [/\b(export\s+)?type\s+([A-Z_a-z][$\w]*)/g, "type"],
@@ -185,16 +249,18 @@ function extractSymbols(filePath: string, content: string): CodeSymbol[] {
 }
 
 function candidateImportPaths(root: string, fromFile: string, source: string): string[] {
-  const basePath = source.startsWith("@/")
-    ? source.slice(2)
-    : source.startsWith("~/")
-      ? source.slice(2)
-      : source.startsWith(".")
-        ? normalize(join(dirname(fromFile), source))
-        : "";
-  if (!basePath) {
+  const basePaths = source.startsWith("@/") || source.startsWith("~/")
+    ? [source.slice(2), normalize(join("src", source.slice(2)))]
+    : source.startsWith(".")
+      ? [normalize(join(dirname(fromFile), source))]
+      : [];
+  if (!basePaths.length) {
     return [];
   }
+  return basePaths.flatMap((basePath) => candidatePathsForBase(root, basePath));
+}
+
+function candidatePathsForBase(root: string, basePath: string): string[] {
   const normalized = normalizePath(basePath);
   const extension = extname(normalized);
   const emittedJavaScriptCandidates =
@@ -231,7 +297,7 @@ function resolveLocalImports(root: string, graph: CodeGraph): void {
   }
 }
 
-function budgetFromOptions(options?: ScanBudget): Required<ScanBudget> {
+function budgetFromOptions(options?: ScanBudget): Required<Omit<ScanBudget, "onFileContent">> {
   return {
     maxFiles: options?.maxFiles ?? DEFAULT_SCAN_BUDGET.maxFiles,
     maxDirectories: options?.maxDirectories ?? DEFAULT_SCAN_BUDGET.maxDirectories,
@@ -240,8 +306,18 @@ function budgetFromOptions(options?: ScanBudget): Required<ScanBudget> {
   };
 }
 
+function addUnreadable(graph: CodeGraph, path: string): void {
+  graph.exclusions.push({ path: path || ".", reason: "unreadable" });
+}
+
 async function walk(root: string, current: string, graph: CodeGraph, ignoreMatcher: Ignore, state: WalkState, depth: number): Promise<void> {
-  const entries = await readdir(current, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(current, { withFileTypes: true });
+  } catch {
+    addUnreadable(graph, normalizePath(relative(root, current)));
+    return;
+  }
   entries.sort((a, b) => a.name.localeCompare(b.name));
 
   for (const entry of entries) {
@@ -282,7 +358,13 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreMatch
       graph.exclusions.push({ path: relativePath, reason: "unsupported" });
       continue;
     }
-    const fileStat = await stat(absolute);
+    let fileStat;
+    try {
+      fileStat = await stat(absolute);
+    } catch {
+      addUnreadable(graph, relativePath);
+      continue;
+    }
     if (graph.files.length >= state.budget.maxFiles || state.totalBytes + fileStat.size > state.budget.maxTotalBytes) {
       graph.exclusions.push({ path: relativePath, reason: "budget" });
       continue;
@@ -291,7 +373,13 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreMatch
       graph.exclusions.push({ path: relativePath, reason: "large-file" });
       continue;
     }
-    const content = await readFile(absolute, "utf8");
+    let content;
+    try {
+      content = await readFile(absolute, "utf8");
+    } catch {
+      addUnreadable(graph, relativePath);
+      continue;
+    }
     if (content.includes("\u0000")) {
       graph.exclusions.push({ path: relativePath, reason: "binary" });
       continue;
@@ -310,6 +398,7 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreMatch
     };
     graph.files.push(file);
     state.totalBytes += fileStat.size;
+    state.onFileContent?.({ path: relativePath, language: file.language, content });
 
     if (CODE_EXTENSIONS.has(extension)) {
       graph.imports.push(...extractImports(relativePath, content));
@@ -327,13 +416,89 @@ export async function scanProject(root: string, options?: ScanBudget): Promise<C
     imports: [],
     exclusions: []
   };
-  await walk(root, root, graph, ignoreMatcher, { budget: budgetFromOptions(options), directories: 0, totalBytes: 0 }, 0);
+  await walk(root, root, graph, ignoreMatcher, { budget: budgetFromOptions(options), directories: 0, totalBytes: 0, onFileContent: options?.onFileContent }, 0);
   graph.files.sort((a, b) => a.path.localeCompare(b.path));
   resolveLocalImports(root, graph);
   graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name));
   graph.imports.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.source.localeCompare(b.source));
   graph.exclusions.sort((a, b) => a.path.localeCompare(b.path));
   return graph;
+}
+
+export async function scanProjectSignature(root: string, options?: ScanBudget): Promise<string> {
+  const ignoreMatcher = await loadRootIgnore(root);
+  const rows: Array<Record<string, unknown>> = [];
+  const budget = budgetFromOptions(options);
+  let directories = 0;
+  let fileCount = 0;
+  let totalBytes = 0;
+
+  async function walkSignature(current: string, depth: number): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch {
+      rows.push({ path: normalizePath(relative(root, current)), reason: "unreadable" });
+      return;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const absolute = join(current, entry.name);
+      const relativePath = normalizePath(relative(root, absolute));
+      if (entry.name === ".tokengraph") continue;
+      const ignorePath = entry.isDirectory() ? `${relativePath}/` : relativePath;
+      if (relativePath && ignoreMatcher.ignores(ignorePath)) {
+        rows.push({ path: relativePath, reason: "ignored" });
+        continue;
+      }
+      const exclusionReason = exclusionForName(entry.name);
+      if (exclusionReason) {
+        rows.push({ path: relativePath, reason: exclusionReason });
+        continue;
+      }
+      if (entry.name.startsWith(".")) {
+        rows.push({ path: relativePath, reason: "hidden" });
+        continue;
+      }
+      if (entry.isDirectory()) {
+        if (depth + 1 > budget.maxDepth || directories >= budget.maxDirectories) {
+          rows.push({ path: relativePath, reason: "budget" });
+          continue;
+        }
+        directories += 1;
+        await walkSignature(absolute, depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const extension = extname(entry.name).toLowerCase();
+      if (!SUPPORTED_EXTENSIONS.has(extension)) {
+        rows.push({ path: relativePath, reason: "unsupported" });
+        continue;
+      }
+      let fileStat;
+      try {
+        fileStat = await stat(absolute, { bigint: true });
+      } catch {
+        rows.push({ path: relativePath, reason: "unreadable" });
+        continue;
+      }
+      const size = Number(fileStat.size);
+      if (fileCount >= budget.maxFiles || totalBytes + size > budget.maxTotalBytes) {
+        rows.push({ path: relativePath, reason: "budget" });
+        continue;
+      }
+      if (size > MAX_INDEXED_BYTES) {
+        rows.push({ path: relativePath, reason: "large-file" });
+        continue;
+      }
+      rows.push({ path: relativePath, size, mtimeNs: fileStat.mtimeNs.toString(), ctimeNs: fileStat.ctimeNs.toString() });
+      fileCount += 1;
+      totalBytes += size;
+    }
+  }
+
+  await walkSignature(root, 0);
+  return hashText(JSON.stringify(rows));
 }
 
 export function isSupportedCodeFile(path: string): boolean {

@@ -37,7 +37,7 @@ function firstMatchingSymbol(project: ProjectIndex, file: CodeFile, terms: strin
     .sort((a, b) => b.score - a.score || (a.symbol.startLine ?? 0) - (b.symbol.startLine ?? 0))[0]?.symbol;
 }
 
-function rankedFiles(project: ProjectIndex, terms: string[], includeTests: boolean): RankedFile[] {
+function rankedFiles(project: ProjectIndex, terms: string[], includeTests: boolean, includeZero = false): RankedFile[] {
   return project.files
     .filter((file) => (includeTests ? file.isTest : !file.isTest && file.kind !== "sql" && file.kind !== "doc"))
     .map((file) => {
@@ -69,7 +69,7 @@ function rankedFiles(project: ProjectIndex, terms: string[], includeTests: boole
         endLine: matchedSymbol?.endLine
       };
     })
-    .filter((entry) => entry.score > 0)
+    .filter((entry) => includeZero || entry.score > 0)
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
 }
 
@@ -186,10 +186,10 @@ export async function buildContextPlan(input: ContextPlanInput): Promise<Context
   const relevantMemories = rankedMemories(input.memories, terms, input.budget.maxMemories);
   const selectedPaths = new Set([...relevantFiles, ...relevantTests].map((file) => file.path));
   const recommendedFirstReads = relevantFiles.slice(0, Math.min(3, relevantFiles.length));
-  const filesToAvoid = input.project.files
-    .filter((file) => !selectedPaths.has(file.path) && !file.isTest)
+  const filesToAvoid = rankedFiles(input.project, terms, false, true)
+    .filter((file) => !selectedPaths.has(file.path) && file.score === 0)
     .slice(0, 5)
-    .map((file) => ({ path: file.path, score: 0, reason: "Not enough overlap with the current task." }));
+    .map((file) => ({ ...file, reason: "No lexical overlap with the current task." }));
 
   const withoutEstimate = {
     task: input.task,
@@ -217,7 +217,7 @@ export async function buildContextPlan(input: ContextPlanInput): Promise<Context
     ...withoutEstimate,
     estimatedTokens: {
       ...estimateSavings(originalContext, compact),
-      avoided: Math.max(1, estimateTokens(originalContext) - estimateTokens(compact))
+      avoided: Math.max(0, estimateTokens(originalContext) - estimateTokens(compact))
     }
   };
 }

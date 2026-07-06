@@ -99,9 +99,9 @@ Document memory review, visual map export, and the two new MCP tools.
 Run:
 
 ```powershell
-pnpm test
 pnpm typecheck
 pnpm build
+pnpm test
 pnpm smoke -- --root . --json
 pnpm validate:plugin
 ```

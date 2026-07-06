@@ -1,8 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-
-import { scanProject } from "./fileScanner.js";
+import { scanProject, scanProjectSignature } from "./fileScanner.js";
 import { mergeSqlGraphs, parsePostgresMigration } from "./sqlParser.js";
 import type { ProjectIndex } from "./types.js";
 
@@ -27,11 +24,21 @@ function detectFrameworks(files: { path: string }[]): string[] {
   return Array.from(frameworks).sort();
 }
 
-export async function indexProject(root: string): Promise<ProjectIndex> {
-  const graph = await scanProject(root);
+export async function indexProject(root: string, options: { scanSignature?: string } = {}): Promise<ProjectIndex> {
+  const sqlContents = new Map<string, string>();
+  const graph = await scanProject(root, {
+    onFileContent: (file) => {
+      if (file.language === "sql") {
+        sqlContents.set(file.path, file.content);
+      }
+    }
+  });
   const sqlGraphs = [];
   for (const file of graph.files.filter((candidate) => candidate.language === "sql").sort((a, b) => a.path.localeCompare(b.path))) {
-    const sql = await readFile(join(root, file.path), "utf8");
+    const sql = sqlContents.get(file.path);
+    if (sql === undefined) {
+      continue;
+    }
     sqlGraphs.push(parsePostgresMigration(file.path, sql));
   }
 
@@ -48,6 +55,7 @@ export async function indexProject(root: string): Promise<ProjectIndex> {
     ...graph,
     scannedAt: new Date().toISOString(),
     fingerprint,
+    scanSignature: options.scanSignature ?? (await scanProjectSignature(root)),
     frameworks: detectFrameworks(graph.files),
     sql
   };

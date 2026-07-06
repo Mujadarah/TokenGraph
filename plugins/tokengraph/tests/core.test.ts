@@ -1,4 +1,4 @@
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,11 +7,12 @@ import { compressOutput } from "../src/core/compressor.js";
 import { scanProject } from "../src/core/fileScanner.js";
 import { MemoryStore } from "../src/core/memoryStore.js";
 import { buildContextPlan } from "../src/core/planner.js";
-import { clearProjectIndex, indexPath, memoryPath, saveProjectIndex } from "../src/core/persistence.js";
+import { clearProjectIndex, indexPath, loadProjectIndex, memoryPath, saveProjectIndex } from "../src/core/persistence.js";
 import { indexProject } from "../src/core/projectIndexer.js";
 import { getIndexStatus } from "../src/core/indexStatus.js";
 import { parsePostgresMigration } from "../src/core/sqlParser.js";
 import { exportProjectMap, reviewMemories } from "../src/core/review.js";
+import { tokenize } from "../src/core/token.js";
 
 const tempRoots: string[] = [];
 
@@ -71,7 +72,12 @@ describe("scanProject", () => {
   });
 
   it("keeps fixture-generated output out of scanner regression projects", async () => {
-    const root = resolve("tests", "fixtures", "ignored-output");
+    const root = await makeRoot();
+    await cp(resolve("tests", "fixtures", "ignored-output"), root, { recursive: true });
+    await mkdir(join(root, "coverage"), { recursive: true });
+    await mkdir(join(root, "generated"), { recursive: true });
+    await writeFile(join(root, "coverage", "report.json"), "{}");
+    await writeFile(join(root, "generated", "client.ts"), "export const generated = true;");
 
     const graph = await scanProject(root);
 
@@ -81,6 +87,72 @@ describe("scanProject", () => {
         expect.objectContaining({ path: "coverage", reason: "ignored" }),
         expect.objectContaining({ path: "generated", reason: "ignored" })
       ])
+    );
+  });
+
+  it("does not classify similarly named directories as tests", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src", "contests"), { recursive: true });
+    await mkdir(join(root, "src", "latests"), { recursive: true });
+    await writeFile(join(root, "src", "contests", "rules.ts"), "export const contestRules = true;");
+    await writeFile(join(root, "src", "latests", "news.ts"), "export const latestNews = true;");
+
+    const graph = await scanProject(root);
+
+    expect(graph.files).toContainEqual(expect.objectContaining({ path: "src/contests/rules.ts", kind: "module", isTest: false }));
+    expect(graph.files).toContainEqual(expect.objectContaining({ path: "src/latests/news.ts", kind: "module", isTest: false }));
+  });
+
+  it("does not classify JavaScript usage strings as React components", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "scripts"), { recursive: true });
+    await writeFile(join(root, "scripts", "smoke.mjs"), "console.log('Usage: smoke --root <project-root>');");
+
+    const graph = await scanProject(root);
+
+    expect(graph.files).toContainEqual(expect.objectContaining({ path: "scripts/smoke.mjs", kind: "module" }));
+  });
+
+  it("extracts async function exports and ignores import-looking strings", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "real.ts"), "export const real = true;");
+    await writeFile(
+      join(root, "src", "service.ts"),
+      [
+        "const prompt = 'we import nothing here';",
+        "const sql = `select * from users`;",
+        "import { real } from './real';",
+        "export async function fetchPatient() {",
+        "  return real;",
+        "}"
+      ].join("\n")
+    );
+
+    const graph = await scanProject(root);
+
+    expect(graph.imports).toContainEqual(expect.objectContaining({ filePath: "src/service.ts", source: "./real", resolvedPath: "src/real.ts" }));
+    expect(graph.imports).not.toContainEqual(expect.objectContaining({ filePath: "src/service.ts", source: "users" }));
+    expect(graph.symbols).toContainEqual(expect.objectContaining({ filePath: "src/service.ts", name: "fetchPatient", exported: true }));
+  });
+
+  it("does not truncate declarations when braces appear in strings", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(
+      join(root, "src", "braceString.ts"),
+      [
+        "export function formatBrace() {",
+        "  const text = '}';",
+        "  return text;",
+        "}"
+      ].join("\n")
+    );
+
+    const graph = await scanProject(root);
+
+    expect(graph.symbols).toContainEqual(
+      expect.objectContaining({ filePath: "src/braceString.ts", name: "formatBrace", startLine: 1, endLine: 4 })
     );
   });
 
@@ -365,6 +437,97 @@ describe("parsePostgresMigration", () => {
       })
     );
   });
+
+  it("resolves Next.js src-layout aliases", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src", "components"), { recursive: true });
+    await mkdir(join(root, "src", "app"), { recursive: true });
+    await writeFile(join(root, "src", "components", "PatientCard.tsx"), "export function PatientCard() { return <article />; }");
+    await writeFile(join(root, "src", "app", "page.tsx"), "import { PatientCard } from '@/components/PatientCard'; export default PatientCard;");
+
+    const graph = await scanProject(root);
+
+    expect(graph.imports).toContainEqual(
+      expect.objectContaining({
+        filePath: "src/app/page.tsx",
+        source: "@/components/PatientCard",
+        resolvedPath: "src/components/PatientCard.tsx"
+      })
+    );
+  });
+
+  it("ignores commented SQL and function bodies while parsing top-level SQL objects", () => {
+    const sql = `
+      -- create table public.commented_out (id uuid);
+      /*
+        create policy "ghost" on public.patients for select using (true);
+      */
+      create function public.audit_grants() returns trigger language plpgsql as $$
+      begin
+        grant select on table public.hidden to hidden_role;
+        return new;
+      end
+      $$;
+      create table public.real_table (id uuid primary key);
+    `;
+
+    const graph = parsePostgresMigration("supabase/migrations/001_noise.sql", sql);
+
+    expect(graph.tables.map((table) => table.name)).toEqual(["public.real_table"]);
+    expect(graph.policies).toEqual([]);
+    expect(graph.grants).toEqual([]);
+  });
+
+  it("records unnamed table-level foreign keys as relations", () => {
+    const sql = `
+      create table public.child (
+        id uuid primary key,
+        parent_id uuid,
+        foreign key (parent_id) references public.parent(id)
+      );
+    `;
+
+    const graph = parsePostgresMigration("supabase/migrations/001_fk.sql", sql);
+
+    expect(graph.relations).toContainEqual(
+      expect.objectContaining({ fromTable: "public.child", fromColumn: "parent_id", toTable: "public.parent", toColumn: "id" })
+    );
+  });
+
+  it("parses execute procedure triggers and Supabase grant variants", () => {
+    const sql = `
+      create trigger patients_touch before update on public.patients for each row execute procedure public.touch_patient();
+      grant select on all tables in schema public to anon, authenticated;
+    `;
+
+    const graph = parsePostgresMigration("supabase/migrations/001_grants.sql", sql);
+
+    expect(graph.triggers).toContainEqual(
+      expect.objectContaining({ name: "patients_touch", table: "public.patients", functionName: "public.touch_patient" })
+    );
+    expect(graph.grants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ privileges: ["select"], objectType: "all tables in schema", objectName: "public", grantee: "anon" }),
+        expect.objectContaining({ privileges: ["select"], objectType: "all tables in schema", objectName: "public", grantee: "authenticated" })
+      ])
+    );
+  });
+
+  it("orders SQL history by statement position within a file", () => {
+    const sql = `
+      create table public.a (id uuid primary key);
+      create index a_id_idx on public.a(id);
+      create table public.b (id uuid primary key);
+    `;
+
+    const graph = parsePostgresMigration("supabase/migrations/001_order.sql", sql);
+
+    expect(graph.history.map((entry) => `${entry.kind}:${entry.name}`)).toEqual([
+      "table:public.a",
+      "index:a_id_idx",
+      "table:public.b"
+    ]);
+  });
 });
 
 describe("indexProject", () => {
@@ -451,6 +614,27 @@ describe("index status and reset", () => {
     await expect(access(indexPath(root))).rejects.toThrow();
     await expect(access(memoryPath(root))).resolves.toBeUndefined();
   });
+
+  it("rejects persisted indexes missing newer SQL graph fields", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(
+      indexPath(root),
+      JSON.stringify({
+        root,
+        scannedAt: "2026-07-06T00:00:00.000Z",
+        fingerprint: "old",
+        frameworks: [],
+        files: [],
+        symbols: [],
+        imports: [],
+        exclusions: [],
+        sql: { tables: [], relations: [], policies: [], indexes: [], triggers: [], functions: [], views: [] }
+      })
+    );
+
+    await expect(loadProjectIndex(root)).resolves.toBeUndefined();
+  });
 });
 
 describe("buildContextPlan", () => {
@@ -510,7 +694,7 @@ describe("buildContextPlan", () => {
     expect(plan.relevantTests.map((item) => item.path)).toContain("services/patientService.test.ts");
     expect(plan.relevantSql.map((item) => item.name)).toContain("public.patients");
     expect(plan.relevantMemories.map((item) => item.title)).toContain("Patient summaries stay tenant scoped");
-    expect(plan.estimatedTokens.avoided).toBeGreaterThan(0);
+    expect(plan.estimatedTokens.avoided).toBeGreaterThanOrEqual(0);
     expect(plan.rawReadPolicy).toMatch(/targeted/i);
   });
 
@@ -585,6 +769,28 @@ describe("buildContextPlan", () => {
     expect(plan.relevantFiles.map((item) => item.path)).not.toContain("app/billing/page.tsx");
   });
 
+  it("does not tell Codex to avoid relevant files trimmed only by budget", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "services"), { recursive: true });
+    await writeFile(join(root, "services", "patientSummaryA.ts"), "export function patientSummaryAlpha() { return null; }");
+    await writeFile(join(root, "services", "patientSummaryB.ts"), "export function patientSummaryBeta() { return null; }");
+    await writeFile(join(root, "services", "patientSummaryC.ts"), "export function patientSummaryGamma() { return null; }");
+    await writeFile(join(root, "services", "billing.ts"), "export function billingExport() { return null; }");
+
+    const project = await indexProject(root);
+    const plan = await buildContextPlan({
+      root,
+      task: "Fix patient summary",
+      project,
+      memories: [],
+      budget: { maxFiles: 2, maxSqlObjects: 0, maxMemories: 0 }
+    });
+
+    expect(plan.relevantFiles).toHaveLength(2);
+    expect(plan.filesToAvoid.map((file) => file.path)).not.toContain("services/patientSummaryC.ts");
+    expect(plan.filesToAvoid).toContainEqual(expect.objectContaining({ path: "services/billing.ts", score: 0 }));
+  });
+
   it("ranks v0.5 SQL policy details and materialized views in context plans", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "supabase", "migrations"), { recursive: true });
@@ -633,7 +839,7 @@ describe("compressOutput", () => {
     expect(compressed.summary).toContain("patientService.test.ts");
     expect(compressed.keyLines).toContain("AssertionError: expected 2 to be 1");
     expect(compressed.keyLines).toContain("at services/patientService.test.ts:42:15");
-    expect(compressed.estimatedTokens.avoided).toBeGreaterThan(0);
+    expect(compressed.estimatedTokens.avoided).toBeGreaterThanOrEqual(0);
   });
 
   it("deduplicates actionable lines without quadratic Array index scans", () => {
@@ -647,6 +853,23 @@ describe("compressOutput", () => {
     expect(compressed.keyLines).toHaveLength(5);
     expect(compressed.omittedLineCount).toBeGreaterThan(0);
     expect(indexOfCalls).toBe(0);
+  });
+
+  it("keeps lowercase failed test summaries and does not floor negative savings", () => {
+    const compressed = compressOutput({
+      kind: "test",
+      text: "setup warning\nTests  2 failed | 30 passed",
+      maxLines: 5
+    });
+
+    expect(compressed.keyLines).toContain("Tests  2 failed | 30 passed");
+    expect(compressed.estimatedTokens.avoided).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("tokenize", () => {
+  it("splits camelCase before lowercasing", () => {
+    expect(tokenize("PatientCard fetchUserById")).toEqual(expect.arrayContaining(["patient", "card", "fetch", "user", "by", "id"]));
   });
 });
 
@@ -670,6 +893,35 @@ describe("MemoryStore", () => {
     expect(result).toHaveLength(1);
     expect(result[0].title).toBe("Use server actions for patient mutations");
     expect(raw[0]).toMatchObject({ type: "convention", title: "Use server actions for patient mutations" });
+  });
+
+  it("quarantines corrupt memory files and recovers with an empty list", async () => {
+    const root = await makeRoot();
+    const storePath = join(root, ".tokengraph", "memory.json");
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(storePath, "{ not json");
+
+    const store = new MemoryStore(storePath);
+
+    await expect(store.list()).resolves.toEqual([]);
+    await expect(access(storePath)).rejects.toThrow();
+    const files = await readdir(join(root, ".tokengraph"));
+    expect(files.some((file) => file.startsWith("memory.json.corrupt-"))).toBe(true);
+  });
+
+  it("serializes concurrent memory writes without losing decisions", async () => {
+    const root = await makeRoot();
+    const storePath = join(root, ".tokengraph", "memory.json");
+    const first = new MemoryStore(storePath);
+    const second = new MemoryStore(storePath);
+
+    await Promise.all([
+      first.add({ type: "architecture", title: "First decision", body: "Keep the first decision.", tags: ["memory"] }),
+      second.add({ type: "bug", title: "Second decision", body: "Keep the second decision.", tags: ["memory"] })
+    ]);
+
+    const titles = (await first.list()).map((memory) => memory.title).sort();
+    expect(titles).toEqual(["First decision", "Second decision"]);
   });
 });
 
@@ -733,5 +985,22 @@ describe("v0.7 review and export helpers", () => {
     expect(exported.content).toContain("app/patients/page.tsx");
     expect(exported.content).toContain("components/PatientCard.tsx");
     expect(exported.content).not.toContain("return <PatientCard");
+  });
+
+  it("prioritizes connected files when exporting a capped project map", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "app", "patients"), { recursive: true });
+    await mkdir(join(root, "components"), { recursive: true });
+    await mkdir(join(root, "aaa"), { recursive: true });
+    await writeFile(join(root, "aaa", "unconnected.ts"), "export const unconnected = true;");
+    await writeFile(join(root, "components", "PatientCard.tsx"), "export function PatientCard() { return <article />; }");
+    await writeFile(join(root, "app", "patients", "page.tsx"), "import { PatientCard } from '../../components/PatientCard'; export default PatientCard;");
+
+    const project = await indexProject(root);
+    const exported = exportProjectMap(project, { format: "json", limit: 2 });
+    const parsed = JSON.parse(exported.content) as { nodes: Array<{ path: string }> };
+
+    expect(parsed.nodes.map((node) => node.path)).toEqual(expect.arrayContaining(["app/patients/page.tsx", "components/PatientCard.tsx"]));
+    expect(parsed.nodes.map((node) => node.path)).not.toContain("aaa/unconnected.ts");
   });
 });

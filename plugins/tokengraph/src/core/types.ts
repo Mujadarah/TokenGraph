@@ -38,7 +38,7 @@ export interface ImportEdge {
 
 export interface Exclusion {
   path: string;
-  reason: "dependency" | "build-output" | "secret" | "binary" | "large-file" | "hidden" | "unsupported" | "ignored" | "budget";
+  reason: "dependency" | "build-output" | "secret" | "binary" | "large-file" | "hidden" | "unsupported" | "ignored" | "budget" | "unreadable";
 }
 
 export interface CodeGraph {
@@ -168,6 +168,7 @@ export interface SqlGraph {
 export interface ProjectIndex extends CodeGraph {
   scannedAt: string;
   fingerprint: string;
+  scanSignature?: string;
   frameworks: string[];
   sql: SqlGraph;
 }
@@ -182,6 +183,8 @@ export interface IndexStatus {
   currentScannedAt: string;
   storedFingerprint?: string;
   currentFingerprint: string;
+  storedScanSignature?: string;
+  currentScanSignature?: string;
 }
 
 export type MemoryType = "architecture" | "convention" | "bug" | "migration" | "product" | "security" | "lesson";

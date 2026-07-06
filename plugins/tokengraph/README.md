@@ -33,8 +33,8 @@ TokenGraph is a local-first Codex plugin that reduces wasted context by routing 
 
 ```powershell
 pnpm install
-pnpm test
 pnpm build
+pnpm test
 pnpm smoke -- --root . --json
 pnpm validate:plugin
 ```

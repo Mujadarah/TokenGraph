@@ -19,12 +19,11 @@ export function tokenize(text: string): string[] {
   return Array.from(
     new Set(
       text
-        .toLowerCase()
         .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .toLowerCase()
         .split(/[^a-z0-9_/$.[\]-]+/i)
         .map((part) => part.trim())
         .filter((part) => part.length > 1)
     )
   );
 }
-

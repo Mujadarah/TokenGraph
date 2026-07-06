@@ -1,11 +1,12 @@
 import process from "node:process";
-import { realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { access, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import { compressOutput } from "./core/compressor.js";
+import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
 import { MemoryStore } from "./core/memoryStore.js";
 import { buildContextPlan } from "./core/planner.js";
@@ -23,17 +24,36 @@ const DEFAULT_BUDGET = {
 
 async function workspaceRoot(inputRoot?: string): Promise<string> {
   const allowedRoot = await realpath(process.cwd());
+  const launchedFromPluginRoot = await isPluginRoot(allowedRoot);
+  if (!inputRoot?.trim() && launchedFromPluginRoot) {
+    throw new Error("TokenGraph is running from its plugin directory; pass the workspace root explicitly.");
+  }
   const requested = inputRoot?.trim() ? resolve(allowedRoot, inputRoot.trim()) : allowedRoot;
-  const resolvedRoot = await realpath(requested);
+  let resolvedRoot;
+  try {
+    resolvedRoot = await realpath(requested);
+  } catch {
+    throw new Error(`Requested workspace root does not exist or is not readable: ${requested}`);
+  }
   const relativeToAllowed = relative(allowedRoot, resolvedRoot);
-  if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute(relativeToAllowed))) {
+  if (!launchedFromPluginRoot && relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute(relativeToAllowed))) {
     throw new Error(`Requested root is outside the allowed workspace: ${resolvedRoot}`);
   }
   return resolvedRoot;
 }
 
+async function isPluginRoot(root: string): Promise<boolean> {
+  try {
+    await access(join(root, ".codex-plugin", "plugin.json"));
+    await access(join(root, ".mcp.json"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function compactJson(value: unknown): string {
-  return JSON.stringify(value, null, 2);
+  return JSON.stringify(value);
 }
 
 function ok<T extends object>(output: T) {
@@ -44,18 +64,49 @@ function ok<T extends object>(output: T) {
 }
 
 async function ensureProject(root: string): Promise<ProjectIndex> {
+  const currentScanSignature = await scanProjectSignature(root);
   const existing = await loadProjectIndex(root);
-  if (existing) {
-    const current = await indexProject(root);
+  if (existing && isSafeProjectIndex(root, existing)) {
+    if (existing.scanSignature === currentScanSignature) {
+      return existing;
+    }
+    const current = await indexProject(root, { scanSignature: currentScanSignature });
     if (isFreshProjectIndex(existing, current)) {
       return existing;
     }
     await saveProjectIndex(root, current);
     return current;
   }
-  const indexed = await indexProject(root);
+  const indexed = await indexProject(root, { scanSignature: currentScanSignature });
   await saveProjectIndex(root, indexed);
   return indexed;
+}
+
+function isSafeRelativePath(path: string): boolean {
+  return Boolean(path) && !path.startsWith("../") && !path.startsWith("..\\") && !isAbsolute(path);
+}
+
+function isSafeProjectIndex(root: string, project: ProjectIndex): boolean {
+  if (project.root !== root) return false;
+  const paths = [
+    ...project.files.map((file) => file.path),
+    ...project.symbols.map((symbol) => symbol.filePath),
+    ...project.imports.flatMap((edge) => [edge.filePath, edge.resolvedPath].filter((path): path is string => Boolean(path))),
+    ...project.sql.tables.map((item) => item.filePath),
+    ...project.sql.relations.map((item) => item.filePath),
+    ...project.sql.constraints.map((item) => item.filePath),
+    ...project.sql.policies.map((item) => item.filePath),
+    ...project.sql.indexes.map((item) => item.filePath),
+    ...project.sql.triggers.map((item) => item.filePath),
+    ...project.sql.functions.map((item) => item.filePath),
+    ...project.sql.views.map((item) => item.filePath),
+    ...project.sql.enums.map((item) => item.filePath),
+    ...project.sql.extensions.map((item) => item.filePath),
+    ...project.sql.grants.map((item) => item.filePath),
+    ...project.sql.materializedViews.map((item) => item.filePath),
+    ...project.sql.history.map((item) => item.filePath)
+  ];
+  return paths.every(isSafeRelativePath);
 }
 
 function projectMap(project: ProjectIndex) {
@@ -75,7 +126,7 @@ function projectMap(project: ProjectIndex) {
       extensions: project.sql.extensions.length,
       grants: project.sql.grants.length,
       materializedViews: project.sql.materializedViews.length,
-      memories: undefined as number | undefined
+      memories: 0
     },
     modules: project.files
       .filter((file) => !file.isTest && file.kind !== "sql")

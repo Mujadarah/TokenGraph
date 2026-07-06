@@ -41,7 +41,13 @@ function isProjectIndex(value: unknown): value is ProjectIndex {
     Array.isArray(candidate.sql?.indexes) &&
     Array.isArray(candidate.sql?.triggers) &&
     Array.isArray(candidate.sql?.functions) &&
-    Array.isArray(candidate.sql?.views)
+    Array.isArray(candidate.sql?.views) &&
+    Array.isArray(candidate.sql?.constraints) &&
+    Array.isArray(candidate.sql?.enums) &&
+    Array.isArray(candidate.sql?.extensions) &&
+    Array.isArray(candidate.sql?.grants) &&
+    Array.isArray(candidate.sql?.materializedViews) &&
+    Array.isArray(candidate.sql?.history)
   );
 }
 

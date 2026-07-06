@@ -2,8 +2,8 @@ import { estimateSavings } from "./token.js";
 import type { CompressedOutput } from "./types.js";
 
 const ACTIONABLE_PATTERNS = [
-  /\bFAIL\b/i,
-  /\bError\b/i,
+  /\b(?:fail|failed|failure|failures)\b/i,
+  /\berrors?\b/i,
   /\bAssertionError\b/i,
   /\bTypeError\b/i,
   /\bReferenceError\b/i,
@@ -50,9 +50,6 @@ export function compressOutput(input: { kind: CompressedOutput["kind"]; text: st
     summary,
     keyLines: fallbackLines,
     omittedLineCount,
-    estimatedTokens: {
-      ...estimatedTokens,
-      avoided: omittedLineCount > 0 ? Math.max(1, estimatedTokens.avoided) : estimatedTokens.avoided
-    }
+    estimatedTokens
   };
 }

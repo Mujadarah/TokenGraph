@@ -62,7 +62,13 @@ function edgeKey(edge: ImportEdge): string {
 export function exportProjectMap(project: ProjectIndex, options: ExportProjectMapOptions = {}): ProjectMapExport {
   const format = options.format ?? "mermaid";
   const limit = Math.max(1, Math.min(options.limit ?? 50, 200));
-  const files = project.files.slice(0, limit);
+  const degree = new Map<string, number>();
+  for (const edge of project.imports) {
+    if (!edge.resolvedPath) continue;
+    degree.set(edge.filePath, (degree.get(edge.filePath) ?? 0) + 1);
+    degree.set(edge.resolvedPath, (degree.get(edge.resolvedPath) ?? 0) + 1);
+  }
+  const files = [...project.files].sort((a, b) => (degree.get(b.path) ?? 0) - (degree.get(a.path) ?? 0) || a.path.localeCompare(b.path)).slice(0, limit);
   const indexedPaths = new Set(files.map((file) => file.path));
   const edges = Array.from(
     new Map(

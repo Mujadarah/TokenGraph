@@ -66,6 +66,107 @@ function splitColumns(body: string): string[] {
   return columns;
 }
 
+interface SqlStatement {
+  text: string;
+  index: number;
+}
+
+type PendingHistoryEntry = SqlHistoryEntry & { position: number };
+
+function sqlStatements(sql: string): SqlStatement[] {
+  const statements: SqlStatement[] = [];
+  let current = "";
+  let statementStart = 0;
+  let state: "code" | "single" | "double" | "line-comment" | "block-comment" | "dollar" = "code";
+  let dollarTag = "";
+  for (let index = 0; index < sql.length; index += 1) {
+    const char = sql[index];
+    const next = sql[index + 1];
+    if (state === "line-comment") {
+      if (char === "\n") {
+        state = "code";
+        current += char;
+      }
+      continue;
+    }
+    if (state === "block-comment") {
+      if (char === "*" && next === "/") {
+        index += 1;
+        state = "code";
+      } else if (char === "\n") {
+        current += char;
+      }
+      continue;
+    }
+    if (state === "single" || state === "double") {
+      current += char;
+      if (char === "\\") {
+        if (next) {
+          current += next;
+          index += 1;
+        }
+        continue;
+      }
+      if ((state === "single" && char === "'") || (state === "double" && char === '"')) {
+        state = "code";
+      }
+      continue;
+    }
+    if (state === "dollar") {
+      current += char;
+      if (dollarTag && sql.startsWith(dollarTag, index)) {
+        current += dollarTag.slice(1);
+        index += dollarTag.length - 1;
+        dollarTag = "";
+        state = "code";
+      }
+      continue;
+    }
+    if (char === "-" && next === "-") {
+      index += 1;
+      state = "line-comment";
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      index += 1;
+      state = "block-comment";
+      continue;
+    }
+    if (char === "'") {
+      state = "single";
+      current += char;
+      continue;
+    }
+    if (char === '"') {
+      state = "double";
+      current += char;
+      continue;
+    }
+    if (char === "$") {
+      const match = sql.slice(index).match(/^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/);
+      if (match) {
+        dollarTag = match[0];
+        state = "dollar";
+        current += dollarTag;
+        index += dollarTag.length - 1;
+        continue;
+      }
+    }
+    current += char;
+    if (char === ";") {
+      if (current.trim()) {
+        statements.push({ text: current, index: statementStart });
+      }
+      current = "";
+      statementStart = index + 1;
+    }
+  }
+  if (current.trim()) {
+    statements.push({ text: current, index: statementStart });
+  }
+  return statements;
+}
+
 function emptyGraph(): SqlGraph {
   return {
     tables: [],
@@ -86,23 +187,27 @@ function emptyGraph(): SqlGraph {
 
 export function parsePostgresMigration(filePath: string, sql: string): SqlGraph {
   const graph = emptyGraph();
-  let order = 0;
-  const remember = (entry: Omit<SqlHistoryEntry, "filePath" | "order">) => {
-    graph.history.push({ ...entry, filePath, order: order++ });
+  const statements = sqlStatements(sql);
+  const history: PendingHistoryEntry[] = [];
+  const remember = (entry: Omit<SqlHistoryEntry, "filePath" | "order">, position: number) => {
+    history.push({ ...entry, filePath, order: 0, position });
   };
 
-  const addConstraint = (constraint: SqlConstraint) => {
+  const addConstraint = (constraint: SqlConstraint, position: number) => {
     graph.constraints.push(constraint);
-    remember({ kind: "constraint", name: constraint.name, action: constraint.name.startsWith("alter ") ? "alter" : "create" });
+    remember({ kind: "constraint", name: constraint.name, action: "create" }, position);
   };
 
-  for (const match of sql.matchAll(/create\s+extension\s+(?:if\s+not\s+exists\s+)?((?:"[^"]+")|[\w-]+)/gi)) {
+  for (const statement of statements.filter((entry) => /^\s*create\s+extension\b/i.test(entry.text))) {
+  for (const match of statement.text.matchAll(/create\s+extension\s+(?:if\s+not\s+exists\s+)?((?:"[^"]+")|[\w-]+)/gi)) {
     const extension: SqlExtension = { name: normalizeSqlName(match[1]), filePath };
     graph.extensions.push(extension);
-    remember({ kind: "extension", name: extension.name, action: "create" });
+    remember({ kind: "extension", name: extension.name, action: "create" }, statement.index + (match.index ?? 0));
+  }
   }
 
-  for (const match of sql.matchAll(/create\s+type\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s+as\s+enum\s*\(([^)]*)\)/gi)) {
+  for (const statement of statements.filter((entry) => /^\s*create\s+type\b/i.test(entry.text))) {
+  for (const match of statement.text.matchAll(/create\s+type\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s+as\s+enum\s*\(([^)]*)\)/gi)) {
     const enumObject: SqlEnum = {
       name: normalizeSqlName(match[1]),
       values: match[2]
@@ -112,10 +217,12 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
       filePath
     };
     graph.enums.push(enumObject);
-    remember({ kind: "enum", name: enumObject.name, action: "create" });
+    remember({ kind: "enum", name: enumObject.name, action: "create" }, statement.index + (match.index ?? 0));
+  }
   }
 
-  for (const match of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(([\s\S]*?)\)\s*;/gi)) {
+  for (const statement of statements.filter((entry) => /^\s*create\s+table\b/i.test(entry.text))) {
+  for (const match of statement.text.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(([\s\S]*?)\)\s*;/gi)) {
     const tableName = normalizeSqlName(match[1]);
     const columnDefs = splitColumns(match[2]);
     const table: SqlTable = { name: tableName, columns: [], filePath };
@@ -133,7 +240,7 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
           expression: kind === "check" ? stripOuterParens(columnDef.slice(columnDef.toLowerCase().indexOf("check") + "check".length)) : undefined,
           filePath
         };
-        addConstraint(constraint);
+        addConstraint(constraint, statement.index + (match.index ?? 0));
         const tableForeignKey = columnDef.match(/foreign\s+key\s*\(([^)]*)\)\s+references\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*(?:\(\s*("?[\w]+"?)\s*\))?/i);
         if (tableForeignKey) {
           const fromColumns = splitCommaList(tableForeignKey[1]);
@@ -148,6 +255,17 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
         continue;
       }
       if (!columnName || /^(constraint|primary|foreign|unique|check)$/i.test(columnName)) {
+        const tableForeignKey = columnDef.match(/foreign\s+key\s*\(([^)]*)\)\s+references\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*(?:\(\s*("?[\w]+"?)\s*\))?/i);
+        if (tableForeignKey) {
+          const fromColumns = splitCommaList(tableForeignKey[1]);
+          graph.relations.push({
+            fromTable: tableName,
+            fromColumn: fromColumns[0] ?? "",
+            toTable: normalizeSqlName(tableForeignKey[2]),
+            toColumn: tableForeignKey[3] ? normalizeSqlName(tableForeignKey[3]) : undefined,
+            filePath
+          });
+        }
         continue;
       }
       table.columns.push(columnName);
@@ -159,7 +277,7 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
           kind: normalizeSqlName(inlineNamedConstraint[2]).toLowerCase() as SqlConstraint["kind"],
           columns: [columnName],
           filePath
-        });
+        }, statement.index + (match.index ?? 0));
       }
       const reference = columnDef.match(/references\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*(?:\(\s*("?[\w]+"?)\s*\))?/i);
       if (reference) {
@@ -173,10 +291,12 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
       }
     }
     graph.tables.push(table);
-    remember({ kind: "table", name: table.name, action: "create" });
+    remember({ kind: "table", name: table.name, action: "create" }, statement.index + (match.index ?? 0));
+  }
   }
 
-  for (const match of sql.matchAll(
+  for (const statement of statements.filter((entry) => /^\s*alter\s+table\b/i.test(entry.text))) {
+  for (const match of statement.text.matchAll(
     /alter\s+table\s+(?:if\s+exists\s+)?((?:"?[\w]+"?\.)?"?[\w]+"?)\s+add\s+constraint\s+("?[\w]+"?)\s+(primary\s+key|foreign\s+key|unique|check|exclude)\b([\s\S]*?);/gi
   )) {
     const kind = normalizeSqlName(match[3]).toLowerCase() as SqlConstraint["kind"];
@@ -190,10 +310,12 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
       filePath
     };
     graph.constraints.push(constraint);
-    remember({ kind: "constraint", name: constraint.name, action: "alter" });
+    remember({ kind: "constraint", name: constraint.name, action: "alter" }, statement.index + (match.index ?? 0));
+  }
   }
 
-  for (const match of sql.matchAll(/create\s+policy\s+(?:"([^"]+)"|([\w_]+))\s+on\s+((?:"?[\w]+"?\.)?"?[\w]+"?)([\s\S]*?);/gi)) {
+  for (const statement of statements.filter((entry) => /^\s*create\s+policy\b/i.test(entry.text))) {
+  for (const match of statement.text.matchAll(/create\s+policy\s+(?:"([^"]+)"|([\w_]+))\s+on\s+((?:"?[\w]+"?\.)?"?[\w]+"?)([\s\S]*?);/gi)) {
     const body = match[4] ?? "";
     const command = body.match(/\bfor\s+(\w+)/i)?.[1]?.toLowerCase();
     const roles = body
@@ -211,26 +333,32 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
       filePath
     };
     graph.policies.push(policy);
-    remember({ kind: "policy", name: policy.name, action: "create" });
+    remember({ kind: "policy", name: policy.name, action: "create" }, statement.index + (match.index ?? 0));
+  }
   }
 
-  for (const match of sql.matchAll(/create\s+(?:unique\s+)?index\s+(?:if\s+not\s+exists\s+)?("?[\w]+"?)\s+on\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(([^)]+)\)/gi)) {
+  for (const statement of statements.filter((entry) => /^\s*create\s+(?:unique\s+)?index\b/i.test(entry.text))) {
+  for (const match of statement.text.matchAll(/create\s+(?:unique\s+)?index\s+(?:if\s+not\s+exists\s+)?("?[\w]+"?)\s+on\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(([^)]+)\)/gi)) {
     graph.indexes.push({
       name: normalizeSqlName(match[1]),
       table: normalizeSqlName(match[2]),
       columns: match[3].split(",").map(normalizeSqlName),
       filePath
     });
-    remember({ kind: "index", name: normalizeSqlName(match[1]), action: "create" });
+    remember({ kind: "index", name: normalizeSqlName(match[1]), action: "create" }, statement.index + (match.index ?? 0));
+  }
   }
 
-  for (const match of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(/gi)) {
+  for (const statement of statements.filter((entry) => /^\s*create\s+(?:or\s+replace\s+)?function\b/i.test(entry.text))) {
+  for (const match of statement.text.matchAll(/create\s+(?:or\s+replace\s+)?function\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(/gi)) {
     const fn: SqlFunction = { name: normalizeSqlName(match[1]), filePath };
     graph.functions.push(fn);
-    remember({ kind: "function", name: fn.name, action: "create" });
+    remember({ kind: "function", name: fn.name, action: "create" }, statement.index + (match.index ?? 0));
+  }
   }
 
-  for (const match of sql.matchAll(/create\s+trigger\s+("?[\w]+"?)[\s\S]*?\son\s+((?:"?[\w]+"?\.)?"?[\w]+"?)[\s\S]*?execute\s+function\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(/gi)) {
+  for (const statement of statements.filter((entry) => /^\s*create\s+trigger\b/i.test(entry.text))) {
+  for (const match of statement.text.matchAll(/create\s+trigger\s+("?[\w]+"?)[\s\S]*?\son\s+((?:"?[\w]+"?\.)?"?[\w]+"?)[\s\S]*?execute\s+(?:function|procedure)\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(/gi)) {
     const trigger: SqlTrigger = {
       name: normalizeSqlName(match[1]),
       table: normalizeSqlName(match[2]),
@@ -238,33 +366,48 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
       filePath
     };
     graph.triggers.push(trigger);
-    remember({ kind: "trigger", name: trigger.name, action: "create" });
+    remember({ kind: "trigger", name: trigger.name, action: "create" }, statement.index + (match.index ?? 0));
+  }
   }
 
-  for (const match of sql.matchAll(/create\s+(?:or\s+replace\s+)?view\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s+as\s+/gi)) {
+  for (const statement of statements.filter((entry) => /^\s*create\s+(?:or\s+replace\s+)?view\b/i.test(entry.text))) {
+  for (const match of statement.text.matchAll(/create\s+(?:or\s+replace\s+)?view\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s+as\s+/gi)) {
     const view: SqlView = { name: normalizeSqlName(match[1]), filePath };
     graph.views.push(view);
-    remember({ kind: "view", name: view.name, action: "create" });
+    remember({ kind: "view", name: view.name, action: "create" }, statement.index + (match.index ?? 0));
+  }
   }
 
-  for (const match of sql.matchAll(/create\s+materialized\s+view\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s+as\s+/gi)) {
+  for (const statement of statements.filter((entry) => /^\s*create\s+materialized\s+view\b/i.test(entry.text))) {
+  for (const match of statement.text.matchAll(/create\s+materialized\s+view\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s+as\s+/gi)) {
     const materializedView: SqlMaterializedView = { name: normalizeSqlName(match[1]), filePath };
     graph.materializedViews.push(materializedView);
-    remember({ kind: "materializedView", name: materializedView.name, action: "create" });
+    remember({ kind: "materializedView", name: materializedView.name, action: "create" }, statement.index + (match.index ?? 0));
+  }
   }
 
-  for (const match of sql.matchAll(/grant\s+([\w\s,]+?)\s+on\s+(?:(table|schema|sequence|function)\s+)?((?:"?[\w]+"?\.)?"?[\w]+"?)\s+to\s+("?[\w]+"?)/gi)) {
-    const grant: SqlGrant = {
-      privileges: splitCommaList(match[1]).map((privilege) => privilege.toLowerCase()),
-      objectType: match[2]?.toLowerCase(),
-      objectName: normalizeSqlName(match[3]),
-      grantee: normalizeSqlName(match[4]),
-      filePath
-    };
-    graph.grants.push(grant);
-    remember({ kind: "grant", name: `${grant.objectName} to ${grant.grantee}`, action: "grant" });
+  for (const statement of statements.filter((entry) => /^\s*grant\b/i.test(entry.text))) {
+  for (const match of statement.text.matchAll(/grant\s+([\w\s,]+?)\s+on\s+(?:(all\s+(tables|sequences|functions)\s+in\s+schema\s+("?[\w]+"?))|(?:(table|schema|sequence|function)\s+)?((?:"?[\w]+"?\.)?"?[\w]+"?))\s+to\s+([^;]+)/gi)) {
+    const privileges = splitCommaList(match[1]).map((privilege) => privilege.toLowerCase());
+    const objectType = match[2] ? `all ${match[3].toLowerCase()} in schema` : match[5]?.toLowerCase();
+    const objectName = normalizeSqlName(match[4] ?? match[6]);
+    for (const grantee of splitCommaList(match[7])) {
+      const grant: SqlGrant = {
+        privileges,
+        objectType,
+        objectName,
+        grantee,
+        filePath
+      };
+      graph.grants.push(grant);
+      remember({ kind: "grant", name: `${grant.objectName} to ${grant.grantee}`, action: "grant" }, statement.index + (match.index ?? 0));
+    }
+  }
   }
 
+  graph.history = history
+    .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name))
+    .map(({ position: _position, ...entry }, order) => ({ ...entry, order }));
   return graph;
 }
 

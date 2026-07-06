@@ -36,13 +36,13 @@ function parseArgs(argv) {
     if (arg === "--") {
       continue;
     } else if (arg === "--root") {
-      args.root = argv[++index];
+      args.root = readOptionValue(argv, ++index, "--root");
     } else if (arg === "--server") {
-      args.server = argv[++index];
+      args.server = readOptionValue(argv, ++index, "--server");
     } else if (arg === "--json") {
       args.json = true;
     } else if (arg === "--timeout") {
-      args.timeoutMs = Number(argv[++index]);
+      args.timeoutMs = Number(readOptionValue(argv, ++index, "--timeout"));
     } else if (arg === "--help" || arg === "-h") {
       console.log(usage());
       process.exit(0);
@@ -54,6 +54,14 @@ function parseArgs(argv) {
     throw new Error("--timeout must be an integer greater than or equal to 1000.");
   }
   return args;
+}
+
+function readOptionValue(argv, index, optionName) {
+  const value = argv[index];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${optionName} requires a value.\n${usage()}`);
+  }
+  return value;
 }
 
 function compactJson(value) {
@@ -179,30 +187,30 @@ async function runSmoke() {
     }
 
     const status = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_index_status", arguments: {} }),
+      await client.request("tools/call", { name: "tokengraph_index_status", arguments: { root } }),
       "tokengraph_index_status"
     );
     const map = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_project_map", arguments: {} }),
+      await client.request("tools/call", { name: "tokengraph_project_map", arguments: { root } }),
       "tokengraph_project_map"
     );
     const plan = assertToolResult(
       await client.request("tools/call", {
         name: "tokengraph_plan_context",
-        arguments: { task: "TokenGraph CLI smoke validation", maxFiles: 3, maxSqlObjects: 3, maxMemories: 0 }
+        arguments: { root, task: "TokenGraph CLI smoke validation", maxFiles: 3, maxSqlObjects: 3, maxMemories: 0 }
       }),
       "tokengraph_plan_context"
     );
     const savings = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_show_token_savings", arguments: {} }),
+      await client.request("tools/call", { name: "tokengraph_show_token_savings", arguments: { root } }),
       "tokengraph_show_token_savings"
     );
     const memoryReview = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_review_memories", arguments: { query: "smoke validation", limit: 5 } }),
+      await client.request("tools/call", { name: "tokengraph_review_memories", arguments: { root, query: "smoke validation", limit: 5 } }),
       "tokengraph_review_memories"
     );
     const projectMapExport = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_export_project_map", arguments: { format: "mermaid", limit: 25 } }),
+      await client.request("tools/call", { name: "tokengraph_export_project_map", arguments: { root, format: "mermaid", limit: 25 } }),
       "tokengraph_export_project_map"
     );
 
@@ -227,7 +235,8 @@ async function runSmoke() {
 
 runSmoke()
   .then((report) => {
-    if (parseArgs(process.argv.slice(2)).json) {
+    const args = parseArgs(process.argv.slice(2));
+    if (args.json) {
       console.log(JSON.stringify(report));
       return;
     }
