@@ -122,7 +122,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(1, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.5.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -135,7 +135,9 @@ describe("TokenGraph MCP stdio server", () => {
         "tokengraph_reset_project",
         "tokengraph_project_map",
         "tokengraph_plan_context",
-        "tokengraph_compress_output"
+        "tokengraph_compress_output",
+        "tokengraph_review_memories",
+        "tokengraph_export_project_map"
       ])
     );
 
@@ -205,6 +207,67 @@ describe("TokenGraph MCP stdio server", () => {
     });
   });
 
+  it("reviews memories and exports a visual project map over JSON-RPC stdio", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root);
+    await mkdir(join(root, "components"), { recursive: true });
+    await mkdir(join(root, "app", "patients"), { recursive: true });
+    await writeFile(join(root, "components", "PatientCard.tsx"), "export function PatientCard() { return <article />; }");
+    await writeFile(
+      join(root, "app", "patients", "page.tsx"),
+      [
+        "import { PatientCard } from '../../components/PatientCard';",
+        "export default function PatientsPage() {",
+        "  return <PatientCard />;",
+        "}"
+      ].join("\n")
+    );
+
+    await request(30, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    await request(31, "tools/call", {
+      name: "tokengraph_remember_decision",
+      arguments: {
+        type: "architecture",
+        title: "Patient summaries stay tenant scoped",
+        body: "Patient summary loading must stay tenant scoped and respect RLS policies.",
+        tags: ["patients", "summary", "rls"]
+      }
+    });
+
+    const review = await request(32, "tools/call", {
+      name: "tokengraph_review_memories",
+      arguments: { query: "patient summary tenant", limit: 3 }
+    });
+    expect(review.structuredContent).toMatchObject({
+      totalMemories: 1,
+      matches: [
+        expect.objectContaining({
+          title: "Patient summaries stay tenant scoped",
+          action: "keep"
+        })
+      ]
+    });
+
+    const exported = await request(33, "tools/call", {
+      name: "tokengraph_export_project_map",
+      arguments: { format: "mermaid", limit: 10 }
+    });
+    expect(exported.structuredContent).toMatchObject({
+      format: "mermaid",
+      nodeCount: 2,
+      edgeCount: 1
+    });
+    expect(JSON.stringify(exported.structuredContent)).toContain("flowchart LR");
+    expect(JSON.stringify(exported.structuredContent)).not.toContain("return <PatientCard");
+  });
+
   it("rejects roots outside the launched workspace", async () => {
     const root = await makeRoot();
     const outsideRoot = await makeRoot();
@@ -214,7 +277,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(10, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.5.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -245,7 +308,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(16, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.5.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -301,7 +364,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(12, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.5.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -348,7 +411,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(14, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.5.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
     });
     send({ method: "notifications/initialized" });
 

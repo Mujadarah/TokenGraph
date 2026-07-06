@@ -259,3 +259,31 @@ export interface CompressedOutput {
   omittedLineCount: number;
   estimatedTokens: TokenEstimate;
 }
+
+export interface MemoryReviewMatch {
+  id: string;
+  type: MemoryType;
+  title: string;
+  tags: string[];
+  createdAt: string;
+  score: number;
+  matchedTerms: string[];
+  action: "keep" | "review";
+  reason: string;
+}
+
+export interface MemoryReview {
+  query: string;
+  totalMemories: number;
+  matches: MemoryReviewMatch[];
+  policy: string;
+}
+
+export interface ProjectMapExport {
+  format: "mermaid" | "json";
+  root: string;
+  nodeCount: number;
+  edgeCount: number;
+  truncated: boolean;
+  content: string;
+}

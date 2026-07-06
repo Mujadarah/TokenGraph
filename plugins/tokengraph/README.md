@@ -2,7 +2,7 @@
 
 TokenGraph is a local-first Codex plugin that reduces wasted context by routing tasks through a compact project map before raw file reads.
 
-## What v0.6 includes
+## What v0.7 includes
 
 - Codex plugin manifest and repo-local marketplace entry.
 - Local stdio MCP server in Node/TypeScript.
@@ -21,6 +21,8 @@ TokenGraph is a local-first Codex plugin that reduces wasted context by routing 
 - Ordered SQL object history across migration files.
 - Planner, project map, search, and SQL summary support for v0.5 SQL object kinds.
 - Local memory storage in `.tokengraph/memory.json`.
+- Read-only memory review through `tokengraph_review_memories`.
+- Mermaid and JSON project map export through `tokengraph_export_project_map`.
 - Log/test/build/diff compression.
 - JSON-RPC stdio smoke coverage for the built MCP entry point.
 - CLI smoke command for local validation outside Codex.
@@ -80,7 +82,7 @@ The repo marketplace file is `.agents/plugins/marketplace.json`. Its `source.pat
 
 ## Privacy
 
-TokenGraph v0.6 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API.
+TokenGraph v0.7 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API.
 
 ## License
 

@@ -10,7 +10,9 @@ const requiredTools = [
   "tokengraph_index_status",
   "tokengraph_project_map",
   "tokengraph_plan_context",
-  "tokengraph_compress_output"
+  "tokengraph_compress_output",
+  "tokengraph_review_memories",
+  "tokengraph_export_project_map"
 ];
 
 function usage() {
@@ -165,7 +167,7 @@ async function runSmoke() {
     await client.request("initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-cli-smoke", version: "0.6.0" }
+      clientInfo: { name: "tokengraph-cli-smoke", version: "0.7.0" }
     });
     client.notify("notifications/initialized");
 
@@ -195,6 +197,14 @@ async function runSmoke() {
       await client.request("tools/call", { name: "tokengraph_show_token_savings", arguments: {} }),
       "tokengraph_show_token_savings"
     );
+    const memoryReview = assertToolResult(
+      await client.request("tools/call", { name: "tokengraph_review_memories", arguments: { query: "smoke validation", limit: 5 } }),
+      "tokengraph_review_memories"
+    );
+    const projectMapExport = assertToolResult(
+      await client.request("tools/call", { name: "tokengraph_export_project_map", arguments: { format: "mermaid", limit: 25 } }),
+      "tokengraph_export_project_map"
+    );
 
     return {
       status: "ok",
@@ -205,7 +215,10 @@ async function runSmoke() {
       filesIndexed: map.counts?.files ?? 0,
       symbolsIndexed: map.counts?.symbols ?? 0,
       recommendedFirstReads: plan.recommendedFirstReads ?? [],
-      estimatedTokensAvoided: savings.avoided ?? 0
+      estimatedTokensAvoided: savings.avoided ?? 0,
+      memoriesReviewed: memoryReview.totalMemories ?? 0,
+      exportedMapNodes: projectMapExport.nodeCount ?? 0,
+      exportedMapEdges: projectMapExport.edgeCount ?? 0
     };
   } finally {
     await client.close();

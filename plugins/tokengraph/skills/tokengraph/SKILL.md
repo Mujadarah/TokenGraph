@@ -18,7 +18,9 @@ For coding tasks in a project where TokenGraph MCP tools are available, use this
 5. Call `tokengraph_explain_symbol` before opening a file or symbol when inbound/outbound references would clarify the patch scope.
 6. If the task touches data, auth, reports, persistence, RLS, migrations, or database-backed UI, call `tokengraph_summarize_sql`.
 7. Compress long test, build, install, diff, or log output with `tokengraph_compress_output` before using it as context.
-8. Store durable project decisions only when they are deliberate and useful with `tokengraph_remember_decision`.
+8. Review local memories with `tokengraph_review_memories` before relying on older or broad memory entries.
+9. Export compact graph visuals with `tokengraph_export_project_map` when a diagram would clarify project structure.
+10. Store durable project decisions only when they are deliberate and useful with `tokengraph_remember_decision`.
 
 If the TokenGraph MCP tools are not exposed in the current thread, say that briefly, then fall back to narrow `rg`/file reads. Do not pretend TokenGraph was used.
 

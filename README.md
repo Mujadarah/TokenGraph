@@ -18,7 +18,7 @@ Large coding sessions often waste tokens by repeatedly reading files, logs, migr
 
 ## Current Version
 
-TokenGraph is currently at `0.6.0`.
+TokenGraph is currently at `0.7.0`.
 
 Highlights:
 
@@ -39,6 +39,8 @@ Highlights:
 - CLI smoke command for validating the built MCP server outside Codex.
 - Fixture-backed scanner and planner regression projects.
 - Local plugin validator.
+- Read-only memory review so Codex can inspect local project memories before relying on them.
+- Mermaid or JSON project map export for compact visual graph review without raw source content.
 
 ## Repository Layout
 
@@ -104,6 +106,8 @@ TokenGraph exposes these MCP tools:
 - `tokengraph_summarize_sql`
 - `tokengraph_compress_output`
 - `tokengraph_remember_decision`
+- `tokengraph_review_memories`
+- `tokengraph_export_project_map`
 - `tokengraph_show_token_savings`
 
 ## Roadmap

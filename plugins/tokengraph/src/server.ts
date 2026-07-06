@@ -11,6 +11,7 @@ import { MemoryStore } from "./core/memoryStore.js";
 import { buildContextPlan } from "./core/planner.js";
 import { indexProject } from "./core/projectIndexer.js";
 import { clearProjectIndex, clearProjectState, loadProjectIndex, memoryPath, saveProjectIndex } from "./core/persistence.js";
+import { exportProjectMap, reviewMemories } from "./core/review.js";
 import { estimateTokens, tokenize } from "./core/token.js";
 import type { ProjectIndex, RankedSqlObject } from "./core/types.js";
 
@@ -229,7 +230,7 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
 }
 
 export function createTokenGraphServer(): McpServer {
-  const server = new McpServer({ name: "tokengraph", version: "0.6.0" });
+  const server = new McpServer({ name: "tokengraph", version: "0.7.0" });
 
   server.registerTool(
     "tokengraph_index_project",
@@ -415,6 +416,43 @@ export function createTokenGraphServer(): McpServer {
       const resolvedRoot = await workspaceRoot(root);
       const entry = await new MemoryStore(memoryPath(resolvedRoot)).add({ type, title, body, tags });
       return ok({ status: "remembered", memory: entry });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_review_memories",
+    {
+      title: "Review Memories",
+      description: "Use this to review local TokenGraph memories before relying on them. This is read-only and never edits memory state.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        query: z.string().optional().describe("Optional review focus. Empty query returns recent memories for manual review."),
+        limit: z.number().int().min(1).max(100).optional()
+      })
+    },
+    async ({ root, query, limit }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+      return ok(await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 }));
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_export_project_map",
+    {
+      title: "Export Project Map",
+      description: "Use this to export a compact visual project map without raw source content.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        format: z.enum(["mermaid", "json"]).default("mermaid"),
+        limit: z.number().int().min(1).max(200).optional()
+      })
+    },
+    async ({ root, format, limit }) => {
+      const project = await ensureProject(await workspaceRoot(root));
+      return ok(exportProjectMap(project, { format, limit: limit ?? 50 }));
     }
   );
 

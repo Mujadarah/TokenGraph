@@ -11,6 +11,7 @@ import { clearProjectIndex, indexPath, memoryPath, saveProjectIndex } from "../s
 import { indexProject } from "../src/core/projectIndexer.js";
 import { getIndexStatus } from "../src/core/indexStatus.js";
 import { parsePostgresMigration } from "../src/core/sqlParser.js";
+import { exportProjectMap, reviewMemories } from "../src/core/review.js";
 
 const tempRoots: string[] = [];
 
@@ -669,5 +670,68 @@ describe("MemoryStore", () => {
     expect(result).toHaveLength(1);
     expect(result[0].title).toBe("Use server actions for patient mutations");
     expect(raw[0]).toMatchObject({ type: "convention", title: "Use server actions for patient mutations" });
+  });
+});
+
+describe("v0.7 review and export helpers", () => {
+  it("reviews stored memories without mutating local memory state", async () => {
+    const root = await makeRoot();
+    const store = new MemoryStore(memoryPath(root));
+    const unrelated = await store.add({
+      type: "convention",
+      title: "Billing export names",
+      body: "Billing exports use month suffixes.",
+      tags: ["billing"]
+    });
+    const relevant = await store.add({
+      type: "architecture",
+      title: "Patient summaries stay tenant scoped",
+      body: "Patient summary loading must stay tenant scoped and respect RLS policies.",
+      tags: ["patients", "summary", "rls"]
+    });
+
+    const review = await reviewMemories({
+      memories: await store.list(),
+      query: "patient summary tenant rls",
+      limit: 5
+    });
+
+    expect(review.totalMemories).toBe(2);
+    expect(review.query).toBe("patient summary tenant rls");
+    expect(review.matches[0]).toMatchObject({
+      id: relevant.id,
+      title: "Patient summaries stay tenant scoped",
+      action: "keep"
+    });
+    expect(review.matches.map((match) => match.id)).toContain(unrelated.id);
+    expect(review.policy).toMatch(/does not modify/i);
+    await expect(store.list()).resolves.toHaveLength(2);
+  });
+
+  it("exports a compact Mermaid project map without raw source content", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "app", "patients"), { recursive: true });
+    await mkdir(join(root, "components"), { recursive: true });
+    await writeFile(join(root, "components", "PatientCard.tsx"), "export function PatientCard() { return <article />; }");
+    await writeFile(
+      join(root, "app", "patients", "page.tsx"),
+      [
+        "import { PatientCard } from '../../components/PatientCard';",
+        "export default function PatientsPage() {",
+        "  return <PatientCard />;",
+        "}"
+      ].join("\n")
+    );
+
+    const project = await indexProject(root);
+    const exported = exportProjectMap(project, { format: "mermaid", limit: 10 });
+
+    expect(exported.format).toBe("mermaid");
+    expect(exported.nodeCount).toBe(2);
+    expect(exported.edgeCount).toBe(1);
+    expect(exported.content).toContain("flowchart LR");
+    expect(exported.content).toContain("app/patients/page.tsx");
+    expect(exported.content).toContain("components/PatientCard.tsx");
+    expect(exported.content).not.toContain("return <PatientCard");
   });
 });

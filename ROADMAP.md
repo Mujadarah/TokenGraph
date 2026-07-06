@@ -61,12 +61,19 @@ Status: complete
 - Installation guide for local marketplace setup.
 - Troubleshooting guide for missing MCP tools, stale indexes, and plugin build failures.
 
+## v0.7 - Review And Export
+
+Status: complete
+
+- Read-only memory review workflow so Codex can inspect, rank, and question local memories before relying on them.
+- Mermaid and JSON project map export for compact visual graph review without raw source content.
+- MCP smoke and CLI smoke coverage for the new review/export tools.
+- Plugin validation checks for the v0.7 tool surface and built MCP server metadata.
+
 ## Later
 
 Ideas under consideration:
 
 - Incremental indexing.
 - Language support beyond TypeScript/JavaScript and PostgreSQL.
-- Optional visual project map export.
-- Optional user-approved memory review workflow.
 - Public release packaging that does not require committing build output.
