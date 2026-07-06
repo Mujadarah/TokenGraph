@@ -48,7 +48,7 @@ const distServer = await readFile(distServerPath, "utf8").catch((error) => fail(
 assert(packageJson.name === "tokengraph", "package name must be tokengraph");
 assert(/^\d+\.\d+\.\d+$/.test(packageJson.version), "package version must be semver");
 assert(manifest.name === "tokengraph", "plugin manifest name must be tokengraph");
-assert(manifest.version === packageJson.version, "plugin manifest version must match package version");
+assert(manifest.version?.split("+", 1)[0] === packageJson.version, "plugin manifest base version must match package version");
 assert(manifest.skills === "./skills/", "plugin manifest must point skills to ./skills/");
 assert(manifest.mcpServers === "./.mcp.json", "plugin manifest must point mcpServers to ./.mcp.json");
 assert(mcp.mcpServers?.tokengraph?.command === "node", "tokengraph MCP command must be node");
@@ -56,6 +56,7 @@ assert(
   Array.isArray(mcp.mcpServers.tokengraph.args) && mcp.mcpServers.tokengraph.args.includes("./dist/index.js"),
   "tokengraph MCP args must include ./dist/index.js"
 );
+assert(mcp.mcpServers.tokengraph.cwd === ".", "tokengraph MCP cwd must be plugin root");
 assert(/^---\s*\nname:\s*tokengraph\s*\n/m.test(skill), "TokenGraph skill frontmatter must name tokengraph");
 assert(/description:\s*\S+/m.test(skill), "TokenGraph skill frontmatter must include a description");
 assert(distServer.includes("tokengraph_index_status"), "built MCP server must register tokengraph_index_status");

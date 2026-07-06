@@ -24,6 +24,22 @@ afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+describe("plugin configuration", () => {
+  it("uses Codex plugin MCP server shape", async () => {
+    const mcp = JSON.parse(await readFile(".mcp.json", "utf8")) as {
+      mcpServers?: {
+        tokengraph?: { command?: string; args?: string[]; cwd?: string };
+      };
+    };
+
+    expect(mcp.mcpServers?.tokengraph).toMatchObject({
+      command: "node",
+      args: ["./dist/index.js"],
+      cwd: "."
+    });
+  });
+});
+
 describe("scanProject", () => {
   it("extracts compact TypeScript graph data and excludes secrets and dependency output", async () => {
     const root = await makeRoot();
