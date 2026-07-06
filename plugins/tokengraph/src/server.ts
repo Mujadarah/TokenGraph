@@ -7,21 +7,16 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import { compressOutput } from "./core/compressor.js";
+import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } from "./core/config.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
 import { MemoryStore } from "./core/memoryStore.js";
 import { buildContextPlan } from "./core/planner.js";
-import { indexProject } from "./core/projectIndexer.js";
+import { indexProject, updateProjectIndexIncremental } from "./core/projectIndexer.js";
 import { clearProjectIndex, clearProjectState, loadProjectIndex, memoryPath, saveProjectIndex } from "./core/persistence.js";
 import { exportProjectMap, reviewMemories } from "./core/review.js";
 import { estimateTokens, tokenize } from "./core/token.js";
 import type { ProjectIndex, RankedSqlObject } from "./core/types.js";
-
-const DEFAULT_BUDGET = {
-  maxFiles: 6,
-  maxSqlObjects: 6,
-  maxMemories: 4
-};
 
 async function workspaceRoot(inputRoot?: string): Promise<string> {
   const allowedRoot = await realpath(process.cwd());
@@ -77,7 +72,8 @@ async function ensureProject(root: string): Promise<ProjectIndex> {
     if (existing.scanSignature === currentScanSignature) {
       return existing;
     }
-    const current = await indexProject(root, { scanSignature: currentScanSignature });
+    const updated = await updateProjectIndexIncremental(root, existing);
+    const current = updated.index;
     if (isFreshProjectIndex(existing, current)) {
       return existing;
     }
@@ -288,7 +284,7 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
 }
 
 export function createTokenGraphServer(): McpServer {
-  const server = new McpServer({ name: "tokengraph", version: "0.7.0" });
+  const server = new McpServer({ name: "tokengraph", version: "0.8.0" });
 
   server.registerTool(
     "tokengraph_index_project",
@@ -297,14 +293,37 @@ export function createTokenGraphServer(): McpServer {
       description: "Use this when Codex needs a compact local project map before reading raw files.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({
-        root: z.string().optional().describe("Workspace root to index. Defaults to the MCP server current working directory.")
+        root: z.string().optional().describe("Workspace root to index. Defaults to the MCP server current working directory."),
+        fullReindex: z.boolean().optional().describe("Force a complete rebuild instead of using compatible incremental index data.")
       })
     },
-    async ({ root }) => {
+    async ({ root, fullReindex }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const project = await indexProject(resolvedRoot);
+      const existing = fullReindex ? undefined : await loadProjectIndex(resolvedRoot);
+      const result = existing && isSafeProjectIndex(resolvedRoot, existing)
+        ? await updateProjectIndexIncremental(resolvedRoot, existing)
+        : {
+            index: await indexProject(resolvedRoot),
+            mode: "full" as const,
+            addedFiles: [],
+            changedFiles: [],
+            deletedFiles: [],
+            parsedFiles: []
+          };
+      const project = result.index;
       await saveProjectIndex(resolvedRoot, project);
-      return ok({ status: "indexed", map: projectMap(project), exclusions: project.exclusions.slice(0, 25) });
+      return ok({
+        status: "indexed",
+        indexingMode: fullReindex ? "full" : result.mode,
+        changes: {
+          addedFiles: result.addedFiles,
+          changedFiles: result.changedFiles,
+          deletedFiles: result.deletedFiles,
+          parsedFiles: result.parsedFiles
+        },
+        map: projectMap(project),
+        exclusions: project.exclusions.slice(0, 25)
+      });
     }
   );
 
@@ -344,6 +363,55 @@ export function createTokenGraphServer(): McpServer {
   );
 
   server.registerTool(
+    "tokengraph_get_config",
+    {
+      title: "Get TokenGraph Config",
+      description: "Use this to read local TokenGraph settings from .tokengraph/config.json.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory.")
+      })
+    },
+    async ({ root }) => ok(await loadTokenGraphConfig(await workspaceRoot(root)))
+  );
+
+  server.registerTool(
+    "tokengraph_set_profile",
+    {
+      title: "Set Token Saving Profile",
+      description: "Use this to switch the active local token-saving profile.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        profile: z.enum(["conservative", "balanced", "aggressive"])
+      })
+    },
+    async ({ root, profile }) => ok({ status: "updated", config: await setTokenSavingProfile(await workspaceRoot(root), profile) })
+  );
+
+  server.registerTool(
+    "tokengraph_update_config",
+    {
+      title: "Update TokenGraph Config",
+      description: "Use this to update explicit local TokenGraph settings while preserving unspecified defaults.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        tokenSavingProfile: z.enum(["conservative", "balanced", "aggressive"]).optional(),
+        maxFiles: z.number().int().min(1).max(50).optional(),
+        maxSqlObjects: z.number().int().min(0).max(50).optional(),
+        maxMemories: z.number().int().min(0).max(50).optional(),
+        maxPlannedContextTokens: z.number().int().min(1).optional(),
+        rawReadWarningThreshold: z.number().int().min(1).optional(),
+        sqlIndexingEnabled: z.boolean().optional(),
+        memoryEnabled: z.boolean().optional(),
+        wikiGenerationEnabled: z.boolean().optional()
+      })
+    },
+    async ({ root, ...update }) => ok({ status: "updated", config: await updateTokenGraphConfig(await workspaceRoot(root), update) })
+  );
+
+  server.registerTool(
     "tokengraph_project_map",
     {
       title: "Show Project Map",
@@ -370,25 +438,33 @@ export function createTokenGraphServer(): McpServer {
       inputSchema: z.object({
         root: z.string().optional(),
         task: z.string().min(3).describe("The coding task or question to route."),
+        profile: z.enum(["conservative", "balanced", "aggressive"]).optional(),
         maxFiles: z.number().int().min(1).max(20).optional(),
         maxSqlObjects: z.number().int().min(0).max(20).optional(),
-        maxMemories: z.number().int().min(0).max(20).optional()
+        maxMemories: z.number().int().min(0).max(20).optional(),
+        maxEstimatedTokens: z.number().int().min(1).optional(),
+        allowRawReads: z.boolean().optional()
       })
     },
-    async ({ root, task, maxFiles, maxSqlObjects, maxMemories }) => {
+    async ({ root, task, profile, maxFiles, maxSqlObjects, maxMemories, maxEstimatedTokens, allowRawReads }) => {
       const resolvedRoot = await workspaceRoot(root);
+      const config = await loadTokenGraphConfig(resolvedRoot);
       const project = await ensureProject(resolvedRoot);
       const memory = new MemoryStore(memoryPath(resolvedRoot));
-      const memories = await memory.search(task, maxMemories ?? DEFAULT_BUDGET.maxMemories);
+      const memories = config.memoryEnabled ? await memory.search(task, maxMemories ?? 20) : [];
       const plan = await buildContextPlan({
         root: resolvedRoot,
         task,
         project,
         memories,
         budget: {
-          maxFiles: maxFiles ?? DEFAULT_BUDGET.maxFiles,
-          maxSqlObjects: maxSqlObjects ?? DEFAULT_BUDGET.maxSqlObjects,
-          maxMemories: maxMemories ?? DEFAULT_BUDGET.maxMemories
+          profile: profile ?? config.tokenSavingProfile,
+          maxFiles,
+          maxSqlObjects,
+          maxMemories,
+          maxEstimatedTokens,
+          rawReadWarningThreshold: undefined,
+          allowRawReads
         }
       });
       return ok(plan);

@@ -2,7 +2,7 @@
 
 TokenGraph is a local-first Codex plugin that reduces wasted context by routing tasks through a compact project map before raw file reads.
 
-## What v0.7 includes
+## What v0.8 includes
 
 - Codex plugin manifest and repo-local marketplace entry.
 - Local stdio MCP server in Node/TypeScript.
@@ -12,6 +12,12 @@ TokenGraph is a local-first Codex plugin that reduces wasted context by routing 
 - Root `.gitignore` support during project scanning.
 - Project fingerprints stored with each index.
 - Index freshness status for missing, fresh, and stale persisted indexes.
+- Incremental indexing for compatible persisted indexes.
+- `fullReindex` support when a complete rebuild is required.
+- Local config stored at `.tokengraph/config.json`.
+- Config tools: `tokengraph_get_config`, `tokengraph_set_profile`, and `tokengraph_update_config`.
+- Token-saving profiles: `conservative`, `balanced`, and `aggressive`.
+- Profile-aware context planning with estimated token budgets and raw-read warning thresholds.
 - Reset controls that clear only `index.json` by default or all `.tokengraph/` state when explicitly requested.
 - Context planner that returns likely files, tests, SQL objects, ranked memories, first reads with safe line hints, files to avoid, and estimated token savings.
 - Relevance scoring that avoids selecting unrelated route files with no task overlap.
@@ -70,7 +76,7 @@ Then install `tokengraph` from that marketplace and start a new Codex thread so 
 
 ### Stale indexes
 
-Call `tokengraph_index_status` before trusting cached context. If it reports `stale`, call `tokengraph_index_project`. If the index looks corrupt, call `tokengraph_reset_project` with `mode: "index"`; this preserves memories by default.
+Call `tokengraph_index_status` before trusting cached context. If it reports `stale`, call `tokengraph_index_project`; compatible indexes update incrementally. Pass `fullReindex: true` only when you need a complete rebuild. If the index looks corrupt, call `tokengraph_reset_project` with `mode: "index"`; this preserves memories by default.
 
 ### Plugin build failures
 
@@ -82,7 +88,7 @@ The repo marketplace file is `.agents/plugins/marketplace.json`. Its `source.pat
 
 ## Privacy
 
-TokenGraph v0.7 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API.
+TokenGraph v0.8 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API. Token counts and savings are estimates, not exact measurements.
 
 ## License
 

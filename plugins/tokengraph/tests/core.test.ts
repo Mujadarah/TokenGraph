@@ -4,11 +4,18 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compressOutput } from "../src/core/compressor.js";
+import {
+  DEFAULT_TOKEN_GRAPH_CONFIG,
+  PROFILE_DEFAULTS,
+  loadTokenGraphConfig,
+  setTokenSavingProfile,
+  updateTokenGraphConfig
+} from "../src/core/config.js";
 import { scanProject } from "../src/core/fileScanner.js";
 import { MemoryStore } from "../src/core/memoryStore.js";
 import { buildContextPlan } from "../src/core/planner.js";
-import { clearProjectIndex, indexPath, loadProjectIndex, memoryPath, saveProjectIndex } from "../src/core/persistence.js";
-import { indexProject } from "../src/core/projectIndexer.js";
+import { clearProjectIndex, configPath, indexPath, loadProjectIndex, memoryPath, saveProjectIndex } from "../src/core/persistence.js";
+import { CURRENT_INDEX_SCHEMA_VERSION, indexProject, updateProjectIndexIncremental } from "../src/core/projectIndexer.js";
 import { getIndexStatus } from "../src/core/indexStatus.js";
 import { parsePostgresMigration } from "../src/core/sqlParser.js";
 import { exportProjectMap, reviewMemories } from "../src/core/review.js";
@@ -38,6 +45,50 @@ describe("plugin configuration", () => {
       command: "node",
       args: ["./dist/index.js"],
       cwd: "."
+    });
+  });
+});
+
+describe("TokenGraph local config", () => {
+  it("creates balanced defaults when no config file exists", async () => {
+    const root = await makeRoot();
+
+    const config = await loadTokenGraphConfig(root);
+
+    expect(config).toEqual(DEFAULT_TOKEN_GRAPH_CONFIG);
+    expect(config).toMatchObject({
+      tokenSavingProfile: "balanced",
+      maxFiles: 6,
+      maxSqlObjects: 6,
+      maxMemories: 4,
+      maxPlannedContextTokens: 8000,
+      rawReadWarningThreshold: 8000,
+      sqlIndexingEnabled: true,
+      memoryEnabled: true,
+      wikiGenerationEnabled: false
+    });
+    expect(JSON.parse(await readFile(configPath(root), "utf8"))).toEqual(DEFAULT_TOKEN_GRAPH_CONFIG);
+  });
+
+  it("updates profile and explicit settings while preserving unspecified defaults", async () => {
+    const root = await makeRoot();
+
+    const profiled = await setTokenSavingProfile(root, "aggressive");
+    const updated = await updateTokenGraphConfig(root, {
+      maxFiles: 8,
+      maxPlannedContextTokens: 6400,
+      sqlIndexingEnabled: false
+    });
+
+    expect(profiled.tokenSavingProfile).toBe("aggressive");
+    expect(updated).toMatchObject({
+      tokenSavingProfile: "aggressive",
+      maxFiles: 8,
+      maxSqlObjects: DEFAULT_TOKEN_GRAPH_CONFIG.maxSqlObjects,
+      maxMemories: DEFAULT_TOKEN_GRAPH_CONFIG.maxMemories,
+      maxPlannedContextTokens: 6400,
+      sqlIndexingEnabled: false,
+      memoryEnabled: true
     });
   });
 });
@@ -540,6 +591,8 @@ describe("indexProject", () => {
     await writeFile(join(root, "src", "patientSummary.ts"), "export const patientSummary = 'new';");
     const second = await indexProject(root);
 
+    expect(first.schemaVersion).toBe(CURRENT_INDEX_SCHEMA_VERSION);
+    expect(first.scanMetadata?.files["src/patientSummary.ts"]).toMatchObject({ path: "src/patientSummary.ts" });
     expect(first.fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(second.fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(second.fingerprint).not.toBe(first.fingerprint);
@@ -569,6 +622,81 @@ describe("indexProject", () => {
         action: "create"
       })
     ]);
+  });
+
+  it("updates only changed TypeScript files during incremental indexing", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function patientSummaryOld() { return 'old'; }");
+    await writeFile(join(root, "src", "billing.ts"), "export function billingExport() { return true; }");
+
+    const first = await indexProject(root);
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function patientSummaryNew() { return 'new'; }");
+
+    const result = await updateProjectIndexIncremental(root, first);
+
+    expect(result.mode).toBe("incremental");
+    expect(result.changedFiles).toEqual(["src/patientSummary.ts"]);
+    expect(result.addedFiles).toEqual([]);
+    expect(result.deletedFiles).toEqual([]);
+    expect(result.parsedFiles).toEqual(["src/patientSummary.ts"]);
+    expect(result.index.symbols).toContainEqual(expect.objectContaining({ filePath: "src/patientSummary.ts", name: "patientSummaryNew" }));
+    expect(result.index.symbols).not.toContainEqual(expect.objectContaining({ filePath: "src/patientSummary.ts", name: "patientSummaryOld" }));
+    expect(result.index.files.find((file) => file.path === "src/billing.ts")?.contentHash).toBe(
+      first.files.find((file) => file.path === "src/billing.ts")?.contentHash
+    );
+  });
+
+  it("removes deleted files and their graph data during incremental indexing", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function patientSummary() { return true; }");
+    await writeFile(join(root, "src", "patientPage.ts"), "import { patientSummary } from './patientSummary'; export function patientPage() { return patientSummary(); }");
+
+    const first = await indexProject(root);
+    await rm(join(root, "src", "patientSummary.ts"));
+
+    const result = await updateProjectIndexIncremental(root, first);
+
+    expect(result.mode).toBe("incremental");
+    expect(result.deletedFiles).toEqual(["src/patientSummary.ts"]);
+    expect(result.index.files.map((file) => file.path)).not.toContain("src/patientSummary.ts");
+    expect(result.index.symbols.map((symbol) => symbol.filePath)).not.toContain("src/patientSummary.ts");
+    const importEdge = result.index.imports.find((edge) => edge.filePath === "src/patientPage.ts" && edge.source === "./patientSummary");
+    expect(importEdge).toBeDefined();
+    expect(importEdge?.resolvedPath).toBeUndefined();
+  });
+
+  it("re-parses only changed SQL migrations during incremental indexing", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await writeFile(join(root, "supabase", "migrations", "001_patients.sql"), "create table public.patients (id uuid primary key);");
+    await writeFile(join(root, "supabase", "migrations", "002_policy.sql"), `create policy "old patient policy" on public.patients for select using (true);`);
+
+    const first = await indexProject(root);
+    await writeFile(join(root, "supabase", "migrations", "002_policy.sql"), `create policy "new patient policy" on public.patients for select using (true);`);
+
+    const result = await updateProjectIndexIncremental(root, first);
+
+    expect(result.mode).toBe("incremental");
+    expect(result.parsedFiles).toEqual(["supabase/migrations/002_policy.sql"]);
+    expect(result.index.sql.tables).toContainEqual(expect.objectContaining({ name: "public.patients" }));
+    expect(result.index.sql.policies).toContainEqual(expect.objectContaining({ name: "new patient policy" }));
+    expect(result.index.sql.policies).not.toContainEqual(expect.objectContaining({ name: "old patient policy" }));
+  });
+
+  it("falls back to full reindex when stored schema metadata is incompatible", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function patientSummary() { return true; }");
+
+    const first = await indexProject(root);
+    const result = await updateProjectIndexIncremental(root, { ...first, schemaVersion: 0, scanMetadata: undefined });
+
+    expect(result.mode).toBe("full");
+    expect(result.fallbackReason).toMatch(/schema/i);
+    expect(result.index.schemaVersion).toBe(CURRENT_INDEX_SCHEMA_VERSION);
+    expect(result.index.files.map((file) => file.path)).toEqual(["src/patientSummary.ts"]);
   });
 });
 
@@ -638,6 +766,110 @@ describe("index status and reset", () => {
 });
 
 describe("buildContextPlan", () => {
+  it("uses token-saving profiles to change context breadth and first reads", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "services"), { recursive: true });
+    for (let index = 1; index <= 8; index += 1) {
+      await writeFile(join(root, "services", `patientSummary${index}.ts`), `export function patientSummary${index}() { return ${index}; }`);
+    }
+
+    const project = await indexProject(root);
+    const aggressive = await buildContextPlan({
+      root,
+      task: "Fix patient summary",
+      project,
+      memories: [],
+      budget: { profile: "aggressive" }
+    });
+    const balanced = await buildContextPlan({
+      root,
+      task: "Fix patient summary",
+      project,
+      memories: [],
+      budget: { profile: "balanced" }
+    });
+    const conservative = await buildContextPlan({
+      root,
+      task: "Fix patient summary",
+      project,
+      memories: [],
+      budget: { profile: "conservative" }
+    });
+
+    expect(PROFILE_DEFAULTS.aggressive.maxFiles).toBe(3);
+    expect(PROFILE_DEFAULTS.balanced.maxFiles).toBe(6);
+    expect(PROFILE_DEFAULTS.conservative.maxFiles).toBe(10);
+    expect(aggressive.profile).toBe("aggressive");
+    expect(aggressive.relevantFiles).toHaveLength(3);
+    expect(aggressive.recommendedFirstReads.length).toBeLessThanOrEqual(2);
+    expect(balanced.relevantFiles).toHaveLength(6);
+    expect(balanced.recommendedFirstReads.length).toBeLessThanOrEqual(3);
+    expect(conservative.relevantFiles).toHaveLength(8);
+    expect(conservative.recommendedFirstReads.length).toBeLessThanOrEqual(5);
+    expect(aggressive.rawReadPolicy).toContain("4000");
+  });
+
+  it("lets explicit planner budgets override profile defaults", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "services"), { recursive: true });
+    for (let index = 1; index <= 6; index += 1) {
+      await writeFile(join(root, "services", `patientSummary${index}.ts`), `export function patientSummary${index}() { return ${index}; }`);
+    }
+
+    const project = await indexProject(root);
+    const plan = await buildContextPlan({
+      root,
+      task: "Fix patient summary",
+      project,
+      memories: [],
+      budget: {
+        profile: "aggressive",
+        maxFiles: 5,
+        maxSqlObjects: 0,
+        maxMemories: 0,
+        firstReads: 4,
+        maxEstimatedTokens: 5000,
+        allowRawReads: false
+      }
+    });
+
+    expect(plan.profile).toBe("aggressive");
+    expect(plan.relevantFiles).toHaveLength(5);
+    expect(plan.recommendedFirstReads).toHaveLength(4);
+    expect(plan.budget.maxFiles).toBe(5);
+    expect(plan.budget.maxEstimatedTokens).toBe(5000);
+    expect(plan.rawReadPolicy).toMatch(/Do not read broad raw files/i);
+    expect(plan.budgetExclusions.length).toBeGreaterThan(0);
+  });
+
+  it("trims lower-priority context when a compact plan exceeds the estimated token budget", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "services"), { recursive: true });
+    for (let index = 1; index <= 6; index += 1) {
+      await writeFile(join(root, "services", `patientSummary${index}.ts`), `export function patientSummary${index}() { return ${index}; }`);
+    }
+
+    const project = await indexProject(root);
+    const plan = await buildContextPlan({
+      root,
+      task: "Fix patient summary",
+      project,
+      memories: [],
+      budget: {
+        profile: "conservative",
+        maxFiles: 6,
+        maxSqlObjects: 0,
+        maxMemories: 0,
+        firstReads: 5,
+        maxEstimatedTokens: 120
+      }
+    });
+
+    expect(plan.relevantFiles.length).toBeLessThan(6);
+    expect(plan.budgetExclusions).toEqual(expect.arrayContaining([expect.stringMatching(/estimated context budget/i)]));
+    expect(plan.estimatedTokens.compressed).toBeGreaterThan(0);
+  });
+
   it("plans context from the Next.js Supabase fixture project", async () => {
     const root = resolve("tests", "fixtures", "next-supabase");
 

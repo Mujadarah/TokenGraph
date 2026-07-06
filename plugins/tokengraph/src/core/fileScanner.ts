@@ -5,7 +5,7 @@ import { basename, dirname, extname, join, normalize, relative, sep } from "node
 
 import type { Ignore } from "ignore";
 
-import type { CodeFile, CodeGraph, CodeSymbol, Exclusion, FileKind, ImportEdge } from "./types.js";
+import type { CodeFile, CodeGraph, CodeSymbol, Exclusion, FileKind, FileScanMetadata, ImportEdge } from "./types.js";
 import { estimateTokens } from "./token.js";
 
 const DEPENDENCY_DIRS = new Set(["node_modules", "vendor", "bower_components"]);
@@ -35,6 +35,19 @@ interface WalkState {
   directories: number;
   totalBytes: number;
   onFileContent?: (file: { path: string; language: string; content: string }) => void;
+}
+
+export interface ProjectFileMetadataScan {
+  files: FileScanMetadata[];
+  exclusions: Exclusion[];
+  scanSignature: string;
+}
+
+export interface ParsedProjectFile {
+  file: CodeFile;
+  imports: ImportEdge[];
+  symbols: CodeSymbol[];
+  content: string;
 }
 
 function normalizePath(path: string): string {
@@ -290,11 +303,16 @@ function candidatePathsForBase(root: string, basePath: string): string[] {
 function resolveLocalImports(root: string, graph: CodeGraph): void {
   const indexedPaths = new Set(graph.files.map((file) => file.path));
   for (const edge of graph.imports) {
+    delete edge.resolvedPath;
     const resolvedPath = candidateImportPaths(root, edge.filePath, edge.source).find((candidate) => indexedPaths.has(candidate));
     if (resolvedPath) {
       edge.resolvedPath = resolvedPath;
     }
   }
+}
+
+export function resolveProjectImports(root: string, graph: CodeGraph): void {
+  resolveLocalImports(root, graph);
 }
 
 function budgetFromOptions(options?: ScanBudget): Required<Omit<ScanBudget, "onFileContent">> {
@@ -426,8 +444,14 @@ export async function scanProject(root: string, options?: ScanBudget): Promise<C
 }
 
 export async function scanProjectSignature(root: string, options?: ScanBudget): Promise<string> {
+  return (await scanProjectFileMetadata(root, options)).scanSignature;
+}
+
+export async function scanProjectFileMetadata(root: string, options?: ScanBudget): Promise<ProjectFileMetadataScan> {
   const ignoreMatcher = await loadRootIgnore(root);
   const rows: Array<Record<string, unknown>> = [];
+  const files: FileScanMetadata[] = [];
+  const exclusions: Exclusion[] = [];
   const budget = budgetFromOptions(options);
   let directories = 0;
   let fileCount = 0;
@@ -449,20 +473,24 @@ export async function scanProjectSignature(root: string, options?: ScanBudget): 
       const ignorePath = entry.isDirectory() ? `${relativePath}/` : relativePath;
       if (relativePath && ignoreMatcher.ignores(ignorePath)) {
         rows.push({ path: relativePath, reason: "ignored" });
+        exclusions.push({ path: relativePath, reason: "ignored" });
         continue;
       }
       const exclusionReason = exclusionForName(entry.name);
       if (exclusionReason) {
         rows.push({ path: relativePath, reason: exclusionReason });
+        exclusions.push({ path: relativePath, reason: exclusionReason });
         continue;
       }
       if (entry.name.startsWith(".")) {
         rows.push({ path: relativePath, reason: "hidden" });
+        exclusions.push({ path: relativePath, reason: "hidden" });
         continue;
       }
       if (entry.isDirectory()) {
         if (depth + 1 > budget.maxDepth || directories >= budget.maxDirectories) {
           rows.push({ path: relativePath, reason: "budget" });
+          exclusions.push({ path: relativePath, reason: "budget" });
           continue;
         }
         directories += 1;
@@ -473,6 +501,7 @@ export async function scanProjectSignature(root: string, options?: ScanBudget): 
       const extension = extname(entry.name).toLowerCase();
       if (!SUPPORTED_EXTENSIONS.has(extension)) {
         rows.push({ path: relativePath, reason: "unsupported" });
+        exclusions.push({ path: relativePath, reason: "unsupported" });
         continue;
       }
       let fileStat;
@@ -480,25 +509,83 @@ export async function scanProjectSignature(root: string, options?: ScanBudget): 
         fileStat = await stat(absolute, { bigint: true });
       } catch {
         rows.push({ path: relativePath, reason: "unreadable" });
+        exclusions.push({ path: relativePath, reason: "unreadable" });
         continue;
       }
       const size = Number(fileStat.size);
       if (fileCount >= budget.maxFiles || totalBytes + size > budget.maxTotalBytes) {
         rows.push({ path: relativePath, reason: "budget" });
+        exclusions.push({ path: relativePath, reason: "budget" });
         continue;
       }
       if (size > MAX_INDEXED_BYTES) {
         rows.push({ path: relativePath, reason: "large-file" });
+        exclusions.push({ path: relativePath, reason: "large-file" });
         continue;
       }
-      rows.push({ path: relativePath, size, mtimeNs: fileStat.mtimeNs.toString(), ctimeNs: fileStat.ctimeNs.toString() });
+      let content;
+      try {
+        content = await readFile(absolute, "utf8");
+      } catch {
+        rows.push({ path: relativePath, reason: "unreadable" });
+        exclusions.push({ path: relativePath, reason: "unreadable" });
+        continue;
+      }
+      if (content.includes("\u0000")) {
+        rows.push({ path: relativePath, reason: "binary" });
+        exclusions.push({ path: relativePath, reason: "binary" });
+        continue;
+      }
+      const metadata = {
+        path: relativePath,
+        size,
+        mtimeNs: fileStat.mtimeNs.toString(),
+        ctimeNs: fileStat.ctimeNs.toString(),
+        contentHash: hashText(content),
+        language: languageForExtension(extension),
+        extension,
+        route: nextRouteForPath(relativePath),
+        isTest: isTestPath(relativePath)
+      };
+      rows.push({ path: relativePath, size, mtimeNs: metadata.mtimeNs, ctimeNs: metadata.ctimeNs, contentHash: metadata.contentHash });
+      files.push(metadata);
       fileCount += 1;
       totalBytes += size;
     }
   }
 
   await walkSignature(root, 0);
-  return hashText(JSON.stringify(rows));
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  exclusions.sort((a, b) => a.path.localeCompare(b.path));
+  return { files, exclusions, scanSignature: hashText(JSON.stringify(rows)) };
+}
+
+export async function scanProjectFile(root: string, metadata: FileScanMetadata): Promise<ParsedProjectFile | undefined> {
+  let content;
+  try {
+    content = await readFile(join(root, metadata.path), "utf8");
+  } catch {
+    return undefined;
+  }
+  if (content.includes("\u0000")) {
+    return undefined;
+  }
+  const file: CodeFile = {
+    path: metadata.path,
+    kind: detectFileKind(metadata.path, metadata.extension, content),
+    language: metadata.language,
+    size: metadata.size,
+    estimatedTokens: estimateTokens(content),
+    contentHash: hashText(content),
+    route: metadata.route,
+    isTest: metadata.isTest
+  };
+  return {
+    file,
+    imports: CODE_EXTENSIONS.has(metadata.extension) ? extractImports(metadata.path, content) : [],
+    symbols: CODE_EXTENSIONS.has(metadata.extension) ? extractSymbols(metadata.path, content) : [],
+    content
+  };
 }
 
 export function isSupportedCodeFile(path: string): boolean {

@@ -18,7 +18,7 @@ Large coding sessions often waste tokens by repeatedly reading files, logs, migr
 
 ## Current Version
 
-TokenGraph is currently at `0.7.0`.
+TokenGraph is currently at `0.8.0`.
 
 Highlights:
 
@@ -29,6 +29,10 @@ Highlights:
 - Better React and Next.js route/component extraction, including `pages/**` routes and component line hints.
 - Root `.gitignore` support during scanning.
 - Project fingerprints and index freshness status.
+- Incremental indexing for compatible persisted indexes, with `fullReindex` available when a complete rebuild is needed.
+- Local config in `.tokengraph/config.json`.
+- Token-saving profiles: `conservative`, `balanced`, and `aggressive`.
+- Profile-aware planner budgets for files, SQL objects, memories, first reads, raw-read warnings, and estimated compact-context tokens.
 - Index-only reset that preserves memory by default.
 - Context planner for focused first reads with line hints, tests, SQL objects, and ranked memories.
 - Symbol explanation with inbound and outbound import references.
@@ -88,7 +92,7 @@ When iterating on this local plugin, rebuild it and restart Codex or start a fre
 ## Troubleshooting
 
 - Missing MCP tools: confirm the plugin is installed/enabled, run `pnpm build`, run `pnpm smoke -- --root . --json`, then restart Codex or open a fresh thread.
-- Stale indexes: call `tokengraph_index_status`; if stale, call `tokengraph_index_project` or `tokengraph_reset_project` with `mode: "index"`.
+- Stale indexes: call `tokengraph_index_status`; if stale, call `tokengraph_index_project`. Pass `fullReindex: true` only when you need a complete rebuild.
 - Plugin build failures: run `pnpm typecheck`, then `pnpm build`; fix TypeScript errors before running `pnpm validate:plugin`.
 - Marketplace not visible: confirm `.agents/plugins/marketplace.json` exists and that `source.path` points to `./plugins/tokengraph` relative to the repository root.
 
@@ -99,6 +103,9 @@ TokenGraph exposes these MCP tools:
 - `tokengraph_index_project`
 - `tokengraph_index_status`
 - `tokengraph_reset_project`
+- `tokengraph_get_config`
+- `tokengraph_set_profile`
+- `tokengraph_update_config`
 - `tokengraph_project_map`
 - `tokengraph_plan_context`
 - `tokengraph_search_graph`

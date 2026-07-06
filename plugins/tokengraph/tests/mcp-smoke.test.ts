@@ -147,6 +147,9 @@ describe("TokenGraph MCP stdio server", () => {
         "tokengraph_index_project",
         "tokengraph_index_status",
         "tokengraph_reset_project",
+        "tokengraph_get_config",
+        "tokengraph_set_profile",
+        "tokengraph_update_config",
         "tokengraph_project_map",
         "tokengraph_plan_context",
         "tokengraph_compress_output",
@@ -170,6 +173,7 @@ describe("TokenGraph MCP stdio server", () => {
     });
     expect(indexed.structuredContent).toMatchObject({
       status: "indexed",
+      indexingMode: "full",
       map: {
         counts: {
           files: 2
@@ -186,12 +190,26 @@ describe("TokenGraph MCP stdio server", () => {
       hasIndex: true
     });
 
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummaryNew() { return null; }");
+    const incremented = await request(54, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root }
+    });
+    expect(incremented.structuredContent).toMatchObject({
+      status: "indexed",
+      indexingMode: "incremental",
+      changes: {
+        changedFiles: ["src/patientSummary.ts"],
+        parsedFiles: ["src/patientSummary.ts"]
+      }
+    });
+
     const explanation = await request(6, "tools/call", {
       name: "tokengraph_explain_symbol",
-      arguments: { root, target: "loadPatientSummary" }
+      arguments: { root, target: "loadPatientSummaryNew" }
     });
     expect(explanation.structuredContent).toMatchObject({
-      target: "loadPatientSummary",
+      target: "loadPatientSummaryNew",
       inboundReferences: [
         expect.objectContaining({
           filePath: "src/patientPage.ts",
@@ -302,6 +320,71 @@ describe("TokenGraph MCP stdio server", () => {
 
     expect(response.isError).toBe(true);
     expect(JSON.stringify(response)).toMatch(/outside the allowed workspace/i);
+  });
+
+  it("manages local config and profile-aware plans over JSON-RPC stdio", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root);
+    await mkdir(join(root, "services"), { recursive: true });
+    for (let index = 1; index <= 5; index += 1) {
+      await writeFile(join(root, "services", `patientSummary${index}.ts`), `export function patientSummary${index}() { return ${index}; }`);
+    }
+
+    await request(70, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.8.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const defaults = await request(71, "tools/call", {
+      name: "tokengraph_get_config",
+      arguments: { root }
+    });
+    expect(defaults.structuredContent).toMatchObject({
+      tokenSavingProfile: "balanced",
+      maxFiles: 6,
+      maxSqlObjects: 6,
+      maxMemories: 4
+    });
+
+    const profiled = await request(72, "tools/call", {
+      name: "tokengraph_set_profile",
+      arguments: { root, profile: "aggressive" }
+    });
+    expect(profiled.structuredContent).toMatchObject({
+      status: "updated",
+      config: {
+        tokenSavingProfile: "aggressive",
+        maxFiles: 6
+      }
+    });
+
+    const updated = await request(73, "tools/call", {
+      name: "tokengraph_update_config",
+      arguments: { root, maxFiles: 4, maxPlannedContextTokens: 5000, memoryEnabled: false }
+    });
+    expect(updated.structuredContent).toMatchObject({
+      status: "updated",
+      config: {
+        tokenSavingProfile: "aggressive",
+        maxFiles: 4,
+        maxPlannedContextTokens: 5000,
+        memoryEnabled: false
+      }
+    });
+
+    const plan = await request(74, "tools/call", {
+      name: "tokengraph_plan_context",
+      arguments: { root, task: "Fix patient summary" }
+    });
+    expect(plan.structuredContent).toMatchObject({
+      profile: "aggressive",
+      budget: {
+        maxFiles: 3
+      }
+    });
   });
 
   it("rejects outside roots when launched from a different plugin-shaped workspace", async () => {

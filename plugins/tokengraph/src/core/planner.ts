@@ -1,13 +1,16 @@
 import { estimateSavings, estimateTokens, tokenize } from "./token.js";
+import { PROFILE_DEFAULTS } from "./config.js";
 import type {
   CodeFile,
+  ContextBudget,
   ContextPlan,
   ContextPlanInput,
   MemoryEntry,
   ProjectIndex,
   RankedFile,
   RankedSqlObject,
-  TaskType
+  TaskType,
+  TokenSavingProfile
 } from "./types.js";
 
 function classifyTask(task: string): TaskType {
@@ -178,30 +181,96 @@ function planText(plan: Omit<ContextPlan, "estimatedTokens">): string {
   return JSON.stringify(plan);
 }
 
+type ResolvedContextBudget = Required<Omit<ContextBudget, "profile">> & { profile: TokenSavingProfile };
+
+function resolveBudget(budget: ContextBudget): ResolvedContextBudget {
+  const profile = budget.profile ?? "balanced";
+  const profileDefaults = PROFILE_DEFAULTS[profile];
+  return {
+    profile,
+    maxFiles: budget.maxFiles ?? profileDefaults.maxFiles,
+    maxSqlObjects: budget.maxSqlObjects ?? profileDefaults.maxSqlObjects,
+    maxMemories: budget.maxMemories ?? profileDefaults.maxMemories,
+    firstReads: budget.firstReads ?? profileDefaults.firstReads,
+    maxEstimatedTokens: budget.maxEstimatedTokens ?? profileDefaults.maxPlannedContextTokens,
+    rawReadWarningThreshold: budget.rawReadWarningThreshold ?? profileDefaults.rawReadWarningThreshold,
+    allowRawReads: budget.allowRawReads ?? true
+  };
+}
+
+function trimPlanToBudget(plan: Omit<ContextPlan, "estimatedTokens">): Omit<ContextPlan, "estimatedTokens"> {
+  const budgetExclusions = new Set(plan.budgetExclusions);
+  const next = { ...plan, budgetExclusions: Array.from(budgetExclusions) };
+  const estimateCompact = () => estimateTokens(planText(next));
+  while (estimateCompact() > next.budget.maxEstimatedTokens) {
+    const before = estimateCompact();
+    if (next.filesToAvoid.length) {
+      next.filesToAvoid = next.filesToAvoid.slice(0, -1);
+      budgetExclusions.add("Removed low-priority avoid-list entries to stay within the estimated context budget.");
+    } else if (next.relevantSql.length) {
+      next.relevantSql = next.relevantSql.slice(0, -1);
+      budgetExclusions.add("Excluded lower-ranked SQL objects to stay within the estimated context budget.");
+    } else if (next.relevantTests.length) {
+      next.relevantTests = next.relevantTests.slice(0, -1);
+      budgetExclusions.add("Excluded lower-ranked tests to stay within the estimated context budget.");
+    } else if (next.relevantMemories.length) {
+      next.relevantMemories = next.relevantMemories.slice(0, -1);
+      budgetExclusions.add("Excluded lower-ranked memories to stay within the estimated context budget.");
+    } else if (next.relevantFiles.length > 1) {
+      next.relevantFiles = next.relevantFiles.slice(0, -1);
+      budgetExclusions.add("Excluded lower-ranked files to stay within the estimated context budget.");
+    } else {
+      budgetExclusions.add("Estimated compact plan still exceeds the requested token budget; token counts are approximate.");
+      next.budgetExclusions = Array.from(budgetExclusions);
+      break;
+    }
+    next.recommendedFirstReads = next.relevantFiles.slice(0, Math.min(next.budget.firstReads, next.relevantFiles.length));
+    next.budgetExclusions = Array.from(budgetExclusions);
+    if (estimateCompact() >= before && before > next.budget.maxEstimatedTokens) {
+      break;
+    }
+  }
+  next.budgetExclusions = Array.from(budgetExclusions);
+  return next;
+}
+
 export async function buildContextPlan(input: ContextPlanInput): Promise<ContextPlan> {
   const terms = tokenize(input.task);
-  const relevantFiles = rankedFiles(input.project, terms, false).slice(0, input.budget.maxFiles);
-  const relevantTests = rankedFiles(input.project, terms, true).slice(0, Math.max(1, Math.ceil(input.budget.maxFiles / 2)));
-  const relevantSql = rankedSql(input.project, terms).slice(0, input.budget.maxSqlObjects);
-  const relevantMemories = rankedMemories(input.memories, terms, input.budget.maxMemories);
+  const budget = resolveBudget(input.budget);
+  const allRelevantFiles = rankedFiles(input.project, terms, false);
+  const allRelevantTests = rankedFiles(input.project, terms, true);
+  const allRelevantSql = rankedSql(input.project, terms);
+  const relevantFiles = allRelevantFiles.slice(0, budget.maxFiles);
+  const relevantTests = allRelevantTests.slice(0, Math.max(1, Math.ceil(budget.maxFiles / 2)));
+  const relevantSql = allRelevantSql.slice(0, budget.maxSqlObjects);
+  const relevantMemories = rankedMemories(input.memories, terms, budget.maxMemories);
+  const budgetExclusions = [];
+  if (allRelevantFiles.length > relevantFiles.length) budgetExclusions.push(`${allRelevantFiles.length - relevantFiles.length} lower-ranked file(s) excluded by profile or explicit file budget.`);
+  if (allRelevantTests.length > relevantTests.length) budgetExclusions.push(`${allRelevantTests.length - relevantTests.length} lower-ranked test file(s) excluded by profile or explicit file budget.`);
+  if (allRelevantSql.length > relevantSql.length) budgetExclusions.push(`${allRelevantSql.length - relevantSql.length} lower-ranked SQL object(s) excluded by profile or explicit SQL budget.`);
   const selectedPaths = new Set([...relevantFiles, ...relevantTests].map((file) => file.path));
-  const recommendedFirstReads = relevantFiles.slice(0, Math.min(3, relevantFiles.length));
+  const recommendedFirstReads = relevantFiles.slice(0, Math.min(budget.firstReads, relevantFiles.length));
   const filesToAvoid = rankedFiles(input.project, terms, false, true)
     .filter((file) => !selectedPaths.has(file.path) && file.score === 0)
     .slice(0, 5)
     .map((file) => ({ ...file, reason: "No lexical overlap with the current task." }));
 
-  const withoutEstimate = {
+  const withoutEstimate = trimPlanToBudget({
     task: input.task,
     taskType: classifyTask(input.task),
+    profile: budget.profile,
+    budget,
     relevantMemories,
     relevantFiles,
     relevantTests,
     relevantSql,
     recommendedFirstReads,
     filesToAvoid,
-    rawReadPolicy: "Read targeted files or short snippets only after this patch scope has been reviewed."
-  };
+    budgetExclusions,
+    rawReadPolicy: budget.allowRawReads
+      ? `Read targeted files or short snippets only after this patch scope has been reviewed. Warn before raw reads over about ${budget.rawReadWarningThreshold} estimated tokens.`
+      : `Do not read broad raw files. Use targeted snippets and warn before any raw read over about ${budget.rawReadWarningThreshold} estimated tokens.`
+  });
   const originalContext = [
     ...input.project.files.map((file) => `${file.path} ${file.estimatedTokens}`),
     ...input.project.symbols.map((symbol) => `${symbol.filePath} ${symbol.name}`),

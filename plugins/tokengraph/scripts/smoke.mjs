@@ -8,6 +8,9 @@ const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultServerEntry = resolve(pluginRoot, "dist", "index.js");
 const requiredTools = [
   "tokengraph_index_status",
+  "tokengraph_get_config",
+  "tokengraph_set_profile",
+  "tokengraph_update_config",
   "tokengraph_project_map",
   "tokengraph_plan_context",
   "tokengraph_compress_output",
@@ -175,7 +178,7 @@ async function runSmoke() {
     await client.request("initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-cli-smoke", version: "0.7.0" }
+      clientInfo: { name: "tokengraph-cli-smoke", version: "0.8.0" }
     });
     client.notify("notifications/initialized");
 
@@ -197,9 +200,13 @@ async function runSmoke() {
     const plan = assertToolResult(
       await client.request("tools/call", {
         name: "tokengraph_plan_context",
-        arguments: { root, task: "TokenGraph CLI smoke validation", maxFiles: 3, maxSqlObjects: 3, maxMemories: 0 }
+        arguments: { root, task: "TokenGraph CLI smoke validation", profile: "aggressive", maxFiles: 3, maxSqlObjects: 3, maxMemories: 0 }
       }),
       "tokengraph_plan_context"
+    );
+    const config = assertToolResult(
+      await client.request("tools/call", { name: "tokengraph_get_config", arguments: { root } }),
+      "tokengraph_get_config"
     );
     const savings = assertToolResult(
       await client.request("tools/call", { name: "tokengraph_show_token_savings", arguments: { root } }),
@@ -223,6 +230,7 @@ async function runSmoke() {
       filesIndexed: map.counts?.files ?? 0,
       symbolsIndexed: map.counts?.symbols ?? 0,
       recommendedFirstReads: plan.recommendedFirstReads ?? [],
+      activeProfile: config.tokenSavingProfile,
       estimatedTokensAvoided: savings.avoided ?? 0,
       memoriesReviewed: memoryReview.totalMemories ?? 0,
       exportedMapNodes: projectMapExport.nodeCount ?? 0,

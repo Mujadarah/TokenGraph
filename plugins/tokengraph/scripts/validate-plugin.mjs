@@ -90,6 +90,12 @@ assert(distServer.includes("usingExpression"), "built MCP server must expose v0.
 assert(distServer.includes("constraints"), "built MCP server must expose v0.5 SQL constraints");
 assert(distServer.includes("tokengraph_review_memories"), "built MCP server must register v0.7 memory review");
 assert(distServer.includes("tokengraph_export_project_map"), "built MCP server must register v0.7 project map export");
+assert(distServer.includes("tokengraph_get_config"), "built MCP server must register v0.8 config getter");
+assert(distServer.includes("tokengraph_set_profile"), "built MCP server must register v0.8 profile setter");
+assert(distServer.includes("tokengraph_update_config"), "built MCP server must register v0.8 config updater");
+assert(distServer.includes("fullReindex"), "built MCP server must expose v0.8 full reindex option");
+assert(distServer.includes("indexingMode"), "built MCP server must report v0.8 indexing mode");
+assert(distServer.includes("maxEstimatedTokens"), "built MCP server must expose v0.8 planner token budget input");
 assert(distReview.includes("flowchart LR"), "built review helpers must include Mermaid project map export");
 
 await assertFile(distEntryPath, "built MCP entry");

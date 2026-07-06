@@ -70,10 +70,20 @@ Status: complete
 - MCP smoke and CLI smoke coverage for the new review/export tools.
 - Plugin validation checks for the v0.7 tool surface and built MCP server metadata.
 
+## v0.8 - Token Budget Profiles And Incremental Indexing
+
+Status: complete
+
+- Local config stored in `.tokengraph/config.json`.
+- MCP config tools for reading settings, switching profile, and updating explicit settings.
+- Conservative, balanced, and aggressive token-saving profiles.
+- Profile-aware context planning with first-read limits, estimated context budgets, and raw-read warning thresholds.
+- Incremental indexing for compatible persisted indexes, with full reindex fallback for incompatible schema metadata.
+- MCP, smoke, and validator coverage for the v0.8 tool surface.
+
 ## Later
 
 Ideas under consideration:
 
-- Incremental indexing.
 - Language support beyond TypeScript/JavaScript and PostgreSQL.
 - Public release packaging that does not require committing build output.

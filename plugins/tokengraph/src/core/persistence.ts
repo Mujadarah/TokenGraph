@@ -15,6 +15,10 @@ export function memoryPath(root: string): string {
   return join(stateDir(root), "memory.json");
 }
 
+export function configPath(root: string): string {
+  return join(stateDir(root), "config.json");
+}
+
 export async function saveProjectIndex(root: string, index: ProjectIndex): Promise<void> {
   await mkdir(stateDir(root), { recursive: true });
   await writeFile(indexPath(root), `${JSON.stringify(index, null, 2)}\n`);

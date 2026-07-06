@@ -11,16 +11,17 @@ Use TokenGraph as the context router before raw repository exploration.
 
 For coding tasks in a project where TokenGraph MCP tools are available, use this order:
 
-1. Call `tokengraph_index_status` when available. Pass the current workspace root explicitly when the tool schema offers `root`; plugin installs may launch the MCP server from the plugin directory rather than the user's project. If the tool says TokenGraph is running from its plugin directory, retry with the explicit workspace root. If the status reports `missing` or `stale`, call `tokengraph_index_project` with the same root.
-2. Call `tokengraph_project_map` for a compact overview.
-3. Call `tokengraph_plan_context` with the user's task before reading raw files.
-4. Read only the recommended first files or narrow snippets from the returned patch scope, using `startLine`/`endLine` hints when present.
-5. Call `tokengraph_explain_symbol` before opening a file or symbol when inbound/outbound references would clarify the patch scope.
-6. If the task touches data, auth, reports, persistence, RLS, migrations, or database-backed UI, call `tokengraph_summarize_sql`.
-7. Compress long test, build, install, diff, or log output with `tokengraph_compress_output` before using it as context.
-8. Review local memories with `tokengraph_review_memories` before relying on older or broad memory entries.
-9. Export compact graph visuals with `tokengraph_export_project_map` when a diagram would clarify project structure.
-10. Store durable project decisions only when they are deliberate and useful with `tokengraph_remember_decision`.
+1. Call `tokengraph_get_config` when available to see the active token-saving profile and local limits.
+2. Call `tokengraph_index_status` when available. Pass the current workspace root explicitly when the tool schema offers `root`; plugin installs may launch the MCP server from the plugin directory rather than the user's project. If the tool says TokenGraph is running from its plugin directory, retry with the explicit workspace root. If the status reports `missing` or `stale`, call `tokengraph_index_project` with the same root. Use `fullReindex: true` only when the user asks for a full rebuild or the index looks corrupt.
+3. Call `tokengraph_project_map` for a compact overview.
+4. Call `tokengraph_plan_context` with the user's task and an appropriate `profile` before reading raw files.
+5. Read only the recommended first files or narrow snippets from the returned patch scope, using `startLine`/`endLine` hints when present.
+6. Call `tokengraph_explain_symbol` before opening a file or symbol when inbound/outbound references would clarify the patch scope.
+7. If the task touches data, auth, reports, persistence, RLS, migrations, or database-backed UI, call `tokengraph_summarize_sql`.
+8. Compress long test, build, install, diff, or log output with `tokengraph_compress_output` before using it as context.
+9. Review local memories with `tokengraph_review_memories` before relying on older or broad memory entries.
+10. Export compact graph visuals with `tokengraph_export_project_map` when a diagram would clarify project structure.
+11. Store durable project decisions only when they are deliberate and useful with `tokengraph_remember_decision`.
 
 If the TokenGraph MCP tools are not exposed in the current thread, say that briefly, then fall back to narrow `rg`/file reads. Do not pretend TokenGraph was used.
 
@@ -31,10 +32,12 @@ If the TokenGraph MCP tools are not exposed in the current thread, say that brie
 - Do not claim exact token savings. TokenGraph reports estimates.
 - Do not send repository content to cloud services from TokenGraph. This version is local-only.
 - Do not use `tokengraph_reset_project` unless the user asks to reset TokenGraph state or a stale/corrupt local index is blocking progress.
+- Do not force `fullReindex` for ordinary stale indexes; compatible indexes should update incrementally.
 
 ## Useful Prompts
 
 - "Use TokenGraph to index this project and show the project map."
+- "Use TokenGraph to switch to the aggressive token-saving profile."
 - "Use TokenGraph to check whether this project index is stale."
 - "Use TokenGraph to plan context for this task before reading files."
 - "Use TokenGraph to explain this symbol before reading the source file."

@@ -1,5 +1,21 @@
 export type TokenSavingProfile = "conservative" | "balanced" | "aggressive";
 
+export interface TokenGraphConfig {
+  tokenSavingProfile: TokenSavingProfile;
+  maxFiles: number;
+  maxSqlObjects: number;
+  maxMemories: number;
+  maxPlannedContextTokens: number;
+  rawReadWarningThreshold: number;
+  sqlIndexingEnabled: boolean;
+  memoryEnabled: boolean;
+  wikiGenerationEnabled: boolean;
+}
+
+export type TokenGraphConfigUpdate = Partial<Omit<TokenGraphConfig, "tokenSavingProfile">> & {
+  tokenSavingProfile?: TokenSavingProfile;
+};
+
 export type TaskType = "bug" | "feature" | "refactor" | "database" | "test" | "docs" | "architecture";
 
 export type FileKind = "module" | "next-route" | "react-component" | "test" | "sql" | "doc";
@@ -166,11 +182,29 @@ export interface SqlGraph {
 }
 
 export interface ProjectIndex extends CodeGraph {
+  schemaVersion?: number;
   scannedAt: string;
   fingerprint: string;
   scanSignature?: string;
+  scanMetadata?: ProjectScanMetadata;
   frameworks: string[];
   sql: SqlGraph;
+}
+
+export interface FileScanMetadata {
+  path: string;
+  size: number;
+  mtimeNs: string;
+  ctimeNs: string;
+  contentHash: string;
+  language: string;
+  extension: string;
+  route?: string;
+  isTest: boolean;
+}
+
+export interface ProjectScanMetadata {
+  files: Record<string, FileScanMetadata>;
 }
 
 export type IndexState = "missing" | "fresh" | "stale";
@@ -229,9 +263,14 @@ export interface RankedSqlObject {
 }
 
 export interface ContextBudget {
-  maxFiles: number;
-  maxSqlObjects: number;
-  maxMemories: number;
+  profile?: TokenSavingProfile;
+  maxFiles?: number;
+  maxSqlObjects?: number;
+  maxMemories?: number;
+  firstReads?: number;
+  maxEstimatedTokens?: number;
+  rawReadWarningThreshold?: number;
+  allowRawReads?: boolean;
 }
 
 export interface ContextPlanInput {
@@ -245,12 +284,15 @@ export interface ContextPlanInput {
 export interface ContextPlan {
   task: string;
   taskType: TaskType;
+  profile: TokenSavingProfile;
+  budget: Required<Omit<ContextBudget, "profile">> & { profile: TokenSavingProfile };
   relevantMemories: MemoryEntry[];
   relevantFiles: RankedFile[];
   relevantTests: RankedFile[];
   relevantSql: RankedSqlObject[];
   recommendedFirstReads: RankedFile[];
   filesToAvoid: RankedFile[];
+  budgetExclusions: string[];
   rawReadPolicy: string;
   estimatedTokens: TokenEstimate;
 }
