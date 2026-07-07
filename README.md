@@ -108,7 +108,7 @@ Wiki files live under `.tokengraph/wiki/`:
 After building the plugin, add this repository as a local marketplace root if needed:
 
 ```powershell
-codex plugin marketplace add C:\Users\rabia\Desktop\TokenGraph
+codex plugin marketplace add C:\Users\example\Desktop\TokenGraph
 ```
 
 Then install `tokengraph` from that marketplace and start a new Codex thread so the skill and MCP tools are loaded.
@@ -121,7 +121,7 @@ For release artifact testing, run:
 cd plugins/tokengraph
 pnpm build
 pnpm package:plugin
-codex plugin marketplace add C:\Users\rabia\Desktop\TokenGraph\artifacts
+codex plugin marketplace add C:\Users\example\Desktop\TokenGraph\artifacts
 ```
 
 The generated marketplace points at `./tokengraph-<version>` relative to the artifact root.
