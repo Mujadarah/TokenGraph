@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -154,7 +154,9 @@ describe("TokenGraph MCP stdio server", () => {
         "tokengraph_plan_context",
         "tokengraph_compress_output",
         "tokengraph_review_memories",
-        "tokengraph_export_project_map"
+        "tokengraph_export_project_map",
+        "tokengraph_generate_wiki",
+        "tokengraph_show_wiki_page"
       ])
     );
 
@@ -322,6 +324,193 @@ describe("TokenGraph MCP stdio server", () => {
     expect(JSON.stringify(response)).toMatch(/outside the allowed workspace/i);
   });
 
+  it("generates and reads project wiki pages over JSON-RPC stdio", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root);
+    await mkdir(join(root, "app", "patients", "[id]"), { recursive: true });
+    await mkdir(join(root, "components"), { recursive: true });
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await writeFile(join(root, "components", "PatientCard.tsx"), "export function PatientCard() { return <article />; }");
+    await writeFile(
+      join(root, "app", "patients", "[id]", "page.tsx"),
+      "import { PatientCard } from '../../../components/PatientCard'; export default function PatientPage() { return <PatientCard />; }"
+    );
+    await writeFile(
+      join(root, "supabase", "migrations", "001_patients.sql"),
+      "create table public.patients (id uuid primary key); create policy \"tenant can read patients\" on public.patients for select using (true);"
+    );
+
+    await request(80, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.9.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const missing = await request(81, "tools/call", {
+      name: "tokengraph_generate_wiki",
+      arguments: { root }
+    });
+    expect(missing.isError).toBe(true);
+    expect(JSON.stringify(missing)).toMatch(/tokengraph_index_project/i);
+
+    await request(82, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root }
+    });
+    const generated = await request(83, "tools/call", {
+      name: "tokengraph_generate_wiki",
+      arguments: { root }
+    });
+    expect(generated.structuredContent).toMatchObject({
+      status: "generated",
+      wikiStatus: { state: "fresh" },
+      pages: expect.arrayContaining([
+        expect.objectContaining({ slug: "overview", title: "Project Overview", estimatedTokens: expect.any(Number) }),
+        expect.objectContaining({ slug: "database", title: "Database", estimatedTokens: expect.any(Number) })
+      ])
+    });
+
+    const overview = await request(84, "tools/call", {
+      name: "tokengraph_show_wiki_page",
+      arguments: { root, slug: "overview" }
+    });
+    expect(overview.structuredContent).toMatchObject({
+      slug: "overview",
+      title: "Project Overview",
+      wikiStatus: { state: "fresh" }
+    });
+    expect(JSON.stringify(overview.structuredContent)).toContain("# Project Overview");
+
+    const unknown = await request(85, "tools/call", {
+      name: "tokengraph_show_wiki_page",
+      arguments: { root, slug: "missing" }
+    });
+    expect(unknown.isError).toBe(true);
+    expect(JSON.stringify(unknown)).toMatch(/available slugs.*overview/i);
+
+    await writeFile(join(root, "components", "PatientCard.tsx"), "export function PatientCardRenamed() { return <article />; }");
+    await request(86, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root }
+    });
+    const stale = await request(87, "tools/call", {
+      name: "tokengraph_show_wiki_page",
+      arguments: { root, slug: "overview" }
+    });
+    expect(stale.structuredContent).toMatchObject({
+      wikiStatus: { state: "stale" }
+    });
+  });
+
+  it("applies workspace root boundaries to wiki tools", async () => {
+    const root = await makeRoot();
+    const outsideRoot = await makeRoot();
+    await stopServer();
+    startServer(root);
+
+    await request(88, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.9.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const generate = await request(89, "tools/call", {
+      name: "tokengraph_generate_wiki",
+      arguments: { root: outsideRoot }
+    });
+    expect(generate.isError).toBe(true);
+    expect(JSON.stringify(generate)).toMatch(/outside the allowed workspace/i);
+
+    const show = await request(90, "tools/call", {
+      name: "tokengraph_show_wiki_page",
+      arguments: { root: outsideRoot, slug: "overview" }
+    });
+    expect(show.isError).toBe(true);
+    expect(JSON.stringify(show)).toMatch(/outside the allowed workspace/i);
+  });
+
+  it("leaves wiki auto-refresh off by default during indexing", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function patientSummary() { return true; }");
+    await stopServer();
+    startServer(root);
+
+    await request(91, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.9.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const indexed = await request(92, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root }
+    });
+    expect(indexed.structuredContent).toMatchObject({
+      status: "indexed",
+      wikiRefreshed: false
+    });
+    await expect(access(join(root, ".tokengraph", "wiki"))).rejects.toThrow();
+  });
+
+  it("auto-refreshes the wiki on full and incremental indexing when enabled", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function patientSummary() { return true; }");
+    await stopServer();
+    startServer(root);
+
+    await request(93, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.9.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    await request(94, "tools/call", {
+      name: "tokengraph_update_config",
+      arguments: { root, wikiGenerationEnabled: true }
+    });
+    const full = await request(95, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root, fullReindex: true }
+    });
+    expect(full.structuredContent).toMatchObject({
+      status: "indexed",
+      indexingMode: "full",
+      wikiRefreshed: true
+    });
+    const fullOverview = await request(96, "tools/call", {
+      name: "tokengraph_show_wiki_page",
+      arguments: { root, slug: "overview" }
+    });
+    expect(fullOverview.structuredContent).toMatchObject({
+      wikiStatus: { state: "fresh" }
+    });
+
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function patientSummaryChanged() { return true; }");
+    const incremental = await request(97, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root }
+    });
+    expect(incremental.structuredContent).toMatchObject({
+      status: "indexed",
+      indexingMode: "incremental",
+      wikiRefreshed: true
+    });
+    const incrementalOverview = await request(98, "tools/call", {
+      name: "tokengraph_show_wiki_page",
+      arguments: { root, slug: "overview" }
+    });
+    expect(incrementalOverview.structuredContent).toMatchObject({
+      wikiStatus: { state: "fresh" }
+    });
+  });
+
   it("manages local config and profile-aware plans over JSON-RPC stdio", async () => {
     const root = await makeRoot();
     await stopServer();
@@ -334,7 +523,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(70, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.8.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.9.0" }
     });
     send({ method: "notifications/initialized" });
 

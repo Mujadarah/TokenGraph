@@ -36,16 +36,20 @@ describe("tokengraph CLI smoke command", () => {
       tools: string[];
       indexStateBeforeMap: string;
       filesIndexed: number;
+      wikiPageSlugs: string[];
+      wikiStatus: string;
     };
 
     expect(report).toMatchObject({
       status: "ok",
       root,
       indexStateBeforeMap: "missing",
-      filesIndexed: 1
+      filesIndexed: 1,
+      wikiStatus: "fresh"
     });
+    expect(report.wikiPageSlugs).toContain("overview");
     expect(report.tools).toEqual(
-      expect.arrayContaining(["tokengraph_index_status", "tokengraph_project_map", "tokengraph_plan_context"])
+      expect.arrayContaining(["tokengraph_index_status", "tokengraph_project_map", "tokengraph_plan_context", "tokengraph_generate_wiki"])
     );
   });
 

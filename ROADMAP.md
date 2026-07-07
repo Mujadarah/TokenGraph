@@ -81,6 +81,19 @@ Status: complete
 - Incremental indexing for compatible persisted indexes, with full reindex fallback for incompatible schema metadata.
 - MCP, smoke, and validator coverage for the v0.8 tool surface.
 
+## v0.9 - Local Project Wiki
+
+Status: complete
+
+- Deterministic local wiki builder derived only from persisted index and memory records.
+- Markdown wiki pages under `.tokengraph/wiki/` with a manifest tied to the index fingerprint.
+- Wiki pages for overview, structure, routes, database, and recorded decisions, omitting empty optional pages.
+- Wiki status for missing, fresh, and stale generated pages.
+- MCP tools `tokengraph_generate_wiki` and `tokengraph_show_wiki_page`.
+- Config-driven auto-refresh on successful indexing when `wikiGenerationEnabled` is true.
+- Reset behavior that clears derived wiki state with index resets while preserving memory and config.
+- MCP, CLI smoke, validator, and core coverage for the v0.9 wiki surface.
+
 ## Later
 
 Ideas under consideration:

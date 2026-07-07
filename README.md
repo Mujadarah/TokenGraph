@@ -1,6 +1,6 @@
 # TokenGraph
 
-TokenGraph is a local-first Codex plugin that helps coding agents spend less context on raw repository exploration. It builds a compact local map of a project, then routes Codex through focused code, SQL, memory, and log summaries before any broad file reading.
+TokenGraph is a local-first Codex plugin that helps coding agents spend less context on raw repository exploration. It builds a compact local map of a project, then routes Codex through focused code, SQL, wiki, memory, and log summaries before any broad file reading.
 
 The project is designed for developers who want faster, more disciplined agent work on real codebases without sending repository indexes to paid or external services.
 
@@ -13,12 +13,13 @@ Large coding sessions often waste tokens by repeatedly reading files, logs, migr
 - Plan the smallest useful patch scope for a task.
 - Surface relevant SQL tables, policies, constraints, enums, extensions, grants, indexes, triggers, functions, views, materialized views, and migration history.
 - Store deliberate project decisions as local memory.
+- Generate compact local wiki pages for orientation questions.
 - Compress long test, build, install, diff, and log output.
 - Detect stale indexes before Codex trusts cached context.
 
 ## Current Version
 
-TokenGraph is currently at `0.8.0`.
+TokenGraph is currently at `0.9.0`.
 
 Highlights:
 
@@ -33,7 +34,10 @@ Highlights:
 - Local config in `.tokengraph/config.json`.
 - Token-saving profiles: `conservative`, `balanced`, and `aggressive`.
 - Profile-aware planner budgets for files, SQL objects, memories, first reads, raw-read warnings, and estimated compact-context tokens.
-- Index-only reset that preserves memory by default.
+- Local project wiki pages under `.tokengraph/wiki/` for overview, structure, routes, database, and recorded decisions.
+- Wiki staleness status based on the persisted index fingerprint recorded in `.tokengraph/wiki/manifest.json`.
+- `wikiGenerationEnabled` auto-refresh on successful indexing, while explicit wiki generation remains available regardless of the flag.
+- Index-only reset that preserves memory and config while clearing derived wiki state.
 - Context planner for focused first reads with line hints, tests, SQL objects, and ranked memories.
 - Symbol explanation with inbound and outbound import references.
 - Broader PostgreSQL parser coverage for constraints, enums, extensions, grants, and materialized views.
@@ -50,16 +54,16 @@ Highlights:
 
 ```text
 .
-├── .agents/plugins/marketplace.json
-├── docs/plans/
-├── docs/superpowers/specs/
-└── plugins/tokengraph/
-    ├── .codex-plugin/plugin.json
-    ├── .mcp.json
-    ├── skills/tokengraph/SKILL.md
-    ├── src/
-    ├── tests/
-    └── scripts/validate-plugin.mjs
+|-- .agents/plugins/marketplace.json
+|-- docs/plans/
+|-- docs/superpowers/specs/
+`-- plugins/tokengraph/
+    |-- .codex-plugin/plugin.json
+    |-- .mcp.json
+    |-- skills/tokengraph/SKILL.md
+    |-- src/
+    |-- tests/
+    `-- scripts/validate-plugin.mjs
 ```
 
 ## Local Development
@@ -75,7 +79,22 @@ pnpm validate:plugin
 
 The MCP server entry point is `plugins/tokengraph/dist/index.js`, built from `plugins/tokengraph/src/index.ts`.
 
-`pnpm smoke -- --root <project>` starts the built stdio MCP server with `<project>` as its workspace, lists the TokenGraph tools, and calls the read-only project map/planner/token-savings tools. Run `pnpm build` first so `dist/index.js` is current.
+`pnpm smoke -- --root <project>` starts the built stdio MCP server with `<project>` as its workspace, lists the TokenGraph tools, and calls the project map, planner, token-savings, memory review, export, and wiki tools. Run `pnpm build` first so `dist/index.js` is current.
+
+## Local Project Wiki
+
+TokenGraph can generate a deterministic local wiki from already-indexed data. It never re-reads raw source for wiki page bodies and only includes paths, file kinds, routes, symbol names, SQL object names/details already in the SQL graph, and memory titles/types/tags.
+
+Wiki files live under `.tokengraph/wiki/`:
+
+- `.tokengraph/wiki/manifest.json` records the wiki schema, generation time, index fingerprint, and page files.
+- `.tokengraph/wiki/overview.md` summarizes frameworks, file kinds, and top-level directories.
+- `.tokengraph/wiki/structure.md` groups indexed files by top-level directory and lists exported symbols.
+- `.tokengraph/wiki/routes.md` lists detected routes when routes exist.
+- `.tokengraph/wiki/database.md` lists SQL tables, policies, materialized views, and migration history when SQL exists.
+- `.tokengraph/wiki/decisions.md` lists recorded memory titles, types, and tags when memories exist.
+
+`tokengraph_generate_wiki` explicitly builds the wiki from the persisted index. `tokengraph_show_wiki_page` reads one page and returns `wikiStatus` as `missing`, `fresh`, or `stale`. A wiki is fresh only when its manifest fingerprint matches the persisted index fingerprint. The `wikiGenerationEnabled` config flag controls automatic wiki refresh after successful indexing; explicit generation is always available.
 
 ## Codex Plugin Use
 
@@ -93,6 +112,7 @@ When iterating on this local plugin, rebuild it and restart Codex or start a fre
 
 - Missing MCP tools: confirm the plugin is installed/enabled, run `pnpm build`, run `pnpm smoke -- --root . --json`, then restart Codex or open a fresh thread.
 - Stale indexes: call `tokengraph_index_status`; if stale, call `tokengraph_index_project`. Pass `fullReindex: true` only when you need a complete rebuild.
+- Stale wiki pages: call `tokengraph_show_wiki_page`; if `wikiStatus` is `missing` or `stale`, call `tokengraph_generate_wiki`.
 - Plugin build failures: run `pnpm typecheck`, then `pnpm build`; fix TypeScript errors before running `pnpm validate:plugin`.
 - Marketplace not visible: confirm `.agents/plugins/marketplace.json` exists and that `source.path` points to `./plugins/tokengraph` relative to the repository root.
 
@@ -107,6 +127,8 @@ TokenGraph exposes these MCP tools:
 - `tokengraph_set_profile`
 - `tokengraph_update_config`
 - `tokengraph_project_map`
+- `tokengraph_generate_wiki`
+- `tokengraph_show_wiki_page`
 - `tokengraph_plan_context`
 - `tokengraph_search_graph`
 - `tokengraph_explain_symbol`
@@ -123,7 +145,7 @@ See [ROADMAP.md](ROADMAP.md) for planned releases.
 
 ## Privacy
 
-TokenGraph is local-first. Project indexes and memories are stored under `.tokengraph/` in the indexed workspace. TokenGraph does not require an OpenAI API key, cloud sync, embeddings service, or paid external API.
+TokenGraph is local-first. Project indexes, generated wiki pages, config, and memories are stored under `.tokengraph/` in the indexed workspace. TokenGraph does not require an OpenAI API key, cloud sync, embeddings service, or paid external API.
 
 ## License
 

@@ -14,12 +14,25 @@ import {
 import { scanProject } from "../src/core/fileScanner.js";
 import { MemoryStore } from "../src/core/memoryStore.js";
 import { buildContextPlan } from "../src/core/planner.js";
-import { clearProjectIndex, configPath, indexPath, loadProjectIndex, memoryPath, saveProjectIndex } from "../src/core/persistence.js";
+import {
+  clearProjectIndex,
+  clearProjectState,
+  configPath,
+  getWikiStatus,
+  indexPath,
+  loadProjectIndex,
+  loadProjectWiki,
+  memoryPath,
+  saveProjectIndex,
+  saveProjectWiki,
+  wikiDir
+} from "../src/core/persistence.js";
 import { CURRENT_INDEX_SCHEMA_VERSION, indexProject, updateProjectIndexIncremental } from "../src/core/projectIndexer.js";
 import { getIndexStatus } from "../src/core/indexStatus.js";
 import { parsePostgresMigration } from "../src/core/sqlParser.js";
 import { exportProjectMap, reviewMemories } from "../src/core/review.js";
-import { tokenize } from "../src/core/token.js";
+import { estimateTokens, tokenize } from "../src/core/token.js";
+import { buildProjectWiki } from "../src/core/wiki.js";
 
 const tempRoots: string[] = [];
 
@@ -762,6 +775,207 @@ describe("index status and reset", () => {
     );
 
     await expect(loadProjectIndex(root)).resolves.toBeUndefined();
+  });
+});
+
+describe("project wiki", () => {
+  it("builds deterministic wiki pages from the indexed fixture and memories", async () => {
+    const root = resolve("tests", "fixtures", "next-supabase");
+    const project = await indexProject(root);
+    const memories = [
+      {
+        id: "mem_patient_scope",
+        createdAt: "2026-07-07T00:00:00.000Z",
+        type: "architecture" as const,
+        title: "Patient summaries stay tenant scoped",
+        body: "Do not include this raw memory body in wiki pages.",
+        tags: ["patients", "rls", "summary"]
+      }
+    ];
+
+    const wiki = buildProjectWiki(project, memories);
+    const rebuilt = buildProjectWiki(project, memories);
+    const page = (slug: string) => {
+      const found = wiki.pages.find((candidate) => candidate.slug === slug);
+      expect(found, `expected wiki page ${slug}`).toBeDefined();
+      return found!;
+    };
+
+    expect(wiki).toMatchObject({
+      schemaVersion: 1,
+      fingerprint: project.fingerprint
+    });
+    expect(wiki.pages.map((candidate) => candidate.slug)).toEqual(["overview", "structure", "routes", "database", "decisions"]);
+    expect(wiki.pages.map((candidate) => candidate.body)).toEqual(rebuilt.pages.map((candidate) => candidate.body));
+
+    expect(page("overview").body).toContain("- Frameworks: Next.js, PostgreSQL/Supabase, React, TypeScript");
+    expect(page("overview").body).toContain("- next-route: 1");
+    expect(page("overview").body).toContain("- react-component: 1");
+    expect(page("overview").body).toContain("- Top-level directories: app, components, services, supabase");
+
+    expect(page("structure").body).toContain("## app");
+    expect(page("structure").body).toContain("- app/patients/[id]/page.tsx (next-route) exports PatientPage");
+    expect(page("structure").body).toContain("- components/PatientCard.tsx (react-component) exports PatientCard");
+    expect(page("structure").body).toContain("- services/patientService.ts (module) exports loadPatientSummary");
+
+    expect(page("routes").body).toContain("- /patients/[id] -> app/patients/[id]/page.tsx");
+
+    expect(page("database").body).toContain("- Table public.patients");
+    expect(page("database").body).toContain("- Policy tenant can read active patients on public.patients");
+    expect(page("database").body).toContain("- Materialized view public.patient_rollups");
+    expect(page("database").body).toMatch(/1\. table public\.patients/);
+    expect(page("database").body).toMatch(/2\. policy tenant can read active patients/);
+    expect(page("database").body).toMatch(/3\. materializedView public\.patient_rollups/);
+
+    expect(page("decisions").body).toContain("- Patient summaries stay tenant scoped (architecture; tags: patients, rls, summary)");
+    expect(page("decisions").body).not.toContain("Do not include this raw memory body");
+
+    for (const candidate of wiki.pages) {
+      expect(candidate.slug).toMatch(/^[a-z0-9-]+$/);
+      expect(candidate.title).toMatch(/\S/);
+      expect(candidate.estimatedTokens).toBe(estimateTokens(candidate.body));
+    }
+  });
+
+  it("omits empty database and decision pages", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "onlyCode.ts"), "export function onlyCode() { return true; }");
+    const project = await indexProject(root);
+
+    const wiki = buildProjectWiki(project, []);
+
+    expect(wiki.pages.map((page) => page.slug)).toEqual(["overview", "structure"]);
+  });
+
+  it("persists wiki manifests and markdown pages", async () => {
+    const root = resolve("tests", "fixtures", "next-supabase");
+    const stateRoot = await makeRoot();
+    const project = await indexProject(root);
+    const wiki = buildProjectWiki(project, []);
+
+    await saveProjectWiki(stateRoot, wiki);
+
+    const files = (await readdir(wikiDir(stateRoot))).sort();
+    expect(files).toEqual(["database.md", "manifest.json", "overview.md", "routes.md", "structure.md"]);
+    expect(JSON.parse(await readFile(join(wikiDir(stateRoot), "manifest.json"), "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      fingerprint: wiki.fingerprint,
+      pages: wiki.pages.map((page) => ({
+        slug: page.slug,
+        title: page.title,
+        estimatedTokens: page.estimatedTokens,
+        file: `${page.slug}.md`
+      }))
+    });
+
+    await expect(loadProjectWiki(stateRoot)).resolves.toEqual(wiki);
+  });
+
+  it("returns undefined for missing or invalid wiki manifests", async () => {
+    const root = await makeRoot();
+    await expect(loadProjectWiki(root)).resolves.toBeUndefined();
+
+    await mkdir(wikiDir(root), { recursive: true });
+    await writeFile(join(wikiDir(root), "manifest.json"), "{ not json");
+
+    await expect(loadProjectWiki(root)).resolves.toBeUndefined();
+  });
+
+  it("rejects wiki manifests whose page files escape the wiki directory", async () => {
+    const root = await makeRoot();
+    await mkdir(wikiDir(root), { recursive: true });
+    await writeFile(
+      join(wikiDir(root), "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        fingerprint: "unsafe",
+        generatedAt: "2026-07-07T00:00:00.000Z",
+        pages: [{ slug: "overview", title: "Overview", estimatedTokens: 1, file: "../overview.md" }]
+      })
+    );
+    await writeFile(join(wikiDir(root), "overview.md"), "# Overview\n");
+
+    await expect(loadProjectWiki(root)).resolves.toBeUndefined();
+
+    await writeFile(
+      join(wikiDir(root), "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        fingerprint: "unsafe",
+        generatedAt: "2026-07-07T00:00:00.000Z",
+        pages: [{ slug: "overview", title: "Overview", estimatedTokens: 1, file: join(root, "overview.md") }]
+      })
+    );
+
+    await expect(loadProjectWiki(root)).resolves.toBeUndefined();
+  });
+
+  it("reports missing, fresh, and stale wiki status from the persisted index fingerprint", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patientSummary.ts"), "export const patientSummary = 'old';");
+
+    await expect(getWikiStatus(root)).resolves.toMatchObject({ state: "missing", hasWiki: false });
+
+    const project = await indexProject(root);
+    await saveProjectIndex(root, project);
+    await saveProjectWiki(root, buildProjectWiki(project, []));
+    await expect(getWikiStatus(root)).resolves.toMatchObject({
+      state: "fresh",
+      hasWiki: true,
+      wikiFingerprint: project.fingerprint,
+      indexFingerprint: project.fingerprint
+    });
+
+    await writeFile(join(root, "src", "patientSummary.ts"), "export const patientSummary = 'new';");
+    const staleProject = await indexProject(root);
+    await saveProjectIndex(root, staleProject);
+    await expect(getWikiStatus(root)).resolves.toMatchObject({
+      state: "stale",
+      hasWiki: true,
+      wikiFingerprint: project.fingerprint,
+      indexFingerprint: staleProject.fingerprint
+    });
+
+    await clearProjectIndex(root);
+    await saveProjectWiki(root, buildProjectWiki(project, []));
+    await expect(getWikiStatus(root)).resolves.toMatchObject({
+      state: "stale",
+      hasWiki: true,
+      indexFingerprint: undefined
+    });
+  });
+
+  it("clears derived wiki state with index resets while preserving memories and config", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patientSummary.ts"), "export const patientSummary = true;");
+    const project = await indexProject(root);
+    await saveProjectIndex(root, project);
+    await saveProjectWiki(root, buildProjectWiki(project, []));
+    await new MemoryStore(memoryPath(root)).add({
+      type: "convention",
+      title: "Keep reset narrow",
+      body: "Index resets preserve memory and config.",
+      tags: ["reset"]
+    });
+    await loadTokenGraphConfig(root);
+
+    await clearProjectIndex(root);
+
+    await expect(access(indexPath(root))).rejects.toThrow();
+    await expect(access(wikiDir(root))).rejects.toThrow();
+    await expect(access(memoryPath(root))).resolves.toBeUndefined();
+    await expect(access(configPath(root))).resolves.toBeUndefined();
+
+    await saveProjectIndex(root, project);
+    await saveProjectWiki(root, buildProjectWiki(project, []));
+    await clearProjectState(root);
+
+    await expect(access(memoryPath(root))).rejects.toThrow();
+    await expect(access(configPath(root))).rejects.toThrow();
+    await expect(access(wikiDir(root))).rejects.toThrow();
   });
 });
 

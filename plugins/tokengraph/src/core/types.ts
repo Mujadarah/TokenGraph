@@ -191,6 +191,19 @@ export interface ProjectIndex extends CodeGraph {
   sql: SqlGraph;
 }
 
+export interface WikiPage {
+  slug: string;
+  title: string;
+  body: string;
+  estimatedTokens: number;
+}
+
+export interface ProjectWiki {
+  schemaVersion: number;
+  fingerprint: string;
+  pages: WikiPage[];
+}
+
 export interface FileScanMetadata {
   path: string;
   size: number;

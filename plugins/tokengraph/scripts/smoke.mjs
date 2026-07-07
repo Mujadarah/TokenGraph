@@ -15,7 +15,9 @@ const requiredTools = [
   "tokengraph_plan_context",
   "tokengraph_compress_output",
   "tokengraph_review_memories",
-  "tokengraph_export_project_map"
+  "tokengraph_export_project_map",
+  "tokengraph_generate_wiki",
+  "tokengraph_show_wiki_page"
 ];
 
 function usage() {
@@ -178,7 +180,7 @@ async function runSmoke() {
     await client.request("initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-cli-smoke", version: "0.8.0" }
+      clientInfo: { name: "tokengraph-cli-smoke", version: "0.9.0" }
     });
     client.notify("notifications/initialized");
 
@@ -220,6 +222,14 @@ async function runSmoke() {
       await client.request("tools/call", { name: "tokengraph_export_project_map", arguments: { root, format: "mermaid", limit: 25 } }),
       "tokengraph_export_project_map"
     );
+    const generatedWiki = assertToolResult(
+      await client.request("tools/call", { name: "tokengraph_generate_wiki", arguments: { root } }),
+      "tokengraph_generate_wiki"
+    );
+    const overviewWiki = assertToolResult(
+      await client.request("tools/call", { name: "tokengraph_show_wiki_page", arguments: { root, slug: "overview" } }),
+      "tokengraph_show_wiki_page"
+    );
 
     return {
       status: "ok",
@@ -234,7 +244,9 @@ async function runSmoke() {
       estimatedTokensAvoided: savings.avoided ?? 0,
       memoriesReviewed: memoryReview.totalMemories ?? 0,
       exportedMapNodes: projectMapExport.nodeCount ?? 0,
-      exportedMapEdges: projectMapExport.edgeCount ?? 0
+      exportedMapEdges: projectMapExport.edgeCount ?? 0,
+      wikiPageSlugs: (generatedWiki.pages ?? []).map((page) => page.slug),
+      wikiStatus: overviewWiki.wikiStatus?.state ?? "unknown"
     };
   } finally {
     await client.close();

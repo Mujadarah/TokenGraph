@@ -13,10 +13,20 @@ import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
 import { MemoryStore } from "./core/memoryStore.js";
 import { buildContextPlan } from "./core/planner.js";
 import { indexProject, updateProjectIndexIncremental } from "./core/projectIndexer.js";
-import { clearProjectIndex, clearProjectState, loadProjectIndex, memoryPath, saveProjectIndex } from "./core/persistence.js";
+import {
+  clearProjectIndex,
+  clearProjectState,
+  getWikiStatus,
+  loadProjectIndex,
+  loadProjectWiki,
+  memoryPath,
+  saveProjectIndex,
+  saveProjectWiki
+} from "./core/persistence.js";
 import { exportProjectMap, reviewMemories } from "./core/review.js";
 import { estimateTokens, tokenize } from "./core/token.js";
 import type { ProjectIndex, RankedSqlObject } from "./core/types.js";
+import { buildProjectWiki } from "./core/wiki.js";
 
 async function workspaceRoot(inputRoot?: string): Promise<string> {
   const allowedRoot = await realpath(process.cwd());
@@ -284,7 +294,7 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
 }
 
 export function createTokenGraphServer(): McpServer {
-  const server = new McpServer({ name: "tokengraph", version: "0.8.0" });
+  const server = new McpServer({ name: "tokengraph", version: "0.9.0" });
 
   server.registerTool(
     "tokengraph_index_project",
@@ -312,9 +322,23 @@ export function createTokenGraphServer(): McpServer {
           };
       const project = result.index;
       await saveProjectIndex(resolvedRoot, project);
+      const config = await loadTokenGraphConfig(resolvedRoot);
+      let wikiRefreshed = false;
+      let wikiWarning: string | undefined;
+      if (config.wikiGenerationEnabled) {
+        try {
+          const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+          await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories));
+          wikiRefreshed = true;
+        } catch (error) {
+          wikiWarning = `Wiki refresh failed: ${(error as Error).message}`;
+        }
+      }
       return ok({
         status: "indexed",
         indexingMode: fullReindex ? "full" : result.mode,
+        wikiRefreshed,
+        ...(wikiWarning ? { wikiWarning } : {}),
         changes: {
           addedFiles: result.addedFiles,
           changedFiles: result.changedFiles,
@@ -344,11 +368,11 @@ export function createTokenGraphServer(): McpServer {
     "tokengraph_reset_project",
     {
       title: "Reset Project State",
-      description: "Use this to clear TokenGraph local state. The default mode clears only the persisted index and preserves memories.",
+      description: "Use this to clear TokenGraph local state. The default mode clears the persisted index and derived wiki while preserving memories.",
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({
         root: z.string().optional().describe("Workspace root to reset. Defaults to the MCP server current working directory."),
-        mode: z.enum(["index", "all"]).default("index").describe("index clears only index.json; all clears the full .tokengraph state directory.")
+        mode: z.enum(["index", "all"]).default("index").describe("index clears index.json and derived wiki pages; all clears the full .tokengraph state directory.")
       })
     },
     async ({ root, mode }) => {
@@ -426,6 +450,67 @@ export function createTokenGraphServer(): McpServer {
       const map = projectMap(project);
       map.counts.memories = memories.length;
       return ok(map);
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_generate_wiki",
+    {
+      title: "Generate Project Wiki",
+      description:
+        "Use this to generate compact local wiki pages from the persisted TokenGraph index and memory records. Explicit generation works regardless of wikiGenerationEnabled; that flag only controls automatic refresh after indexing.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional().describe("Workspace root whose persisted index should be used. Defaults to the MCP server current working directory.")
+      })
+    },
+    async ({ root }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const project = await loadProjectIndex(resolvedRoot);
+      if (!project || !isSafeProjectIndex(resolvedRoot, project)) {
+        throw new Error("No safe persisted TokenGraph index was found. Run tokengraph_index_project before tokengraph_generate_wiki.");
+      }
+      const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+      const wiki = buildProjectWiki(project, memories);
+      await saveProjectWiki(resolvedRoot, wiki);
+      return ok({
+        status: "generated",
+        root: resolvedRoot,
+        wikiStatus: await getWikiStatus(resolvedRoot),
+        pages: wiki.pages.map((page) => ({ slug: page.slug, title: page.title, estimatedTokens: page.estimatedTokens }))
+      });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_show_wiki_page",
+    {
+      title: "Show Wiki Page",
+      description:
+        "Use this to read a generated local wiki page before opening raw files. Explicit reads work regardless of wikiGenerationEnabled; that flag only controls automatic refresh after indexing.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional().describe("Workspace root whose generated wiki should be read. Defaults to the MCP server current working directory."),
+        slug: z.string().min(1).describe("Wiki page slug to read, such as overview, structure, routes, database, or decisions.")
+      })
+    },
+    async ({ root, slug }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const wiki = await loadProjectWiki(resolvedRoot);
+      if (!wiki) {
+        throw new Error("No generated TokenGraph wiki was found. Run tokengraph_generate_wiki first.");
+      }
+      const page = wiki.pages.find((candidate) => candidate.slug === slug);
+      if (!page) {
+        throw new Error(`Unknown wiki page slug "${slug}". Available slugs: ${wiki.pages.map((candidate) => candidate.slug).join(", ") || "none"}.`);
+      }
+      return ok({
+        slug: page.slug,
+        title: page.title,
+        body: page.body,
+        estimatedTokens: page.estimatedTokens,
+        wikiStatus: await getWikiStatus(resolvedRoot)
+      });
     }
   );
 

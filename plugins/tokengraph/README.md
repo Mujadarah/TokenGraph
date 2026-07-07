@@ -2,7 +2,7 @@
 
 TokenGraph is a local-first Codex plugin that reduces wasted context by routing tasks through a compact project map before raw file reads.
 
-## What v0.8 includes
+## What v0.9 includes
 
 - Codex plugin manifest and repo-local marketplace entry.
 - Local stdio MCP server in Node/TypeScript.
@@ -18,7 +18,12 @@ TokenGraph is a local-first Codex plugin that reduces wasted context by routing 
 - Config tools: `tokengraph_get_config`, `tokengraph_set_profile`, and `tokengraph_update_config`.
 - Token-saving profiles: `conservative`, `balanced`, and `aggressive`.
 - Profile-aware context planning with estimated token budgets and raw-read warning thresholds.
-- Reset controls that clear only `index.json` by default or all `.tokengraph/` state when explicitly requested.
+- Local project wiki generation under `.tokengraph/wiki/` with deterministic Markdown pages.
+- Wiki pages for `overview`, `structure`, `routes`, `database`, and `decisions`, with empty optional pages omitted.
+- Wiki status based on whether the manifest fingerprint matches the persisted index fingerprint.
+- Wiki tools: `tokengraph_generate_wiki` and `tokengraph_show_wiki_page`.
+- `wikiGenerationEnabled` auto-refresh after successful indexing; explicit wiki generation works regardless of the flag.
+- Reset controls that clear `index.json` and derived wiki pages by default or all `.tokengraph/` state when explicitly requested.
 - Context planner that returns likely files, tests, SQL objects, ranked memories, first reads with safe line hints, files to avoid, and estimated token savings.
 - Relevance scoring that avoids selecting unrelated route files with no task overlap.
 - Symbol explanation with inbound and outbound references from the resolved import graph.
@@ -47,7 +52,22 @@ pnpm validate:plugin
 
 The MCP server entry point is `dist/index.js`, built from `src/index.ts`.
 
-`pnpm smoke -- --root <project>` starts the built MCP server over stdio, validates the required TokenGraph tools, and calls the project status, map, planner, and token-savings tools against the selected project root. Run `pnpm build` first.
+`pnpm smoke -- --root <project>` starts the built MCP server over stdio, validates the required TokenGraph tools, and calls the project status, map, planner, token-savings, memory review, export, and wiki tools against the selected project root. Run `pnpm build` first.
+
+## Local project wiki
+
+The wiki is derived only from the persisted `ProjectIndex` plus memory records. Page bodies do not embed raw source or memory bodies. They include indexed paths, file kinds, route strings, exported symbol names, SQL object names/details already captured in the SQL graph, and memory titles/types/tags.
+
+Generated files:
+
+- `.tokengraph/wiki/manifest.json`
+- `.tokengraph/wiki/overview.md`
+- `.tokengraph/wiki/structure.md`
+- `.tokengraph/wiki/routes.md` when routes exist
+- `.tokengraph/wiki/database.md` when SQL objects exist
+- `.tokengraph/wiki/decisions.md` when memories exist
+
+The manifest records the index fingerprint used to build the wiki. `tokengraph_show_wiki_page` returns `wikiStatus`; it is `fresh` only when the manifest fingerprint matches the persisted index fingerprint, `stale` when they differ or the index is missing, and `missing` when no valid wiki exists.
 
 ## Codex install notes
 
@@ -76,7 +96,7 @@ Then install `tokengraph` from that marketplace and start a new Codex thread so 
 
 ### Stale indexes
 
-Call `tokengraph_index_status` before trusting cached context. If it reports `stale`, call `tokengraph_index_project`; compatible indexes update incrementally. Pass `fullReindex: true` only when you need a complete rebuild. If the index looks corrupt, call `tokengraph_reset_project` with `mode: "index"`; this preserves memories by default.
+Call `tokengraph_index_status` before trusting cached context. If it reports `stale`, call `tokengraph_index_project`; compatible indexes update incrementally. Pass `fullReindex: true` only when you need a complete rebuild. For wiki pages, call `tokengraph_show_wiki_page` and check `wikiStatus`; regenerate with `tokengraph_generate_wiki` when the wiki is missing or stale. If the index looks corrupt, call `tokengraph_reset_project` with `mode: "index"`; this preserves memories and config by default while clearing derived wiki pages.
 
 ### Plugin build failures
 
@@ -88,7 +108,7 @@ The repo marketplace file is `.agents/plugins/marketplace.json`. Its `source.pat
 
 ## Privacy
 
-TokenGraph v0.8 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API. Token counts and savings are estimates, not exact measurements.
+TokenGraph v0.9 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API. Token counts and savings are estimates, not exact measurements.
 
 ## License
 
