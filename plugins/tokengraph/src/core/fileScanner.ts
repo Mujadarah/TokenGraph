@@ -1,8 +1,8 @@
-import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, normalize, relative, sep } from "node:path";
 
+import * as ignorePackage from "ignore";
 import type { Ignore } from "ignore";
 
 import type { CodeFile, CodeGraph, CodeSymbol, Exclusion, FileKind, FileScanMetadata, ImportEdge } from "./types.js";
@@ -20,8 +20,7 @@ const DEFAULT_SCAN_BUDGET = {
   maxDepth: 32,
   maxTotalBytes: 50 * 1024 * 1024
 };
-const createIgnore = createRequire(import.meta.url)("ignore") as () => Ignore;
-
+const createIgnore = (("default" in ignorePackage ? ignorePackage.default : ignorePackage) as unknown) as () => Ignore;
 export interface ScanBudget {
   maxFiles?: number;
   maxDirectories?: number;

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -78,6 +78,30 @@ describe("tokengraph CLI smoke command", () => {
       stderr: expect.stringContaining("--root requires a value")
     });
   });
+
+  it("runs from a copied plugin cache without node_modules", async () => {
+    const cacheRoot = await makeRoot();
+    const projectRoot = await makeRoot();
+    await mkdir(join(projectRoot, "src"), { recursive: true });
+    await writeFile(join(projectRoot, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
+    await cp(resolve("dist"), join(cacheRoot, "dist"), { recursive: true });
+    await cp(resolve(".codex-plugin"), join(cacheRoot, ".codex-plugin"), { recursive: true });
+    await cp(resolve(".mcp.json"), join(cacheRoot, ".mcp.json"));
+    await cp(resolve("package.json"), join(cacheRoot, "package.json"));
+
+    await expect(access(join(cacheRoot, "node_modules"))).rejects.toThrow();
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [resolve("scripts", "smoke.mjs"), "--root", projectRoot, "--server", join(cacheRoot, "dist", "index.js"), "--json"],
+      { cwd: process.cwd() }
+    );
+
+    expect(JSON.parse(stdout)).toMatchObject({
+      status: "ok",
+      root: projectRoot,
+      filesIndexed: 1
+    });
+  });
 });
 
 describe("tokengraph release package command", () => {
@@ -99,9 +123,9 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.10.0"
+      version: "0.10.1"
     });
-    expect(report.packageDir).toBe(resolve(outRoot, "tokengraph-0.10.0"));
+    expect(report.packageDir).toBe(resolve(outRoot, "tokengraph-0.10.1"));
     expect(report.marketplacePath).toBe(resolve(outRoot, ".agents", "plugins", "marketplace.json"));
     expect(report.files).toEqual(
       expect.arrayContaining([
@@ -124,7 +148,7 @@ describe("tokengraph release package command", () => {
     };
     expect(marketplace.plugins?.[0]).toMatchObject({
       name: "tokengraph",
-      source: { path: "./tokengraph-0.10.0" }
+      source: { path: "./tokengraph-0.10.1" }
     });
   });
 

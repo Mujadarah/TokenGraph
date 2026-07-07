@@ -8,7 +8,8 @@ Scope:
 - Package only the files needed for Codex plugin installation: `.codex-plugin/`, `.mcp.json`, `dist/`, `skills/`, `README.md`, `package.json`, and `LICENSE`.
 - Generate a release-local `.agents/plugins/marketplace.json` whose `source.path` points at the packaged plugin folder.
 - Keep source, tests, dependencies, local state, and generated artifacts out of the packaged plugin folder.
-- Update package, manifest, server, smoke, validator, README, and roadmap metadata for `0.10.0`.
+- Update package, manifest, server, smoke, validator, README, and roadmap metadata for the `0.10.x` release line.
+- Bundle the MCP entry point so installed Codex plugin caches can launch without `node_modules`.
 - Keep language support, SQLite persistence, and archive/registry publishing out of this release.
 
 Official Codex grounding:
@@ -26,3 +27,4 @@ Verification:
 - `pnpm smoke -- --root . --json`
 - `pnpm validate:plugin`
 - `pnpm package:plugin -- --json`
+- Reinstall `tokengraph@personal` and verify the installed cache lists `tokengraph_*` tools without running a cache-local dependency install.

@@ -19,7 +19,7 @@ Large coding sessions often waste tokens by repeatedly reading files, logs, migr
 
 ## Current Version
 
-TokenGraph is currently at `0.10.0`.
+TokenGraph is currently at `0.10.1`.
 
 Highlights:
 
@@ -44,6 +44,7 @@ Highlights:
 - Supabase RLS policy summaries with command, roles, `using`, and `with check` clauses.
 - Ordered SQL object history across migration files.
 - JSON-RPC stdio smoke tests for the built MCP entry point.
+- Self-contained bundled MCP entry point so installed plugin caches do not need a `node_modules` install step.
 - CLI smoke command for validating the built MCP server outside Codex.
 - Release packaging that produces an installable plugin folder without committing `dist/`.
 - Fixture-backed scanner and planner regression projects.
@@ -80,6 +81,8 @@ pnpm package:plugin
 ```
 
 The MCP server entry point is `plugins/tokengraph/dist/index.js`, built from `plugins/tokengraph/src/index.ts`.
+
+`pnpm build` runs TypeScript and bundles the MCP entry point into a self-contained `plugins/tokengraph/dist/index.js`. That lets Codex launch the installed plugin cache without running `pnpm install` inside the cache.
 
 `pnpm smoke -- --root <project>` starts the built stdio MCP server with `<project>` as its workspace, lists the TokenGraph tools, and calls the project map, planner, token-savings, memory review, export, and wiki tools. Run `pnpm build` first so `dist/index.js` is current.
 

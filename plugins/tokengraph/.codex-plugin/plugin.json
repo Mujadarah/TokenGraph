@@ -1,6 +1,6 @@
 {
   "name": "tokengraph",
-  "version": "0.10.0+codex.20260707142600",
+  "version": "0.10.1+codex.20260707144200",
   "description": "Reduce wasted Codex context with local code, SQL, memory, and log routing.",
   "author": {
     "name": "TokenGraph"
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "TokenGraph",
     "shortDescription": "Route Codex through compact local project context before raw files.",
-    "longDescription": "TokenGraph indexes the current project locally and gives Codex a compact code graph, resolved import graph, SQL graph with PostgreSQL object and RLS policy detail, memory graph, local project wiki, project map, visual map export, index and wiki freshness status, reset controls, local config, profile-aware context planning, incremental indexing, memory review, reference explanation, log compressor, token savings report, CLI smoke validation, release packaging, and fixture-backed scanner/planner regression coverage. It does not require a paid API key or cloud service.",
+    "longDescription": "TokenGraph indexes the current project locally and gives Codex a compact code graph, resolved import graph, SQL graph with PostgreSQL object and RLS policy detail, memory graph, local project wiki, project map, visual map export, index and wiki freshness status, reset controls, local config, profile-aware context planning, incremental indexing, memory review, reference explanation, log compressor, token savings report, CLI smoke validation, self-contained MCP runtime bundling, release packaging, and fixture-backed scanner/planner regression coverage. It does not require a paid API key or cloud service.",
     "developerName": "TokenGraph",
     "category": "Developer Tools",
     "capabilities": [
@@ -38,6 +38,7 @@
       "Memory Review",
       "Visual Map Export",
       "Log Compression",
+      "Self-Contained MCP Runtime",
       "Release Packaging",
       "CLI Smoke Validation",
       "Fixture Regression Tests"

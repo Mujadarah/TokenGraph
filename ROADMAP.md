@@ -98,6 +98,7 @@ Status: complete
 
 Status: complete
 
+- Self-contained bundled MCP entry point so installed Codex plugin caches can start without a cache-local dependency install.
 - `pnpm package:plugin` command that builds a distributable plugin folder from source plus compiled `dist/`.
 - Release artifact directory ignored by git so public source packaging does not require committed build output.
 - Release-local `.agents/plugins/marketplace.json` that points at the packaged plugin folder with a relative `source.path`.

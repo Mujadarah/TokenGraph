@@ -2,7 +2,7 @@
 
 TokenGraph is a local-first Codex plugin that reduces wasted context by routing tasks through a compact project map before raw file reads.
 
-## What v0.10 includes
+## What v0.10.1 includes
 
 - Codex plugin manifest and repo-local marketplace entry.
 - Local stdio MCP server in Node/TypeScript.
@@ -36,6 +36,7 @@ TokenGraph is a local-first Codex plugin that reduces wasted context by routing 
 - Mermaid and JSON project map export through `tokengraph_export_project_map`.
 - Log/test/build/diff compression.
 - JSON-RPC stdio smoke coverage for the built MCP entry point.
+- Self-contained bundled MCP entry point so installed Codex plugin caches do not need `node_modules`.
 - CLI smoke command for local validation outside Codex.
 - Example fixture projects for scanner and planner regression tests.
 - Local plugin validation for manifest, MCP config, built output, and skill metadata.
@@ -52,7 +53,7 @@ pnpm validate:plugin
 pnpm package:plugin
 ```
 
-The MCP server entry point is `dist/index.js`, built from `src/index.ts`.
+The MCP server entry point is `dist/index.js`, built from `src/index.ts`. `pnpm build` first type-checks and emits the module tree, then bundles the MCP entry point so an installed Codex plugin cache can launch without running `pnpm install` in the cache.
 
 `pnpm smoke -- --root <project>` starts the built MCP server over stdio, validates the required TokenGraph tools, and calls the project status, map, planner, token-savings, memory review, export, and wiki tools against the selected project root. Run `pnpm build` first.
 
@@ -118,7 +119,7 @@ The repo marketplace file is `.agents/plugins/marketplace.json`. Its `source.pat
 
 ## Privacy
 
-TokenGraph v0.10 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API. Token counts and savings are estimates, not exact measurements.
+TokenGraph v0.10.1 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API. Token counts and savings are estimates, not exact measurements.
 
 ## License
 

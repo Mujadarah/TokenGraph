@@ -50,6 +50,7 @@ const distEntryPath = resolve(pluginRoot, "dist", "index.js");
 const distServerPath = resolve(pluginRoot, "dist", "server.js");
 const distReviewPath = resolve(pluginRoot, "dist", "core", "review.js");
 const smokeScriptPath = resolve(pluginRoot, "scripts", "smoke.mjs");
+const buildScriptPath = resolve(pluginRoot, "scripts", "build.mjs");
 const packageScriptPath = resolve(pluginRoot, "scripts", "package-plugin.mjs");
 const nextSupabaseFixturePath = resolve(pluginRoot, "tests", "fixtures", "next-supabase");
 const ignoredOutputFixturePath = resolve(pluginRoot, "tests", "fixtures", "ignored-output");
@@ -64,6 +65,8 @@ const distReview = await readFile(distReviewPath, "utf8").catch((error) => fail(
 
 assert(packageJson.name === "tokengraph", "package name must be tokengraph");
 assert(/^\d+\.\d+\.\d+$/.test(packageJson.version), "package version must be semver");
+assert(packageJson.scripts?.build === "node scripts/build.mjs", "package scripts must use the bundled MCP build command");
+assert(packageJson.devDependencies?.esbuild, "package devDependencies must include esbuild for self-contained MCP bundles");
 assert(packageJson.scripts?.smoke === "node scripts/smoke.mjs", "package scripts must include smoke command");
 assert(packageJson.scripts?.["package:plugin"] === "node scripts/package-plugin.mjs", "package scripts must include package:plugin command");
 assert(manifest.name === "tokengraph", "plugin manifest name must be tokengraph");
@@ -98,16 +101,19 @@ assert(distServer.includes("tokengraph_update_config"), "built MCP server must r
 assert(distServer.includes("fullReindex"), "built MCP server must expose v0.8 full reindex option");
 assert(distServer.includes("indexingMode"), "built MCP server must report v0.8 indexing mode");
 assert(distServer.includes("maxEstimatedTokens"), "built MCP server must expose v0.8 planner token budget input");
-assert(packageJson.version === "0.10.0", "package version must be 0.10.0 for this release");
+assert(packageJson.version === "0.10.1", "package version must be 0.10.1 for this release");
 assert(distServer.includes("tokengraph_generate_wiki"), "built MCP server must register v0.9 wiki generator");
 assert(distServer.includes("tokengraph_show_wiki_page"), "built MCP server must register v0.9 wiki page reader");
 assert(distServer.includes("wikiRefreshed"), "built MCP server must report v0.9 wiki auto-refresh state");
 assert(packageJson.scripts?.["package:plugin"]?.includes("package-plugin.mjs"), "package metadata must expose v0.10 release packaging");
+assert(packageJson.scripts?.build === "node scripts/build.mjs", "package build must create a self-contained MCP entry bundle");
+assert(packageJson.devDependencies?.esbuild, "package devDependencies must include esbuild for the self-contained MCP bundle");
 assert(distReview.includes("flowchart LR"), "built review helpers must include Mermaid project map export");
 
 await assertFile(distEntryPath, "built MCP entry");
 await assertFile(distServerPath, "built MCP server");
 await assertFile(distReviewPath, "built review helpers");
+await assertFile(buildScriptPath, "bundled build script");
 await assertFile(smokeScriptPath, "CLI smoke script");
 await assertFile(packageScriptPath, "release package script");
 await assertFile(nextSupabaseFixturePath, "Next.js Supabase regression fixture");
