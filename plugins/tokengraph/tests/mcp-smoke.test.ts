@@ -773,6 +773,53 @@ describe("TokenGraph MCP stdio server", () => {
     });
   });
 
+  it("rejects nested traversal paths in crafted persisted indexes", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
+    const current = await indexProject(root);
+    await writeFile(
+      join(root, ".tokengraph", "index.json"),
+      JSON.stringify(
+        {
+          ...current,
+          symbols: [
+            {
+              name: "NestedInjectedOutsideSymbol",
+              kind: "function",
+              filePath: "src/../../outside-secret.ts",
+              exported: true,
+              startLine: 1,
+              endLine: 1
+            }
+          ]
+        },
+        null,
+        2
+      )
+    );
+    await stopServer();
+    startServer(root);
+
+    await request(60, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.10.1" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const explanation = await request(61, "tools/call", {
+      name: "tokengraph_explain_symbol",
+      arguments: { target: "NestedInjectedOutsideSymbol" }
+    });
+
+    expect(explanation.structuredContent).toMatchObject({
+      symbols: [],
+      explanation: "No indexed file or symbol matched this target."
+    });
+  });
+
   it("serves fresh persisted indexes without reindexing when the scan signature matches", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });

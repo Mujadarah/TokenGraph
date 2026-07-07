@@ -96,7 +96,9 @@ async function ensureProject(root: string): Promise<ProjectIndex> {
 }
 
 function isSafeRelativePath(path: string): boolean {
-  return Boolean(path) && !path.startsWith("../") && !path.startsWith("..\\") && !isAbsolute(path);
+  if (!path || isAbsolute(path)) return false;
+  const segments = path.split(/[\\/]+/);
+  return segments.every((segment) => segment && segment !== "." && segment !== "..");
 }
 
 function isSafeProjectIndex(root: string, project: ProjectIndex): boolean {

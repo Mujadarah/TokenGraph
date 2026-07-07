@@ -1,6 +1,6 @@
 {
   "name": "tokengraph",
-  "version": "0.10.1+codex.20260707144200",
+  "version": "0.10.1+codex.20260707150000",
   "description": "Reduce wasted Codex context with local code, SQL, memory, and log routing.",
   "author": {
     "name": "TokenGraph"
