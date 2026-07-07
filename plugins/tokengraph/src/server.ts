@@ -294,7 +294,7 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
 }
 
 export function createTokenGraphServer(): McpServer {
-  const server = new McpServer({ name: "tokengraph", version: "0.9.0" });
+  const server = new McpServer({ name: "tokengraph", version: "0.10.0" });
 
   server.registerTool(
     "tokengraph_index_project",

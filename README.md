@@ -19,7 +19,7 @@ Large coding sessions often waste tokens by repeatedly reading files, logs, migr
 
 ## Current Version
 
-TokenGraph is currently at `0.9.0`.
+TokenGraph is currently at `0.10.0`.
 
 Highlights:
 
@@ -45,6 +45,7 @@ Highlights:
 - Ordered SQL object history across migration files.
 - JSON-RPC stdio smoke tests for the built MCP entry point.
 - CLI smoke command for validating the built MCP server outside Codex.
+- Release packaging that produces an installable plugin folder without committing `dist/`.
 - Fixture-backed scanner and planner regression projects.
 - Local plugin validator.
 - Read-only memory review so Codex can inspect local project memories before relying on them.
@@ -75,11 +76,14 @@ pnpm build
 pnpm test
 pnpm smoke -- --root . --json
 pnpm validate:plugin
+pnpm package:plugin
 ```
 
 The MCP server entry point is `plugins/tokengraph/dist/index.js`, built from `plugins/tokengraph/src/index.ts`.
 
 `pnpm smoke -- --root <project>` starts the built stdio MCP server with `<project>` as its workspace, lists the TokenGraph tools, and calls the project map, planner, token-savings, memory review, export, and wiki tools. Run `pnpm build` first so `dist/index.js` is current.
+
+`pnpm package:plugin` creates an ignored release artifact under `artifacts/`. The artifact contains a compiled plugin folder plus a release-local `.agents/plugins/marketplace.json`, so public source releases do not need to commit `plugins/tokengraph/dist/`.
 
 ## Local Project Wiki
 
@@ -108,6 +112,17 @@ Then install `tokengraph` from that marketplace and start a new Codex thread so 
 
 When iterating on this local plugin, rebuild it and restart Codex or start a fresh thread so the updated skill, manifest, and MCP server are loaded.
 
+For release artifact testing, run:
+
+```powershell
+cd plugins/tokengraph
+pnpm build
+pnpm package:plugin
+codex plugin marketplace add C:\Users\rabia\Desktop\TokenGraph\artifacts
+```
+
+The generated marketplace points at `./tokengraph-<version>` relative to the artifact root.
+
 ## Troubleshooting
 
 - Missing MCP tools: confirm the plugin is installed/enabled, run `pnpm build`, run `pnpm smoke -- --root . --json`, then restart Codex or open a fresh thread.
@@ -115,6 +130,7 @@ When iterating on this local plugin, rebuild it and restart Codex or start a fre
 - Stale wiki pages: call `tokengraph_show_wiki_page`; if `wikiStatus` is `missing` or `stale`, call `tokengraph_generate_wiki`.
 - Plugin build failures: run `pnpm typecheck`, then `pnpm build`; fix TypeScript errors before running `pnpm validate:plugin`.
 - Marketplace not visible: confirm `.agents/plugins/marketplace.json` exists and that `source.path` points to `./plugins/tokengraph` relative to the repository root.
+- Release package missing built files: run `pnpm build` before `pnpm package:plugin`; the package command requires `dist/index.js` and `dist/server.js`.
 
 ## MCP Tool Surface
 

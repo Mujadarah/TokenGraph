@@ -94,9 +94,18 @@ Status: complete
 - Reset behavior that clears derived wiki state with index resets while preserving memory and config.
 - MCP, CLI smoke, validator, and core coverage for the v0.9 wiki surface.
 
+## v0.10 - Release Packaging
+
+Status: complete
+
+- `pnpm package:plugin` command that builds a distributable plugin folder from source plus compiled `dist/`.
+- Release artifact directory ignored by git so public source packaging does not require committed build output.
+- Release-local `.agents/plugins/marketplace.json` that points at the packaged plugin folder with a relative `source.path`.
+- Packaged plugin includes only install files: metadata, MCP config, compiled server, skills, README, package metadata, and license.
+- CLI regression coverage and validator checks for the v0.10 packaging workflow.
+
 ## Later
 
 Ideas under consideration:
 
 - Language support beyond TypeScript/JavaScript and PostgreSQL.
-- Public release packaging that does not require committing build output.

@@ -2,7 +2,7 @@
 
 TokenGraph is a local-first Codex plugin that reduces wasted context by routing tasks through a compact project map before raw file reads.
 
-## What v0.9 includes
+## What v0.10 includes
 
 - Codex plugin manifest and repo-local marketplace entry.
 - Local stdio MCP server in Node/TypeScript.
@@ -39,6 +39,7 @@ TokenGraph is a local-first Codex plugin that reduces wasted context by routing 
 - CLI smoke command for local validation outside Codex.
 - Example fixture projects for scanner and planner regression tests.
 - Local plugin validation for manifest, MCP config, built output, and skill metadata.
+- Release packaging with `pnpm package:plugin`, producing an installable plugin folder and release-local marketplace file without committing `dist/`.
 
 ## Local development
 
@@ -48,11 +49,14 @@ pnpm build
 pnpm test
 pnpm smoke -- --root . --json
 pnpm validate:plugin
+pnpm package:plugin
 ```
 
 The MCP server entry point is `dist/index.js`, built from `src/index.ts`.
 
 `pnpm smoke -- --root <project>` starts the built MCP server over stdio, validates the required TokenGraph tools, and calls the project status, map, planner, token-savings, memory review, export, and wiki tools against the selected project root. Run `pnpm build` first.
+
+`pnpm package:plugin` creates an ignored release artifact under the repository `artifacts/` directory. The artifact includes only installable plugin files: `.codex-plugin/`, `.mcp.json`, `dist/`, `skills/`, `README.md`, `package.json`, and the repository license. It also writes a release-local `.agents/plugins/marketplace.json` that points at the packaged plugin folder.
 
 ## Local project wiki
 
@@ -85,6 +89,8 @@ codex plugin marketplace add C:\Users\rabia\Desktop\TokenGraph
 
 Then install `tokengraph` from that marketplace and start a new Codex thread so the skill and MCP tools are loaded. After changing plugin code, run `pnpm build`, run the smoke command, and restart Codex or open a fresh thread.
 
+For release artifact testing, run `pnpm build` and then `pnpm package:plugin`. Add the generated `artifacts/` directory as a marketplace root if you want to test the packaged plugin folder instead of the source checkout.
+
 ## Troubleshooting
 
 ### Missing MCP tools
@@ -102,13 +108,17 @@ Call `tokengraph_index_status` before trusting cached context. If it reports `st
 
 Run `pnpm typecheck` to get compiler errors, then `pnpm build`. `pnpm validate:plugin` expects the built `dist/index.js` and `dist/server.js` files to exist and match the current plugin metadata.
 
+### Release package failures
+
+Run `pnpm build` before `pnpm package:plugin`. The package command fails if `dist/index.js` or `dist/server.js` is missing, because the generated plugin folder is meant to be installable without a TypeScript build step.
+
 ### Marketplace visibility
 
 The repo marketplace file is `.agents/plugins/marketplace.json`. Its `source.path` must point to `./plugins/tokengraph` relative to the repository root, not relative to `.agents/plugins`.
 
 ## Privacy
 
-TokenGraph v0.9 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API. Token counts and savings are estimates, not exact measurements.
+TokenGraph v0.10 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API. Token counts and savings are estimates, not exact measurements.
 
 ## License
 

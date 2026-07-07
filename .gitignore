@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .tokengraph/
+artifacts/
 
 # Local/editor state
 .DS_Store
