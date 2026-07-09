@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
+import { quarantineCorruptJson, writeJsonAtomic, writeTextAtomic } from "./storage.js";
 import type { ProjectIndex, ProjectWiki, WikiPage } from "./types.js";
 
 export function stateDir(root: string): string {
@@ -20,6 +20,18 @@ export function configPath(root: string): string {
   return join(stateDir(root), "config.json");
 }
 
+export function rulesPath(root: string): string {
+  return join(stateDir(root), "rules.json");
+}
+
+export function tokenEventsPath(root: string): string {
+  return join(stateDir(root), "token-events.json");
+}
+
+export function benchmarkRunsPath(root: string): string {
+  return join(stateDir(root), "benchmark-runs.json");
+}
+
 export function wikiDir(root: string): string {
   return join(stateDir(root), "wiki");
 }
@@ -28,21 +40,8 @@ export function wikiManifestPath(root: string): string {
   return join(wikiDir(root), "manifest.json");
 }
 
-async function writeAtomic(path: string, content: string): Promise<void> {
-  const directory = dirname(path);
-  await mkdir(directory, { recursive: true });
-  const tempPath = join(directory, `.${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
-  try {
-    await writeFile(tempPath, content);
-    await rename(tempPath, path);
-  } finally {
-    await rm(tempPath, { force: true });
-  }
-}
-
 export async function saveProjectIndex(root: string, index: ProjectIndex): Promise<void> {
-  await mkdir(stateDir(root), { recursive: true });
-  await writeFile(indexPath(root), `${JSON.stringify(index, null, 2)}\n`);
+  await writeJsonAtomic(indexPath(root), index);
 }
 
 function isProjectIndex(value: unknown): value is ProjectIndex {
@@ -81,7 +80,11 @@ export async function loadProjectIndex(root: string): Promise<ProjectIndex | und
     const parsed = JSON.parse(await readFile(indexPath(root), "utf8")) as unknown;
     return isProjectIndex(parsed) ? parsed : undefined;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    if (error instanceof SyntaxError) {
+      await quarantineCorruptJson(indexPath(root));
       return undefined;
     }
     throw error;
@@ -143,7 +146,7 @@ export async function saveProjectWiki(root: string, wiki: ProjectWiki): Promise<
     file: `${page.slug}.md`
   }));
   for (const wikiPage of wiki.pages) {
-    await writeAtomic(join(wikiDir(root), `${wikiPage.slug}.md`), wikiPage.body);
+    await writeTextAtomic(join(wikiDir(root), `${wikiPage.slug}.md`), wikiPage.body);
   }
   const manifest: WikiManifest = {
     schemaVersion: wiki.schemaVersion,
@@ -151,7 +154,7 @@ export async function saveProjectWiki(root: string, wiki: ProjectWiki): Promise<
     generatedAt: new Date().toISOString(),
     pages
   };
-  await writeAtomic(wikiManifestPath(root), `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeJsonAtomic(wikiManifestPath(root), manifest);
 }
 
 export async function loadProjectWiki(root: string): Promise<ProjectWiki | undefined> {
@@ -175,7 +178,11 @@ export async function loadProjectWiki(root: string): Promise<ProjectWiki | undef
       pages
     };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    if (error instanceof SyntaxError) {
+      await quarantineCorruptJson(wikiManifestPath(root));
       return undefined;
     }
     throw error;

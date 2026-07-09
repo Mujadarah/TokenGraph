@@ -1,7 +1,10 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 
 import { configPath, stateDir } from "./persistence.js";
+import { quarantineCorruptJson, writeJsonAtomic } from "./storage.js";
 import type { TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
+
+export const CURRENT_CONFIG_SCHEMA_VERSION = 1;
 
 export const PROFILE_DEFAULTS = {
   conservative: {
@@ -72,23 +75,40 @@ function normalizeConfig(value: unknown): TokenGraphConfig {
   };
 }
 
+function unwrapPersistedConfig(value: unknown): { config: unknown; needsMigration: boolean } {
+  if (value && typeof value === "object" && "schemaVersion" in value && "config" in value) {
+    return {
+      config: (value as { config?: unknown }).config,
+      needsMigration: (value as { schemaVersion?: unknown }).schemaVersion !== CURRENT_CONFIG_SCHEMA_VERSION
+    };
+  }
+  return { config: value, needsMigration: true };
+}
+
 export async function saveTokenGraphConfig(root: string, config: TokenGraphConfig): Promise<TokenGraphConfig> {
   const normalized = normalizeConfig(config);
-  await mkdir(stateDir(root), { recursive: true });
-  await writeFile(configPath(root), `${JSON.stringify(normalized, null, 2)}\n`);
+  await writeJsonAtomic(configPath(root), {
+    schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
+    config: normalized
+  });
   return normalized;
 }
 
 export async function loadTokenGraphConfig(root: string): Promise<TokenGraphConfig> {
   try {
     const parsed = JSON.parse(await readFile(configPath(root), "utf8")) as unknown;
-    const normalized = normalizeConfig(parsed);
-    if (JSON.stringify(parsed) !== JSON.stringify(normalized)) {
+    const unwrapped = unwrapPersistedConfig(parsed);
+    const normalized = normalizeConfig(unwrapped.config);
+    if (unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(normalized)) {
       await saveTokenGraphConfig(root, normalized);
     }
     return normalized;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
+    }
+    if (error instanceof SyntaxError) {
+      await quarantineCorruptJson(configPath(root));
       return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
     }
     throw error;

@@ -4,7 +4,12 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compressOutput } from "../src/core/compressor.js";
+import { compressContext } from "../src/core/contextCompressor.js";
+import { ArchitectureRuleStore, checkArchitecture } from "../src/core/architectureRules.js";
+import { traceFailure } from "../src/core/failureTracer.js";
+import { assessChangeRisk } from "../src/core/regressionRisk.js";
 import {
+  CURRENT_CONFIG_SCHEMA_VERSION,
   DEFAULT_TOKEN_GRAPH_CONFIG,
   PROFILE_DEFAULTS,
   loadTokenGraphConfig,
@@ -23,6 +28,7 @@ import {
   loadProjectIndex,
   loadProjectWiki,
   memoryPath,
+  rulesPath,
   saveProjectIndex,
   saveProjectWiki,
   wikiDir
@@ -30,9 +36,11 @@ import {
 import { CURRENT_INDEX_SCHEMA_VERSION, indexProject, updateProjectIndexIncremental } from "../src/core/projectIndexer.js";
 import { getIndexStatus } from "../src/core/indexStatus.js";
 import { parsePostgresMigration } from "../src/core/sqlParser.js";
+import { JsonTokenGraphStore, SqliteTokenGraphStore } from "../src/core/storage.js";
 import { exportProjectMap, reviewMemories } from "../src/core/review.js";
 import { estimateTokens, tokenize } from "../src/core/token.js";
 import { buildProjectWiki } from "../src/core/wiki.js";
+import type { MemoryEntry, MemoryInput } from "../src/core/types.js";
 
 const tempRoots: string[] = [];
 
@@ -40,6 +48,23 @@ async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "tokengraph-"));
   tempRoots.push(root);
   return root;
+}
+
+function testMemory(input: MemoryInput & { id: string; createdAt: string }): MemoryEntry {
+  return {
+    ...input,
+    status: input.status ?? "active",
+    updatedAt: input.createdAt,
+    linkedFiles: input.linkedFiles ?? [],
+    linkedSymbols: input.linkedSymbols ?? [],
+    linkedSqlObjects: input.linkedSqlObjects ?? [],
+    linkedRules: input.linkedRules ?? [],
+    confidence: input.confidence ?? "medium",
+    supersedes: input.supersedes ?? [],
+    supersededBy: input.supersededBy ?? [],
+    source: input.source ?? "test",
+    evidence: input.evidence ?? []
+  };
 }
 
 afterEach(async () => {
@@ -80,7 +105,38 @@ describe("TokenGraph local config", () => {
       memoryEnabled: true,
       wikiGenerationEnabled: false
     });
-    expect(JSON.parse(await readFile(configPath(root), "utf8"))).toEqual(DEFAULT_TOKEN_GRAPH_CONFIG);
+    expect(JSON.parse(await readFile(configPath(root), "utf8"))).toEqual({
+      schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
+      config: DEFAULT_TOKEN_GRAPH_CONFIG
+    });
+  });
+
+  it("migrates legacy config files into a schema-versioned envelope", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(configPath(root), JSON.stringify({ ...DEFAULT_TOKEN_GRAPH_CONFIG, tokenSavingProfile: "aggressive" }));
+
+    const config = await loadTokenGraphConfig(root);
+    const raw = JSON.parse(await readFile(configPath(root), "utf8"));
+
+    expect(config.tokenSavingProfile).toBe("aggressive");
+    expect(raw).toEqual({
+      schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
+      config
+    });
+  });
+
+  it("quarantines corrupt config instead of silently destroying it", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(configPath(root), "{ not json");
+
+    const config = await loadTokenGraphConfig(root);
+    const files = await readdir(join(root, ".tokengraph"));
+
+    expect(config).toEqual(DEFAULT_TOKEN_GRAPH_CONFIG);
+    expect(files.some((file) => file.startsWith("config.json.corrupt-"))).toBe(true);
+    expect(JSON.parse(await readFile(configPath(root), "utf8"))).toMatchObject({ schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION });
   });
 
   it("updates profile and explicit settings while preserving unspecified defaults", async () => {
@@ -783,14 +839,14 @@ describe("project wiki", () => {
     const root = resolve("tests", "fixtures", "next-supabase");
     const project = await indexProject(root);
     const memories = [
-      {
+      testMemory({
         id: "mem_patient_scope",
         createdAt: "2026-07-07T00:00:00.000Z",
         type: "architecture" as const,
         title: "Patient summaries stay tenant scoped",
         body: "Do not include this raw memory body in wiki pages.",
         tags: ["patients", "rls", "summary"]
-      }
+      })
     ];
 
     const wiki = buildProjectWiki(project, memories);
@@ -1158,22 +1214,22 @@ describe("buildContextPlan", () => {
 
     const project = await indexProject(root);
     const memories = [
-      {
+      testMemory({
         id: "mem_old",
         createdAt: "2026-07-06T00:00:00.000Z",
         type: "convention" as const,
         title: "Billing export naming",
         body: "Billing reports use export suffixes.",
         tags: ["billing"]
-      },
-      {
+      }),
+      testMemory({
         id: "mem_patient",
         createdAt: "2026-07-06T00:01:00.000Z",
         type: "architecture" as const,
         title: "Patient summary scope",
         body: "Patient summary loading must stay tenant scoped.",
         tags: ["patients", "summary"]
-      }
+      })
     ];
 
     const plan = await buildContextPlan({
@@ -1313,6 +1369,219 @@ describe("compressOutput", () => {
   });
 });
 
+describe("compressContext", () => {
+  it("preserves constraints, failure details, migrations, public API names, and targeted first reads", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "services"), { recursive: true });
+    await writeFile(join(root, "services", "patientService.ts"), "export function loadPatientSummary() { return []; }");
+    await writeFile(
+      join(root, "services", "patientService.test.ts"),
+      "import { loadPatientSummary } from './patientService'; test('keeps tenant scoped rows', () => loadPatientSummary());"
+    );
+    const project = await indexProject(root);
+    const memory = new MemoryStore(memoryPath(root));
+    await memory.add({
+      type: "bug",
+      title: "Patient RLS failures keep exact test output",
+      body: "Preserve exact failing test names and RLS migration identifiers.",
+      tags: ["patient", "rls", "test"]
+    });
+    const text = [
+      "User constraint: Do not remove public API loadPatientSummary.",
+      "FAIL services/patientService.test.ts > patient summary > keeps tenant scoped rows",
+      "AssertionError: expected 2 to be 1",
+      "    at loadPatientSummary (services/patientService.ts:1:17)",
+      "Migration 20260708_add_patient_rls.sql must preserve RLS policy using tenant_id = auth.uid().",
+      "Security warning: tenant isolation is required.",
+      ...Array.from({ length: 50 }, (_, index) => `noise line ${index}`)
+    ].join("\n");
+
+    const compressed = await compressContext({
+      root,
+      task: "Fix patient summary tenant scoped rows",
+      contentKind: "mixed",
+      text,
+      preserveRawReferences: true,
+      project,
+      memories: await memory.search("patient rls test")
+    });
+
+    expect(compressed.compressedTask).toContain("Fix patient summary tenant scoped rows");
+    expect(compressed.preservedConstraints).toEqual(
+      expect.arrayContaining([
+        "User constraint: Do not remove public API loadPatientSummary.",
+        "FAIL services/patientService.test.ts > patient summary > keeps tenant scoped rows",
+        "AssertionError: expected 2 to be 1",
+        "at loadPatientSummary (services/patientService.ts:1:17)",
+        "Migration 20260708_add_patient_rls.sql must preserve RLS policy using tenant_id = auth.uid().",
+        "Security warning: tenant isolation is required."
+      ])
+    );
+    expect(compressed.referencedMemories).toEqual(expect.arrayContaining([expect.objectContaining({ title: "Patient RLS failures keep exact test output" })]));
+    expect(compressed.recommendedFirstReads).toEqual(expect.arrayContaining([expect.objectContaining({ path: "services/patientService.ts", startLine: 1 })]));
+    expect(compressed.omissions.join("\n")).toMatch(/omitted/i);
+    expect(compressed.estimatedTokens.avoided).toBeGreaterThan(0);
+    expect(compressed.confidence).toMatch(/medium|high/);
+  });
+});
+
+describe("traceFailure", () => {
+  it("preserves exact failure details and routes to graph-related context", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "services"), { recursive: true });
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await writeFile(join(root, "services", "patientService.ts"), "export function loadPatientSummary() { return []; }");
+    await writeFile(
+      join(root, "services", "patientService.test.ts"),
+      "import { loadPatientSummary } from './patientService'; it('keeps tenant scoped rows', () => loadPatientSummary());"
+    );
+    await writeFile(
+      join(root, "supabase", "migrations", "001_patients.sql"),
+      "create table public.patients (id uuid primary key, tenant_id uuid); create policy \"tenant can read patients\" on public.patients for select using (tenant_id = auth.uid());"
+    );
+    const project = await indexProject(root);
+    const memory = new MemoryStore(memoryPath(root));
+    await memory.add({
+      type: "bug",
+      title: "Patient summaries must stay tenant scoped",
+      body: "Past patient summary bugs leaked tenant rows when RLS context was skipped.",
+      tags: ["patient", "tenant", "rls"]
+    });
+    const failureText = [
+      "FAIL services/patientService.test.ts > patient summary > keeps tenant scoped rows",
+      "AssertionError: expected 2 to be 1",
+      "    at loadPatientSummary (services/patientService.ts:1:17)",
+      "    at services/patientService.test.ts:1:82"
+    ].join("\n");
+
+    const trace = await traceFailure({
+      root,
+      kind: "test",
+      text: failureText,
+      task: "Fix patient summary tenant scoped rows",
+      project,
+      memories: await memory.search("patient tenant rls")
+    });
+
+    expect(trace.compressedOutput.keyLines).toContain("FAIL services/patientService.test.ts > patient summary > keeps tenant scoped rows");
+    expect(trace.compressedOutput.keyLines).toContain("AssertionError: expected 2 to be 1");
+    expect(trace.compressedOutput.keyLines).toContain("at loadPatientSummary (services/patientService.ts:1:17)");
+    expect(trace.detectedPaths).toEqual(expect.arrayContaining(["services/patientService.ts", "services/patientService.test.ts"]));
+    expect(trace.detectedTests).toContain("services/patientService.test.ts > patient summary > keeps tenant scoped rows");
+    expect(trace.detectedSymbols).toContain("loadPatientSummary");
+    expect(trace.relatedImports).toEqual(
+      expect.arrayContaining([expect.objectContaining({ filePath: "services/patientService.test.ts", resolvedPath: "services/patientService.ts" })])
+    );
+    expect(trace.relatedSql).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "policy", name: "tenant can read patients" })]));
+    expect(trace.relatedMemories).toEqual(expect.arrayContaining([expect.objectContaining({ title: "Patient summaries must stay tenant scoped" })]));
+    expect(trace.hypotheses[0]).toMatchObject({
+      label: "hypothesis",
+      confidence: expect.stringMatching(/medium|high/)
+    });
+    expect(trace.recommendedFirstReads).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: "services/patientService.ts", startLine: 1 })])
+    );
+    expect(trace.recommendedCommands).toEqual(expect.arrayContaining(["pnpm test -- services/patientService.test.ts"]));
+    expect(trace.tokenEstimate.avoided).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("JsonTokenGraphStore", () => {
+  it("writes schema-versioned JSON and quarantines corrupt state", async () => {
+    const root = await makeRoot();
+    const storePath = join(root, ".tokengraph", "token-events.json");
+    const store = new JsonTokenGraphStore(storePath, { schemaVersion: 1, dataKey: "events" });
+
+    await store.write([{ id: "evt_1", estimatedTokens: 10 }]);
+    expect(JSON.parse(await readFile(storePath, "utf8"))).toEqual({
+      schemaVersion: 1,
+      events: [{ id: "evt_1", estimatedTokens: 10 }]
+    });
+
+    await writeFile(storePath, "{ not json");
+    await expect(store.read()).resolves.toEqual([]);
+    expect((await readdir(join(root, ".tokengraph"))).some((file) => file.startsWith("token-events.json.corrupt-"))).toBe(true);
+  });
+
+  it("keeps SQLite optional and unavailable until explicitly implemented", () => {
+    expect(() => new SqliteTokenGraphStore("unused.sqlite")).toThrow(/optional SQLite backend is not implemented/i);
+  });
+});
+
+describe("assessChangeRisk", () => {
+  it("scores regression risk from graph, SQL, rules, tests, and memories", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "app", "patients"), { recursive: true });
+    await mkdir(join(root, "src", "services"), { recursive: true });
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await writeFile(
+      join(root, "app", "patients", "page.tsx"),
+      "import { loadPatientSummary } from '../../src/services/patientService'; export default function Page() { return loadPatientSummary(); }"
+    );
+    await writeFile(join(root, "src", "services", "patientService.ts"), "export function loadPatientSummary() { return []; }");
+    await writeFile(
+      join(root, "src", "services", "patientService.test.ts"),
+      "import { loadPatientSummary } from './patientService'; it('keeps tenant scoped rows', () => loadPatientSummary());"
+    );
+    await writeFile(
+      join(root, "supabase", "migrations", "001_patient_rls.sql"),
+      [
+        "create table public.patients (id uuid primary key, tenant_id uuid, auth_user_id uuid);",
+        "create policy \"tenant can read patients\" on public.patients for select using (tenant_id = auth.uid());",
+        "create function public.audit_patient_change() returns trigger language plpgsql as $$ begin return new; end; $$;"
+      ].join("\n")
+    );
+    const project = await indexProject(root);
+    const memory = new MemoryStore(memoryPath(root));
+    await memory.add({
+      type: "bug",
+      title: "Patient tenant scoping is fragile",
+      body: "Past patient summary bugs leaked tenant rows when auth and RLS context were skipped.",
+      tags: ["patient", "tenant", "fragile", "rls"]
+    });
+    const rules = new ArchitectureRuleStore(rulesPath(root));
+    const rule = await rules.add({
+      type: "forbidden-import",
+      name: "Routes cannot import services directly",
+      fromPattern: "^app/",
+      targetPattern: "^src/services/",
+      severity: "warning"
+    });
+
+    const report = await assessChangeRisk({
+      root,
+      changedFiles: ["src/services/patientService.ts", "supabase/migrations/001_patient_rls.sql"],
+      diffSummary: "Touches tenant_id RLS policy, auth user lookup, and audit logging for patient summaries.",
+      task: "Change patient summary tenant scoping and audit logging",
+      project,
+      rules: await rules.list(),
+      memories: await memory.search("patient tenant fragile rls")
+    });
+
+    expect(report.riskLevel).toBe("high");
+    expect(report.riskScore).toBeGreaterThanOrEqual(70);
+    expect(report.affectedFiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "src/services/patientService.ts" }),
+        expect.objectContaining({ path: "app/patients/page.tsx" })
+      ])
+    );
+    expect(report.affectedRoutes.some((route) => route.includes("patients"))).toBe(true);
+    expect(report.affectedTests).toEqual(expect.arrayContaining([expect.objectContaining({ path: "src/services/patientService.test.ts" })]));
+    expect(report.affectedSql).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "table", name: "public.patients" }),
+        expect.objectContaining({ kind: "policy", name: "tenant can read patients" })
+      ])
+    );
+    expect(report.affectedRules).toEqual(expect.arrayContaining([expect.objectContaining({ ruleId: rule.id })]));
+    expect(report.affectedMemories).toEqual(expect.arrayContaining([expect.objectContaining({ title: "Patient tenant scoping is fragile" })]));
+    expect(report.recommendedTests).toEqual(expect.arrayContaining(["pnpm test -- src/services/patientService.test.ts"]));
+    expect(report.manualReviewWarnings.join("\n")).toMatch(/tenant isolation|RLS|audit/i);
+    expect(report.tokenEstimate.avoided).toBeGreaterThanOrEqual(0);
+  });
+});
+
 describe("tokenize", () => {
   it("splits camelCase before lowercasing", () => {
     expect(tokenize("PatientCard fetchUserById")).toEqual(expect.arrayContaining(["patient", "card", "fetch", "user", "by", "id"]));
@@ -1338,7 +1607,38 @@ describe("MemoryStore", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].title).toBe("Use server actions for patient mutations");
-    expect(raw[0]).toMatchObject({ type: "convention", title: "Use server actions for patient mutations" });
+    expect(raw).toMatchObject({
+      schemaVersion: 1,
+      memories: [expect.objectContaining({ type: "convention", title: "Use server actions for patient mutations", status: "active" })]
+    });
+  });
+
+  it("migrates legacy memory arrays to schema-versioned storage on write", async () => {
+    const root = await makeRoot();
+    const storePath = memoryPath(root);
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(
+      storePath,
+      JSON.stringify([
+        {
+          id: "mem_legacy",
+          createdAt: "2026-07-08T00:00:00.000Z",
+          type: "bug",
+          title: "Legacy memory",
+          body: "Legacy body.",
+          tags: ["legacy"]
+        }
+      ])
+    );
+
+    const store = new MemoryStore(storePath);
+    expect(await store.list()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "mem_legacy", status: "active" })]));
+
+    await store.update("mem_legacy", { confidence: "high" });
+    expect(JSON.parse(await readFile(storePath, "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      memories: [expect.objectContaining({ id: "mem_legacy", confidence: "high" })]
+    });
   });
 
   it("quarantines corrupt memory files and recovers with an empty list", async () => {
@@ -1368,6 +1668,239 @@ describe("MemoryStore", () => {
 
     const titles = (await first.list()).map((memory) => memory.title).sort();
     expect(titles).toEqual(["First decision", "Second decision"]);
+  });
+
+  it("tracks lifecycle metadata and excludes deprecated or deleted memories from normal recall", async () => {
+    const root = await makeRoot();
+    const store = new MemoryStore(memoryPath(root));
+
+    const active = await store.add({
+      type: "architecture",
+      title: "Use REST patient API",
+      body: "Patient reads use REST endpoints until the API migration is complete.",
+      tags: ["patient", "api"],
+      source: "test-plan",
+      confidence: "medium"
+    });
+    expect(active).toMatchObject({
+      status: "active",
+      confidence: "medium",
+      source: "test-plan",
+      linkedFiles: [],
+      linkedSymbols: [],
+      linkedSqlObjects: [],
+      linkedRules: [],
+      supersedes: [],
+      supersededBy: [],
+      evidence: []
+    });
+
+    const confirmed = await store.confirm(active.id, ["Verified in ADR-001"]);
+    expect(confirmed).toMatchObject({ status: "active", confidence: "high", evidence: ["Verified in ADR-001"] });
+    expect(confirmed?.confirmedAt).toEqual(expect.any(String));
+
+    const linked = await store.link(active.id, {
+      linkedFiles: ["src/services/patientService.ts", "src/services/patientService.ts"],
+      linkedSymbols: ["loadPatientSummary"],
+      linkedSqlObjects: ["public.patients"],
+      linkedRules: ["rule_patient_api"],
+      evidence: ["Linked during Phase G test"]
+    });
+    expect(linked).toMatchObject({
+      linkedFiles: ["src/services/patientService.ts"],
+      linkedSymbols: ["loadPatientSummary"],
+      linkedSqlObjects: ["public.patients"],
+      linkedRules: ["rule_patient_api"],
+      evidence: ["Verified in ADR-001", "Linked during Phase G test"]
+    });
+
+    const recalled = await store.recall("patient api", { limit: 5 });
+    expect(recalled.memories).toEqual(expect.arrayContaining([expect.objectContaining({ id: active.id, status: "active" })]));
+    expect(recalled.memories.find((memory) => memory.id === active.id)?.lastUsedAt).toEqual(expect.any(String));
+
+    await store.deprecate(active.id, ["mem_replacement"], ["Replaced by GraphQL migration decision"]);
+    expect(await store.search("patient api")).toEqual([]);
+    expect(await store.list()).toEqual([]);
+    expect(await store.list({ includeDeprecated: true })).toEqual(expect.arrayContaining([expect.objectContaining({ id: active.id, status: "deprecated" })]));
+
+    await store.delete(active.id);
+    expect(await store.list({ includeDeprecated: true })).toEqual([]);
+    expect(await store.list({ includeDeleted: true, includeDeprecated: true })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: active.id, status: "deleted" })])
+    );
+    expect((await store.recall("patient api")).memories).toEqual([]);
+    expect((await store.recall("patient api", { auditMode: true })).memories).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: active.id, status: "deleted" })])
+    );
+  });
+
+  it("surfaces memory conflicts without resolving them automatically", async () => {
+    const root = await makeRoot();
+    const store = new MemoryStore(memoryPath(root));
+    const existing = await store.add({
+      type: "architecture",
+      title: "Use REST patient API",
+      body: "Use REST endpoints for patient reads.",
+      tags: ["patient", "api"]
+    });
+
+    const conflicts = await store.findConflicts({
+      candidate: {
+        type: "architecture",
+        title: "Use GraphQL patient API",
+        body: "Prefer GraphQL instead of REST for patient reads.",
+        tags: ["patient", "api"]
+      }
+    });
+
+    expect(conflicts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          memory: expect.objectContaining({ id: existing.id, status: "active" }),
+          matchedTerms: expect.arrayContaining(["patient", "api"])
+        })
+      ])
+    );
+    expect(await store.list()).toEqual(expect.arrayContaining([expect.objectContaining({ id: existing.id, status: "active" })]));
+  });
+});
+
+describe("ArchitectureRuleStore and checkArchitecture", () => {
+  it("persists, updates, and deletes local architecture rules", async () => {
+    const root = await makeRoot();
+    const store = new ArchitectureRuleStore(rulesPath(root));
+
+    const created = await store.add({
+      type: "forbidden-import",
+      name: "UI must not import server internals",
+      fromPattern: "^src/ui/",
+      targetPattern: "^src/server/",
+      severity: "error",
+      message: "Route through a public service boundary."
+    });
+    const updated = await store.update(created.id, { enabled: false, message: "Use the API client boundary." });
+
+    expect(created).toMatchObject({
+      type: "forbidden-import",
+      name: "UI must not import server internals",
+      enabled: true,
+      severity: "error"
+    });
+    expect(updated).toMatchObject({
+      id: created.id,
+      enabled: false,
+      message: "Use the API client boundary."
+    });
+    expect(await store.list()).toHaveLength(1);
+    expect(JSON.parse(await readFile(rulesPath(root), "utf8"))).toEqual({
+      schemaVersion: 1,
+      rules: [updated]
+    });
+
+    expect(await store.delete(created.id)).toBe(true);
+    expect(await store.list()).toEqual([]);
+  });
+
+  it("migrates legacy rule arrays to schema-versioned storage on write", async () => {
+    const root = await makeRoot();
+    const store = new ArchitectureRuleStore(rulesPath(root));
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(
+      rulesPath(root),
+      JSON.stringify([
+        {
+          id: "rule_legacy",
+          type: "required-test",
+          name: "Legacy required test",
+          enabled: true,
+          severity: "warning",
+          createdAt: "2026-07-08T00:00:00.000Z",
+          updatedAt: "2026-07-08T00:00:00.000Z"
+        }
+      ])
+    );
+
+    await store.update("rule_legacy", { message: "Keep legacy rules migratable." });
+    expect(JSON.parse(await readFile(rulesPath(root), "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      rules: [expect.objectContaining({ id: "rule_legacy", message: "Keep legacy rules migratable." })]
+    });
+  });
+
+  it("reports import, dependency, test, SQL, and marketplace architecture findings", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src", "ui"), { recursive: true });
+    await mkdir(join(root, "src", "server"), { recursive: true });
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await mkdir(join(root, ".agents", "plugins"), { recursive: true });
+    await writeFile(join(root, "src", "ui", "page.ts"), "import { queryDb } from '../server/db'; export const page = queryDb;");
+    await writeFile(join(root, "src", "server", "db.ts"), "export const queryDb = true;");
+    await writeFile(
+      join(root, "supabase", "migrations", "001_accounts.sql"),
+      "create table public.accounts (id uuid primary key, tenant_id uuid); grant select on public.accounts to anon;"
+    );
+    await writeFile(
+      join(root, ".agents", "plugins", "marketplace.json"),
+      JSON.stringify({
+        plugins: [
+          {
+            name: "tokengraph",
+            source: { source: "local", path: "./plugins/tokengraph" },
+            policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" }
+          }
+        ]
+      })
+    );
+    const project = await indexProject(root);
+    const store = new ArchitectureRuleStore(rulesPath(root));
+    await store.add({
+      type: "forbidden-import",
+      name: "UI cannot import server",
+      fromPattern: "^src/ui/",
+      targetPattern: "^src/server/",
+      severity: "error"
+    });
+    await store.add({
+      type: "dependency-direction",
+      name: "UI should only import client modules",
+      fromPattern: "^src/ui/",
+      allowedTargetPattern: "^src/client/",
+      severity: "warning"
+    });
+    await store.add({
+      type: "required-test",
+      name: "Server modules need direct tests",
+      modulePattern: "^src/server/db\\.ts$",
+      testPattern: "^src/server/db\\.test\\.ts$",
+      severity: "warning"
+    });
+
+    const report = await checkArchitecture({
+      root,
+      project,
+      rules: await store.list(),
+      files: ["src/server/db.ts"]
+    });
+
+    expect(report.violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "forbidden-import",
+          ruleName: "UI cannot import server",
+          filePath: "src/ui/page.ts",
+          targetPath: "src/server/db.ts"
+        })
+      ])
+    );
+    expect(report.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "dependency-direction", ruleName: "UI should only import client modules" }),
+        expect.objectContaining({ type: "required-test", filePath: "src/server/db.ts" }),
+        expect.objectContaining({ type: "tenant-isolation", sqlObject: "public.accounts" }),
+        expect.objectContaining({ type: "grant", sqlObject: "public.accounts" }),
+        expect.objectContaining({ type: "marketplace-target", sourcePath: "./plugins/tokengraph" })
+      ])
+    );
   });
 });
 
@@ -1431,6 +1964,17 @@ describe("v0.7 review and export helpers", () => {
     expect(exported.content).toContain("app/patients/page.tsx");
     expect(exported.content).toContain("components/PatientCard.tsx");
     expect(exported.content).not.toContain("return <PatientCard");
+    expect(exported.resourceLinks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "TokenGraph project map",
+          mimeType: "text/vnd.mermaid"
+        })
+      ])
+    );
+    expect(exported.markdownFallback).toContain("```mermaid");
+    expect(exported.markdownFallback).toContain("flowchart LR");
+    expect(exported).not.toHaveProperty("imageContent");
   });
 
   it("prioritizes connected files when exporting a capped project map", async () => {
@@ -1446,6 +1990,16 @@ describe("v0.7 review and export helpers", () => {
     const exported = exportProjectMap(project, { format: "json", limit: 2 });
     const parsed = JSON.parse(exported.content) as { nodes: Array<{ path: string }> };
 
+    expect(exported.resourceLinks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "TokenGraph project map",
+          mimeType: "application/json"
+        })
+      ])
+    );
+    expect(exported.markdownFallback).toContain("```json");
+    expect(exported.markdownFallback).toContain("\"nodes\"");
     expect(parsed.nodes.map((node) => node.path)).toEqual(expect.arrayContaining(["app/patients/page.tsx", "components/PatientCard.tsx"]));
     expect(parsed.nodes.map((node) => node.path)).not.toContain("aaa/unconnected.ts");
   });

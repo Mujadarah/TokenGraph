@@ -235,17 +235,178 @@ export interface IndexStatus {
 }
 
 export type MemoryType = "architecture" | "convention" | "bug" | "migration" | "product" | "security" | "lesson";
+export type MemoryStatus = "active" | "deprecated" | "deleted";
+export type MemoryConfidence = "low" | "medium" | "high";
+
+export type ArchitectureRuleType =
+  | "forbidden-import"
+  | "required-import"
+  | "dependency-direction"
+  | "naming-convention"
+  | "required-test"
+  | "security"
+  | "rls"
+  | "tenant-isolation"
+  | "audit-logging"
+  | "release-packaging";
+
+export type ArchitectureRuleSeverity = "info" | "warning" | "error";
+
+export interface ArchitectureRuleInput {
+  type: ArchitectureRuleType;
+  name: string;
+  description?: string;
+  enabled?: boolean;
+  severity?: ArchitectureRuleSeverity;
+  fromPattern?: string;
+  targetPattern?: string;
+  allowedTargetPattern?: string;
+  modulePattern?: string;
+  testPattern?: string;
+  namePattern?: string;
+  sqlPattern?: string;
+  message?: string;
+}
+
+export interface ArchitectureRule extends ArchitectureRuleInput {
+  id: string;
+  enabled: boolean;
+  severity: ArchitectureRuleSeverity;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ArchitectureFinding {
+  type: ArchitectureRuleType | "marketplace-target" | "tenant-isolation" | "rls" | "grant" | "auth" | "audit-logging";
+  severity: ArchitectureRuleSeverity;
+  message: string;
+  ruleId?: string;
+  ruleName?: string;
+  filePath?: string;
+  targetPath?: string;
+  importSource?: string;
+  sqlObject?: string;
+  sourcePath?: string;
+  evidence?: string[];
+}
+
+export interface ArchitectureCheckReport {
+  status: "checked";
+  root: string;
+  ruleCount: number;
+  checkedFiles: string[];
+  violations: ArchitectureFinding[];
+  warnings: ArchitectureFinding[];
+}
+
+export type FailureTraceKind = "test" | "build" | "runtime" | "install" | "log";
+
+export interface FailureHypothesis {
+  label: "hypothesis";
+  statement: string;
+  confidence: "low" | "medium" | "high";
+  evidence: string[];
+}
+
+export interface FailureTraceReport {
+  compressedOutput: CompressedOutput;
+  detectedPaths: string[];
+  detectedSymbols: string[];
+  detectedTests: string[];
+  relatedFiles: RankedFile[];
+  relatedImports: ImportEdge[];
+  relatedSql: RankedSqlObject[];
+  relatedMemories: MemoryEntry[];
+  hypotheses: FailureHypothesis[];
+  recommendedFirstReads: RankedFile[];
+  recommendedCommands: string[];
+  confidence: "low" | "medium" | "high";
+  tokenEstimate: TokenEstimate;
+}
+
+export type ChangeRiskLevel = "low" | "medium" | "high";
+
+export interface ChangeRiskReport {
+  riskScore: number;
+  riskLevel: ChangeRiskLevel;
+  affectedFiles: RankedFile[];
+  affectedRoutes: string[];
+  affectedTests: RankedFile[];
+  affectedSql: RankedSqlObject[];
+  affectedRules: ArchitectureFinding[];
+  affectedMemories: MemoryEntry[];
+  recommendedTests: string[];
+  manualReviewWarnings: string[];
+  tokenEstimate: TokenEstimate;
+}
 
 export interface MemoryInput {
   type: MemoryType;
   title: string;
   body: string;
   tags: string[];
+  status?: MemoryStatus;
+  linkedFiles?: string[];
+  linkedSymbols?: string[];
+  linkedSqlObjects?: string[];
+  linkedRules?: string[];
+  confidence?: MemoryConfidence;
+  supersedes?: string[];
+  supersededBy?: string[];
+  source?: string;
+  evidence?: string[];
+  lastUsedAt?: string;
+  confirmedAt?: string;
 }
 
 export interface MemoryEntry extends MemoryInput {
   id: string;
   createdAt: string;
+  status: MemoryStatus;
+  updatedAt: string;
+  lastUsedAt?: string;
+  confirmedAt?: string;
+  linkedFiles: string[];
+  linkedSymbols: string[];
+  linkedSqlObjects: string[];
+  linkedRules: string[];
+  confidence: MemoryConfidence;
+  supersedes: string[];
+  supersededBy: string[];
+  source: string;
+  evidence: string[];
+}
+
+export interface MemoryUpdateInput {
+  type?: MemoryType;
+  title?: string;
+  body?: string;
+  tags?: string[];
+  status?: MemoryStatus;
+  linkedFiles?: string[];
+  linkedSymbols?: string[];
+  linkedSqlObjects?: string[];
+  linkedRules?: string[];
+  confidence?: MemoryConfidence;
+  supersedes?: string[];
+  supersededBy?: string[];
+  source?: string;
+  evidence?: string[];
+  lastUsedAt?: string;
+  confirmedAt?: string;
+}
+
+export interface MemoryConflict {
+  memory: MemoryEntry;
+  matchedTerms: string[];
+  reason: string;
+}
+
+export interface MemoryRecall {
+  query: string;
+  auditMode: boolean;
+  memories: MemoryEntry[];
+  policy: string;
 }
 
 export interface RankedFile {
@@ -318,12 +479,46 @@ export interface CompressedOutput {
   estimatedTokens: TokenEstimate;
 }
 
+export type ContextCompressionKind = "prompt" | "memory" | "diff" | "sql" | "wiki" | "mixed";
+
+export interface WikiReference {
+  slug: string;
+  title: string;
+  reason: string;
+  estimatedTokens: number;
+}
+
+export interface ContextCompressionInput {
+  root: string;
+  task: string;
+  contentKind: ContextCompressionKind;
+  text?: string;
+  profile?: TokenSavingProfile;
+  preserveRawReferences?: boolean;
+  project: ProjectIndex;
+  memories: MemoryEntry[];
+  wiki?: ProjectWiki;
+}
+
+export interface ContextCompressionReport {
+  compressedTask: string;
+  preservedConstraints: string[];
+  referencedMemories: MemoryEntry[];
+  referencedWikiPages: WikiReference[];
+  recommendedFirstReads: RankedFile[];
+  omissions: string[];
+  confidence: "low" | "medium" | "high";
+  estimatedTokens: TokenEstimate;
+}
+
 export interface MemoryReviewMatch {
   id: string;
   type: MemoryType;
   title: string;
   tags: string[];
   createdAt: string;
+  status: MemoryStatus;
+  confidence: MemoryConfidence;
   score: number;
   matchedTerms: string[];
   action: "keep" | "review";
@@ -344,4 +539,10 @@ export interface ProjectMapExport {
   edgeCount: number;
   truncated: boolean;
   content: string;
+  resourceLinks: Array<{
+    label: string;
+    uri: string;
+    mimeType: string;
+  }>;
+  markdownFallback: string;
 }

@@ -1,10 +1,20 @@
 #!/usr/bin/env node
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(pluginRoot, "..", "..");
+const requiredFocusedSkillDirs = [
+  "graph-context-retrieval",
+  "root-cause-debugger",
+  "architecture-consistency-checker",
+  "context-compression",
+  "regression-detector",
+  "token-budget-optimizer",
+  "memory-curator",
+  "release-packaging-auditor"
+];
 
 function fail(message) {
   console.error(`TokenGraph plugin validation failed: ${message}`);
@@ -25,14 +35,6 @@ async function readJson(path) {
   }
 }
 
-async function readOptionalJson(path) {
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    return undefined;
-  }
-}
-
 async function assertFile(path, label) {
   try {
     await access(path);
@@ -41,25 +43,98 @@ async function assertFile(path, label) {
   }
 }
 
+async function assertDirectory(path, label) {
+  try {
+    const entries = await readdir(path, { withFileTypes: true });
+    return entries;
+  } catch {
+    fail(`${label} is missing at ${path}`);
+  }
+}
+
+async function assertMissing(path, label) {
+  try {
+    await access(path);
+    fail(`${label} must not be included at ${path}`);
+  } catch {
+    return;
+  }
+}
+
+async function collectSkillFiles(skillsRoot) {
+  const skillFiles = [];
+  const entries = await assertDirectory(skillsRoot, "skills directory");
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const skillPath = resolve(skillsRoot, entry.name, "SKILL.md");
+    try {
+      await access(skillPath);
+      skillFiles.push(skillPath);
+    } catch {
+      fail(`skill folder ${entry.name} must contain SKILL.md`);
+    }
+  }
+  return skillFiles;
+}
+
+async function assertSkillFrontmatter(skillsRoot, label) {
+  const skillFiles = await collectSkillFiles(skillsRoot);
+  assert(skillFiles.length > 0, `${label} must include at least one skill`);
+  for (const skillFile of skillFiles) {
+    const skill = await readFile(skillFile, "utf8").catch((error) => fail(`cannot read skill ${skillFile}: ${error.message}`));
+    assert(/^---\s*\n[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} must include frontmatter`);
+    assert(/^---[\s\S]*\nname:\s*\S+[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} frontmatter must include name`);
+    assert(/^---[\s\S]*\ndescription:\s*\S+[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} frontmatter must include description`);
+  }
+  return skillFiles;
+}
+
+async function assertRequiredFocusedSkills(skillsRoot, label) {
+  for (const skillDir of requiredFocusedSkillDirs) {
+    const skillFile = resolve(skillsRoot, skillDir, "SKILL.md");
+    const skill = await readFile(skillFile, "utf8").catch((error) =>
+      fail(`${label} required skill ${skillDir} is missing or unreadable: ${error.message}`)
+    );
+    assert(/^---[\s\S]*\nname:\s*\S+[\s\S]*\ndescription:\s*\S+[\s\S]*\n---/.test(skill), `${label} skill ${skillDir} must include name and description frontmatter`);
+    assert(/Use this skill when/i.test(skill), `${label} skill ${skillDir} must tell Codex when to use it`);
+    assert(/MCP tools to call/i.test(skill), `${label} skill ${skillDir} must list TokenGraph MCP tools to call`);
+    assert(/avoid raw/i.test(skill), `${label} skill ${skillDir} must explain when to avoid raw reads`);
+    assert(/hypoth/i.test(skill), `${label} skill ${skillDir} must require hypotheses to be marked clearly`);
+    assert(/Do not pretend/i.test(skill), `${label} skill ${skillDir} must forbid pretending unavailable MCP tools were used`);
+    assert(/unavailable/i.test(skill), `${label} skill ${skillDir} must state how to handle unavailable MCP tools`);
+  }
+}
+
 const packageJsonPath = resolve(pluginRoot, "package.json");
 const manifestPath = resolve(pluginRoot, ".codex-plugin", "plugin.json");
 const marketplacePath = resolve(repoRoot, ".agents", "plugins", "marketplace.json");
 const mcpPath = resolve(pluginRoot, ".mcp.json");
-const skillPath = resolve(pluginRoot, "skills", "tokengraph", "SKILL.md");
+const skillsPath = resolve(pluginRoot, "skills");
 const distEntryPath = resolve(pluginRoot, "dist", "index.js");
 const distServerPath = resolve(pluginRoot, "dist", "server.js");
 const distReviewPath = resolve(pluginRoot, "dist", "core", "review.js");
+const releaseRoot = resolve(repoRoot, "release", "tokengraph");
+const releaseManifestPath = resolve(releaseRoot, ".codex-plugin", "plugin.json");
+const releaseMcpPath = resolve(releaseRoot, ".mcp.json");
+const releaseDistEntryPath = resolve(releaseRoot, "dist", "index.js");
+const releaseDistServerPath = resolve(releaseRoot, "dist", "server.js");
+const releaseSkillsPath = resolve(releaseRoot, "skills");
+const releasePackageJsonPath = resolve(releaseRoot, "package.json");
+const releaseReadmePath = resolve(releaseRoot, "README.md");
 const smokeScriptPath = resolve(pluginRoot, "scripts", "smoke.mjs");
 const buildScriptPath = resolve(pluginRoot, "scripts", "build.mjs");
 const packageScriptPath = resolve(pluginRoot, "scripts", "package-plugin.mjs");
+const benchmarkScriptPath = resolve(pluginRoot, "scripts", "benchmark.mjs");
 const nextSupabaseFixturePath = resolve(pluginRoot, "tests", "fixtures", "next-supabase");
 const ignoredOutputFixturePath = resolve(pluginRoot, "tests", "fixtures", "ignored-output");
+const benchmarkDocsPath = resolve(repoRoot, "docs", "benchmarks");
+const trustDocsPath = resolve(repoRoot, "docs", "trust");
+const hostDocsPath = resolve(repoRoot, "docs", "hosts");
 
 const packageJson = await readJson(packageJsonPath);
 const manifest = await readJson(manifestPath);
-const marketplace = await readOptionalJson(marketplacePath);
+const marketplace = await readJson(marketplacePath);
 const mcp = await readJson(mcpPath);
-const skill = await readFile(skillPath, "utf8").catch((error) => fail(`cannot read TokenGraph skill: ${error.message}`));
 const distServer = await readFile(distServerPath, "utf8").catch((error) => fail(`cannot read built MCP server: ${error.message}`));
 const distReview = await readFile(distReviewPath, "utf8").catch((error) => fail(`cannot read built review helpers: ${error.message}`));
 
@@ -68,23 +143,30 @@ assert(/^\d+\.\d+\.\d+$/.test(packageJson.version), "package version must be sem
 assert(packageJson.scripts?.build === "node scripts/build.mjs", "package scripts must use the bundled MCP build command");
 assert(packageJson.devDependencies?.esbuild, "package devDependencies must include esbuild for self-contained MCP bundles");
 assert(packageJson.scripts?.smoke === "node scripts/smoke.mjs", "package scripts must include smoke command");
+assert(packageJson.scripts?.benchmark === "node scripts/benchmark.mjs", "package scripts must include benchmark command");
 assert(packageJson.scripts?.["package:plugin"] === "node scripts/package-plugin.mjs", "package scripts must include package:plugin command");
 assert(manifest.name === "tokengraph", "plugin manifest name must be tokengraph");
 assert(manifest.version?.split("+", 1)[0] === packageJson.version, "plugin manifest base version must match package version");
 assert(manifest.skills === "./skills/", "plugin manifest must point skills to ./skills/");
 assert(manifest.mcpServers === "./.mcp.json", "plugin manifest must point mcpServers to ./.mcp.json");
-if (marketplace) {
-  const marketplacePlugin = marketplace.plugins?.find((plugin) => plugin.name === "tokengraph");
-  assert(marketplacePlugin?.source?.path === "./plugins/tokengraph", "marketplace tokengraph source path must point to ./plugins/tokengraph");
-}
+const marketplacePlugin = marketplace.plugins?.find((plugin) => plugin.name === "tokengraph");
+assert(marketplacePlugin, "root marketplace must include tokengraph");
+assert(marketplacePlugin.source?.source === "local", "marketplace tokengraph source must be local");
+assert(
+  marketplacePlugin.source?.path === "./release/tokengraph",
+  "marketplace tokengraph source path must point to ./release/tokengraph"
+);
+assert(resolve(repoRoot, marketplacePlugin.source.path) === releaseRoot, "marketplace tokengraph source path must resolve to release/tokengraph");
+assert(marketplacePlugin.policy?.installation === "AVAILABLE", "marketplace tokengraph installation policy must be AVAILABLE");
+assert(marketplacePlugin.policy?.authentication === "ON_INSTALL", "marketplace tokengraph authentication policy must be ON_INSTALL");
 assert(mcp.mcpServers?.tokengraph?.command === "node", "tokengraph MCP command must be node");
 assert(
   Array.isArray(mcp.mcpServers.tokengraph.args) && mcp.mcpServers.tokengraph.args.includes("./dist/index.js"),
   "tokengraph MCP args must include ./dist/index.js"
 );
 assert(mcp.mcpServers.tokengraph.cwd === ".", "tokengraph MCP cwd must be plugin root");
-assert(/^---\s*\nname:\s*tokengraph\s*\n/m.test(skill), "TokenGraph skill frontmatter must name tokengraph");
-assert(/description:\s*\S+/m.test(skill), "TokenGraph skill frontmatter must include a description");
+await assertSkillFrontmatter(skillsPath, "source plugin");
+await assertRequiredFocusedSkills(skillsPath, "source plugin");
 assert(distServer.includes("tokengraph_index_status"), "built MCP server must register tokengraph_index_status");
 assert(distServer.includes("tokengraph_reset_project"), "built MCP server must register tokengraph_reset_project");
 assert(distServer.includes(`version: "${packageJson.version}"`), `built MCP server must advertise version ${packageJson.version}`);
@@ -101,22 +183,80 @@ assert(distServer.includes("tokengraph_update_config"), "built MCP server must r
 assert(distServer.includes("fullReindex"), "built MCP server must expose v0.8 full reindex option");
 assert(distServer.includes("indexingMode"), "built MCP server must report v0.8 indexing mode");
 assert(distServer.includes("maxEstimatedTokens"), "built MCP server must expose v0.8 planner token budget input");
-assert(packageJson.version === "0.10.1", "package version must be 0.10.1 for this release");
+assert(packageJson.version === "0.17.0", "package version must be 0.17.0 for this release");
 assert(distServer.includes("tokengraph_generate_wiki"), "built MCP server must register v0.9 wiki generator");
 assert(distServer.includes("tokengraph_show_wiki_page"), "built MCP server must register v0.9 wiki page reader");
 assert(distServer.includes("wikiRefreshed"), "built MCP server must report v0.9 wiki auto-refresh state");
+assert(distServer.includes("tokengraph_list_rules"), "built MCP server must register architecture rule listing");
+assert(distServer.includes("tokengraph_add_rule"), "built MCP server must register architecture rule creation");
+assert(distServer.includes("tokengraph_update_rule"), "built MCP server must register architecture rule updates");
+assert(distServer.includes("tokengraph_delete_rule"), "built MCP server must register architecture rule deletion");
+assert(distServer.includes("tokengraph_check_architecture"), "built MCP server must register architecture checks");
+assert(distServer.includes("tokengraph_trace_failure"), "built MCP server must register failure tracing");
+assert(distServer.includes("tokengraph_assess_change_risk"), "built MCP server must register change risk assessment");
+assert(distServer.includes("tokengraph_compress_context"), "built MCP server must register context compression");
+assert(distServer.includes("resource_link"), "built MCP server must emit resource link content for map exports");
+assert(distServer.includes("tokengraph_update_memory"), "built MCP server must register memory updates");
+assert(distServer.includes("tokengraph_delete_memory"), "built MCP server must register memory deletion");
+assert(distServer.includes("tokengraph_deprecate_memory"), "built MCP server must register memory deprecation");
+assert(distServer.includes("tokengraph_confirm_memory"), "built MCP server must register memory confirmation");
+assert(distServer.includes("tokengraph_find_memory_conflicts"), "built MCP server must register memory conflict checks");
+assert(distServer.includes("tokengraph_link_memory"), "built MCP server must register memory linking");
+assert(distServer.includes("tokengraph_recall_memory"), "built MCP server must register memory recall");
 assert(packageJson.scripts?.["package:plugin"]?.includes("package-plugin.mjs"), "package metadata must expose v0.10 release packaging");
 assert(packageJson.scripts?.build === "node scripts/build.mjs", "package build must create a self-contained MCP entry bundle");
 assert(packageJson.devDependencies?.esbuild, "package devDependencies must include esbuild for the self-contained MCP bundle");
 assert(distReview.includes("flowchart LR"), "built review helpers must include Mermaid project map export");
+assert(distReview.includes("resourceLinks"), "built review helpers must include MCP resource link metadata");
+assert(distReview.includes("markdownFallback"), "built review helpers must include Markdown diagram fallbacks");
 
 await assertFile(distEntryPath, "built MCP entry");
 await assertFile(distServerPath, "built MCP server");
 await assertFile(distReviewPath, "built review helpers");
 await assertFile(buildScriptPath, "bundled build script");
 await assertFile(smokeScriptPath, "CLI smoke script");
+await assertFile(benchmarkScriptPath, "benchmark harness script");
 await assertFile(packageScriptPath, "release package script");
 await assertFile(nextSupabaseFixturePath, "Next.js Supabase regression fixture");
 await assertFile(ignoredOutputFixturePath, "ignored-output regression fixture");
+for (const file of ["methodology.md", "results-current.md", "fixtures.md"]) {
+  await assertFile(resolve(benchmarkDocsPath, file), `benchmark doc ${file}`);
+}
+for (const file of ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"]) {
+  await assertFile(resolve(trustDocsPath, file), `trust doc ${file}`);
+}
+for (const file of ["codex.md", "claude-code.md", "generic-mcp.md", "cursor-windsurf.md"]) {
+  await assertFile(resolve(hostDocsPath, file), `host doc ${file}`);
+}
+
+await assertFile(releaseManifestPath, "release plugin manifest");
+await assertFile(releaseMcpPath, "release MCP config");
+await assertFile(releaseDistEntryPath, "release built MCP entry");
+await assertFile(releaseDistServerPath, "release built MCP server");
+await assertFile(releaseReadmePath, "release README");
+await assertFile(releasePackageJsonPath, "release package metadata");
+await assertFile(resolve(releaseRoot, "LICENSE"), "release license");
+await assertSkillFrontmatter(releaseSkillsPath, "release plugin");
+await assertRequiredFocusedSkills(releaseSkillsPath, "release plugin");
+await assertMissing(resolve(releaseRoot, "src"), "release source directory");
+await assertMissing(resolve(releaseRoot, "tests"), "release tests directory");
+await assertMissing(resolve(releaseRoot, "scripts"), "release scripts directory");
+await assertMissing(resolve(releaseRoot, "node_modules"), "release dependency directory");
+await assertMissing(resolve(releaseRoot, ".tokengraph"), "release local state directory");
+
+const releaseManifest = await readJson(releaseManifestPath);
+const releaseMcp = await readJson(releaseMcpPath);
+const releasePackageJson = await readJson(releasePackageJsonPath);
+const releaseReadme = await readFile(releaseReadmePath, "utf8").catch((error) => fail(`cannot read release README: ${error.message}`));
+assert(releaseManifest.name === manifest.name, "release plugin manifest name must match source manifest");
+assert(releaseManifest.version?.split("+", 1)[0] === packageJson.version, "release plugin manifest base version must match package version");
+assert(releasePackageJson.version === packageJson.version, "release package version must match source package version");
+assert(!/C:\\Users\\example|C:\\Users\\rabia|Desktop\\TokenGraph/.test(releaseReadme), "release README must not contain personal machine paths");
+assert(releaseMcp.mcpServers?.tokengraph?.command === "node", "release tokengraph MCP command must be node");
+assert(
+  Array.isArray(releaseMcp.mcpServers.tokengraph.args) && releaseMcp.mcpServers.tokengraph.args.includes("./dist/index.js"),
+  "release tokengraph MCP args must include ./dist/index.js"
+);
+assert(releaseMcp.mcpServers.tokengraph.cwd === ".", "release tokengraph MCP cwd must be plugin root");
 
 console.log(`TokenGraph plugin validation passed (${packageJson.version}).`);

@@ -6,13 +6,17 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
+import { ArchitectureRuleStore, checkArchitecture } from "./core/architectureRules.js";
+import { compressContext } from "./core/contextCompressor.js";
 import { compressOutput } from "./core/compressor.js";
 import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } from "./core/config.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
+import { traceFailure } from "./core/failureTracer.js";
 import { MemoryStore } from "./core/memoryStore.js";
 import { buildContextPlan } from "./core/planner.js";
 import { indexProject, updateProjectIndexIncremental } from "./core/projectIndexer.js";
+import { assessChangeRisk } from "./core/regressionRisk.js";
 import {
   clearProjectIndex,
   clearProjectState,
@@ -20,6 +24,7 @@ import {
   loadProjectIndex,
   loadProjectWiki,
   memoryPath,
+  rulesPath,
   saveProjectIndex,
   saveProjectWiki
 } from "./core/persistence.js";
@@ -27,6 +32,40 @@ import { exportProjectMap, reviewMemories } from "./core/review.js";
 import { estimateTokens, tokenize } from "./core/token.js";
 import type { ProjectIndex, RankedSqlObject } from "./core/types.js";
 import { buildProjectWiki } from "./core/wiki.js";
+
+const architectureRuleTypeSchema = z.enum([
+  "forbidden-import",
+  "required-import",
+  "dependency-direction",
+  "naming-convention",
+  "required-test",
+  "security",
+  "rls",
+  "tenant-isolation",
+  "audit-logging",
+  "release-packaging"
+]);
+
+const memoryTypeSchema = z.enum(["architecture", "convention", "bug", "migration", "product", "security", "lesson"]);
+const memoryConfidenceSchema = z.enum(["low", "medium", "high"]);
+const tokenSavingProfileSchema = z.enum(["conservative", "balanced", "aggressive"]);
+const contextCompressionKindSchema = z.enum(["prompt", "memory", "diff", "sql", "wiki", "mixed"]);
+const architectureRuleSeveritySchema = z.enum(["info", "warning", "error"]);
+const architectureRuleFields = {
+  type: architectureRuleTypeSchema,
+  name: z.string().min(3),
+  description: z.string().optional(),
+  enabled: z.boolean().optional(),
+  severity: architectureRuleSeveritySchema.optional(),
+  fromPattern: z.string().optional(),
+  targetPattern: z.string().optional(),
+  allowedTargetPattern: z.string().optional(),
+  modulePattern: z.string().optional(),
+  testPattern: z.string().optional(),
+  namePattern: z.string().optional(),
+  sqlPattern: z.string().optional(),
+  message: z.string().optional()
+};
 
 async function workspaceRoot(inputRoot?: string): Promise<string> {
   const allowedRoot = await realpath(process.cwd());
@@ -71,6 +110,22 @@ function compactJson(value: unknown): string {
 function ok<T extends object>(output: T) {
   return {
     content: [{ type: "text" as const, text: compactJson(output) }],
+    structuredContent: output
+  };
+}
+
+function okWithResourceLinks<T extends { resourceLinks?: Array<{ label: string; uri: string; mimeType: string }> }>(output: T) {
+  return {
+    content: [
+      { type: "text" as const, text: compactJson(output) },
+      ...(output.resourceLinks ?? []).map((link) => ({
+        type: "resource_link" as const,
+        uri: link.uri,
+        name: link.label,
+        description: link.label,
+        mimeType: link.mimeType
+      }))
+    ],
     structuredContent: output
   };
 }
@@ -296,7 +351,7 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
 }
 
 export function createTokenGraphServer(): McpServer {
-  const server = new McpServer({ name: "tokengraph", version: "0.10.1" });
+  const server = new McpServer({ name: "tokengraph", version: "0.17.0" });
 
   server.registerTool(
     "tokengraph_index_project",
@@ -435,6 +490,159 @@ export function createTokenGraphServer(): McpServer {
       })
     },
     async ({ root, ...update }) => ok({ status: "updated", config: await updateTokenGraphConfig(await workspaceRoot(root), update) })
+  );
+
+  server.registerTool(
+    "tokengraph_list_rules",
+    {
+      title: "List Architecture Rules",
+      description: "Use this to list local TokenGraph architecture rules from .tokengraph/rules.json.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory.")
+      })
+    },
+    async ({ root }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      return ok({ root: resolvedRoot, rules: await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list() });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_add_rule",
+    {
+      title: "Add Architecture Rule",
+      description: "Use this to add a local architecture rule to .tokengraph/rules.json.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+        ...architectureRuleFields
+      })
+    },
+    async ({ root, ...input }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const rule = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).add(input);
+      return ok({ status: "added", root: resolvedRoot, rule });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_update_rule",
+    {
+      title: "Update Architecture Rule",
+      description: "Use this to update a local architecture rule in .tokengraph/rules.json.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+        id: z.string().min(1),
+        type: architectureRuleTypeSchema.optional(),
+        name: z.string().min(3).optional(),
+        description: z.string().optional(),
+        enabled: z.boolean().optional(),
+        severity: architectureRuleSeveritySchema.optional(),
+        fromPattern: z.string().optional(),
+        targetPattern: z.string().optional(),
+        allowedTargetPattern: z.string().optional(),
+        modulePattern: z.string().optional(),
+        testPattern: z.string().optional(),
+        namePattern: z.string().optional(),
+        sqlPattern: z.string().optional(),
+        message: z.string().optional()
+      })
+    },
+    async ({ root, id, ...update }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const rule = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).update(id, update);
+      if (!rule) {
+        throw new Error(`No architecture rule found for id ${id}.`);
+      }
+      return ok({ status: "updated", root: resolvedRoot, rule });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_delete_rule",
+    {
+      title: "Delete Architecture Rule",
+      description: "Use this to delete a local architecture rule from .tokengraph/rules.json.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+        id: z.string().min(1)
+      })
+    },
+    async ({ root, id }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const deleted = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).delete(id);
+      if (!deleted) {
+        throw new Error(`No architecture rule found for id ${id}.`);
+      }
+      return ok({ status: "deleted", root: resolvedRoot, id });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_check_architecture",
+    {
+      title: "Check Architecture",
+      description: "Use this to check imports, selected module tests, SQL security warnings, and marketplace target sanity against local architecture rules.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+        files: z.array(z.string()).optional().describe("Optional selected module paths for required-test checks.")
+      })
+    },
+    async ({ root, files }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const project = await ensureProject(resolvedRoot);
+      const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+      return ok(await checkArchitecture({ root: resolvedRoot, project, rules, files }));
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_trace_failure",
+    {
+      title: "Trace Failure",
+      description: "Use this to compress failure output and route debugging through graph-related files, imports, SQL, memories, hypotheses, and first reads.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+        kind: z.enum(["test", "build", "runtime", "install", "log"]),
+        text: z.string().min(1),
+        task: z.string().optional(),
+        profile: z.enum(["conservative", "balanced", "aggressive"]).optional()
+      })
+    },
+    async ({ root, kind, text, task, profile }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const project = await ensureProject(resolvedRoot);
+      const memories = await new MemoryStore(memoryPath(resolvedRoot)).search(`${task ?? ""}\n${text}`, 8);
+      return ok(await traceFailure({ root: resolvedRoot, kind, text, task, profile, project, memories }));
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_assess_change_risk",
+    {
+      title: "Assess Change Risk",
+      description: "Use this to estimate regression risk for changed files using graph, routes, tests, SQL, architecture rules, memories, and targeted test recommendations.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+        changedFiles: z.array(z.string().min(1)).min(1),
+        diffSummary: z.string().optional(),
+        task: z.string().optional(),
+        profile: z.enum(["conservative", "balanced", "aggressive"]).optional()
+      })
+    },
+    async ({ root, changedFiles, diffSummary, task, profile }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const project = await ensureProject(resolvedRoot);
+      const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+      const memories = await new MemoryStore(memoryPath(resolvedRoot)).search(`${task ?? ""}\n${diffSummary ?? ""}\n${changedFiles.join("\n")}`, 8);
+      return ok(await assessChangeRisk({ root: resolvedRoot, changedFiles, diffSummary, task, profile, project, rules, memories }));
+    }
   );
 
   server.registerTool(
@@ -620,6 +828,43 @@ export function createTokenGraphServer(): McpServer {
   );
 
   server.registerTool(
+    "tokengraph_compress_context",
+    {
+      title: "Compress Context",
+      description:
+        "Use this to compress prompts, memories, diffs, SQL, wiki text, logs, or mixed context while preserving exact implementation-critical references and first-read recommendations.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        task: z.string().min(1),
+        contentKind: contextCompressionKindSchema,
+        text: z.string().optional(),
+        profile: tokenSavingProfileSchema.optional(),
+        preserveRawReferences: z.boolean().optional()
+      })
+    },
+    async ({ root, task, contentKind, text, profile, preserveRawReferences }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const [project, config, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
+      const memoryQuery = [task, text ?? ""].join("\n");
+      const memories = config.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(memoryQuery, config.maxMemories) : [];
+      return ok(
+        await compressContext({
+          root: resolvedRoot,
+          task,
+          contentKind,
+          text,
+          profile: profile ?? config.tokenSavingProfile,
+          preserveRawReferences,
+          project,
+          memories,
+          wiki
+        })
+      );
+    }
+  );
+
+  server.registerTool(
     "tokengraph_remember_decision",
     {
       title: "Remember Decision",
@@ -627,16 +872,223 @@ export function createTokenGraphServer(): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: z.object({
         root: z.string().optional(),
-        type: z.enum(["architecture", "convention", "bug", "migration", "product", "security", "lesson"]),
+        type: memoryTypeSchema,
         title: z.string().min(3),
         body: z.string().min(3),
-        tags: z.array(z.string()).default([])
+        tags: z.array(z.string()).default([]),
+        confidence: memoryConfidenceSchema.optional(),
+        source: z.string().optional(),
+        evidence: z.array(z.string()).optional(),
+        linkedFiles: z.array(z.string()).optional(),
+        linkedSymbols: z.array(z.string()).optional(),
+        linkedSqlObjects: z.array(z.string()).optional(),
+        linkedRules: z.array(z.string()).optional(),
+        supersedes: z.array(z.string()).optional(),
+        importance: z.enum(["normal", "important"]).optional(),
+        approved: z.boolean().optional()
       })
     },
-    async ({ root, type, title, body, tags }) => {
+    async ({ root, type, title, body, tags, confidence, source, evidence, linkedFiles, linkedSymbols, linkedSqlObjects, linkedRules, supersedes, importance, approved }) => {
+      if (importance === "important" && approved !== true) {
+        throw new Error("Important durable memories require explicit approval. Retry with approved: true only when the user requested or approved storing it.");
+      }
       const resolvedRoot = await workspaceRoot(root);
-      const entry = await new MemoryStore(memoryPath(resolvedRoot)).add({ type, title, body, tags });
+      const entry = await new MemoryStore(memoryPath(resolvedRoot)).add({
+        type,
+        title,
+        body,
+        tags,
+        confidence,
+        source,
+        evidence,
+        linkedFiles,
+        linkedSymbols,
+        linkedSqlObjects,
+        linkedRules,
+        supersedes
+      });
       return ok({ status: "remembered", memory: entry });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_update_memory",
+    {
+      title: "Update Memory",
+      description: "Use this to update a local memory's text, tags, confidence, links, source, or evidence without deleting history.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        id: z.string().min(1),
+        type: memoryTypeSchema.optional(),
+        title: z.string().min(3).optional(),
+        body: z.string().min(3).optional(),
+        tags: z.array(z.string()).optional(),
+        confidence: memoryConfidenceSchema.optional(),
+        source: z.string().optional(),
+        evidence: z.array(z.string()).optional(),
+        linkedFiles: z.array(z.string()).optional(),
+        linkedSymbols: z.array(z.string()).optional(),
+        linkedSqlObjects: z.array(z.string()).optional(),
+        linkedRules: z.array(z.string()).optional(),
+        supersedes: z.array(z.string()).optional(),
+        supersededBy: z.array(z.string()).optional()
+      })
+    },
+    async ({ root, id, ...update }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const memory = await new MemoryStore(memoryPath(resolvedRoot)).update(id, update);
+      if (!memory) {
+        throw new Error(`No memory found for id ${id}.`);
+      }
+      return ok({ status: "updated", root: resolvedRoot, memory });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_delete_memory",
+    {
+      title: "Delete Memory",
+      description: "Use this to soft-delete a memory by default. Deleted memories are hidden from normal recall and visible only in audit mode.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        id: z.string().min(1),
+        hard: z.boolean().optional()
+      })
+    },
+    async ({ root, id, hard }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const deleted = await new MemoryStore(memoryPath(resolvedRoot)).delete(id, { hard: hard === true });
+      if (!deleted) {
+        throw new Error(`No memory found for id ${id}.`);
+      }
+      return ok({ status: "deleted", root: resolvedRoot, id, hard: hard === true });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_deprecate_memory",
+    {
+      title: "Deprecate Memory",
+      description: "Use this to mark a memory stale without deleting it. Deprecated memories are excluded from normal planning and recall.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        id: z.string().min(1),
+        supersededBy: z.array(z.string()).optional(),
+        evidence: z.array(z.string()).optional()
+      })
+    },
+    async ({ root, id, supersededBy, evidence }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const memory = await new MemoryStore(memoryPath(resolvedRoot)).deprecate(id, supersededBy ?? [], evidence ?? []);
+      if (!memory) {
+        throw new Error(`No memory found for id ${id}.`);
+      }
+      return ok({ status: "deprecated", root: resolvedRoot, memory });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_confirm_memory",
+    {
+      title: "Confirm Memory",
+      description: "Use this to mark a memory as confirmed with evidence and raise or set confidence.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        id: z.string().min(1),
+        evidence: z.array(z.string()).optional(),
+        confidence: memoryConfidenceSchema.optional()
+      })
+    },
+    async ({ root, id, evidence, confidence }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const memory = await new MemoryStore(memoryPath(resolvedRoot)).confirm(id, evidence ?? [], confidence ?? "high");
+      if (!memory) {
+        throw new Error(`No memory found for id ${id}.`);
+      }
+      return ok({ status: "confirmed", root: resolvedRoot, memory });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_find_memory_conflicts",
+    {
+      title: "Find Memory Conflicts",
+      description: "Use this to surface potentially conflicting active memories. It never resolves or edits conflicts automatically.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        id: z.string().optional(),
+        query: z.string().optional(),
+        candidate: z
+          .object({
+            type: memoryTypeSchema,
+            title: z.string().min(3),
+            body: z.string().min(3),
+            tags: z.array(z.string()).default([])
+          })
+          .optional(),
+        limit: z.number().int().min(1).max(50).optional()
+      })
+    },
+    async ({ root, id, query, candidate, limit }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const conflicts = await new MemoryStore(memoryPath(resolvedRoot)).findConflicts({ id, query, candidate, limit });
+      return ok({
+        root: resolvedRoot,
+        conflicts,
+        policy: "Memory conflicts are surfaced for review and not automatically resolved."
+      });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_link_memory",
+    {
+      title: "Link Memory",
+      description: "Use this to link a memory to files, symbols, SQL objects, architecture rules, source, and evidence.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        id: z.string().min(1),
+        linkedFiles: z.array(z.string()).optional(),
+        linkedSymbols: z.array(z.string()).optional(),
+        linkedSqlObjects: z.array(z.string()).optional(),
+        linkedRules: z.array(z.string()).optional(),
+        evidence: z.array(z.string()).optional(),
+        source: z.string().optional()
+      })
+    },
+    async ({ root, id, ...links }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const memory = await new MemoryStore(memoryPath(resolvedRoot)).link(id, links);
+      if (!memory) {
+        throw new Error(`No memory found for id ${id}.`);
+      }
+      return ok({ status: "linked", root: resolvedRoot, memory });
+    }
+  );
+
+  server.registerTool(
+    "tokengraph_recall_memory",
+    {
+      title: "Recall Memory",
+      description: "Use this to retrieve relevant active memories. Audit mode is required to include deprecated or deleted memories.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional(),
+        query: z.string().optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+        auditMode: z.boolean().optional()
+      })
+    },
+    async ({ root, query, limit, auditMode }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const recall = await new MemoryStore(memoryPath(resolvedRoot)).recall(query ?? "", { limit, auditMode: auditMode === true });
+      return ok({ root: resolvedRoot, ...recall });
     }
   );
 
@@ -673,7 +1125,7 @@ export function createTokenGraphServer(): McpServer {
     },
     async ({ root, format, limit }) => {
       const project = await ensureProject(await workspaceRoot(root));
-      return ok(exportProjectMap(project, { format, limit: limit ?? 50 }));
+      return okWithResourceLinks(exportProjectMap(project, { format, limit: limit ?? 50 }));
     }
   );
 

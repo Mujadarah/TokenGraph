@@ -3,6 +3,12 @@ dist/
 .tokengraph/
 artifacts/
 
+# Committed one-click Codex release plugin runtime.
+!release/
+!release/tokengraph/
+!release/tokengraph/dist/
+!release/tokengraph/dist/**
+
 # Local/editor state
 .DS_Store
 Thumbs.db

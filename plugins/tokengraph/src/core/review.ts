@@ -33,6 +33,8 @@ export async function reviewMemories({ memories, query = "", limit = 20 }: Revie
         title: memory.title,
         tags: memory.tags,
         createdAt: memory.createdAt,
+        status: memory.status,
+        confidence: memory.confidence,
         score: hits.length,
         matchedTerms: hits,
         action: hits.length > 0 || terms.length === 0 ? ("keep" as const) : ("review" as const),
@@ -94,6 +96,7 @@ export function exportProjectMap(project: ProjectIndex, options: ExportProjectMa
           ...files.map((file) => `  ${nodeIds.get(file.path)}["${escapeMermaidLabel(`${file.path} (${file.kind})`)}"]`),
           ...edges.map((edge) => `  ${nodeIds.get(edge.filePath)} --> ${nodeIds.get(edge.resolvedPath ?? "")}`)
         ].join("\n");
+  const mimeType = format === "json" ? "application/json" : "text/vnd.mermaid";
 
   return {
     format,
@@ -101,6 +104,14 @@ export function exportProjectMap(project: ProjectIndex, options: ExportProjectMa
     nodeCount: files.length,
     edgeCount: edges.length,
     truncated: project.files.length > files.length,
-    content
+    content,
+    resourceLinks: [
+      {
+        label: "TokenGraph project map",
+        uri: `tokengraph://project-map/${encodeURIComponent(project.fingerprint)}/${format}`,
+        mimeType
+      }
+    ],
+    markdownFallback: format === "json" ? ["```json", content, "```"].join("\n") : ["```mermaid", content, "```"].join("\n")
   };
 }

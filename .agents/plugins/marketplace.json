@@ -8,7 +8,7 @@
       "name": "tokengraph",
       "source": {
         "source": "local",
-        "path": "./plugins/tokengraph"
+        "path": "./release/tokengraph"
       },
       "policy": {
         "installation": "AVAILABLE",

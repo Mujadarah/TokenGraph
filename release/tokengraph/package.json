@@ -1,0 +1,11 @@
+{
+  "name": "tokengraph",
+  "version": "0.17.0",
+  "description": "Local-first Codex MCP plugin for compact project context routing.",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "bin": {
+    "tokengraph-mcp": "./dist/index.js"
+  }
+}

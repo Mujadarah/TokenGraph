@@ -153,10 +153,25 @@ describe("TokenGraph MCP stdio server", () => {
         "tokengraph_project_map",
         "tokengraph_plan_context",
         "tokengraph_compress_output",
+        "tokengraph_compress_context",
         "tokengraph_review_memories",
+        "tokengraph_update_memory",
+        "tokengraph_delete_memory",
+        "tokengraph_deprecate_memory",
+        "tokengraph_confirm_memory",
+        "tokengraph_find_memory_conflicts",
+        "tokengraph_link_memory",
+        "tokengraph_recall_memory",
         "tokengraph_export_project_map",
         "tokengraph_generate_wiki",
-        "tokengraph_show_wiki_page"
+        "tokengraph_show_wiki_page",
+        "tokengraph_list_rules",
+        "tokengraph_add_rule",
+        "tokengraph_update_rule",
+        "tokengraph_delete_rule",
+        "tokengraph_check_architecture",
+        "tokengraph_trace_failure",
+        "tokengraph_assess_change_risk"
       ])
     );
 
@@ -241,6 +256,415 @@ describe("TokenGraph MCP stdio server", () => {
     });
   });
 
+  it("manages architecture rules and checks architecture over JSON-RPC stdio", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root);
+    await mkdir(join(root, "src", "ui"), { recursive: true });
+    await mkdir(join(root, "src", "server"), { recursive: true });
+    await mkdir(join(root, ".agents", "plugins"), { recursive: true });
+    await writeFile(join(root, "src", "ui", "page.ts"), "import { queryDb } from '../server/db'; export const page = queryDb;");
+    await writeFile(join(root, "src", "server", "db.ts"), "export const queryDb = true;");
+    await writeFile(
+      join(root, ".agents", "plugins", "marketplace.json"),
+      JSON.stringify({
+        plugins: [
+          {
+            name: "tokengraph",
+            source: { source: "local", path: "./plugins/tokengraph" },
+            policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" }
+          }
+        ]
+      })
+    );
+
+    await request(100, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const added = await request(101, "tools/call", {
+      name: "tokengraph_add_rule",
+      arguments: {
+        root,
+        type: "forbidden-import",
+        name: "UI cannot import server",
+        fromPattern: "^src/ui/",
+        targetPattern: "^src/server/",
+        severity: "error"
+      }
+    });
+    expect(added.structuredContent).toMatchObject({
+      status: "added",
+      rule: {
+        type: "forbidden-import",
+        name: "UI cannot import server"
+      }
+    });
+
+    const listed = await request(102, "tools/call", {
+      name: "tokengraph_list_rules",
+      arguments: { root }
+    });
+    expect(listed.structuredContent).toMatchObject({
+      rules: [expect.objectContaining({ name: "UI cannot import server" })]
+    });
+
+    const ruleId = (added.structuredContent as { rule: { id: string } }).rule.id;
+    const updated = await request(103, "tools/call", {
+      name: "tokengraph_update_rule",
+      arguments: { root, id: ruleId, message: "Use the public client boundary." }
+    });
+    expect(updated.structuredContent).toMatchObject({
+      status: "updated",
+      rule: {
+        id: ruleId,
+        message: "Use the public client boundary."
+      }
+    });
+
+    const checked = await request(104, "tools/call", {
+      name: "tokengraph_check_architecture",
+      arguments: { root }
+    });
+    expect(checked.structuredContent).toMatchObject({
+      status: "checked",
+      violations: [
+        expect.objectContaining({
+          type: "forbidden-import",
+          ruleName: "UI cannot import server",
+          filePath: "src/ui/page.ts",
+          targetPath: "src/server/db.ts"
+        })
+      ],
+      warnings: [expect.objectContaining({ type: "marketplace-target", sourcePath: "./plugins/tokengraph" })]
+    });
+
+    const deleted = await request(105, "tools/call", {
+      name: "tokengraph_delete_rule",
+      arguments: { root, id: ruleId }
+    });
+    expect(deleted.structuredContent).toMatchObject({ status: "deleted", id: ruleId });
+  });
+
+  it("traces failure output with compact graph-related recommendations", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root);
+    await mkdir(join(root, "services"), { recursive: true });
+    await writeFile(join(root, "services", "patientService.ts"), "export function loadPatientSummary() { return []; }");
+    await writeFile(
+      join(root, "services", "patientService.test.ts"),
+      "import { loadPatientSummary } from './patientService'; it('keeps tenant scoped rows', () => loadPatientSummary());"
+    );
+
+    await request(110, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const traced = await request(111, "tools/call", {
+      name: "tokengraph_trace_failure",
+      arguments: {
+        root,
+        kind: "test",
+        task: "Fix patient summary tenant scoped rows",
+        text: [
+          "FAIL services/patientService.test.ts > patient summary > keeps tenant scoped rows",
+          "AssertionError: expected 2 to be 1",
+          "    at loadPatientSummary (services/patientService.ts:1:17)",
+          "    at services/patientService.test.ts:1:82"
+        ].join("\n")
+      }
+    });
+
+    expect(traced.structuredContent).toMatchObject({
+      detectedPaths: expect.arrayContaining(["services/patientService.ts", "services/patientService.test.ts"]),
+      detectedTests: expect.arrayContaining(["services/patientService.test.ts > patient summary > keeps tenant scoped rows"]),
+      detectedSymbols: expect.arrayContaining(["loadPatientSummary"]),
+      hypotheses: [expect.objectContaining({ label: "hypothesis" })],
+      recommendedCommands: expect.arrayContaining(["pnpm test -- services/patientService.test.ts"])
+    });
+    expect(JSON.stringify(traced.structuredContent)).toContain("AssertionError: expected 2 to be 1");
+  });
+
+  it("compresses mixed context while preserving implementation-critical references", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root);
+    await mkdir(join(root, "services"), { recursive: true });
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await writeFile(join(root, "services", "patientService.ts"), "export function loadPatientSummary() { return []; }");
+    await writeFile(
+      join(root, "services", "patientService.test.ts"),
+      "import { loadPatientSummary } from './patientService'; it('keeps tenant scoped rows', () => loadPatientSummary());"
+    );
+    await writeFile(
+      join(root, "supabase", "migrations", "20260708_add_patient_rls.sql"),
+      "create policy \"tenant rows only\" on public.patients for select using (tenant_id = auth.uid());"
+    );
+
+    await request(115, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    await request(116, "tools/call", {
+      name: "tokengraph_remember_decision",
+      arguments: {
+        root,
+        type: "bug",
+        title: "Patient RLS failures keep exact test output",
+        body: "Preserve exact failing test names, stack paths, RLS migration identifiers, and tenant-isolation warnings.",
+        tags: ["patient", "rls", "test"]
+      }
+    });
+
+    const compressed = await request(117, "tools/call", {
+      name: "tokengraph_compress_context",
+      arguments: {
+        root,
+        task: "Fix patient summary tenant scoped rows without weakening RLS",
+        contentKind: "mixed",
+        preserveRawReferences: true,
+        text: [
+          "User constraint: Do not remove public API loadPatientSummary.",
+          "FAIL services/patientService.test.ts > patient summary > keeps tenant scoped rows",
+          "AssertionError: expected 2 to be 1",
+          "    at loadPatientSummary (services/patientService.ts:1:17)",
+          "Migration 20260708_add_patient_rls.sql must preserve RLS policy using tenant_id = auth.uid().",
+          "Security warning: tenant isolation is required.",
+          ...Array.from({ length: 60 }, (_, index) => `irrelevant expanded context line ${index}`)
+        ].join("\n")
+      }
+    });
+
+    expect(compressed.structuredContent).toMatchObject({
+      compressedTask: expect.stringContaining("Fix patient summary tenant scoped rows"),
+      preservedConstraints: expect.arrayContaining([
+        "User constraint: Do not remove public API loadPatientSummary.",
+        "FAIL services/patientService.test.ts > patient summary > keeps tenant scoped rows",
+        "AssertionError: expected 2 to be 1",
+        "at loadPatientSummary (services/patientService.ts:1:17)",
+        "Migration 20260708_add_patient_rls.sql must preserve RLS policy using tenant_id = auth.uid().",
+        "Security warning: tenant isolation is required."
+      ]),
+      referencedMemories: expect.arrayContaining([expect.objectContaining({ title: "Patient RLS failures keep exact test output" })]),
+      recommendedFirstReads: expect.arrayContaining([expect.objectContaining({ path: "services/patientService.ts", startLine: 1 })])
+    });
+    expect((compressed.structuredContent as { omissions: string[] }).omissions.join("\n")).toMatch(/omitted/i);
+    expect((compressed.structuredContent as { estimatedTokens: { avoided: number } }).estimatedTokens.avoided).toBeGreaterThan(0);
+    expect((compressed.structuredContent as { confidence: string }).confidence).toMatch(/medium|high/);
+  });
+
+  it("assesses change risk with graph, SQL, rule, test, and memory signals", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root);
+    await mkdir(join(root, "app", "patients"), { recursive: true });
+    await mkdir(join(root, "src", "services"), { recursive: true });
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await writeFile(
+      join(root, "app", "patients", "page.tsx"),
+      "import { loadPatientSummary } from '../../src/services/patientService'; export default function Page() { return loadPatientSummary(); }"
+    );
+    await writeFile(join(root, "src", "services", "patientService.ts"), "export function loadPatientSummary() { return []; }");
+    await writeFile(
+      join(root, "src", "services", "patientService.test.ts"),
+      "import { loadPatientSummary } from './patientService'; it('keeps tenant scoped rows', () => loadPatientSummary());"
+    );
+    await writeFile(
+      join(root, "supabase", "migrations", "001_patient_rls.sql"),
+      [
+        "create table public.patients (id uuid primary key, tenant_id uuid, auth_user_id uuid);",
+        "create policy \"tenant can read patients\" on public.patients for select using (tenant_id = auth.uid());",
+        "create function public.audit_patient_change() returns trigger language plpgsql as $$ begin return new; end; $$;"
+      ].join("\n")
+    );
+
+    await request(120, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const remembered = await request(121, "tools/call", {
+      name: "tokengraph_remember_decision",
+      arguments: {
+        root,
+        type: "bug",
+        title: "Patient tenant scoping is fragile",
+        body: "Past patient summary bugs leaked tenant rows when auth and RLS context were skipped.",
+        tags: ["patient", "tenant", "fragile", "rls"]
+      }
+    });
+    expect(remembered.structuredContent).toMatchObject({ status: "remembered" });
+
+    const addedRule = await request(122, "tools/call", {
+      name: "tokengraph_add_rule",
+      arguments: {
+        root,
+        type: "forbidden-import",
+        name: "Routes cannot import services directly",
+        fromPattern: "^app/",
+        targetPattern: "^src/services/",
+        severity: "warning"
+      }
+    });
+    expect(addedRule.structuredContent).toMatchObject({ status: "added" });
+
+    const assessed = await request(123, "tools/call", {
+      name: "tokengraph_assess_change_risk",
+      arguments: {
+        root,
+        changedFiles: ["src/services/patientService.ts", "supabase/migrations/001_patient_rls.sql"],
+        task: "Change patient summary tenant scoping and audit logging",
+        diffSummary: "Touches tenant_id RLS policy, auth user lookup, and audit logging for patient summaries."
+      }
+    });
+
+    expect(assessed.structuredContent).toMatchObject({
+      riskLevel: "high",
+      affectedFiles: expect.arrayContaining([expect.objectContaining({ path: "app/patients/page.tsx" })]),
+      affectedTests: expect.arrayContaining([expect.objectContaining({ path: "src/services/patientService.test.ts" })]),
+      affectedSql: expect.arrayContaining([expect.objectContaining({ kind: "policy", name: "tenant can read patients" })]),
+      affectedRules: expect.arrayContaining([expect.objectContaining({ ruleName: "Routes cannot import services directly" })]),
+      affectedMemories: expect.arrayContaining([expect.objectContaining({ title: "Patient tenant scoping is fragile" })]),
+      recommendedTests: expect.arrayContaining(["pnpm test -- src/services/patientService.test.ts"])
+    });
+    expect((assessed.structuredContent as { riskScore: number }).riskScore).toBeGreaterThanOrEqual(70);
+    expect(JSON.stringify((assessed.structuredContent as { manualReviewWarnings: string[] }).manualReviewWarnings)).toMatch(/RLS|tenant|audit/i);
+  });
+
+  it("manages memory lifecycle metadata over JSON-RPC stdio", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root);
+
+    await request(130, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const remembered = await request(131, "tools/call", {
+      name: "tokengraph_remember_decision",
+      arguments: {
+        root,
+        type: "architecture",
+        title: "Use REST patient API",
+        body: "Use REST endpoints for patient reads until the API migration is complete.",
+        tags: ["patient", "api"],
+        source: "mcp-smoke",
+        evidence: ["Initial memory lifecycle smoke test"]
+      }
+    });
+    const memoryId = (remembered.structuredContent as { memory: { id: string } }).memory.id;
+
+    const updated = await request(132, "tools/call", {
+      name: "tokengraph_update_memory",
+      arguments: { root, id: memoryId, confidence: "medium", tags: ["patient", "api", "tenant"] }
+    });
+    expect(updated.structuredContent).toMatchObject({
+      status: "updated",
+      memory: expect.objectContaining({ id: memoryId, status: "active", tags: ["patient", "api", "tenant"] })
+    });
+
+    const confirmed = await request(133, "tools/call", {
+      name: "tokengraph_confirm_memory",
+      arguments: { root, id: memoryId, evidence: ["Confirmed by test fixture"] }
+    });
+    expect(confirmed.structuredContent).toMatchObject({
+      status: "confirmed",
+      memory: expect.objectContaining({ id: memoryId, confidence: "high", confirmedAt: expect.any(String) })
+    });
+
+    const linked = await request(134, "tools/call", {
+      name: "tokengraph_link_memory",
+      arguments: {
+        root,
+        id: memoryId,
+        linkedFiles: ["src/services/patientService.ts"],
+        linkedSymbols: ["loadPatientSummary"],
+        linkedSqlObjects: ["public.patients"],
+        linkedRules: ["rule_patient_api"],
+        evidence: ["Linked by smoke test"]
+      }
+    });
+    expect(linked.structuredContent).toMatchObject({
+      status: "linked",
+      memory: expect.objectContaining({
+        id: memoryId,
+        linkedFiles: ["src/services/patientService.ts"],
+        linkedSymbols: ["loadPatientSummary"],
+        linkedSqlObjects: ["public.patients"],
+        linkedRules: ["rule_patient_api"]
+      })
+    });
+
+    const conflicts = await request(135, "tools/call", {
+      name: "tokengraph_find_memory_conflicts",
+      arguments: {
+        root,
+        candidate: {
+          type: "architecture",
+          title: "Use GraphQL patient API",
+          body: "Prefer GraphQL instead of REST for patient reads.",
+          tags: ["patient", "api"]
+        }
+      }
+    });
+    expect(conflicts.structuredContent).toMatchObject({
+      conflicts: [expect.objectContaining({ memory: expect.objectContaining({ id: memoryId, status: "active" }) })],
+      policy: expect.stringMatching(/not automatically resolved/i)
+    });
+
+    const recalled = await request(136, "tools/call", {
+      name: "tokengraph_recall_memory",
+      arguments: { root, query: "patient api", limit: 5 }
+    });
+    expect(recalled.structuredContent).toMatchObject({
+      memories: [expect.objectContaining({ id: memoryId, status: "active", lastUsedAt: expect.any(String) })]
+    });
+
+    const deprecated = await request(137, "tools/call", {
+      name: "tokengraph_deprecate_memory",
+      arguments: { root, id: memoryId, supersededBy: ["mem_next"], evidence: ["GraphQL migration superseded it"] }
+    });
+    expect(deprecated.structuredContent).toMatchObject({
+      status: "deprecated",
+      memory: expect.objectContaining({ id: memoryId, status: "deprecated", supersededBy: ["mem_next"] })
+    });
+
+    const normalRecall = await request(138, "tools/call", {
+      name: "tokengraph_recall_memory",
+      arguments: { root, query: "patient api" }
+    });
+    expect(normalRecall.structuredContent).toMatchObject({ memories: [] });
+
+    const deleted = await request(139, "tools/call", {
+      name: "tokengraph_delete_memory",
+      arguments: { root, id: memoryId }
+    });
+    expect(deleted.structuredContent).toMatchObject({ status: "deleted", id: memoryId, hard: false });
+
+    const auditRecall = await request(140, "tools/call", {
+      name: "tokengraph_recall_memory",
+      arguments: { root, query: "patient api", auditMode: true }
+    });
+    expect(auditRecall.structuredContent).toMatchObject({
+      memories: [expect.objectContaining({ id: memoryId, status: "deleted" })]
+    });
+  });
+
   it("reviews memories and exports a visual project map over JSON-RPC stdio", async () => {
     const root = await makeRoot();
     await stopServer();
@@ -296,8 +720,24 @@ describe("TokenGraph MCP stdio server", () => {
     expect(exported.structuredContent).toMatchObject({
       format: "mermaid",
       nodeCount: 2,
-      edgeCount: 1
+      edgeCount: 1,
+      resourceLinks: [
+        expect.objectContaining({
+          label: "TokenGraph project map",
+          mimeType: "text/vnd.mermaid"
+        })
+      ],
+      markdownFallback: expect.stringContaining("```mermaid")
     });
+    expect(exported.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "resource_link",
+          uri: expect.stringMatching(/^tokengraph:\/\/project-map\//),
+          mimeType: "text/vnd.mermaid"
+        })
+      ])
+    );
     expect(JSON.stringify(exported.structuredContent)).toContain("flowchart LR");
     expect(JSON.stringify(exported.structuredContent)).not.toContain("return <PatientCard");
   });
@@ -805,7 +1245,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(60, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.10.1" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
     });
     send({ method: "notifications/initialized" });
 

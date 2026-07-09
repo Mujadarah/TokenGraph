@@ -2,9 +2,12 @@
 
 TokenGraph is a local-first Codex plugin that reduces wasted context by routing tasks through a compact project map before raw file reads.
 
-## What v0.10.1 includes
+This folder is the maintainer development source plugin. Normal Codex users should install TokenGraph from the repository marketplace, which points to `release/tokengraph/`, not this source folder. The source folder is only directly installable after maintainers run `pnpm build` and create current `dist/` output.
 
-- Codex plugin manifest and repo-local marketplace entry.
+## What v0.17.0 includes
+
+- Codex plugin manifest and release marketplace entry.
+- Focused Codex skills for graph retrieval, root-cause debugging, architecture consistency, context compression, regression detection, token budgets, memory curation, and release packaging audits.
 - Local stdio MCP server in Node/TypeScript.
 - Project indexing for TypeScript, JavaScript, React, Next.js, PostgreSQL, and Supabase-style SQL migrations.
 - Local import resolution for relative paths and common `@/` or `~/` aliases.
@@ -15,6 +18,12 @@ TokenGraph is a local-first Codex plugin that reduces wasted context by routing 
 - Incremental indexing for compatible persisted indexes.
 - `fullReindex` support when a complete rebuild is required.
 - Local config stored at `.tokengraph/config.json`.
+- Schema-versioned JSON persistence for config, memories, rules, wiki manifests, token events, and benchmark run storage.
+- Safe migration of compatible legacy config, memory, and rule files, with corrupt JSON quarantined instead of silently overwritten.
+- `JsonTokenGraphStore` abstraction, with SQLite intentionally left optional until proven necessary.
+- Benchmark harness through `pnpm benchmark -- --json`, plus benchmark methodology, current results, and fixture docs.
+- Trust docs for privacy, security, permissions, local storage, limitations, and release install behavior.
+- Host-neutral docs for Codex, Claude Code, generic MCP stdio clients, Cursor, and Windsurf/Cascade.
 - Config tools: `tokengraph_get_config`, `tokengraph_set_profile`, and `tokengraph_update_config`.
 - Token-saving profiles: `conservative`, `balanced`, and `aggressive`.
 - Profile-aware context planning with estimated token budgets and raw-read warning thresholds.
@@ -33,14 +42,22 @@ TokenGraph is a local-first Codex plugin that reduces wasted context by routing 
 - Planner, project map, search, and SQL summary support for v0.5 SQL object kinds.
 - Local memory storage in `.tokengraph/memory.json`.
 - Read-only memory review through `tokengraph_review_memories`.
-- Mermaid and JSON project map export through `tokengraph_export_project_map`.
-- Log/test/build/diff compression.
+- Memory lifecycle metadata for active, deprecated, deleted, confirmed, linked, source-backed, and evidenced memories.
+- Memory tools: `tokengraph_update_memory`, `tokengraph_delete_memory`, `tokengraph_deprecate_memory`, `tokengraph_confirm_memory`, `tokengraph_find_memory_conflicts`, `tokengraph_link_memory`, and `tokengraph_recall_memory`.
+- Local architecture rules in `.tokengraph/rules.json`.
+- Rule tools: `tokengraph_list_rules`, `tokengraph_add_rule`, `tokengraph_update_rule`, and `tokengraph_delete_rule`.
+- Architecture checks through `tokengraph_check_architecture` for imports, dependency direction, missing tests, SQL security warnings, and marketplace target sanity.
+- Root cause failure tracing through `tokengraph_trace_failure`, with compressed output, exact failing test names, stack paths, related imports, SQL, memories, hypotheses, first reads, commands, confidence, and token estimates.
+- Regression risk assessment through `tokengraph_assess_change_risk`, with affected files, routes, tests, SQL, architecture rules, memories, targeted test commands, manual review warnings, and token estimates.
+- Quality-first context compression through `tokengraph_compress_context`, preserving exact errors, test names, stack paths and line numbers, security warnings, migration identifiers, affected file paths, public API names, and user constraints.
+- Mermaid and JSON project map export through `tokengraph_export_project_map`, including resource-link metadata and Markdown fallbacks.
+- Log/test/build/diff and mixed-context compression.
 - JSON-RPC stdio smoke coverage for the built MCP entry point.
 - Self-contained bundled MCP entry point so installed Codex plugin caches do not need `node_modules`.
 - CLI smoke command for local validation outside Codex.
 - Example fixture projects for scanner and planner regression tests.
 - Local plugin validation for manifest, MCP config, built output, and skill metadata.
-- Release packaging with `pnpm package:plugin`, producing an installable plugin folder and release-local marketplace file without committing `dist/`.
+- Release packaging with `pnpm package:plugin`, producing ignored installable artifacts, and `pnpm package:plugin -- --release`, updating the committed one-click install plugin under `release/tokengraph/`.
 
 ## Local development
 
@@ -51,6 +68,7 @@ pnpm test
 pnpm smoke -- --root . --json
 pnpm validate:plugin
 pnpm package:plugin
+pnpm package:plugin -- --release
 ```
 
 The MCP server entry point is `dist/index.js`, built from `src/index.ts`. `pnpm build` first type-checks and emits the module tree, then bundles the MCP entry point so an installed Codex plugin cache can launch without running `pnpm install` in the cache.
@@ -58,6 +76,8 @@ The MCP server entry point is `dist/index.js`, built from `src/index.ts`. `pnpm 
 `pnpm smoke -- --root <project>` starts the built MCP server over stdio, validates the required TokenGraph tools, and calls the project status, map, planner, token-savings, memory review, export, and wiki tools against the selected project root. Run `pnpm build` first.
 
 `pnpm package:plugin` creates an ignored release artifact under the repository `artifacts/` directory. The artifact includes only installable plugin files: `.codex-plugin/`, `.mcp.json`, `dist/`, `skills/`, `README.md`, `package.json`, and the repository license. It also writes a release-local `.agents/plugins/marketplace.json` that points at the packaged plugin folder.
+
+`pnpm package:plugin -- --release` updates `release/tokengraph/`, the committed one-click install target used by the root marketplace.
 
 ## Local project wiki
 
@@ -82,13 +102,15 @@ This repository contains a local marketplace file at:
 .agents/plugins/marketplace.json
 ```
 
-After building the plugin, add this marketplace root to Codex if needed:
+For normal user install, add the repository marketplace root to Codex if needed:
 
 ```powershell
-codex plugin marketplace add C:\Users\rabia\Desktop\TokenGraph
+codex plugin marketplace add C:\path\to\TokenGraph
 ```
 
-Then install `tokengraph` from that marketplace and start a new Codex thread so the skill and MCP tools are loaded. After changing plugin code, run `pnpm build`, run the smoke command, and restart Codex or open a fresh thread.
+Then install `tokengraph` from that marketplace and start a new Codex thread so the skill and MCP tools are loaded. The root marketplace points to `release/tokengraph/`, which already includes compiled runtime files.
+
+After changing source plugin code, run `pnpm build`, run the smoke command, update the release folder with `pnpm package:plugin -- --release`, and restart Codex or open a fresh thread.
 
 For release artifact testing, run `pnpm build` and then `pnpm package:plugin`. Add the generated `artifacts/` directory as a marketplace root if you want to test the packaged plugin folder instead of the source checkout.
 
@@ -97,9 +119,10 @@ For release artifact testing, run `pnpm build` and then `pnpm package:plugin`. A
 ### Missing MCP tools
 
 1. Confirm `tokengraph` is installed and enabled in Codex.
-2. Run `pnpm build` from `plugins/tokengraph`.
-3. Run `pnpm smoke -- --root . --json`.
-4. Restart Codex or open a fresh thread so plugin-provided MCP servers are reloaded.
+2. Confirm the root marketplace points to `./release/tokengraph`.
+3. Confirm `release/tokengraph/dist/index.js` and `release/tokengraph/dist/server.js` exist.
+4. If testing source changes, run `pnpm build` from `plugins/tokengraph`, then `pnpm smoke -- --root . --json`, then `pnpm package:plugin -- --release`.
+5. Restart Codex or open a fresh thread so plugin-provided MCP servers are reloaded.
 
 ### Stale indexes
 
@@ -115,11 +138,11 @@ Run `pnpm build` before `pnpm package:plugin`. The package command fails if `dis
 
 ### Marketplace visibility
 
-The repo marketplace file is `.agents/plugins/marketplace.json`. Its `source.path` must point to `./plugins/tokengraph` relative to the repository root, not relative to `.agents/plugins`.
+The repo marketplace file is `.agents/plugins/marketplace.json`. Its normal user `source.path` must point to `./release/tokengraph` relative to the repository root, not relative to `.agents/plugins`. Maintainers can test source builds separately, but normal docs should not direct users to install from `./plugins/tokengraph`.
 
 ## Privacy
 
-TokenGraph v0.10.1 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key or paid external API. Token counts and savings are estimates, not exact measurements.
+TokenGraph v0.17.0 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key, cloud sync, embeddings service, or paid external API. Token counts and savings are estimates, not exact measurements.
 
 ## License
 

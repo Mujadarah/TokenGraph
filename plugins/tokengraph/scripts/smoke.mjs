@@ -14,10 +14,25 @@ const requiredTools = [
   "tokengraph_project_map",
   "tokengraph_plan_context",
   "tokengraph_compress_output",
+  "tokengraph_compress_context",
   "tokengraph_review_memories",
+  "tokengraph_update_memory",
+  "tokengraph_delete_memory",
+  "tokengraph_deprecate_memory",
+  "tokengraph_confirm_memory",
+  "tokengraph_find_memory_conflicts",
+  "tokengraph_link_memory",
+  "tokengraph_recall_memory",
   "tokengraph_export_project_map",
   "tokengraph_generate_wiki",
-  "tokengraph_show_wiki_page"
+  "tokengraph_show_wiki_page",
+  "tokengraph_list_rules",
+  "tokengraph_add_rule",
+  "tokengraph_update_rule",
+  "tokengraph_delete_rule",
+  "tokengraph_check_architecture",
+  "tokengraph_trace_failure",
+  "tokengraph_assess_change_risk"
 ];
 
 function usage() {
@@ -180,7 +195,7 @@ async function runSmoke() {
     await client.request("initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-cli-smoke", version: "0.10.1" }
+      clientInfo: { name: "tokengraph-cli-smoke", version: "0.17.0" }
     });
     client.notify("notifications/initialized");
 
@@ -222,6 +237,24 @@ async function runSmoke() {
       await client.request("tools/call", { name: "tokengraph_export_project_map", arguments: { root, format: "mermaid", limit: 25 } }),
       "tokengraph_export_project_map"
     );
+    const compressedContext = assertToolResult(
+      await client.request("tools/call", {
+        name: "tokengraph_compress_context",
+        arguments: {
+          root,
+          task: "TokenGraph CLI smoke validation must preserve public API smokeValidation",
+          contentKind: "mixed",
+          preserveRawReferences: true,
+          text: [
+            "User constraint: Do not remove public API smokeValidation.",
+            "FAIL scripts/smoke.mjs > smoke validation > keeps required tools",
+            "AssertionError: expected tool to be listed",
+            "Security warning: local-only MCP context must not require telemetry."
+          ].join("\n")
+        }
+      }),
+      "tokengraph_compress_context"
+    );
     const generatedWiki = assertToolResult(
       await client.request("tools/call", { name: "tokengraph_generate_wiki", arguments: { root } }),
       "tokengraph_generate_wiki"
@@ -245,6 +278,7 @@ async function runSmoke() {
       memoriesReviewed: memoryReview.totalMemories ?? 0,
       exportedMapNodes: projectMapExport.nodeCount ?? 0,
       exportedMapEdges: projectMapExport.edgeCount ?? 0,
+      compressedContextConfidence: compressedContext.confidence ?? "unknown",
       wikiPageSlugs: (generatedWiki.pages ?? []).map((page) => page.slug),
       wikiStatus: overviewWiki.wikiStatus?.state ?? "unknown"
     };
