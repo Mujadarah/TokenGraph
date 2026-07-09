@@ -121,6 +121,8 @@ const releaseDistServerPath = resolve(releaseRoot, "dist", "server.js");
 const releaseSkillsPath = resolve(releaseRoot, "skills");
 const releasePackageJsonPath = resolve(releaseRoot, "package.json");
 const releaseReadmePath = resolve(releaseRoot, "README.md");
+const rootReadmePath = resolve(repoRoot, "README.md");
+const sourceReadmePath = resolve(pluginRoot, "README.md");
 const smokeScriptPath = resolve(pluginRoot, "scripts", "smoke.mjs");
 const buildScriptPath = resolve(pluginRoot, "scripts", "build.mjs");
 const packageScriptPath = resolve(pluginRoot, "scripts", "package-plugin.mjs");
@@ -248,10 +250,19 @@ const releaseManifest = await readJson(releaseManifestPath);
 const releaseMcp = await readJson(releaseMcpPath);
 const releasePackageJson = await readJson(releasePackageJsonPath);
 const releaseReadme = await readFile(releaseReadmePath, "utf8").catch((error) => fail(`cannot read release README: ${error.message}`));
+const rootReadme = await readFile(rootReadmePath, "utf8").catch((error) => fail(`cannot read root README: ${error.message}`));
+const sourceReadme = await readFile(sourceReadmePath, "utf8").catch((error) => fail(`cannot read source plugin README: ${error.message}`));
+const personalWindowsProfilePathPattern = /C:\\Users\\(?!example(?:\\|$))[^\\\s]+/i;
+for (const [label, content] of [
+  ["root README", rootReadme],
+  ["source plugin README", sourceReadme],
+  ["release README", releaseReadme]
+]) {
+  assert(!personalWindowsProfilePathPattern.test(content), `${label} must not contain personal Windows profile paths`);
+}
 assert(releaseManifest.name === manifest.name, "release plugin manifest name must match source manifest");
 assert(releaseManifest.version?.split("+", 1)[0] === packageJson.version, "release plugin manifest base version must match package version");
 assert(releasePackageJson.version === packageJson.version, "release package version must match source package version");
-assert(!/C:\\Users\\example|C:\\Users\\rabia|Desktop\\TokenGraph/.test(releaseReadme), "release README must not contain personal machine paths");
 assert(releaseMcp.mcpServers?.tokengraph?.command === "node", "release tokengraph MCP command must be node");
 assert(
   Array.isArray(releaseMcp.mcpServers.tokengraph.args) && releaseMcp.mcpServers.tokengraph.args.includes("./dist/index.js"),
