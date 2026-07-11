@@ -165,25 +165,43 @@ function okWithResourceLinks<T extends { resourceLinks?: Array<{ label: string; 
   };
 }
 
+const projectWriteChains = new Map<string, Promise<void>>();
+
+async function enqueueProjectWrite<T>(root: string, operation: () => Promise<T>): Promise<T> {
+  const key = resolve(root);
+  const previous = projectWriteChains.get(key) ?? Promise.resolve();
+  const current = previous.then(operation, operation);
+  projectWriteChains.set(
+    key,
+    current.then(
+      () => undefined,
+      () => undefined
+    )
+  );
+  return current;
+}
+
 async function ensureProject(root: string): Promise<ProjectIndex> {
-  const currentScanSignature = await scanProjectSignature(root);
-  const existing = await loadProjectIndex(root);
-  if (existing && isSafeProjectIndex(root, existing)) {
-    if (existing.scanSignature === currentScanSignature) {
-      return existing;
-    }
-    const updated = await updateProjectIndexIncremental(root, existing);
-    const current = updated.index;
-    if (isFreshProjectIndex(existing, current)) {
+  return enqueueProjectWrite(root, async () => {
+    const currentScanSignature = await scanProjectSignature(root);
+    const existing = await loadProjectIndex(root);
+    if (existing && isSafeProjectIndex(root, existing)) {
+      if (existing.scanSignature === currentScanSignature) {
+        return existing;
+      }
+      const updated = await updateProjectIndexIncremental(root, existing);
+      const current = updated.index;
+      if (isFreshProjectIndex(existing, current)) {
+        await saveProjectIndex(root, current);
+        return current;
+      }
       await saveProjectIndex(root, current);
       return current;
     }
-    await saveProjectIndex(root, current);
-    return current;
-  }
-  const indexed = await indexProject(root, { scanSignature: currentScanSignature });
-  await saveProjectIndex(root, indexed);
-  return indexed;
+    const indexed = await indexProject(root, { scanSignature: currentScanSignature });
+    await saveProjectIndex(root, indexed);
+    return indexed;
+  });
 }
 
 function isSafeRelativePath(path: string): boolean {

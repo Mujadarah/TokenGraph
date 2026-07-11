@@ -1357,6 +1357,40 @@ describe("TokenGraph MCP stdio server", () => {
     expect(status.structuredContent).toMatchObject({ state: "fresh" });
   });
 
+  it("serializes overlapping index operations for one project", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "first.ts"), "export const first = true;\n");
+    await stopServer();
+    startServer(root);
+
+    await request(80, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    await request(81, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root }
+    });
+    await writeFile(join(root, "src", "second.ts"), "export const second = true;\n");
+
+    const [first, second] = await Promise.all([
+      request(82, "tools/call", { name: "tokengraph_project_map", arguments: { root } }),
+      request(83, "tools/call", { name: "tokengraph_project_map", arguments: { root } })
+    ]);
+
+    expect(first.isError).not.toBe(true);
+    expect(second.isError).not.toBe(true);
+    const final = await request(84, "tools/call", {
+      name: "tokengraph_project_map",
+      arguments: { root }
+    });
+    expect(final.structuredContent).toMatchObject({ counts: { files: 2 } });
+  });
+
   it("returns a friendly error for missing workspace roots", async () => {
     const root = await makeRoot();
     await stopServer();
