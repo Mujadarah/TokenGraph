@@ -156,14 +156,26 @@ function lineForIndex(content: string, index: number): number {
 function declarationEndLine(content: string, startLine: number): number {
   const lines = maskCodeStringsAndComments(content).split(/\r?\n/);
   let braceDepth = 0;
+  let parenDepth = 0;
+  let bracketDepth = 0;
   for (let index = startLine - 1; index < lines.length; index += 1) {
     const line = lines[index];
     braceDepth += (line.match(/\{/g) ?? []).length;
     braceDepth -= (line.match(/\}/g) ?? []).length;
-    if (index === startLine - 1 && braceDepth <= 0) {
+    parenDepth += (line.match(/\(/g) ?? []).length;
+    parenDepth -= (line.match(/\)/g) ?? []).length;
+    bracketDepth += (line.match(/\[/g) ?? []).length;
+    bracketDepth -= (line.match(/\]/g) ?? []).length;
+    if (index === startLine - 1 && braceDepth <= 0 && parenDepth <= 0 && bracketDepth <= 0) {
       return startLine;
     }
-    if (index > startLine - 1 && braceDepth <= 0 && /[};]\s*$/.test(line.trim())) {
+    if (
+      index > startLine - 1 &&
+      braceDepth <= 0 &&
+      parenDepth <= 0 &&
+      bracketDepth <= 0 &&
+      /[};)\]]\s*;?\s*$/.test(line.trim())
+    ) {
       return index + 1;
     }
   }

@@ -276,6 +276,27 @@ describe("scanProject", () => {
     );
   });
 
+  it("ends an arrow declaration at its closing parenthesis", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(
+      join(root, "src", "factory.ts"),
+      [
+        "export const makePatient = () => (",
+        "  {",
+        "    id: 'patient-1'",
+        "  }",
+        ");",
+        "",
+        "export const unrelated = true;"
+      ].join("\n")
+    );
+
+    const graph = await scanProject(root);
+
+    expect(graph.symbols.find((symbol) => symbol.name === "makePatient")).toMatchObject({ startLine: 1, endLine: 5 });
+  });
+
   it("extracts compact TypeScript graph data and excludes secrets and dependency output", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "app", "patients", "[id]"), { recursive: true });
