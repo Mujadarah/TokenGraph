@@ -17,7 +17,39 @@ import type {
 } from "./types.js";
 
 function normalizeSqlName(name: string): string {
-  return name.replace(/"/g, "").replace(/\s+/g, " ").trim();
+  const segments: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < name.length; index += 1) {
+    const char = name[index];
+    const next = name[index + 1];
+    if (char === '"') {
+      current += char;
+      if (quoted && next === '"') {
+        current += next;
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (char === "." && !quoted) {
+      segments.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  segments.push(current);
+  return segments
+    .map((segment) => {
+      const trimmed = segment.trim();
+      if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+        return trimmed.slice(1, -1).replace(/""/g, '"');
+      }
+      return trimmed.replace(/"/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    })
+    .join(".");
 }
 
 function stripOuterParens(value: string): string {

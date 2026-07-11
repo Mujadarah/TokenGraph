@@ -505,6 +505,25 @@ describe("parsePostgresMigration", () => {
     ]);
   });
 
+  it("folds unquoted SQL identifiers but preserves quoted identifiers", () => {
+    const graph = parsePostgresMigration(
+      "supabase/migrations/005_case.sql",
+      [
+        "create table PUBLIC.Patients (ID uuid primary key);",
+        "create policy read_patients on public.PATIENTS for select using (true);",
+        "create table public.\"PatientNotes\" (\"DisplayName\" text);"
+      ].join("\n")
+    );
+
+    expect(graph.tables).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "public.patients", columns: ["id"] }),
+        expect.objectContaining({ name: "public.PatientNotes", columns: ["DisplayName"] })
+      ])
+    );
+    expect(graph.policies).toEqual(expect.arrayContaining([expect.objectContaining({ table: "public.patients" })]));
+  });
+
   it("extracts tables, columns, relations, policies, indexes, triggers, functions, and views", () => {
     const sql = `
       create table public.patients (

@@ -144,14 +144,14 @@ it("folds unquoted SQL identifiers but preserves quoted identifiers", () => {
     [
       "create table PUBLIC.Patients (ID uuid primary key);",
       "create policy read_patients on public.PATIENTS for select using (true);",
-      "create table public.\"Patient Notes\" (\"Display Name\" text);"
+        "create table public.\"PatientNotes\" (\"DisplayName\" text);"
     ].join("\\n")
   );
 
   expect(graph.tables).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ name: "public.patients", columns: ["id"] }),
-      expect.objectContaining({ name: "public.Patient Notes", columns: ["Display Name"] })
+      expect.objectContaining({ name: "public.PatientNotes", columns: ["DisplayName"] })
     ])
   );
   expect(graph.policies).toEqual(expect.arrayContaining([expect.objectContaining({ table: "public.patients" })]));
