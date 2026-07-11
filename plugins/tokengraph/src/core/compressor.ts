@@ -13,12 +13,12 @@ const ACTIONABLE_PATTERNS = [
   /\bconflict\b/i,
   /\bmissing\b/i
 ];
-const MAX_INPUT_BYTES = 1024 * 1024;
+const MAX_INPUT_CHARS = 1024 * 1024;
 const MAX_INPUT_LINES = 10_000;
 
 export function compressOutput(input: { kind: CompressedOutput["kind"]; text: string; maxLines?: number }): CompressedOutput {
-  const truncatedByBytes = input.text.length > MAX_INPUT_BYTES;
-  const boundedText = truncatedByBytes ? input.text.slice(0, MAX_INPUT_BYTES) : input.text;
+  const truncatedByChars = input.text.length > MAX_INPUT_CHARS;
+  const boundedText = truncatedByChars ? input.text.slice(0, MAX_INPUT_CHARS) : input.text;
   const lines = boundedText.split(/\r?\n/, MAX_INPUT_LINES + 1).map((line) => line.trim());
   const truncatedByLines = lines.length > MAX_INPUT_LINES;
   if (truncatedByLines) {
@@ -44,7 +44,7 @@ export function compressOutput(input: { kind: CompressedOutput["kind"]; text: st
   const compressedText = [summary, ...fallbackLines].join("\n");
 
   const estimatedTokens = estimateSavings(input.text, compressedText);
-  const omittedLineCount = Math.max(0, lines.length - fallbackLines.length) + (truncatedByBytes || truncatedByLines ? 1 : 0);
+  const omittedLineCount = Math.max(0, lines.length - fallbackLines.length) + (truncatedByChars || truncatedByLines ? 1 : 0);
   return {
     kind: input.kind,
     summary,

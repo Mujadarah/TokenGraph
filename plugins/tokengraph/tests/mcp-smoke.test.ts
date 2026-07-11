@@ -196,6 +196,7 @@ describe("TokenGraph MCP stdio server", () => {
     for (const name of indexWritingTools) {
       expect(listedTools.find((tool) => tool.name === name)?.annotations?.readOnlyHint, name).toBe(false);
     }
+    expect(listedTools.find((tool) => tool.name === "tokengraph_recall_memory")?.annotations?.idempotentHint).toBe(false);
 
     const missingStatus = await request(3, "tools/call", {
       name: "tokengraph_index_status",

@@ -524,6 +524,15 @@ describe("scanProject", () => {
 });
 
 describe("parsePostgresMigration", () => {
+  it("preserves quoted column names containing spaces", () => {
+    const graph = parsePostgresMigration(
+      "supabase/migrations/006_columns.sql",
+      "create table public.notes (\"Display Name\" text, id uuid primary key);"
+    );
+
+    expect(graph.tables).toEqual([expect.objectContaining({ name: "public.notes", columns: ["Display Name", "id"] })]);
+  });
+
   it("reports a case-mismatched dollar quote instead of silently dropping later SQL", () => {
     const graph = parsePostgresMigration(
       "supabase/migrations/003_malformed.sql",
@@ -1449,6 +1458,12 @@ describe("buildContextPlan", () => {
 });
 
 describe("compressOutput", () => {
+  it("names the text cap according to its character semantics", async () => {
+    const source = await readFile("src/core/compressor.ts", "utf8");
+    expect(source).toContain("MAX_INPUT_CHARS");
+    expect(source).not.toContain("MAX_INPUT_BYTES");
+  });
+
   it("keeps actionable test failure details and reports token savings", () => {
     const noisyLog = [
       "PASS services/account.test.ts",
