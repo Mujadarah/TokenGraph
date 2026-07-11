@@ -84,9 +84,10 @@ async function request(id: number, method: string, params?: Record<string, unkno
   return response.result as Record<string, unknown>;
 }
 
-function startServer(cwd: string = process.cwd()) {
+function startServer(cwd: string = process.cwd(), env: NodeJS.ProcessEnv = {}) {
   server = spawn(process.execPath, [serverEntry], {
     cwd,
+    env: { ...process.env, ...env },
     stdio: ["pipe", "pipe", "pipe"]
   });
 }
@@ -1016,17 +1017,12 @@ describe("TokenGraph MCP stdio server", () => {
     });
   });
 
-  it("rejects outside roots when launched from a different plugin-shaped workspace", async () => {
+  it("rejects an outside root when launched from the installed plugin root", async () => {
     const root = await makeRoot();
     const outsideRoot = await makeRoot();
-    await mkdir(join(root, ".codex-plugin"), { recursive: true });
-    await mkdir(join(root, "src"), { recursive: true });
-    await writeFile(join(root, ".codex-plugin", "plugin.json"), "{}");
-    await writeFile(join(root, ".mcp.json"), "{}");
-    await writeFile(join(root, "src", "local.ts"), "export const localValue = true;");
     await writeFile(join(outsideRoot, "outside.ts"), "export const outsideValue = true;");
     await stopServer();
-    startServer(root);
+    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: root, CLAUDE_PROJECT_DIR: "" });
 
     await request(60, "initialize", {
       protocolVersion: "2025-06-18",
@@ -1041,15 +1037,16 @@ describe("TokenGraph MCP stdio server", () => {
     });
 
     expect(response.isError).toBe(true);
-    expect(JSON.stringify(response)).toMatch(/outside the allowed workspace/i);
+    expect(JSON.stringify(response)).toMatch(/outside the trusted workspace/i);
+    await expect(access(join(outsideRoot, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("accepts an explicit workspace root when launched from the installed plugin root", async () => {
+  it("fails closed when launched from the installed plugin root without a trusted workspace", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
     await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
     await stopServer();
-    startServer(process.cwd());
+    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: "", CLAUDE_PROJECT_DIR: "" });
 
     await request(40, "initialize", {
       protocolVersion: "2025-06-18",
@@ -1062,19 +1059,31 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_project_map",
       arguments: { root }
     });
-    expect(mapped.structuredContent).toMatchObject({
-      root,
-      counts: {
-        files: 1
-      }
-    });
+    expect(mapped.isError).toBe(true);
+    expect(JSON.stringify(mapped)).toMatch(/trusted workspace root/i);
 
-    const missingRoot = await request(42, "tools/call", {
-      name: "tokengraph_project_map",
-      arguments: {}
+    await expect(access(join(root, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("accepts a root inside the host-provided workspace when launched from the plugin root", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
+    await stopServer();
+    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: root, CLAUDE_PROJECT_DIR: "" });
+
+    await request(43, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
     });
-    expect(missingRoot.isError).toBe(true);
-    expect(JSON.stringify(missingRoot)).toMatch(/pass the workspace root/i);
+    send({ method: "notifications/initialized" });
+
+    const mapped = await request(44, "tools/call", {
+      name: "tokengraph_project_map",
+      arguments: { root }
+    });
+    expect(mapped.structuredContent).toMatchObject({ root, counts: { files: 1 } });
   });
 
   it("summarizes v0.5 SQL objects over JSON-RPC stdio", async () => {

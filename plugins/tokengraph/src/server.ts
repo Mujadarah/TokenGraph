@@ -1,6 +1,7 @@
 import process from "node:process";
 import { access, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { McpServer } from "@modelcontextprotocol/server";
@@ -67,26 +68,6 @@ const architectureRuleFields = {
   message: z.string().optional()
 };
 
-async function workspaceRoot(inputRoot?: string): Promise<string> {
-  const allowedRoot = await realpath(process.cwd());
-  const launchedFromPluginRoot = await isPluginRoot(allowedRoot);
-  if (!inputRoot?.trim() && launchedFromPluginRoot) {
-    throw new Error("TokenGraph is running from its plugin directory; pass the workspace root explicitly.");
-  }
-  const requested = inputRoot?.trim() ? resolve(allowedRoot, inputRoot.trim()) : allowedRoot;
-  let resolvedRoot;
-  try {
-    resolvedRoot = await realpath(requested);
-  } catch {
-    throw new Error(`Requested workspace root does not exist or is not readable: ${requested}`);
-  }
-  const relativeToAllowed = relative(allowedRoot, resolvedRoot);
-  if (!launchedFromPluginRoot && relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute(relativeToAllowed))) {
-    throw new Error(`Requested root is outside the allowed workspace: ${resolvedRoot}`);
-  }
-  return resolvedRoot;
-}
-
 function ownPluginRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
 }
@@ -95,12 +76,66 @@ async function isPluginRoot(root: string): Promise<boolean> {
   try {
     const [realRoot, realSelf] = await Promise.all([realpath(root), realpath(ownPluginRoot())]);
     if (realRoot !== realSelf) return false;
-    await access(join(root, ".codex-plugin", "plugin.json"));
-    await access(join(root, ".mcp.json"));
-    return true;
+    const hasManifest = await Promise.any([
+      access(join(root, ".codex-plugin", "plugin.json")),
+      access(join(root, ".claude-plugin", "plugin.json"))
+    ]).then(() => true, () => false);
+    const hasMcpConfig = await Promise.any([
+      access(join(root, ".mcp.json")),
+      access(join(root, ".mcp.claude.json"))
+    ]).then(() => true, () => false);
+    return hasManifest && hasMcpConfig;
   } catch {
     return false;
   }
+}
+
+type TrustedWorkspaceProvider = () => Promise<string | undefined>;
+
+async function resolveTrustedWorkspace(server: McpServer): Promise<string | undefined> {
+  const configured = process.env.CLAUDE_PROJECT_DIR?.trim() || process.env.TOKENGRAPH_WORKSPACE_ROOT?.trim();
+  if (configured) return configured;
+
+  try {
+    const roots = await server.server.listRoots({}, { timeout: 1_000 });
+    const fileRoot = roots.roots.find((root) => root.uri.startsWith("file://"));
+    return fileRoot ? fileURLToPath(fileRoot.uri) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function createWorkspaceResolver(server: McpServer, provider?: TrustedWorkspaceProvider) {
+  return async (inputRoot?: string): Promise<string> => {
+    const cwd = await realpath(process.cwd());
+    const configured = await (provider?.() ?? resolveTrustedWorkspace(server));
+    const allowedRoot = configured
+      ? await realpath(configured)
+      : await isPluginRoot(cwd)
+        ? undefined
+        : cwd;
+    if (!allowedRoot) {
+      throw new Error("TokenGraph needs a trusted workspace root from the host before it can access project files.");
+    }
+
+    const home = await realpath(homedir());
+    if (allowedRoot === parse(allowedRoot).root || allowedRoot === home) {
+      throw new Error("TokenGraph refuses filesystem and home directories as workspace roots.");
+    }
+
+    const requested = inputRoot?.trim() ? resolve(allowedRoot, inputRoot.trim()) : allowedRoot;
+    let resolvedRoot: string;
+    try {
+      resolvedRoot = await realpath(requested);
+    } catch {
+      throw new Error(`Requested workspace root does not exist or is not readable: ${requested}`);
+    }
+    const relativeToAllowed = relative(allowedRoot, resolvedRoot);
+    if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute(relativeToAllowed))) {
+      throw new Error(`Requested root is outside the trusted workspace: ${resolvedRoot}`);
+    }
+    return resolvedRoot;
+  };
 }
 
 function compactJson(value: unknown): string {
@@ -350,8 +385,9 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
   return rows.filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
-export function createTokenGraphServer(): McpServer {
+export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWorkspaceProvider } = {}): McpServer {
   const server = new McpServer({ name: "tokengraph", version: "0.17.0" });
+  const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
 
   server.registerTool(
     "tokengraph_index_project",
