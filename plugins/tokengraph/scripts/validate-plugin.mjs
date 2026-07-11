@@ -260,6 +260,11 @@ assert(sourceReadme.includes("TOKENGRAPH_WORKSPACE_ROOT"), "plugin README must d
 assert(codexHostGuide.includes("TOKENGRAPH_WORKSPACE_ROOT"), "Codex host guide must document trusted workspace configuration");
 assert(claudeHostGuide.includes("CLAUDE_PROJECT_DIR"), "Claude Code host guide must document its trusted project root");
 assert(/trusted workspace|workspace trust boundary/i.test(securityGuide), "security guide must document the trusted workspace boundary");
+const registeredToolNames = Array.from(distServer.matchAll(/registerTool\(\s*["'](tokengraph_[a-z0-9_]+)["']/g), (match) => match[1]);
+const documentedToolNames = new Set(Array.from(sourceReadme.matchAll(/`(tokengraph_[a-z0-9_]+)`/g), (match) => match[1]));
+for (const toolName of registeredToolNames) {
+  assert(documentedToolNames.has(toolName), `plugin README must document registered tool ${toolName}`);
+}
 const personalWindowsProfilePathPattern = /C:\\Users\\(?!example(?:\\|$))[^\\\s]+/i;
 for (const [label, content] of [
   ["root README", rootReadme],

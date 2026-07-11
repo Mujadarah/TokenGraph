@@ -1,6 +1,7 @@
 import process from "node:process";
 import { access, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
@@ -51,26 +52,6 @@ const architectureRuleFields = {
     sqlPattern: z.string().optional(),
     message: z.string().optional()
 };
-async function workspaceRoot(inputRoot) {
-    const allowedRoot = await realpath(process.cwd());
-    const launchedFromPluginRoot = await isPluginRoot(allowedRoot);
-    if (!inputRoot?.trim() && launchedFromPluginRoot) {
-        throw new Error("TokenGraph is running from its plugin directory; pass the workspace root explicitly.");
-    }
-    const requested = inputRoot?.trim() ? resolve(allowedRoot, inputRoot.trim()) : allowedRoot;
-    let resolvedRoot;
-    try {
-        resolvedRoot = await realpath(requested);
-    }
-    catch {
-        throw new Error(`Requested workspace root does not exist or is not readable: ${requested}`);
-    }
-    const relativeToAllowed = relative(allowedRoot, resolvedRoot);
-    if (!launchedFromPluginRoot && relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute(relativeToAllowed))) {
-        throw new Error(`Requested root is outside the allowed workspace: ${resolvedRoot}`);
-    }
-    return resolvedRoot;
-}
 function ownPluginRoot() {
     return resolve(dirname(fileURLToPath(import.meta.url)), "..");
 }
@@ -79,13 +60,63 @@ async function isPluginRoot(root) {
         const [realRoot, realSelf] = await Promise.all([realpath(root), realpath(ownPluginRoot())]);
         if (realRoot !== realSelf)
             return false;
-        await access(join(root, ".codex-plugin", "plugin.json"));
-        await access(join(root, ".mcp.json"));
-        return true;
+        const hasManifest = await Promise.any([
+            access(join(root, ".codex-plugin", "plugin.json")),
+            access(join(root, ".claude-plugin", "plugin.json"))
+        ]).then(() => true, () => false);
+        const hasMcpConfig = await Promise.any([
+            access(join(root, ".mcp.json")),
+            access(join(root, ".mcp.claude.json"))
+        ]).then(() => true, () => false);
+        return hasManifest && hasMcpConfig;
     }
     catch {
         return false;
     }
+}
+async function resolveTrustedWorkspace(server) {
+    const configured = process.env.CLAUDE_PROJECT_DIR?.trim() || process.env.TOKENGRAPH_WORKSPACE_ROOT?.trim();
+    if (configured)
+        return configured;
+    try {
+        const roots = await server.server.listRoots({}, { timeout: 1_000 });
+        const fileRoot = roots.roots.find((root) => root.uri.startsWith("file://"));
+        return fileRoot ? fileURLToPath(fileRoot.uri) : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function createWorkspaceResolver(server, provider) {
+    return async (inputRoot) => {
+        const cwd = await realpath(process.cwd());
+        const configured = await (provider?.() ?? resolveTrustedWorkspace(server));
+        const allowedRoot = configured
+            ? await realpath(configured)
+            : await isPluginRoot(cwd)
+                ? undefined
+                : cwd;
+        if (!allowedRoot) {
+            throw new Error("TokenGraph needs a trusted workspace root from the host before it can access project files.");
+        }
+        const home = await realpath(homedir());
+        if (allowedRoot === parse(allowedRoot).root || allowedRoot === home) {
+            throw new Error("TokenGraph refuses filesystem and home directories as workspace roots.");
+        }
+        const requested = inputRoot?.trim() ? resolve(allowedRoot, inputRoot.trim()) : allowedRoot;
+        let resolvedRoot;
+        try {
+            resolvedRoot = await realpath(requested);
+        }
+        catch {
+            throw new Error(`Requested workspace root does not exist or is not readable: ${requested}`);
+        }
+        const relativeToAllowed = relative(allowedRoot, resolvedRoot);
+        if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute(relativeToAllowed))) {
+            throw new Error(`Requested root is outside the trusted workspace: ${resolvedRoot}`);
+        }
+        return resolvedRoot;
+    };
 }
 function compactJson(value) {
     return JSON.stringify(value);
@@ -111,24 +142,35 @@ function okWithResourceLinks(output) {
         structuredContent: output
     };
 }
+const projectWriteChains = new Map();
+async function enqueueProjectWrite(root, operation) {
+    const key = resolve(root);
+    const previous = projectWriteChains.get(key) ?? Promise.resolve();
+    const current = previous.then(operation, operation);
+    projectWriteChains.set(key, current.then(() => undefined, () => undefined));
+    return current;
+}
 async function ensureProject(root) {
-    const currentScanSignature = await scanProjectSignature(root);
-    const existing = await loadProjectIndex(root);
-    if (existing && isSafeProjectIndex(root, existing)) {
-        if (existing.scanSignature === currentScanSignature) {
-            return existing;
+    return enqueueProjectWrite(root, async () => {
+        const currentScanSignature = await scanProjectSignature(root);
+        const existing = await loadProjectIndex(root);
+        if (existing && isSafeProjectIndex(root, existing)) {
+            if (existing.scanSignature === currentScanSignature) {
+                return existing;
+            }
+            const updated = await updateProjectIndexIncremental(root, existing);
+            const current = updated.index;
+            if (isFreshProjectIndex(existing, current)) {
+                await saveProjectIndex(root, current);
+                return current;
+            }
+            await saveProjectIndex(root, current);
+            return current;
         }
-        const updated = await updateProjectIndexIncremental(root, existing);
-        const current = updated.index;
-        if (isFreshProjectIndex(existing, current)) {
-            return existing;
-        }
-        await saveProjectIndex(root, current);
-        return current;
-    }
-    const indexed = await indexProject(root, { scanSignature: currentScanSignature });
-    await saveProjectIndex(root, indexed);
-    return indexed;
+        const indexed = await indexProject(root, { scanSignature: currentScanSignature });
+        await saveProjectIndex(root, indexed);
+        return indexed;
+    });
 }
 function isSafeRelativePath(path) {
     if (!path || isAbsolute(path))
@@ -188,7 +230,8 @@ function projectMap(project) {
             constraints: project.sql.constraints.map((constraint) => ({ name: constraint.name, table: constraint.table, kind: constraint.kind })),
             enums: project.sql.enums.map((enumObject) => ({ name: enumObject.name, values: enumObject.values.length })),
             extensions: project.sql.extensions.map((extension) => ({ name: extension.name })),
-            materializedViews: project.sql.materializedViews.map((view) => ({ name: view.name }))
+            materializedViews: project.sql.materializedViews.map((view) => ({ name: view.name })),
+            warnings: project.sql.warnings
         }
     };
 }
@@ -326,8 +369,9 @@ function sqlSummary(project, query, limit) {
     ];
     return rows.filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
 }
-export function createTokenGraphServer() {
+export function createTokenGraphServer(options = {}) {
     const server = new McpServer({ name: "tokengraph", version: "0.17.0" });
+    const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
     server.registerTool("tokengraph_index_project", {
         title: "Index Project",
         description: "Use this when Codex needs a compact local project map before reading raw files.",
@@ -511,7 +555,7 @@ export function createTokenGraphServer() {
     server.registerTool("tokengraph_check_architecture", {
         title: "Check Architecture",
         description: "Use this to check imports, selected module tests, SQL security warnings, and marketplace target sanity against local architecture rules.",
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: z.object({
             root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
             files: z.array(z.string()).optional().describe("Optional selected module paths for required-test checks.")
@@ -525,7 +569,7 @@ export function createTokenGraphServer() {
     server.registerTool("tokengraph_trace_failure", {
         title: "Trace Failure",
         description: "Use this to compress failure output and route debugging through graph-related files, imports, SQL, memories, hypotheses, and first reads.",
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: z.object({
             root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
             kind: z.enum(["test", "build", "runtime", "install", "log"]),
@@ -542,7 +586,7 @@ export function createTokenGraphServer() {
     server.registerTool("tokengraph_assess_change_risk", {
         title: "Assess Change Risk",
         description: "Use this to estimate regression risk for changed files using graph, routes, tests, SQL, architecture rules, memories, and targeted test recommendations.",
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: z.object({
             root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
             changedFiles: z.array(z.string().min(1)).min(1),
@@ -560,7 +604,7 @@ export function createTokenGraphServer() {
     server.registerTool("tokengraph_project_map", {
         title: "Show Project Map",
         description: "Use this when Codex needs a compact overview of indexed modules, symbols, SQL objects, and freshness.",
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: z.object({ root: z.string().optional() })
     }, async ({ root }) => {
         const resolvedRoot = await workspaceRoot(root);
@@ -622,7 +666,7 @@ export function createTokenGraphServer() {
     server.registerTool("tokengraph_plan_context", {
         title: "Plan Context",
         description: "Use this before raw file exploration to get the smallest likely files, SQL objects, tests, and memories for a task.",
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: z.object({
             root: z.string().optional(),
             task: z.string().min(3).describe("The coding task or question to route."),
@@ -659,7 +703,7 @@ export function createTokenGraphServer() {
     server.registerTool("tokengraph_search_graph", {
         title: "Search Graph",
         description: "Use this to search indexed files, symbols, SQL tables, and routes without reading raw source.",
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: z.object({
             root: z.string().optional(),
             query: z.string().min(2),
@@ -672,7 +716,7 @@ export function createTokenGraphServer() {
     server.registerTool("tokengraph_explain_symbol", {
         title: "Explain Symbol",
         description: "Use this when Codex needs to know why a file or symbol is relevant before reading it.",
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: z.object({ root: z.string().optional(), target: z.string().min(1) })
     }, async ({ root, target }) => {
         const project = await ensureProject(await workspaceRoot(root));
@@ -681,7 +725,7 @@ export function createTokenGraphServer() {
     server.registerTool("tokengraph_summarize_sql", {
         title: "Summarize SQL",
         description: "Use this when a task touches data, auth, reports, RLS, migrations, or persistence.",
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: z.object({ root: z.string().optional(), query: z.string().min(2), limit: z.number().int().min(1).max(50).optional() })
     }, async ({ root, query, limit }) => {
         const project = await ensureProject(await workspaceRoot(root));
@@ -700,7 +744,7 @@ export function createTokenGraphServer() {
     server.registerTool("tokengraph_compress_context", {
         title: "Compress Context",
         description: "Use this to compress prompts, memories, diffs, SQL, wiki text, logs, or mixed context while preserving exact implementation-critical references and first-read recommendations.",
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: z.object({
             root: z.string().optional(),
             task: z.string().min(1),
@@ -931,7 +975,7 @@ export function createTokenGraphServer() {
     server.registerTool("tokengraph_export_project_map", {
         title: "Export Project Map",
         description: "Use this to export a compact visual project map without raw source content.",
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: z.object({
             root: z.string().optional(),
             format: z.enum(["mermaid", "json"]).default("mermaid"),
@@ -944,7 +988,7 @@ export function createTokenGraphServer() {
     server.registerTool("tokengraph_show_token_savings", {
         title: "Show Token Savings",
         description: "Use this to estimate how many tokens TokenGraph avoided by using the compact local index.",
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: z.object({ root: z.string().optional() })
     }, async ({ root }) => {
         const project = await ensureProject(await workspaceRoot(root));

@@ -142,12 +142,11 @@ export class MemoryStore {
         });
     }
     async deprecate(id, supersededBy = [], evidence = []) {
-        const current = (await this.list({ includeDeprecated: true, includeDeleted: true })).find((memory) => memory.id === id);
-        return this.update(id, {
+        return this.mutate(id, (memory) => mergeMemory(memory, {
             status: "deprecated",
-            supersededBy: unique([...(current?.supersededBy ?? []), ...supersededBy]),
-            evidence: unique([...(current?.evidence ?? []), ...evidence])
-        });
+            supersededBy: unique([...memory.supersededBy, ...supersededBy]),
+            evidence: unique([...memory.evidence, ...evidence])
+        }));
     }
     async delete(id, options = {}) {
         return this.enqueueWrite(async () => {
@@ -166,25 +165,21 @@ export class MemoryStore {
         });
     }
     async confirm(id, evidence = [], confidence = "high") {
-        const current = (await this.list({ includeDeprecated: true, includeDeleted: true })).find((memory) => memory.id === id);
-        return this.update(id, {
+        return this.mutate(id, (memory) => mergeMemory(memory, {
             confirmedAt: nowIso(),
             confidence,
-            evidence: unique([...(current?.evidence ?? []), ...evidence])
-        });
+            evidence: unique([...memory.evidence, ...evidence])
+        }));
     }
     async link(id, links) {
-        const current = (await this.list({ includeDeprecated: true, includeDeleted: true })).find((memory) => memory.id === id);
-        if (!current)
-            return undefined;
-        return this.update(id, {
-            linkedFiles: unique([...current.linkedFiles, ...(links.linkedFiles ?? [])]),
-            linkedSymbols: unique([...current.linkedSymbols, ...(links.linkedSymbols ?? [])]),
-            linkedSqlObjects: unique([...current.linkedSqlObjects, ...(links.linkedSqlObjects ?? [])]),
-            linkedRules: unique([...current.linkedRules, ...(links.linkedRules ?? [])]),
-            evidence: unique([...current.evidence, ...(links.evidence ?? [])]),
+        return this.mutate(id, (memory) => mergeMemory(memory, {
+            linkedFiles: unique([...memory.linkedFiles, ...(links.linkedFiles ?? [])]),
+            linkedSymbols: unique([...memory.linkedSymbols, ...(links.linkedSymbols ?? [])]),
+            linkedSqlObjects: unique([...memory.linkedSqlObjects, ...(links.linkedSqlObjects ?? [])]),
+            linkedRules: unique([...memory.linkedRules, ...(links.linkedRules ?? [])]),
+            evidence: unique([...memory.evidence, ...(links.evidence ?? [])]),
             ...(links.source ? { source: links.source } : {})
-        });
+        }));
     }
     async search(query, limit = 5) {
         const terms = tokenize(query);
@@ -268,6 +263,18 @@ export class MemoryStore {
             if (changed) {
                 await this.writeAtomic(memories);
             }
+        });
+    }
+    async mutate(id, transform) {
+        return this.enqueueWrite(async () => {
+            const memories = await this.readAll();
+            const index = memories.findIndex((memory) => memory.id === id);
+            if (index === -1)
+                return undefined;
+            const next = transform(memories[index]);
+            memories[index] = next;
+            await this.writeAtomic(memories);
+            return next;
         });
     }
     async readAll() {

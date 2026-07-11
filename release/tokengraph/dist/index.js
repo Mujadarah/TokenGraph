@@ -9122,21 +9122,21 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
   const { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizeComponentEncoding, isIPv4, nonSimpleDomain } = require_utils();
   const { SCHEMES, getSchemeHandler } = require_schemes();
   function normalize2(uri, options) {
-    if (typeof uri === "string") uri = serialize(parse3(uri, options), options);
-    else if (typeof uri === "object") uri = parse3(serialize(uri, options), options);
+    if (typeof uri === "string") uri = serialize(parse4(uri, options), options);
+    else if (typeof uri === "object") uri = parse4(serialize(uri, options), options);
     return uri;
   }
   function resolve6(baseURI, relativeURI, options) {
     const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
-    const resolved = resolveComponent(parse3(baseURI, schemelessOptions), parse3(relativeURI, schemelessOptions), schemelessOptions, true);
+    const resolved = resolveComponent(parse4(baseURI, schemelessOptions), parse4(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
     return serialize(resolved, schemelessOptions);
   }
   function resolveComponent(base, relative4, options, skipNormalization) {
     const target = {};
     if (!skipNormalization) {
-      base = parse3(serialize(base, options), options);
-      relative4 = parse3(serialize(relative4, options), options);
+      base = parse4(serialize(base, options), options);
+      relative4 = parse4(serialize(relative4, options), options);
     }
     options = options || {};
     if (!options.tolerant && relative4.scheme) {
@@ -9180,7 +9180,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
   function equal(uriA, uriB, options) {
     if (typeof uriA === "string") {
       uriA = unescape(uriA);
-      uriA = serialize(normalizeComponentEncoding(parse3(uriA, options), true), {
+      uriA = serialize(normalizeComponentEncoding(parse4(uriA, options), true), {
         ...options,
         skipEscape: true
       });
@@ -9190,7 +9190,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     });
     if (typeof uriB === "string") {
       uriB = unescape(uriB);
-      uriB = serialize(normalizeComponentEncoding(parse3(uriB, options), true), {
+      uriB = serialize(normalizeComponentEncoding(parse4(uriB, options), true), {
         ...options,
         skipEscape: true
       });
@@ -9243,7 +9243,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     return uriTokens.join("");
   }
   const URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
-  function parse3(uri, opts) {
+  function parse4(uri, opts) {
     const options = Object.assign({}, opts);
     const parsed = {
       scheme: void 0,
@@ -9304,7 +9304,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     resolveComponent,
     equal,
     serialize,
-    parse: parse3
+    parse: parse4
   };
   module.exports = fastUri;
   module.exports.default = fastUri;
@@ -19433,13 +19433,76 @@ function toError(value) {
 // src/server.ts
 import process4 from "node:process";
 import { access, realpath } from "node:fs/promises";
-import { dirname as dirname5, isAbsolute as isAbsolute2, join as join6, relative as relative3, resolve as resolve5 } from "node:path";
+import { homedir } from "node:os";
+import { dirname as dirname5, isAbsolute as isAbsolute2, join as join6, parse as parse3, relative as relative3, resolve as resolve5 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/core/architectureRules.ts
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+
+// src/core/patternSafety.ts
+import { Worker } from "node:worker_threads";
+var PATTERN_FIELDS = [
+  "fromPattern",
+  "targetPattern",
+  "allowedTargetPattern",
+  "modulePattern",
+  "testPattern",
+  "namePattern",
+  "sqlPattern"
+];
+var PROBE = `${"a".repeat(12e3)}!`;
+var TIMEOUT_MS = 250;
+function assertSafePattern(pattern) {
+  return new Promise((resolve6, reject) => {
+    const worker = new Worker(
+      `const { parentPort, workerData } = require("node:worker_threads");
+try {
+  new RegExp(workerData.pattern).test(workerData.probe);
+  parentPort.postMessage({ ok: true });
+} catch (error) {
+  parentPort.postMessage({ ok: false, message: error instanceof Error ? error.message : String(error) });
+}`,
+      { eval: true, workerData: { pattern, probe: PROBE } }
+    );
+    let settled = false;
+    const finish = (error2) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      void worker.terminate();
+      if (error2) reject(error2);
+      else resolve6();
+    };
+    const timeout = setTimeout(() => {
+      finish(new Error("pattern evaluation exceeded the safety time limit"));
+    }, TIMEOUT_MS);
+    worker.once("message", (message) => {
+      if (message.ok) finish();
+      else finish(new Error(message.message ?? "pattern could not be compiled"));
+    });
+    worker.once("error", (error2) => finish(error2));
+    worker.once("exit", (code) => {
+      if (code !== 0) finish(new Error(`pattern worker exited with code ${code}`));
+    });
+  });
+}
+async function assertSafeArchitectureRulePatterns(input) {
+  for (const field of PATTERN_FIELDS) {
+    const pattern = input[field];
+    if (typeof pattern !== "string" || !pattern) continue;
+    try {
+      await assertSafePattern(pattern);
+    } catch (error2) {
+      const message = error2 instanceof Error ? error2.message : String(error2);
+      throw new Error(`Unsafe architecture rule pattern in ${field}: ${message}`);
+    }
+  }
+}
+
+// src/core/architectureRules.ts
 var DEFAULT_SEVERITY = "warning";
 var CURRENT_RULES_SCHEMA_VERSION = 1;
 function nowIso() {
@@ -19500,6 +19563,7 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
   async add(input) {
     return this.enqueueWrite(async () => {
       const rules = await this.list();
+      await assertSafeArchitectureRulePatterns(input);
       const rule = normalizeRule(input);
       rules.push(rule);
       await this.writeAtomic(rules);
@@ -19521,6 +19585,7 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
         severity: update.severity ?? current.severity,
         updatedAt: nowIso()
       };
+      await assertSafeArchitectureRulePatterns(next);
       rules[index] = next;
       await this.writeAtomic(rules);
       return next;
@@ -20551,7 +20616,7 @@ function normalizePath(path) {
   return path.split(sep).join("/");
 }
 function hashText(text) {
-  return createHash("sha256").update(text).digest("hex");
+  return createHash("sha256").update(text.replace(/\r\n?/g, "\n")).digest("hex");
 }
 function exclusionForName(name) {
   if (DEPENDENCY_DIRS.has(name)) return "dependency";
@@ -20559,16 +20624,25 @@ function exclusionForName(name) {
   if (SECRET_FILE_PATTERNS.some((pattern) => pattern.test(name))) return "secret";
   return void 0;
 }
-async function loadRootIgnore(root) {
-  const matcher = createIgnore();
+async function loadIgnoreScopes(base, inherited = []) {
+  let content;
   try {
-    matcher.add(await readFile5(join4(root, ".gitignore"), "utf8"));
+    content = await readFile5(join4(base, ".gitignore"), "utf8");
   } catch (error2) {
     if (error2.code !== "ENOENT") {
       throw error2;
     }
+    return inherited;
   }
-  return matcher;
+  const matcher = createIgnore();
+  matcher.add(content);
+  return [...inherited, { base, matcher }];
+}
+function isIgnored(scopes, absolutePath, isDirectory) {
+  return scopes.some(({ base, matcher }) => {
+    const path = normalizePath(relative2(base, absolutePath));
+    return Boolean(path) && matcher.ignores(isDirectory ? `${path}/` : path);
+  });
 }
 function languageForExtension(extension) {
   switch (extension) {
@@ -20598,7 +20672,7 @@ function nextRouteForPath(path) {
   const parts = path.split("/");
   const fileName = parts.at(-1) ?? "";
   if (path.startsWith("app/")) {
-    if (!/^(page|route|layout)\.[jt]sx?$/.test(fileName)) {
+    if (!/^(page|route)\.[jt]sx?$/.test(fileName)) {
       return void 0;
     }
     const routeParts2 = parts.slice(1, -1).filter((part) => !part.startsWith("("));
@@ -20644,14 +20718,20 @@ function lineForIndex(content, index) {
 function declarationEndLine(content, startLine) {
   const lines = maskCodeStringsAndComments(content).split(/\r?\n/);
   let braceDepth = 0;
+  let parenDepth = 0;
+  let bracketDepth = 0;
   for (let index = startLine - 1; index < lines.length; index += 1) {
     const line = lines[index];
     braceDepth += (line.match(/\{/g) ?? []).length;
     braceDepth -= (line.match(/\}/g) ?? []).length;
-    if (index === startLine - 1 && braceDepth <= 0) {
+    parenDepth += (line.match(/\(/g) ?? []).length;
+    parenDepth -= (line.match(/\)/g) ?? []).length;
+    bracketDepth += (line.match(/\[/g) ?? []).length;
+    bracketDepth -= (line.match(/\]/g) ?? []).length;
+    if (index === startLine - 1 && braceDepth <= 0 && parenDepth <= 0 && bracketDepth <= 0) {
       return startLine;
     }
-    if (index > startLine - 1 && braceDepth <= 0 && /[};]\s*$/.test(line.trim())) {
+    if (index > startLine - 1 && braceDepth <= 0 && parenDepth <= 0 && bracketDepth <= 0 && /[};)\]]\s*;?\s*$/.test(line.trim())) {
       return index + 1;
     }
   }
@@ -20794,7 +20874,8 @@ function budgetFromOptions(options) {
 function addUnreadable(graph, path) {
   graph.exclusions.push({ path: path || ".", reason: "unreadable" });
 }
-async function walk(root, current, graph, ignoreMatcher, state, depth) {
+async function walk(root, current, graph, ignoreScopes, state, depth) {
+  const currentScopes = current === root ? ignoreScopes : await loadIgnoreScopes(current, ignoreScopes);
   let entries;
   try {
     entries = await readdir(current, { withFileTypes: true });
@@ -20809,8 +20890,7 @@ async function walk(root, current, graph, ignoreMatcher, state, depth) {
     if (entry.name === ".tokengraph") {
       continue;
     }
-    const ignorePath = entry.isDirectory() ? `${relativePath}/` : relativePath;
-    if (relativePath && ignoreMatcher.ignores(ignorePath)) {
+    if (relativePath && isIgnored(currentScopes, absolute, entry.isDirectory())) {
       graph.exclusions.push({ path: relativePath, reason: "ignored" });
       continue;
     }
@@ -20829,7 +20909,7 @@ async function walk(root, current, graph, ignoreMatcher, state, depth) {
         continue;
       }
       state.directories += 1;
-      await walk(root, absolute, graph, ignoreMatcher, state, depth + 1);
+      await walk(root, absolute, graph, currentScopes, state, depth + 1);
       continue;
     }
     if (!entry.isFile()) {
@@ -20887,7 +20967,7 @@ async function walk(root, current, graph, ignoreMatcher, state, depth) {
   }
 }
 async function scanProject(root, options) {
-  const ignoreMatcher = await loadRootIgnore(root);
+  const ignoreScopes = await loadIgnoreScopes(root);
   const graph = {
     root,
     files: [],
@@ -20895,7 +20975,7 @@ async function scanProject(root, options) {
     imports: [],
     exclusions: []
   };
-  await walk(root, root, graph, ignoreMatcher, { budget: budgetFromOptions(options), directories: 0, totalBytes: 0, onFileContent: options?.onFileContent }, 0);
+  await walk(root, root, graph, ignoreScopes, { budget: budgetFromOptions(options), directories: 0, totalBytes: 0, onFileContent: options?.onFileContent }, 0);
   graph.files.sort((a, b) => a.path.localeCompare(b.path));
   resolveLocalImports(root, graph);
   graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name));
@@ -20907,7 +20987,7 @@ async function scanProjectSignature(root, options) {
   return (await scanProjectFileMetadata(root, options)).scanSignature;
 }
 async function scanProjectFileMetadata(root, options) {
-  const ignoreMatcher = await loadRootIgnore(root);
+  const ignoreScopes = await loadIgnoreScopes(root);
   const rows = [];
   const files = [];
   const exclusions = [];
@@ -20915,7 +20995,8 @@ async function scanProjectFileMetadata(root, options) {
   let directories = 0;
   let fileCount = 0;
   let totalBytes = 0;
-  async function walkSignature(current, depth) {
+  async function walkSignature(current, depth, inheritedScopes) {
+    const currentScopes = current === root ? inheritedScopes : await loadIgnoreScopes(current, inheritedScopes);
     let entries;
     try {
       entries = await readdir(current, { withFileTypes: true });
@@ -20928,8 +21009,7 @@ async function scanProjectFileMetadata(root, options) {
       const absolute = join4(current, entry.name);
       const relativePath = normalizePath(relative2(root, absolute));
       if (entry.name === ".tokengraph") continue;
-      const ignorePath = entry.isDirectory() ? `${relativePath}/` : relativePath;
-      if (relativePath && ignoreMatcher.ignores(ignorePath)) {
+      if (relativePath && isIgnored(currentScopes, absolute, entry.isDirectory())) {
         rows.push({ path: relativePath, reason: "ignored" });
         exclusions.push({ path: relativePath, reason: "ignored" });
         continue;
@@ -20952,7 +21032,7 @@ async function scanProjectFileMetadata(root, options) {
           continue;
         }
         directories += 1;
-        await walkSignature(absolute, depth + 1);
+        await walkSignature(absolute, depth + 1, currentScopes);
         continue;
       }
       if (!entry.isFile()) continue;
@@ -21011,7 +21091,7 @@ async function scanProjectFileMetadata(root, options) {
       totalBytes += size;
     }
   }
-  await walkSignature(root, 0);
+  await walkSignature(root, 0, ignoreScopes);
   files.sort((a, b) => a.path.localeCompare(b.path));
   exclusions.sort((a, b) => a.path.localeCompare(b.path));
   return { files, exclusions, scanSignature: hashText(JSON.stringify(rows)) };
@@ -21049,7 +21129,37 @@ import { createHash as createHash2 } from "node:crypto";
 
 // src/core/sqlParser.ts
 function normalizeSqlName(name) {
-  return name.replace(/"/g, "").replace(/\s+/g, " ").trim();
+  const segments = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < name.length; index += 1) {
+    const char = name[index];
+    const next = name[index + 1];
+    if (char === '"') {
+      current += char;
+      if (quoted && next === '"') {
+        current += next;
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (char === "." && !quoted) {
+      segments.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  segments.push(current);
+  return segments.map((segment) => {
+    const trimmed = segment.trim();
+    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+      return trimmed.slice(1, -1).replace(/""/g, '"');
+    }
+    return trimmed.replace(/"/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  }).join(".");
 }
 function stripOuterParens(value) {
   let text = value.trim();
@@ -21183,7 +21293,8 @@ function sqlStatements(sql) {
   if (current.trim()) {
     statements.push({ text: current, index: statementStart });
   }
-  return statements;
+  const warningMessage = state === "dollar" ? "SQL parser reached end of file inside a dollar-quoted block; later statements may be unindexed." : state === "single" ? "SQL parser reached end of file inside a single-quoted string; later statements may be unindexed." : state === "double" ? "SQL parser reached end of file inside a double-quoted identifier; later statements may be unindexed." : void 0;
+  return { statements, warningMessage };
 }
 function emptyGraph() {
   return {
@@ -21199,12 +21310,17 @@ function emptyGraph() {
     extensions: [],
     grants: [],
     materializedViews: [],
-    history: []
+    history: [],
+    warnings: []
   };
 }
 function parsePostgresMigration(filePath, sql) {
   const graph = emptyGraph();
-  const statements = sqlStatements(sql);
+  const scan = sqlStatements(sql);
+  const statements = scan.statements;
+  if (scan.warningMessage) {
+    graph.warnings.push({ filePath, message: scan.warningMessage });
+  }
   const history = [];
   const remember = (entry, position) => {
     history.push({ ...entry, filePath, order: 0, position });
@@ -21439,13 +21555,14 @@ function mergeSqlGraphs(graphs) {
     merged.grants.push(...graph.grants);
     merged.materializedViews.push(...graph.materializedViews);
     merged.history.push(...graph.history);
+    merged.warnings.push(...graph.warnings);
   }
   merged.history.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.order - b.order || a.name.localeCompare(b.name));
   return merged;
 }
 
 // src/core/projectIndexer.ts
-var CURRENT_INDEX_SCHEMA_VERSION = 2;
+var CURRENT_INDEX_SCHEMA_VERSION = 3;
 function fingerprintPayload(value) {
   return createHash2("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -21487,7 +21604,8 @@ function emptySqlGraph() {
     extensions: [],
     grants: [],
     materializedViews: [],
-    history: []
+    history: [],
+    warnings: []
   };
 }
 function sqlGraphForFiles(sql, filePaths) {
@@ -21504,7 +21622,8 @@ function sqlGraphForFiles(sql, filePaths) {
     extensions: sql.extensions.filter((entry) => filePaths.has(entry.filePath)),
     grants: sql.grants.filter((entry) => filePaths.has(entry.filePath)),
     materializedViews: sql.materializedViews.filter((entry) => filePaths.has(entry.filePath)),
-    history: sql.history.filter((entry) => filePaths.has(entry.filePath))
+    history: sql.history.filter((entry) => filePaths.has(entry.filePath)),
+    warnings: sql.warnings.filter((entry) => filePaths.has(entry.filePath))
   };
 }
 function sortGraph(graph) {
@@ -21553,7 +21672,7 @@ async function indexProject(root, options = {}) {
   return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), options.scanSignature ?? metadata.scanSignature, scanMetadataFromFiles(metadata.files));
 }
 function metadataChanged(previous, current) {
-  return !previous || previous.size !== current.size || previous.mtimeNs !== current.mtimeNs || previous.ctimeNs !== current.ctimeNs || previous.contentHash !== current.contentHash;
+  return !previous || previous.contentHash !== current.contentHash || previous.language !== current.language || previous.extension !== current.extension;
 }
 async function updateProjectIndexIncremental(root, existingIndex) {
   if (existingIndex.root !== root) {
@@ -21999,12 +22118,14 @@ var MemoryStore = class _MemoryStore {
     });
   }
   async deprecate(id, supersededBy = [], evidence = []) {
-    const current = (await this.list({ includeDeprecated: true, includeDeleted: true })).find((memory) => memory.id === id);
-    return this.update(id, {
-      status: "deprecated",
-      supersededBy: unique3([...current?.supersededBy ?? [], ...supersededBy]),
-      evidence: unique3([...current?.evidence ?? [], ...evidence])
-    });
+    return this.mutate(
+      id,
+      (memory) => mergeMemory(memory, {
+        status: "deprecated",
+        supersededBy: unique3([...memory.supersededBy, ...supersededBy]),
+        evidence: unique3([...memory.evidence, ...evidence])
+      })
+    );
   }
   async delete(id, options = {}) {
     return this.enqueueWrite(async () => {
@@ -22021,24 +22142,27 @@ var MemoryStore = class _MemoryStore {
     });
   }
   async confirm(id, evidence = [], confidence = "high") {
-    const current = (await this.list({ includeDeprecated: true, includeDeleted: true })).find((memory) => memory.id === id);
-    return this.update(id, {
-      confirmedAt: nowIso2(),
-      confidence,
-      evidence: unique3([...current?.evidence ?? [], ...evidence])
-    });
+    return this.mutate(
+      id,
+      (memory) => mergeMemory(memory, {
+        confirmedAt: nowIso2(),
+        confidence,
+        evidence: unique3([...memory.evidence, ...evidence])
+      })
+    );
   }
   async link(id, links) {
-    const current = (await this.list({ includeDeprecated: true, includeDeleted: true })).find((memory) => memory.id === id);
-    if (!current) return void 0;
-    return this.update(id, {
-      linkedFiles: unique3([...current.linkedFiles, ...links.linkedFiles ?? []]),
-      linkedSymbols: unique3([...current.linkedSymbols, ...links.linkedSymbols ?? []]),
-      linkedSqlObjects: unique3([...current.linkedSqlObjects, ...links.linkedSqlObjects ?? []]),
-      linkedRules: unique3([...current.linkedRules, ...links.linkedRules ?? []]),
-      evidence: unique3([...current.evidence, ...links.evidence ?? []]),
-      ...links.source ? { source: links.source } : {}
-    });
+    return this.mutate(
+      id,
+      (memory) => mergeMemory(memory, {
+        linkedFiles: unique3([...memory.linkedFiles, ...links.linkedFiles ?? []]),
+        linkedSymbols: unique3([...memory.linkedSymbols, ...links.linkedSymbols ?? []]),
+        linkedSqlObjects: unique3([...memory.linkedSqlObjects, ...links.linkedSqlObjects ?? []]),
+        linkedRules: unique3([...memory.linkedRules, ...links.linkedRules ?? []]),
+        evidence: unique3([...memory.evidence, ...links.evidence ?? []]),
+        ...links.source ? { source: links.source } : {}
+      })
+    );
   }
   async search(query, limit = 5) {
     const terms = tokenize(query);
@@ -22099,6 +22223,17 @@ var MemoryStore = class _MemoryStore {
       if (changed) {
         await this.writeAtomic(memories);
       }
+    });
+  }
+  async mutate(id, transform2) {
+    return this.enqueueWrite(async () => {
+      const memories = await this.readAll();
+      const index = memories.findIndex((memory) => memory.id === id);
+      if (index === -1) return void 0;
+      const next = transform2(memories[index]);
+      memories[index] = next;
+      await this.writeAtomic(memories);
+      return next;
     });
   }
   async readAll() {
@@ -22639,25 +22774,6 @@ var architectureRuleFields = {
   sqlPattern: string2().optional(),
   message: string2().optional()
 };
-async function workspaceRoot(inputRoot) {
-  const allowedRoot = await realpath(process4.cwd());
-  const launchedFromPluginRoot = await isPluginRoot(allowedRoot);
-  if (!inputRoot?.trim() && launchedFromPluginRoot) {
-    throw new Error("TokenGraph is running from its plugin directory; pass the workspace root explicitly.");
-  }
-  const requested = inputRoot?.trim() ? resolve5(allowedRoot, inputRoot.trim()) : allowedRoot;
-  let resolvedRoot;
-  try {
-    resolvedRoot = await realpath(requested);
-  } catch {
-    throw new Error(`Requested workspace root does not exist or is not readable: ${requested}`);
-  }
-  const relativeToAllowed = relative3(allowedRoot, resolvedRoot);
-  if (!launchedFromPluginRoot && relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute2(relativeToAllowed))) {
-    throw new Error(`Requested root is outside the allowed workspace: ${resolvedRoot}`);
-  }
-  return resolvedRoot;
-}
 function ownPluginRoot() {
   return resolve5(dirname5(fileURLToPath(import.meta.url)), "..");
 }
@@ -22665,12 +22781,55 @@ async function isPluginRoot(root) {
   try {
     const [realRoot, realSelf] = await Promise.all([realpath(root), realpath(ownPluginRoot())]);
     if (realRoot !== realSelf) return false;
-    await access(join6(root, ".codex-plugin", "plugin.json"));
-    await access(join6(root, ".mcp.json"));
-    return true;
+    const hasManifest = await Promise.any([
+      access(join6(root, ".codex-plugin", "plugin.json")),
+      access(join6(root, ".claude-plugin", "plugin.json"))
+    ]).then(() => true, () => false);
+    const hasMcpConfig = await Promise.any([
+      access(join6(root, ".mcp.json")),
+      access(join6(root, ".mcp.claude.json"))
+    ]).then(() => true, () => false);
+    return hasManifest && hasMcpConfig;
   } catch {
     return false;
   }
+}
+async function resolveTrustedWorkspace(server) {
+  const configured = process4.env.CLAUDE_PROJECT_DIR?.trim() || process4.env.TOKENGRAPH_WORKSPACE_ROOT?.trim();
+  if (configured) return configured;
+  try {
+    const roots = await server.server.listRoots({}, { timeout: 1e3 });
+    const fileRoot = roots.roots.find((root) => root.uri.startsWith("file://"));
+    return fileRoot ? fileURLToPath(fileRoot.uri) : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function createWorkspaceResolver(server, provider) {
+  return async (inputRoot) => {
+    const cwd = await realpath(process4.cwd());
+    const configured = await (provider?.() ?? resolveTrustedWorkspace(server));
+    const allowedRoot = configured ? await realpath(configured) : await isPluginRoot(cwd) ? void 0 : cwd;
+    if (!allowedRoot) {
+      throw new Error("TokenGraph needs a trusted workspace root from the host before it can access project files.");
+    }
+    const home = await realpath(homedir());
+    if (allowedRoot === parse3(allowedRoot).root || allowedRoot === home) {
+      throw new Error("TokenGraph refuses filesystem and home directories as workspace roots.");
+    }
+    const requested = inputRoot?.trim() ? resolve5(allowedRoot, inputRoot.trim()) : allowedRoot;
+    let resolvedRoot;
+    try {
+      resolvedRoot = await realpath(requested);
+    } catch {
+      throw new Error(`Requested workspace root does not exist or is not readable: ${requested}`);
+    }
+    const relativeToAllowed = relative3(allowedRoot, resolvedRoot);
+    if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute2(relativeToAllowed))) {
+      throw new Error(`Requested root is outside the trusted workspace: ${resolvedRoot}`);
+    }
+    return resolvedRoot;
+  };
 }
 function compactJson(value) {
   return JSON.stringify(value);
@@ -22696,24 +22855,41 @@ function okWithResourceLinks(output) {
     structuredContent: output
   };
 }
+var projectWriteChains = /* @__PURE__ */ new Map();
+async function enqueueProjectWrite(root, operation) {
+  const key = resolve5(root);
+  const previous = projectWriteChains.get(key) ?? Promise.resolve();
+  const current = previous.then(operation, operation);
+  projectWriteChains.set(
+    key,
+    current.then(
+      () => void 0,
+      () => void 0
+    )
+  );
+  return current;
+}
 async function ensureProject(root) {
-  const currentScanSignature = await scanProjectSignature(root);
-  const existing = await loadProjectIndex(root);
-  if (existing && isSafeProjectIndex(root, existing)) {
-    if (existing.scanSignature === currentScanSignature) {
-      return existing;
+  return enqueueProjectWrite(root, async () => {
+    const currentScanSignature = await scanProjectSignature(root);
+    const existing = await loadProjectIndex(root);
+    if (existing && isSafeProjectIndex(root, existing)) {
+      if (existing.scanSignature === currentScanSignature) {
+        return existing;
+      }
+      const updated = await updateProjectIndexIncremental(root, existing);
+      const current = updated.index;
+      if (isFreshProjectIndex(existing, current)) {
+        await saveProjectIndex(root, current);
+        return current;
+      }
+      await saveProjectIndex(root, current);
+      return current;
     }
-    const updated = await updateProjectIndexIncremental(root, existing);
-    const current = updated.index;
-    if (isFreshProjectIndex(existing, current)) {
-      return existing;
-    }
-    await saveProjectIndex(root, current);
-    return current;
-  }
-  const indexed = await indexProject(root, { scanSignature: currentScanSignature });
-  await saveProjectIndex(root, indexed);
-  return indexed;
+    const indexed = await indexProject(root, { scanSignature: currentScanSignature });
+    await saveProjectIndex(root, indexed);
+    return indexed;
+  });
 }
 function isSafeRelativePath(path) {
   if (!path || isAbsolute2(path)) return false;
@@ -22768,7 +22944,8 @@ function projectMap(project) {
       constraints: project.sql.constraints.map((constraint) => ({ name: constraint.name, table: constraint.table, kind: constraint.kind })),
       enums: project.sql.enums.map((enumObject) => ({ name: enumObject.name, values: enumObject.values.length })),
       extensions: project.sql.extensions.map((extension) => ({ name: extension.name })),
-      materializedViews: project.sql.materializedViews.map((view) => ({ name: view.name }))
+      materializedViews: project.sql.materializedViews.map((view) => ({ name: view.name })),
+      warnings: project.sql.warnings
     }
   };
 }
@@ -22899,8 +23076,9 @@ function sqlSummary(project, query, limit) {
   ];
   return rows.filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
 }
-function createTokenGraphServer() {
+function createTokenGraphServer(options = {}) {
   const server = new McpServer({ name: "tokengraph", version: "0.17.0" });
+  const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
   server.registerTool(
     "tokengraph_index_project",
     {
@@ -23122,7 +23300,7 @@ function createTokenGraphServer() {
     {
       title: "Check Architecture",
       description: "Use this to check imports, selected module tests, SQL security warnings, and marketplace target sanity against local architecture rules.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({
         root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
         files: array(string2()).optional().describe("Optional selected module paths for required-test checks.")
@@ -23140,7 +23318,7 @@ function createTokenGraphServer() {
     {
       title: "Trace Failure",
       description: "Use this to compress failure output and route debugging through graph-related files, imports, SQL, memories, hypotheses, and first reads.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({
         root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
         kind: _enum(["test", "build", "runtime", "install", "log"]),
@@ -23162,7 +23340,7 @@ ${text}`, 8);
     {
       title: "Assess Change Risk",
       description: "Use this to estimate regression risk for changed files using graph, routes, tests, SQL, architecture rules, memories, and targeted test recommendations.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({
         root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
         changedFiles: array(string2().min(1)).min(1),
@@ -23186,7 +23364,7 @@ ${changedFiles.join("\n")}`, 8);
     {
       title: "Show Project Map",
       description: "Use this when Codex needs a compact overview of indexed modules, symbols, SQL objects, and freshness.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({ root: string2().optional() })
     },
     async ({ root }) => {
@@ -23260,7 +23438,7 @@ ${changedFiles.join("\n")}`, 8);
     {
       title: "Plan Context",
       description: "Use this before raw file exploration to get the smallest likely files, SQL objects, tests, and memories for a task.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({
         root: string2().optional(),
         task: string2().min(3).describe("The coding task or question to route."),
@@ -23301,7 +23479,7 @@ ${changedFiles.join("\n")}`, 8);
     {
       title: "Search Graph",
       description: "Use this to search indexed files, symbols, SQL tables, and routes without reading raw source.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({
         root: string2().optional(),
         query: string2().min(2),
@@ -23318,7 +23496,7 @@ ${changedFiles.join("\n")}`, 8);
     {
       title: "Explain Symbol",
       description: "Use this when Codex needs to know why a file or symbol is relevant before reading it.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({ root: string2().optional(), target: string2().min(1) })
     },
     async ({ root, target }) => {
@@ -23331,7 +23509,7 @@ ${changedFiles.join("\n")}`, 8);
     {
       title: "Summarize SQL",
       description: "Use this when a task touches data, auth, reports, RLS, migrations, or persistence.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({ root: string2().optional(), query: string2().min(2), limit: number2().int().min(1).max(50).optional() })
     },
     async ({ root, query, limit }) => {
@@ -23358,7 +23536,7 @@ ${changedFiles.join("\n")}`, 8);
     {
       title: "Compress Context",
       description: "Use this to compress prompts, memories, diffs, SQL, wiki text, logs, or mixed context while preserving exact implementation-critical references and first-read recommendations.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({
         root: string2().optional(),
         task: string2().min(1),
@@ -23629,7 +23807,7 @@ ${changedFiles.join("\n")}`, 8);
     {
       title: "Export Project Map",
       description: "Use this to export a compact visual project map without raw source content.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({
         root: string2().optional(),
         format: _enum(["mermaid", "json"]).default("mermaid"),
@@ -23646,7 +23824,7 @@ ${changedFiles.join("\n")}`, 8);
     {
       title: "Show Token Savings",
       description: "Use this to estimate how many tokens TokenGraph avoided by using the compact local index.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({ root: string2().optional() })
     },
     async ({ root }) => {
