@@ -33,7 +33,7 @@
 - Consumes: SQL text passed to `parsePostgresMigration(filePath, sql)`.
 - Produces: `SqlGraph.warnings: SqlParseWarning[]`, merged and persisted with project indexes and exposed in the project-map database summary.
 
-- [ ] **Step 1: Write failing malformed-SQL tests**
+- [x] **Step 1: Write failing malformed-SQL tests**
 
 Add tests covering a mismatched dollar quote and an unterminated single-quoted string. Each test must assert a warning identifies the file and parser state, and that a later table is not silently presented as parsed data:
 
@@ -72,13 +72,13 @@ it("reports an unterminated SQL string", () => {
 });
 ```
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 Run: `pnpm vitest run tests/core.test.ts --testNamePattern "mismatched dollar|unterminated SQL"`
 
 Expected: FAIL because `SqlGraph` has no warnings and the statement scanner does not report its terminal state.
 
-- [ ] **Step 3: Add warning data and terminal-state detection**
+- [x] **Step 3: Add warning data and terminal-state detection**
 
 Add:
 
@@ -110,13 +110,13 @@ Change `sqlStatements` to return `{ statements, warningMessage?: string }`. Afte
 
 Expose `project.sql.warnings` as `database.warnings` in `projectMap` so index and map responses carry the warning without changing existing fields.
 
-- [ ] **Step 4: Verify focused SQL tests pass**
+- [x] **Step 4: Verify focused SQL tests pass**
 
 Run: `pnpm vitest run tests/core.test.ts --testNamePattern "mismatched dollar|unterminated SQL|parsePostgresMigration"`
 
 Expected: PASS, including the existing SQL parser coverage.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/tokengraph/src/core/types.ts plugins/tokengraph/src/core/sqlParser.ts plugins/tokengraph/src/core/projectIndexer.ts plugins/tokengraph/src/server.ts plugins/tokengraph/tests/core.test.ts
@@ -135,7 +135,7 @@ git commit -m "fix(sql): surface malformed migration warnings"
 - Consumes: SQL identifiers from tables, policies, constraints, indexes, functions, views, grants, and relations.
 - Produces: lower-case unquoted identifiers while preserving the case and spaces of double-quoted identifiers.
 
-- [ ] **Step 1: Write the failing identifier-case test**
+- [x] **Step 1: Write the failing identifier-case test**
 
 ```ts
 it("folds unquoted SQL identifiers but preserves quoted identifiers", () => {
@@ -158,23 +158,23 @@ it("folds unquoted SQL identifiers but preserves quoted identifiers", () => {
 });
 ```
 
-- [ ] **Step 2: Verify it fails**
+- [x] **Step 2: Verify it fails**
 
 Run: `pnpm vitest run tests/core.test.ts --testNamePattern "folds unquoted SQL identifiers"`
 
 Expected: FAIL because the current normalizer strips quotes but preserves unquoted case and truncates quoted names containing spaces when parsing columns.
 
-- [ ] **Step 3: Implement quote-aware identifier normalization**
+- [x] **Step 3: Implement quote-aware identifier normalization**
 
 Replace `normalizeSqlName` with a quote-aware segment scanner that splits on dots only outside double quotes. For each segment, preserve a quoted identifier after unescaping doubled quotes; otherwise remove accidental quote characters and lower-case the segment. Add a separate first-token parser for table columns so a leading quoted column name containing spaces remains intact.
 
-- [ ] **Step 4: Run focused SQL tests**
+- [x] **Step 4: Run focused SQL tests**
 
 Run: `pnpm vitest run tests/core.test.ts --testNamePattern "folds unquoted SQL identifiers|parsePostgresMigration"`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/tokengraph/src/core/sqlParser.ts plugins/tokengraph/tests/core.test.ts
@@ -193,7 +193,7 @@ git commit -m "fix(sql): normalize unquoted identifier case"
 - Consumes: root and nested `.gitignore` files while walking a project.
 - Produces: identical ignore decisions and exclusions for full graph scans and metadata/signature scans.
 
-- [ ] **Step 1: Write the failing nested-ignore test**
+- [x] **Step 1: Write the failing nested-ignore test**
 
 ```ts
 it("honors nested gitignore files", async () => {
@@ -210,23 +210,23 @@ it("honors nested gitignore files", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify it fails**
+- [x] **Step 2: Verify it fails**
 
 Run: `pnpm vitest run tests/core.test.ts --testNamePattern "nested gitignore"`
 
 Expected: FAIL because only the root `.gitignore` is loaded.
 
-- [ ] **Step 3: Add scoped ignore matchers**
+- [x] **Step 3: Add scoped ignore matchers**
 
 Introduce an ignore scope `{ base: string; matcher: Ignore }`. Load the root matcher once, load each directory's `.gitignore` before walking its entries, and evaluate every entry against each ancestor matcher using a path relative to that matcher base. Thread the same scopes through `walk` and `walkSignature`; preserve deterministic sorting and existing exclusion reasons.
 
-- [ ] **Step 4: Verify full and metadata scans agree**
+- [x] **Step 4: Verify full and metadata scans agree**
 
 Run: `pnpm vitest run tests/core.test.ts --testNamePattern "nested gitignore|scanProjectSignature|incremental"`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/tokengraph/src/core/fileScanner.ts plugins/tokengraph/tests/core.test.ts
@@ -245,7 +245,7 @@ git commit -m "fix(scanner): honor nested gitignore rules"
 - Consumes: App Router `page`, `route`, and `layout` filenames.
 - Produces: route metadata only for endpoint files (`page` and `route`), while layouts remain indexed as ordinary modules.
 
-- [ ] **Step 1: Write the failing route test**
+- [x] **Step 1: Write the failing route test**
 
 ```ts
 it("does not expose App Router layouts as duplicate routes", async () => {
@@ -264,23 +264,23 @@ it("does not expose App Router layouts as duplicate routes", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify it fails**
+- [x] **Step 2: Verify it fails**
 
 Run: `pnpm vitest run tests/core.test.ts --testNamePattern "layouts as duplicate routes"`
 
 Expected: FAIL because `layout.tsx` currently receives the same route metadata as `page.tsx`.
 
-- [ ] **Step 3: Restrict route detection to endpoint files**
+- [x] **Step 3: Restrict route detection to endpoint files**
 
 Update `nextRouteForPath` so App Router files match only `page` and `route`. Keep route-file metadata and existing Pages Router behavior unchanged.
 
-- [ ] **Step 4: Verify route and wiki coverage**
+- [x] **Step 4: Verify route and wiki coverage**
 
 Run: `pnpm vitest run tests/core.test.ts --testNamePattern "layouts as duplicate routes|project wiki|routes"`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/tokengraph/src/core/fileScanner.ts plugins/tokengraph/tests/core.test.ts
@@ -299,7 +299,7 @@ git commit -m "fix(routes): exclude App Router layouts from route hints"
 - Consumes: UTF-8 file content using LF, CRLF, or CR line endings.
 - Produces: identical `CodeFile.contentHash` and metadata `contentHash` for equivalent logical content.
 
-- [ ] **Step 1: Write the failing line-ending test**
+- [x] **Step 1: Write the failing line-ending test**
 
 ```ts
 it("keeps content hashes stable across line endings", async () => {
@@ -318,23 +318,23 @@ it("keeps content hashes stable across line endings", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify it fails**
+- [x] **Step 2: Verify it fails**
 
 Run: `pnpm vitest run tests/core.test.ts --testNamePattern "line endings"`
 
 Expected: FAIL because `hashText` currently hashes raw line endings.
 
-- [ ] **Step 3: Hash canonical content**
+- [x] **Step 3: Hash canonical content**
 
 Normalize `\\r\\n` and lone `\\r` to `\\n` inside the shared `hashText` helper. Keep file size and raw content available for existing token estimates; only semantic content hashes and scan signatures should canonicalize line endings. Update `metadataChanged` to use the canonical content hash and format metadata rather than raw size or timestamp fields, so equivalent line endings do not trigger reparsing.
 
-- [ ] **Step 4: Run Phase 3 focused tests**
+- [x] **Step 4: Run Phase 3 focused tests**
 
 Run: `pnpm vitest run tests/core.test.ts --testNamePattern "line endings|nested gitignore|layouts as duplicate routes|folds unquoted SQL identifiers|mismatched dollar|unterminated SQL"`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/tokengraph/src/core/fileScanner.ts plugins/tokengraph/tests/core.test.ts
@@ -343,7 +343,7 @@ git commit -m "fix(scanner): canonicalize line endings in content hashes"
 
 ### Task 6: Verify and publish Phase 3
 
-- [ ] **Step 1: Run the complete gate**
+- [x] **Step 1: Run the complete gate**
 
 ```bash
 pnpm typecheck
@@ -353,13 +353,13 @@ pnpm smoke -- --root . --json
 pnpm validate:plugin
 ```
 
-- [ ] **Step 2: Scan phase-specific changed files for non-ASCII characters**
+- [x] **Step 2: Scan phase-specific changed files for non-ASCII characters**
 
 ```powershell
 git diff --name-only codex/tokengraph-phase2-indexing...HEAD | ForEach-Object { if (Select-String -LiteralPath $_ -Pattern '[^\\x00-\\x7F]' -Quiet) { throw "non-ASCII: $_" } }
 ```
 
-- [ ] **Step 3: Push and open the Phase 3 PR**
+- [x] **Step 3: Push and open the Phase 3 PR**
 
 ```bash
 git push -u origin codex/tokengraph-phase3-sql-scanning
