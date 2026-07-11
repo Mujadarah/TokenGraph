@@ -175,7 +175,8 @@ async function ensureProject(root: string): Promise<ProjectIndex> {
     const updated = await updateProjectIndexIncremental(root, existing);
     const current = updated.index;
     if (isFreshProjectIndex(existing, current)) {
-      return existing;
+      await saveProjectIndex(root, current);
+      return current;
     }
     await saveProjectIndex(root, current);
     return current;

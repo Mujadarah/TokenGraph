@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -1308,6 +1308,53 @@ describe("TokenGraph MCP stdio server", () => {
     expect(mapped.structuredContent).toMatchObject({
       scannedAt: "2000-01-01T00:00:00.000Z"
     });
+  });
+
+  it("persists a refreshed scan signature after a metadata-only change", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    const file = join(root, "src", "stable.ts");
+    await writeFile(file, "export const stable = true;\n");
+    await stopServer();
+    startServer(root);
+
+    await request(70, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    await request(71, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root }
+    });
+    const before = JSON.parse(await readFile(join(root, ".tokengraph", "index.json"), "utf8")) as {
+      fingerprint: string;
+      scanSignature: string;
+    };
+
+    const original = await readFile(file, "utf8");
+    const touchedAt = new Date(Date.now() + 2_000);
+    await utimes(file, touchedAt, touchedAt);
+    expect(await readFile(file, "utf8")).toBe(original);
+    const mapped = await request(72, "tools/call", {
+      name: "tokengraph_project_map",
+      arguments: { root }
+    });
+    const after = JSON.parse(await readFile(join(root, ".tokengraph", "index.json"), "utf8")) as {
+      fingerprint: string;
+      scanSignature: string;
+    };
+
+    expect(mapped.structuredContent).toMatchObject({ root });
+    expect(after.fingerprint).toBe(before.fingerprint);
+    expect(after.scanSignature).not.toBe(before.scanSignature);
+    const status = await request(73, "tools/call", {
+      name: "tokengraph_index_status",
+      arguments: { root }
+    });
+    expect(status.structuredContent).toMatchObject({ state: "fresh" });
   });
 
   it("returns a friendly error for missing workspace roots", async () => {
