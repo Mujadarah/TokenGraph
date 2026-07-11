@@ -6,6 +6,9 @@
         "./dist/index.js"
       ],
       "cwd": ".",
+      "env_vars": [
+        "TOKENGRAPH_WORKSPACE_ROOT"
+      ],
       "startup_timeout_sec": 20,
       "tool_timeout_sec": 120
     }

@@ -32,7 +32,14 @@ Install from the Codex plugin directory after restarting Codex or refreshing the
 ## Runtime Behavior
 
 - Codex launches the plugin-provided MCP server from the installed plugin package.
-- TokenGraph tools accept `root`; pass the workspace root explicitly when Codex launches the server from the plugin directory.
+- TokenGraph tools accept `root`, but it is always constrained to a trusted workspace. Codex clients that do not answer MCP Roots must forward `TOKENGRAPH_WORKSPACE_ROOT` in the server configuration, for example:
+
+```toml
+[mcp_servers.tokengraph]
+env_vars = ["TOKENGRAPH_WORKSPACE_ROOT"]
+```
+
+Never use a caller-supplied `root` as the trust boundary. Filesystem roots and home directories are rejected.
 - Tool responses include `structuredContent` and a serialized text block for compatibility.
 - Project map exports include structured JSON or Mermaid text, resource-link metadata, and Markdown fallbacks.
 - TokenGraph does not require a UI framework. If a future Codex surface supports richer rendering, keep it as progressive enhancement over the same MCP tools.

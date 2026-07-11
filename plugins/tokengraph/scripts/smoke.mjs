@@ -186,6 +186,7 @@ async function runSmoke() {
 
   const child = spawn(process.execPath, [serverEntry], {
     cwd: root,
+    env: { ...process.env, TOKENGRAPH_WORKSPACE_ROOT: root },
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true
   });

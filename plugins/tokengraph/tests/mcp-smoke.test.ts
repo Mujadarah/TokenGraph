@@ -85,9 +85,13 @@ async function request(id: number, method: string, params?: Record<string, unkno
 }
 
 function startServer(cwd: string = process.cwd(), env: NodeJS.ProcessEnv = {}) {
+  const childEnv = { ...process.env, ...env };
+  if (!env.TOKENGRAPH_WORKSPACE_ROOT && !env.CLAUDE_PROJECT_DIR && cwd !== process.cwd()) {
+    childEnv.TOKENGRAPH_WORKSPACE_ROOT = cwd;
+  }
   server = spawn(process.execPath, [serverEntry], {
     cwd,
-    env: { ...process.env, ...env },
+    env: childEnv,
     stdio: ["pipe", "pipe", "pipe"]
   });
 }
@@ -762,7 +766,7 @@ describe("TokenGraph MCP stdio server", () => {
     });
 
     expect(response.isError).toBe(true);
-    expect(JSON.stringify(response)).toMatch(/outside the allowed workspace/i);
+    expect(JSON.stringify(response)).toMatch(/outside (the allowed|the trusted|trusted) workspace/i);
   });
 
   it("generates and reads project wiki pages over JSON-RPC stdio", async () => {
@@ -863,14 +867,14 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { root: outsideRoot }
     });
     expect(generate.isError).toBe(true);
-    expect(JSON.stringify(generate)).toMatch(/outside the allowed workspace/i);
+    expect(JSON.stringify(generate)).toMatch(/outside (the allowed|the trusted|trusted) workspace/i);
 
     const show = await request(90, "tools/call", {
       name: "tokengraph_show_wiki_page",
       arguments: { root: outsideRoot, slug: "overview" }
     });
     expect(show.isError).toBe(true);
-    expect(JSON.stringify(show)).toMatch(/outside the allowed workspace/i);
+    expect(JSON.stringify(show)).toMatch(/outside (the allowed|the trusted|trusted) workspace/i);
   });
 
   it("leaves wiki auto-refresh off by default during indexing", async () => {
