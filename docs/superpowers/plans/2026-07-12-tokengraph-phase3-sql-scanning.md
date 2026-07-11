@@ -326,7 +326,7 @@ Expected: FAIL because `hashText` currently hashes raw line endings.
 
 - [ ] **Step 3: Hash canonical content**
 
-Normalize `\\r\\n` and lone `\\r` to `\\n` inside the shared `hashText` helper. Keep file size and raw content available for existing token estimates; only semantic content hashes and scan signatures should canonicalize line endings.
+Normalize `\\r\\n` and lone `\\r` to `\\n` inside the shared `hashText` helper. Keep file size and raw content available for existing token estimates; only semantic content hashes and scan signatures should canonicalize line endings. Update `metadataChanged` to use the canonical content hash and format metadata rather than raw size or timestamp fields, so equivalent line endings do not trigger reparsing.
 
 - [ ] **Step 4: Run Phase 3 focused tests**
 

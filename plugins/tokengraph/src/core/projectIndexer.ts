@@ -135,13 +135,7 @@ export async function indexProject(root: string, options: { scanSignature?: stri
 }
 
 function metadataChanged(previous: FileScanMetadata | undefined, current: FileScanMetadata): boolean {
-  return (
-    !previous ||
-    previous.size !== current.size ||
-    previous.mtimeNs !== current.mtimeNs ||
-    previous.ctimeNs !== current.ctimeNs ||
-    previous.contentHash !== current.contentHash
-  );
+  return !previous || previous.contentHash !== current.contentHash || previous.language !== current.language || previous.extension !== current.extension;
 }
 
 export async function updateProjectIndexIncremental(root: string, existingIndex: ProjectIndex): Promise<IndexUpdateResult> {
