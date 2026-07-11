@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "tokengraph": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/dist/index.js"
+      ],
+      "env": {
+        "TOKENGRAPH_WORKSPACE_ROOT": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}

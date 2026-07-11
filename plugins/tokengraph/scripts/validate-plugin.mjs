@@ -85,6 +85,7 @@ async function assertSkillFrontmatter(skillsRoot, label) {
     assert(/^---\s*\n[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} must include frontmatter`);
     assert(/^---[\s\S]*\nname:\s*\S+[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} frontmatter must include name`);
     assert(/^---[\s\S]*\ndescription:\s*\S+[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} frontmatter must include description`);
+    assert(/^---[\s\S]*\nwhen_to_use:\s*\S+[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} frontmatter must include when_to_use`);
   }
   return skillFiles;
 }
@@ -108,16 +109,19 @@ async function assertRequiredFocusedSkills(skillsRoot, label) {
 const packageJsonPath = resolve(pluginRoot, "package.json");
 const manifestPath = resolve(pluginRoot, ".codex-plugin", "plugin.json");
 const marketplacePath = resolve(repoRoot, ".agents", "plugins", "marketplace.json");
+const claudeMarketplacePath = resolve(repoRoot, ".claude-plugin", "marketplace.json");
 const mcpPath = resolve(pluginRoot, ".mcp.json");
+const claudeManifestPath = resolve(pluginRoot, ".claude-plugin", "plugin.json");
+const claudeMcpPath = resolve(pluginRoot, ".mcp.claude.json");
 const skillsPath = resolve(pluginRoot, "skills");
 const distEntryPath = resolve(pluginRoot, "dist", "index.js");
-const distServerPath = resolve(pluginRoot, "dist", "server.js");
+const distServerPath = resolve(pluginRoot, "dist", "index.js");
 const distReviewPath = resolve(pluginRoot, "dist", "core", "review.js");
 const releaseRoot = resolve(repoRoot, "release", "tokengraph");
 const releaseManifestPath = resolve(releaseRoot, ".codex-plugin", "plugin.json");
 const releaseMcpPath = resolve(releaseRoot, ".mcp.json");
 const releaseDistEntryPath = resolve(releaseRoot, "dist", "index.js");
-const releaseDistServerPath = resolve(releaseRoot, "dist", "server.js");
+const releaseDistCorePath = resolve(releaseRoot, "dist", "core");
 const releaseSkillsPath = resolve(releaseRoot, "skills");
 const releasePackageJsonPath = resolve(releaseRoot, "package.json");
 const releaseReadmePath = resolve(releaseRoot, "README.md");
@@ -136,11 +140,15 @@ const hostDocsPath = resolve(repoRoot, "docs", "hosts");
 const packageJson = await readJson(packageJsonPath);
 const manifest = await readJson(manifestPath);
 const marketplace = await readJson(marketplacePath);
+const claudeMarketplace = await readJson(claudeMarketplacePath);
 const mcp = await readJson(mcpPath);
-const distServer = await readFile(distServerPath, "utf8").catch((error) => fail(`cannot read built MCP server: ${error.message}`));
+const claudeManifest = await readJson(claudeManifestPath);
+const claudeMcp = await readJson(claudeMcpPath);
+const distServer = await readFile(distServerPath, "utf8").catch((error) => fail(`cannot read bundled MCP entry: ${error.message}`));
 const distReview = await readFile(distReviewPath, "utf8").catch((error) => fail(`cannot read built review helpers: ${error.message}`));
 
 assert(packageJson.name === "tokengraph", "package name must be tokengraph");
+assert(/LICENSE/i.test(packageJson.license ?? ""), "package metadata must point at the repository license");
 assert(/^\d+\.\d+\.\d+$/.test(packageJson.version), "package version must be semver");
 assert(packageJson.scripts?.build === "node scripts/build.mjs", "package scripts must use the bundled MCP build command");
 assert(packageJson.devDependencies?.esbuild, "package devDependencies must include esbuild for self-contained MCP bundles");
@@ -151,6 +159,13 @@ assert(manifest.name === "tokengraph", "plugin manifest name must be tokengraph"
 assert(manifest.version?.split("+", 1)[0] === packageJson.version, "plugin manifest base version must match package version");
 assert(manifest.skills === "./skills/", "plugin manifest must point skills to ./skills/");
 assert(manifest.mcpServers === "./.mcp.json", "plugin manifest must point mcpServers to ./.mcp.json");
+assert(claudeManifest.name === "tokengraph", "Claude plugin manifest name must be tokengraph");
+assert(claudeManifest.version === packageJson.version, "Claude plugin manifest version must match package version");
+assert(claudeManifest.mcpServers === "./.mcp.claude.json", "Claude plugin manifest must point at ./.mcp.claude.json");
+const claudeMarketplacePlugin = claudeMarketplace.plugins?.find((plugin) => plugin.name === "tokengraph");
+assert(claudeMarketplace.name === "tokengraph", "Claude marketplace must be named tokengraph");
+assert(claudeMarketplace.owner?.name === "Mujadarah", "Claude marketplace must identify its owner");
+assert(claudeMarketplacePlugin?.source === "./release/tokengraph", "Claude marketplace source must point at ./release/tokengraph");
 const marketplacePlugin = marketplace.plugins?.find((plugin) => plugin.name === "tokengraph");
 assert(marketplacePlugin, "root marketplace must include tokengraph");
 assert(marketplacePlugin.source?.source === "local", "marketplace tokengraph source must be local");
@@ -167,6 +182,9 @@ assert(
   "tokengraph MCP args must include ./dist/index.js"
 );
 assert(mcp.mcpServers.tokengraph.cwd === ".", "tokengraph MCP cwd must be plugin root");
+assert(claudeMcp.mcpServers?.tokengraph?.command === "node", "Claude tokengraph MCP command must be node");
+assert(claudeMcp.mcpServers.tokengraph.args?.includes("${CLAUDE_PLUGIN_ROOT}/dist/index.js"), "Claude MCP args must use CLAUDE_PLUGIN_ROOT");
+assert(claudeMcp.mcpServers.tokengraph.env?.TOKENGRAPH_WORKSPACE_ROOT === "${CLAUDE_PROJECT_DIR}", "Claude MCP config must forward CLAUDE_PROJECT_DIR");
 await assertSkillFrontmatter(skillsPath, "source plugin");
 await assertRequiredFocusedSkills(skillsPath, "source plugin");
 assert(distServer.includes("tokengraph_index_status"), "built MCP server must register tokengraph_index_status");
@@ -234,7 +252,8 @@ for (const file of ["codex.md", "claude-code.md", "generic-mcp.md", "cursor-wind
 await assertFile(releaseManifestPath, "release plugin manifest");
 await assertFile(releaseMcpPath, "release MCP config");
 await assertFile(releaseDistEntryPath, "release built MCP entry");
-await assertFile(releaseDistServerPath, "release built MCP server");
+await assertMissing(releaseDistCorePath, "release dist/core directory");
+await assertMissing(resolve(releaseRoot, "dist", "server.js"), "release built MCP server");
 await assertFile(releaseReadmePath, "release README");
 await assertFile(releasePackageJsonPath, "release package metadata");
 await assertFile(resolve(releaseRoot, "LICENSE"), "release license");
@@ -248,6 +267,8 @@ await assertMissing(resolve(releaseRoot, ".tokengraph"), "release local state di
 
 const releaseManifest = await readJson(releaseManifestPath);
 const releaseMcp = await readJson(releaseMcpPath);
+const releaseClaudeManifest = await readJson(resolve(releaseRoot, ".claude-plugin", "plugin.json"));
+const releaseClaudeMcp = await readJson(resolve(releaseRoot, ".mcp.claude.json"));
 const releasePackageJson = await readJson(releasePackageJsonPath);
 const releaseReadme = await readFile(releaseReadmePath, "utf8").catch((error) => fail(`cannot read release README: ${error.message}`));
 const rootReadme = await readFile(rootReadmePath, "utf8").catch((error) => fail(`cannot read root README: ${error.message}`));
@@ -299,5 +320,8 @@ assert(
   "release tokengraph MCP args must include ./dist/index.js"
 );
 assert(releaseMcp.mcpServers.tokengraph.cwd === ".", "release tokengraph MCP cwd must be plugin root");
+assert(releaseClaudeManifest.mcpServers === "./.mcp.claude.json", "release Claude manifest must point at ./.mcp.claude.json");
+assert(releaseClaudeMcp.mcpServers?.tokengraph?.args?.includes("${CLAUDE_PLUGIN_ROOT}/dist/index.js"), "release Claude MCP args must use CLAUDE_PLUGIN_ROOT");
+assert(releaseClaudeMcp.mcpServers?.tokengraph?.env?.TOKENGRAPH_WORKSPACE_ROOT === "${CLAUDE_PROJECT_DIR}", "release Claude MCP config must forward CLAUDE_PROJECT_DIR");
 
 console.log(`TokenGraph plugin validation passed (${packageJson.version}).`);

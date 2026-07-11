@@ -1,7 +1,7 @@
 {
   "name": "tokengraph",
   "version": "0.17.0+codex.20260709164120",
-  "description": "Reduce wasted Codex context with local code, SQL, memory, and log routing.",
+  "description": "Reduce wasted coding-agent context with local code, SQL, memory, and log routing.",
   "author": {
     "name": "TokenGraph"
   },
@@ -18,8 +18,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "TokenGraph",
-    "shortDescription": "Route Codex through compact local project context before raw files.",
-    "longDescription": "TokenGraph indexes the current project locally and gives Codex a compact code graph, resolved import graph, SQL graph with PostgreSQL object and RLS policy detail, memory graph with lifecycle metadata, local project wiki, project map, multimodal-safe visual map export with resource links and Markdown fallbacks, index and wiki freshness status, reset controls, schema-versioned local config, profile-aware context planning, quality-first context compression, incremental indexing, memory review, memory recall and curation, schema-versioned JSON persistence, architecture rules, architecture checks, failure tracing, regression risk assessment, benchmark harness, trust documentation, host-neutral MCP documentation, reference explanation, log compressor, token savings report, CLI smoke validation, self-contained MCP runtime bundling, release packaging, and fixture-backed scanner/planner regression coverage. It does not require a paid API key or cloud service.",
+    "shortDescription": "Route coding agents through compact local project context before raw files.",
+    "longDescription": "TokenGraph indexes the current project locally and gives coding agents a compact code graph, resolved import graph, SQL graph with PostgreSQL object and RLS policy detail, memory graph with lifecycle metadata, local project wiki, project map, multimodal-safe visual map export with resource links and Markdown fallbacks, index and wiki freshness status, reset controls, schema-versioned local config, profile-aware context planning, quality-first context compression, incremental indexing, memory review, memory recall and curation, schema-versioned JSON persistence, architecture rules, architecture checks, failure tracing, regression risk assessment, benchmark harness, trust documentation, host-neutral MCP documentation, reference explanation, log compressor, token savings report, CLI smoke validation, self-contained MCP runtime bundling, release packaging, and fixture-backed scanner/planner regression coverage. It does not require a paid API key or cloud service.",
     "developerName": "TokenGraph",
     "category": "Developer Tools",
     "capabilities": [
@@ -54,8 +54,8 @@
       "Fixture Regression Tests"
     ],
     "defaultPrompt": [
-      "Index this project with TokenGraph.",
-      "Plan context before reading raw files.",
+      "Have TokenGraph index this project.",
+      "Plan compact context before reading raw files.",
       "Show TokenGraph token savings."
     ],
     "brandColor": "#2563EB"

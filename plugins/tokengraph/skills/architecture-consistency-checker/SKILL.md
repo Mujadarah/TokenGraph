@@ -1,6 +1,7 @@
 ---
 name: architecture-consistency-checker
 description: Use TokenGraph graph and SQL context to check dependency direction, rule fit, and architecture-sensitive changes.
+when_to_use: Use when a coding agent changes module boundaries, imports, security rules, SQL, or release packaging.
 ---
 
 # Architecture Consistency Checker

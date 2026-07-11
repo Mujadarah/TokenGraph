@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/tokengraph
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: plugins/tokengraph/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Smoke test
+        run: pnpm smoke -- --root . --json
+
+      - name: Validate plugin
+        run: pnpm validate:plugin
+
+      - name: Scan tracked source and documentation for non-ASCII characters
+        working-directory: .
+        shell: bash
+        run: |
+          files=$(git ls-files -z | tr '\0' '\n' | grep -v '^release/tokengraph/dist/' || true)
+          if [ -n "$files" ]; then
+            bad=$(printf '%s\n' "$files" | xargs -r grep -Il '[^ -~]' || true)
+            if [ -n "$bad" ]; then
+              echo "Non-ASCII characters found in:" >&2
+              printf '%s\n' "$bad" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Rebuild committed release
+        run: pnpm package:plugin -- --release
+
+      - name: Confirm committed release is reproducible
+        working-directory: .
+        run: git diff --exit-code -- release/tokengraph
+
+      - name: Validate Claude plugin strictly when CLI is available
+        working-directory: .
+        shell: bash
+        run: |
+          if command -v claude >/dev/null 2>&1; then
+            claude plugin validate ./release/tokengraph --strict
+          else
+            echo "Claude CLI not installed on this runner; manifest checks remain covered by pnpm validate:plugin."
+          fi

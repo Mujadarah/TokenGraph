@@ -1,6 +1,7 @@
 ---
 name: context-compression
 description: Use TokenGraph compression and planning tools to preserve important constraints while reducing prompt, diff, log, SQL, memory, and wiki context.
+when_to_use: Use when a coding agent must reduce a large context while preserving implementation-critical details.
 ---
 
 # Context Compression

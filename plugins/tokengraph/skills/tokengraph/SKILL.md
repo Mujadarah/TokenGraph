@@ -1,6 +1,7 @@
 ---
 name: tokengraph
-description: Use when working in a codebase where Codex should reduce token waste by routing through TokenGraph's local MCP project map, wiki, context planner, SQL graph, memory, and log compressor before reading raw files.
+description: Use when working in a codebase where a coding agent should reduce token waste by routing through TokenGraph's local MCP project map, wiki, context planner, SQL graph, memory, and log compressor before reading raw files.
+when_to_use: Use at the start of coding-agent work when TokenGraph MCP tools are available and raw repository reads would be broad.
 ---
 
 # TokenGraph

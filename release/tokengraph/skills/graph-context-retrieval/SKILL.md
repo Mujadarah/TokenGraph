@@ -1,11 +1,12 @@
 ---
 name: graph-context-retrieval
 description: Use focused TokenGraph graph, wiki, SQL, and planner tools to retrieve compact implementation context before raw reads.
+when_to_use: Use when a coding agent needs project structure, scope, routes, imports, SQL objects, or symbols before reading source.
 ---
 
 # Graph Context Retrieval
 
-Use this skill when Codex needs to understand project structure, likely patch scope, routes, imports, SQL objects, or symbols before opening source files.
+Use this skill when a coding agent needs to understand project structure, likely patch scope, routes, imports, SQL objects, or symbols before opening source files.
 
 ## MCP tools to call
 

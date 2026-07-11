@@ -1,8 +1,8 @@
 # TokenGraph Release Plugin
 
-This folder is the installable TokenGraph plugin for normal Codex users.
+This folder is the installable TokenGraph plugin for Codex and Claude Code users.
 
-It includes the compiled MCP runtime under `dist/`, the plugin manifest, MCP config, skills, package metadata, and license. A normal user install from the repository marketplace should not require `pnpm install`, `pnpm build`, TypeScript, or a local dependency install inside this folder.
+It includes the self-contained MCP runtime at `dist/index.js`, host manifests, MCP configs, skills, package metadata, and license. A normal user install from a marketplace should not require `pnpm install`, `pnpm build`, TypeScript, or a local dependency install inside this folder.
 
 ## Install
 
@@ -13,6 +13,8 @@ codex plugin marketplace add C:\path\to\TokenGraph
 ```
 
 Then install `tokengraph` from that marketplace and start a new Codex thread. The root marketplace points to `./release/tokengraph`.
+
+For Claude Code, add the repository's `.claude-plugin/marketplace.json` marketplace and install `tokengraph`. Claude launches through `${CLAUDE_PLUGIN_ROOT}` and forwards `${CLAUDE_PROJECT_DIR}` as the trusted workspace root.
 
 ## Runtime
 

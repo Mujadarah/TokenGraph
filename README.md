@@ -1,12 +1,12 @@
 # TokenGraph
 
-TokenGraph is a local-first Codex plugin that helps coding agents spend less context on raw repository exploration. It builds a compact local map of a project, then routes Codex through focused code, SQL, wiki, memory, and log summaries before any broad file reading.
+TokenGraph is a local-first coding-agent plugin that helps coding agents spend less context on raw repository exploration. It builds a compact local map of a project, then routes the agent through focused code, SQL, wiki, memory, and log summaries before any broad file reading.
 
 The project is designed for developers who want faster, more disciplined agent work on real codebases without sending repository indexes to paid or external services.
 
 ## Why TokenGraph
 
-Large coding sessions often waste tokens by repeatedly reading files, logs, migrations, and generated output. TokenGraph gives Codex a local context router:
+Large coding sessions often waste tokens by repeatedly reading files, logs, migrations, and generated output. TokenGraph gives coding agents a local context router:
 
 - Index the current workspace into a compact code graph.
 - Summarize project structure before raw reads.
@@ -26,7 +26,7 @@ Highlights:
 - Local stdio MCP server in Node.js and TypeScript.
 - Codex plugin metadata and TokenGraph skill.
 - Focused Codex skills for graph retrieval, debugging, architecture checks, compression, regression detection, token budgets, memory curation, and release packaging audits.
-- Committed one-click release plugin under `release/tokengraph/` for normal Codex installs.
+- Committed one-click release plugin under `release/tokengraph/` for normal Codex and Claude Code installs.
 - Project indexing for TypeScript, JavaScript, React, Next.js, PostgreSQL, and Supabase-style SQL migrations.
 - Resolved local import edges for relative imports and common `@/` or `~/` aliases.
 - Better React and Next.js route/component extraction, including `pages/**` routes and component line hints.
@@ -97,7 +97,7 @@ Normal users should install TokenGraph from the repository marketplace:
 codex plugin marketplace add C:\path\to\TokenGraph
 ```
 
-The root marketplace at `.agents/plugins/marketplace.json` points to `./release/tokengraph`, which is a committed installable plugin folder. It includes `dist/index.js` and `dist/server.js`, so users do not need to run `pnpm install`, `pnpm build`, TypeScript, or a package step before Codex can load the MCP tools.
+The root marketplace at `.agents/plugins/marketplace.json` points to `./release/tokengraph`, which is a committed installable plugin folder. It includes the self-contained `dist/index.js` runtime, so users do not need to run `pnpm install`, `pnpm build`, TypeScript, or a package step before a host can load the MCP tools.
 
 After installing `tokengraph`, start a new Codex thread so the bundled skill and MCP server are loaded.
 
@@ -158,12 +158,12 @@ The generated marketplace points at `./tokengraph-<version>` relative to the art
 
 ## Troubleshooting
 
-- Missing MCP tools: first confirm Codex installed the release plugin from `./release/tokengraph`, not the source plugin at `./plugins/tokengraph`. The release plugin should already contain `dist/index.js` and `dist/server.js`. If testing source changes as a maintainer, run `pnpm build`, `pnpm smoke -- --root . --json`, `pnpm package:plugin -- --release`, and then restart Codex or open a fresh thread.
+- Missing MCP tools: first confirm the host installed the release plugin from `./release/tokengraph`, not the source plugin at `./plugins/tokengraph`. The release plugin should contain `dist/index.js` and no `dist/server.js`. If testing source changes as a maintainer, run `pnpm build`, `pnpm smoke -- --root . --json`, `pnpm package:plugin -- --release`, and then restart the host or open a fresh thread.
 - Stale indexes: call `tokengraph_index_status`; if stale, call `tokengraph_index_project`. Pass `fullReindex: true` only when you need a complete rebuild.
 - Stale wiki pages: call `tokengraph_show_wiki_page`; if `wikiStatus` is `missing` or `stale`, call `tokengraph_generate_wiki`.
 - Plugin build failures: run `pnpm typecheck`, then `pnpm build`; fix TypeScript errors before running `pnpm validate:plugin`.
 - Marketplace not visible: confirm `.agents/plugins/marketplace.json` exists and that `source.path` points to `./release/tokengraph` relative to the repository root.
-- Release package missing built files: run `pnpm build` before `pnpm package:plugin` or `pnpm package:plugin -- --release`; the package command requires source `dist/index.js` and `dist/server.js`.
+- Release package missing built files: run `pnpm build` before `pnpm package:plugin` or `pnpm package:plugin -- --release`; the package command requires source `dist/index.js`.
 
 ## MCP Tool Surface
 

@@ -1,13 +1,13 @@
 # TokenGraph
 
-TokenGraph is a local-first Codex plugin that reduces wasted context by routing tasks through a compact project map before raw file reads.
+TokenGraph is a local-first coding-agent plugin that reduces wasted context by routing tasks through a compact project map before raw file reads.
 
-This folder is the maintainer development source plugin. Normal Codex users should install TokenGraph from the repository marketplace, which points to `release/tokengraph/`, not this source folder. The source folder is only directly installable after maintainers run `pnpm build` and create current `dist/` output.
+This folder is the maintainer development source plugin. Normal users should install TokenGraph from the repository marketplace, which points to `release/tokengraph/`, not this source folder. The source folder is only directly installable after maintainers run `pnpm build` and create current `dist/` output.
 
 ## What v0.17.0 includes
 
-- Codex plugin manifest and release marketplace entry.
-- Focused Codex skills for graph retrieval, root-cause debugging, architecture consistency, context compression, regression detection, token budgets, memory curation, and release packaging audits.
+- Codex and Claude Code plugin manifests and release marketplace entries.
+- Focused coding-agent skills for graph retrieval, root-cause debugging, architecture consistency, context compression, regression detection, token budgets, memory curation, and release packaging audits.
 - Local stdio MCP server in Node/TypeScript.
 - Project indexing for TypeScript, JavaScript, React, Next.js, PostgreSQL, and Supabase-style SQL migrations.
 - Local import resolution for relative paths and common `@/` or `~/` aliases.
@@ -54,8 +54,8 @@ This folder is the maintainer development source plugin. Normal Codex users shou
 - Mermaid and JSON project map export through `tokengraph_export_project_map`, including resource-link metadata and Markdown fallbacks.
 - Log/test/build/diff and mixed-context compression.
 - JSON-RPC stdio smoke coverage for the built MCP entry point.
-- Self-contained bundled MCP entry point so installed Codex plugin caches do not need `node_modules`.
-- CLI smoke command for local validation outside Codex.
+- Self-contained bundled MCP entry point so installed plugin caches do not need `node_modules`.
+- CLI smoke command for local validation outside a host.
 - Example fixture projects for scanner and planner regression tests.
 - Local plugin validation for manifest, MCP config, built output, and skill metadata.
 - Release packaging with `pnpm package:plugin`, producing ignored installable artifacts, and `pnpm package:plugin -- --release`, updating the committed one-click install plugin under `release/tokengraph/`.
@@ -72,13 +72,13 @@ pnpm package:plugin
 pnpm package:plugin -- --release
 ```
 
-The MCP server entry point is `dist/index.js`, built from `src/index.ts`. `pnpm build` first type-checks and emits the module tree, then bundles the MCP entry point so an installed Codex plugin cache can launch without running `pnpm install` in the cache.
+The MCP server entry point is `dist/index.js`, built from `src/index.ts`. `pnpm build` first type-checks and emits the module tree, then bundles the MCP entry point so an installed plugin cache can launch without running `pnpm install` in the cache.
 
 When a host launches the server from the installed plugin directory, TokenGraph requires a trusted project root. Claude Code supplies `CLAUDE_PROJECT_DIR`; Codex clients that do not provide MCP Roots must forward `TOKENGRAPH_WORKSPACE_ROOT` in their MCP configuration. A tool `root` is accepted only when it resolves inside that trusted workspace, and filesystem or home-directory roots are refused.
 
 `pnpm smoke -- --root <project>` starts the built MCP server over stdio, validates the required TokenGraph tools, and calls the project status, map, planner, token-savings, memory review, export, and wiki tools against the selected project root. Run `pnpm build` first.
 
-`pnpm package:plugin` creates an ignored release artifact under the repository `artifacts/` directory. The artifact includes only installable plugin files: `.codex-plugin/`, `.mcp.json`, `dist/`, `skills/`, `README.md`, `package.json`, and the repository license. It also writes a release-local `.agents/plugins/marketplace.json` that points at the packaged plugin folder.
+`pnpm package:plugin` creates an ignored release artifact under the repository `artifacts/` directory. The artifact includes only installable plugin files: `.codex-plugin/`, `.claude-plugin/`, `.mcp.json`, `.mcp.claude.json`, the bundled `dist/index.js`, `skills/`, `README.md`, `package.json`, and the repository license.
 
 `pnpm package:plugin -- --release` updates `release/tokengraph/`, the committed one-click install target used by the root marketplace.
 
@@ -97,7 +97,7 @@ Generated files:
 
 The manifest records the index fingerprint used to build the wiki. `tokengraph_show_wiki_page` returns `wikiStatus`; it is `fresh` only when the manifest fingerprint matches the persisted index fingerprint, `stale` when they differ or the index is missing, and `missing` when no valid wiki exists.
 
-## Codex install notes
+## Host install notes
 
 This repository contains a local marketplace file at:
 
@@ -105,13 +105,15 @@ This repository contains a local marketplace file at:
 .agents/plugins/marketplace.json
 ```
 
-For normal user install, add the repository marketplace root to Codex if needed:
+For normal Codex install, add the repository marketplace root if needed:
 
 ```powershell
 codex plugin marketplace add C:\path\to\TokenGraph
 ```
 
-Then install `tokengraph` from that marketplace and start a new Codex thread so the skill and MCP tools are loaded. The root marketplace points to `release/tokengraph/`, which already includes compiled runtime files.
+Then install `tokengraph` from that marketplace and start a new Codex thread so the skill and MCP tools are loaded. The root marketplace points to `release/tokengraph/`, which includes only the bundled runtime.
+
+For Claude Code, add this repository as a marketplace and install `tokengraph` from `.claude-plugin/marketplace.json`. Claude launches the bundled server through `${CLAUDE_PLUGIN_ROOT}` and forwards `${CLAUDE_PROJECT_DIR}` as the trusted workspace root.
 
 After changing source plugin code, run `pnpm build`, run the smoke command, update the release folder with `pnpm package:plugin -- --release`, and restart Codex or open a fresh thread.
 
@@ -121,9 +123,9 @@ For release artifact testing, run `pnpm build` and then `pnpm package:plugin`. A
 
 ### Missing MCP tools
 
-1. Confirm `tokengraph` is installed and enabled in Codex.
+1. Confirm `tokengraph` is installed and enabled in your coding-agent host.
 2. Confirm the root marketplace points to `./release/tokengraph`.
-3. Confirm `release/tokengraph/dist/index.js` and `release/tokengraph/dist/server.js` exist.
+3. Confirm `release/tokengraph/dist/index.js` exists and `release/tokengraph/dist/server.js` is absent.
 4. If testing source changes, run `pnpm build` from `plugins/tokengraph`, then `pnpm smoke -- --root . --json`, then `pnpm package:plugin -- --release`.
 5. Restart Codex or open a fresh thread so plugin-provided MCP servers are reloaded.
 
@@ -133,11 +135,11 @@ Call `tokengraph_index_status` before trusting cached context. If it reports `st
 
 ### Plugin build failures
 
-Run `pnpm typecheck` to get compiler errors, then `pnpm build`. `pnpm validate:plugin` expects the built `dist/index.js` and `dist/server.js` files to exist and match the current plugin metadata.
+Run `pnpm typecheck` to get compiler errors, then `pnpm build`. `pnpm validate:plugin` expects the built `dist/index.js` bundle and current plugin metadata to exist.
 
 ### Release package failures
 
-Run `pnpm build` before `pnpm package:plugin`. The package command fails if `dist/index.js` or `dist/server.js` is missing, because the generated plugin folder is meant to be installable without a TypeScript build step.
+Run `pnpm build` before `pnpm package:plugin`. The package command fails if `dist/index.js` is missing, because the generated plugin folder is meant to be installable without a TypeScript build step.
 
 ### Marketplace visibility
 
