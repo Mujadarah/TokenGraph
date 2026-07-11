@@ -457,6 +457,21 @@ describe("scanProject", () => {
     expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "generated", reason: "ignored" }));
   });
 
+  it("honors nested gitignore files", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src", "generated"), { recursive: true });
+    await writeFile(join(root, "src", ".gitignore"), "generated/\n");
+    await writeFile(join(root, "src", "generated", "client.ts"), "export const generated = true;\n");
+    await writeFile(join(root, "src", "real.ts"), "export const real = true;\n");
+
+    const graph = await scanProject(root);
+    const project = await indexProject(root);
+
+    expect(graph.files.map((file) => file.path)).toEqual(["src/real.ts"]);
+    expect(project.files.map((file) => file.path)).toEqual(["src/real.ts"]);
+    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/generated", reason: "ignored" }));
+  });
+
   it("stops indexing once the configured file budget is reached", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
