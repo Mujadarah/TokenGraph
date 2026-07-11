@@ -252,6 +252,14 @@ const releasePackageJson = await readJson(releasePackageJsonPath);
 const releaseReadme = await readFile(releaseReadmePath, "utf8").catch((error) => fail(`cannot read release README: ${error.message}`));
 const rootReadme = await readFile(rootReadmePath, "utf8").catch((error) => fail(`cannot read root README: ${error.message}`));
 const sourceReadme = await readFile(sourceReadmePath, "utf8").catch((error) => fail(`cannot read source plugin README: ${error.message}`));
+const codexHostGuide = await readFile(resolve(hostDocsPath, "codex.md"), "utf8").catch((error) => fail(`cannot read Codex host guide: ${error.message}`));
+const claudeHostGuide = await readFile(resolve(hostDocsPath, "claude-code.md"), "utf8").catch((error) => fail(`cannot read Claude Code host guide: ${error.message}`));
+const securityGuide = await readFile(resolve(trustDocsPath, "security.md"), "utf8").catch((error) => fail(`cannot read security guide: ${error.message}`));
+assert(Array.isArray(mcp.mcpServers.tokengraph.env_vars) && mcp.mcpServers.tokengraph.env_vars.includes("TOKENGRAPH_WORKSPACE_ROOT"), "tokengraph MCP config must forward TOKENGRAPH_WORKSPACE_ROOT");
+assert(sourceReadme.includes("TOKENGRAPH_WORKSPACE_ROOT"), "plugin README must document trusted workspace configuration");
+assert(codexHostGuide.includes("TOKENGRAPH_WORKSPACE_ROOT"), "Codex host guide must document trusted workspace configuration");
+assert(claudeHostGuide.includes("CLAUDE_PROJECT_DIR"), "Claude Code host guide must document its trusted project root");
+assert(/trusted workspace|workspace trust boundary/i.test(securityGuide), "security guide must document the trusted workspace boundary");
 const personalWindowsProfilePathPattern = /C:\\Users\\(?!example(?:\\|$))[^\\\s]+/i;
 for (const [label, content] of [
   ["root README", rootReadme],

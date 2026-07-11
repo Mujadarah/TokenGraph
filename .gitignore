@@ -2,6 +2,7 @@ node_modules/
 dist/
 .tokengraph/
 artifacts/
+.worktrees/
 
 # Committed one-click Codex release plugin runtime.
 !release/

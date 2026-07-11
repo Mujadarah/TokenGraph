@@ -73,6 +73,8 @@ pnpm package:plugin -- --release
 
 The MCP server entry point is `dist/index.js`, built from `src/index.ts`. `pnpm build` first type-checks and emits the module tree, then bundles the MCP entry point so an installed Codex plugin cache can launch without running `pnpm install` in the cache.
 
+When a host launches the server from the installed plugin directory, TokenGraph requires a trusted project root. Claude Code supplies `CLAUDE_PROJECT_DIR`; Codex clients that do not provide MCP Roots must forward `TOKENGRAPH_WORKSPACE_ROOT` in their MCP configuration. A tool `root` is accepted only when it resolves inside that trusted workspace, and filesystem or home-directory roots are refused.
+
 `pnpm smoke -- --root <project>` starts the built MCP server over stdio, validates the required TokenGraph tools, and calls the project status, map, planner, token-savings, memory review, export, and wiki tools against the selected project root. Run `pnpm build` first.
 
 `pnpm package:plugin` creates an ignored release artifact under the repository `artifacts/` directory. The artifact includes only installable plugin files: `.codex-plugin/`, `.mcp.json`, `dist/`, `skills/`, `README.md`, `package.json`, and the repository license. It also writes a release-local `.agents/plugins/marketplace.json` that points at the packaged plugin folder.

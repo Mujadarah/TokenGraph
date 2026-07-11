@@ -28,7 +28,8 @@ If TokenGraph is installed outside the current repository, use that release pack
 ## Usage Notes
 
 - Approve the project-scoped server when Claude Code prompts for `.mcp.json` trust.
-- If Claude Code launches the server outside the repository root, pass `root` explicitly in TokenGraph tool calls.
+- Claude Code supplies `CLAUDE_PROJECT_DIR` to plugin-provided MCP servers; TokenGraph uses it as the trusted project root.
+- A TokenGraph `root` argument may select only a path inside `CLAUDE_PROJECT_DIR`.
 - Use `tokengraph_index_status`, `tokengraph_index_project`, `tokengraph_plan_context`, and `tokengraph_compress_context` before broad raw file reads.
 - Map exports return structured JSON or Mermaid text plus Markdown fallbacks. Image output is not required.
 
