@@ -1770,8 +1770,8 @@ describe("tokenize", () => {
   });
 
   it("estimates dense scripts and emoji closer to one token per code point", () => {
-    expect(estimateTokens("患者患者")).toBeGreaterThanOrEqual(4);
-    expect(estimateTokens("🙂🙂")).toBeGreaterThanOrEqual(2);
+    expect(estimateTokens("\u60a8\u8005\u60a8\u8005")).toBeGreaterThanOrEqual(4);
+    expect(estimateTokens("\u{1F642}\u{1F642}")).toBeGreaterThanOrEqual(2);
   });
 });
 

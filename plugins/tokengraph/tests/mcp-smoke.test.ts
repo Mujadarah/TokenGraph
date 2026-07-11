@@ -146,7 +146,7 @@ describe("TokenGraph MCP stdio server", () => {
     send({ method: "notifications/initialized" });
 
     const listed = await request(2, "tools/list");
-    const listedTools = (listed.tools as Array<{ name: string; annotations?: { readOnlyHint?: boolean } }> | undefined) ?? [];
+    const listedTools = (listed.tools as Array<{ name: string; annotations?: { readOnlyHint?: boolean; idempotentHint?: boolean } }> | undefined) ?? [];
     const toolNames = listedTools.map((tool) => tool.name);
     expect(toolNames).toEqual(
       expect.arrayContaining([
