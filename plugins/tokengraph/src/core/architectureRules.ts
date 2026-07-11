@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import type { ArchitectureCheckReport, ArchitectureFinding, ArchitectureRule, ArchitectureRuleInput, ArchitectureRuleSeverity, ProjectIndex } from "./types.js";
+import { assertSafeArchitectureRulePatterns } from "./patternSafety.js";
 
 const DEFAULT_SEVERITY: ArchitectureRuleSeverity = "warning";
 const CURRENT_RULES_SCHEMA_VERSION = 1;
@@ -74,6 +75,7 @@ export class ArchitectureRuleStore {
   async add(input: ArchitectureRuleInput): Promise<ArchitectureRule> {
     return this.enqueueWrite(async () => {
       const rules = await this.list();
+      await assertSafeArchitectureRulePatterns(input);
       const rule = normalizeRule(input);
       rules.push(rule);
       await this.writeAtomic(rules);
@@ -96,6 +98,7 @@ export class ArchitectureRuleStore {
         severity: update.severity ?? current.severity,
         updatedAt: nowIso()
       };
+      await assertSafeArchitectureRulePatterns(next);
       rules[index] = next;
       await this.writeAtomic(rules);
       return next;

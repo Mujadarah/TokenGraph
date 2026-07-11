@@ -1766,6 +1766,45 @@ describe("MemoryStore", () => {
 });
 
 describe("ArchitectureRuleStore and checkArchitecture", () => {
+  it("rejects a catastrophic architecture rule before persistence", async () => {
+    const root = await makeRoot();
+    const store = new ArchitectureRuleStore(rulesPath(root));
+
+    await expect(
+      store.add({
+        type: "forbidden-import",
+        name: "Unsafe backtracking rule",
+        fromPattern: "^(a+)+$"
+      })
+    ).rejects.toThrow(/unsafe architecture rule pattern/i);
+
+    await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("persists a normal anchored architecture rule", async () => {
+    const root = await makeRoot();
+    const store = new ArchitectureRuleStore(rulesPath(root));
+
+    const rule = await store.add({
+      type: "forbidden-import",
+      name: "Routes cannot import services directly",
+      fromPattern: "^app/",
+      targetPattern: "^src/services/"
+    });
+
+    expect(rule.fromPattern).toBe("^app/");
+    expect(await store.list()).toEqual([rule]);
+  });
+
+  it("rejects an unsafe architecture pattern during update", async () => {
+    const root = await makeRoot();
+    const store = new ArchitectureRuleStore(rulesPath(root));
+    const rule = await store.add({ type: "forbidden-import", name: "Safe rule", fromPattern: "^app/" });
+
+    await expect(store.update(rule.id, { fromPattern: "^(a+)+$" })).rejects.toThrow(/unsafe architecture rule pattern/i);
+    await expect(store.list()).resolves.toEqual([rule]);
+  });
+
   it("persists, updates, and deletes local architecture rules", async () => {
     const root = await makeRoot();
     const store = new ArchitectureRuleStore(rulesPath(root));
