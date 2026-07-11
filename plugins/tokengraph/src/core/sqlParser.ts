@@ -9,6 +9,7 @@ import type {
   SqlIndex,
   SqlMaterializedView,
   SqlPolicy,
+  SqlParseWarning,
   SqlRelation,
   SqlTable,
   SqlTrigger,
@@ -71,9 +72,14 @@ interface SqlStatement {
   index: number;
 }
 
+interface SqlStatementScan {
+  statements: SqlStatement[];
+  warningMessage?: string;
+}
+
 type PendingHistoryEntry = SqlHistoryEntry & { position: number };
 
-function sqlStatements(sql: string): SqlStatement[] {
+function sqlStatements(sql: string): SqlStatementScan {
   const statements: SqlStatement[] = [];
   let current = "";
   let statementStart = 0;
@@ -164,7 +170,14 @@ function sqlStatements(sql: string): SqlStatement[] {
   if (current.trim()) {
     statements.push({ text: current, index: statementStart });
   }
-  return statements;
+  const warningMessage = state === "dollar"
+    ? "SQL parser reached end of file inside a dollar-quoted block; later statements may be unindexed."
+    : state === "single"
+      ? "SQL parser reached end of file inside a single-quoted string; later statements may be unindexed."
+      : state === "double"
+        ? "SQL parser reached end of file inside a double-quoted identifier; later statements may be unindexed."
+        : undefined;
+  return { statements, warningMessage };
 }
 
 function emptyGraph(): SqlGraph {
@@ -181,13 +194,18 @@ function emptyGraph(): SqlGraph {
     extensions: [],
     grants: [],
     materializedViews: [],
-    history: []
+    history: [],
+    warnings: []
   };
 }
 
 export function parsePostgresMigration(filePath: string, sql: string): SqlGraph {
   const graph = emptyGraph();
-  const statements = sqlStatements(sql);
+  const scan = sqlStatements(sql);
+  const statements = scan.statements;
+  if (scan.warningMessage) {
+    graph.warnings.push({ filePath, message: scan.warningMessage });
+  }
   const history: PendingHistoryEntry[] = [];
   const remember = (entry: Omit<SqlHistoryEntry, "filePath" | "order">, position: number) => {
     history.push({ ...entry, filePath, order: 0, position });
@@ -446,6 +464,7 @@ export function mergeSqlGraphs(graphs: SqlGraph[]): SqlGraph {
     merged.grants.push(...graph.grants);
     merged.materializedViews.push(...graph.materializedViews);
     merged.history.push(...graph.history);
+    merged.warnings.push(...graph.warnings);
   }
   merged.history.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.order - b.order || a.name.localeCompare(b.name));
   return merged;

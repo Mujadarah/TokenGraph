@@ -262,7 +262,8 @@ function projectMap(project: ProjectIndex) {
       constraints: project.sql.constraints.map((constraint) => ({ name: constraint.name, table: constraint.table, kind: constraint.kind })),
       enums: project.sql.enums.map((enumObject) => ({ name: enumObject.name, values: enumObject.values.length })),
       extensions: project.sql.extensions.map((extension) => ({ name: extension.name })),
-      materializedViews: project.sql.materializedViews.map((view) => ({ name: view.name }))
+      materializedViews: project.sql.materializedViews.map((view) => ({ name: view.name })),
+      warnings: project.sql.warnings
     }
   };
 }

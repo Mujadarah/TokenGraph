@@ -146,6 +146,11 @@ export interface SqlMaterializedView {
   filePath: string;
 }
 
+export interface SqlParseWarning {
+  filePath: string;
+  message: string;
+}
+
 export interface SqlHistoryEntry {
   kind:
     | "table"
@@ -179,6 +184,7 @@ export interface SqlGraph {
   grants: SqlGrant[];
   materializedViews: SqlMaterializedView[];
   history: SqlHistoryEntry[];
+  warnings: SqlParseWarning[];
 }
 
 export interface ProjectIndex extends CodeGraph {

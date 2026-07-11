@@ -472,6 +472,39 @@ describe("scanProject", () => {
 });
 
 describe("parsePostgresMigration", () => {
+  it("reports a case-mismatched dollar quote instead of silently dropping later SQL", () => {
+    const graph = parsePostgresMigration(
+      "supabase/migrations/003_malformed.sql",
+      [
+        "create function public.bad() returns void as $FUNC$",
+        "begin",
+        "  perform 1;",
+        "end;",
+        "$func$;",
+        "create table public.after_bad (id uuid primary key);"
+      ].join("\n")
+    );
+
+    expect(graph.warnings).toEqual([
+      expect.objectContaining({ filePath: "supabase/migrations/003_malformed.sql", message: expect.stringMatching(/dollar/i) })
+    ]);
+    expect(graph.tables).toEqual([]);
+  });
+
+  it("reports an unterminated SQL string", () => {
+    const graph = parsePostgresMigration(
+      "supabase/migrations/004_unterminated.sql",
+      [
+        "insert into public.seed_notes (body) values ('unfinished);",
+        "create table public.after_bad (id uuid primary key);"
+      ].join("\n")
+    );
+
+    expect(graph.warnings).toEqual([
+      expect.objectContaining({ filePath: "supabase/migrations/004_unterminated.sql", message: expect.stringMatching(/single-quoted/i) })
+    ]);
+  });
+
   it("extracts tables, columns, relations, policies, indexes, triggers, functions, and views", () => {
     const sql = `
       create table public.patients (
