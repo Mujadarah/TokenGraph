@@ -1,33 +1,21 @@
 # TokenGraph on Claude Code
 
-Claude Code can connect to TokenGraph as a local stdio MCP server. Use this guide for direct MCP configuration; keep the TokenGraph core server shared with Codex and other hosts.
+Claude Code can install TokenGraph from the repository marketplace and launch its local stdio MCP server without a hand-written project config. The Claude-specific manifest keeps host transport details separate from the shared TokenGraph server.
 
 Official references:
 
 - Claude Code MCP guide: https://code.claude.com/docs/en/mcp
 - MCP tool result content types: https://modelcontextprotocol.io/specification/2025-06-18/server/tools
 
-## Project Configuration
+## Marketplace installation
 
-For a project-scoped setup, add `.mcp.json` at the repository root:
+From Claude Code, add the repository's `.claude-plugin/marketplace.json` as a marketplace source and install the `tokengraph` plugin. The marketplace entry points to the committed `release/tokengraph/` folder, which contains the self-contained `dist/index.js` runtime and does not require an npm install in the plugin cache.
 
-```json
-{
-  "mcpServers": {
-    "tokengraph": {
-      "command": "node",
-      "args": ["./release/tokengraph/dist/index.js"],
-      "env": {}
-    }
-  }
-}
-```
-
-If TokenGraph is installed outside the current repository, use that release package's absolute `dist/index.js` path or a host-supported variable. Keep secrets out of the file; TokenGraph itself does not require API keys.
+The plugin manifest points to `.mcp.claude.json`. That config launches `${CLAUDE_PLUGIN_ROOT}/dist/index.js` and forwards `${CLAUDE_PROJECT_DIR}` as `TOKENGRAPH_WORKSPACE_ROOT`.
 
 ## Usage Notes
 
-- Approve the project-scoped server when Claude Code prompts for `.mcp.json` trust.
+- Approve the marketplace-installed server when Claude Code prompts for plugin or MCP trust.
 - Claude Code supplies `CLAUDE_PROJECT_DIR` to plugin-provided MCP servers; TokenGraph uses it as the trusted project root.
 - A TokenGraph `root` argument may select only a path inside `CLAUDE_PROJECT_DIR`.
 - Use `tokengraph_index_status`, `tokengraph_index_project`, `tokengraph_plan_context`, and `tokengraph_compress_context` before broad raw file reads.

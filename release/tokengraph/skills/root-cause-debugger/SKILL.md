@@ -1,11 +1,12 @@
 ---
 name: root-cause-debugger
 description: Use TokenGraph compression, graph traversal, and targeted context planning to debug failures without broad log or file dumps.
+when_to_use: Use when a coding agent investigates a test, build, runtime, install, or log failure.
 ---
 
 # Root Cause Debugger
 
-Use this skill when investigating test, build, runtime, install, or log failures and Codex needs a compact path from symptom to likely cause.
+Use this skill when investigating test, build, runtime, install, or log failures and a coding agent needs a compact path from symptom to likely cause.
 
 ## MCP tools to call
 

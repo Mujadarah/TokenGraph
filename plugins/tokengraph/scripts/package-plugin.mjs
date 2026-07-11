@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { access, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -78,9 +78,9 @@ async function copyRequiredPath(source, destination) {
 function buildReleaseReadme(version) {
   return `# TokenGraph Release Plugin
 
-This folder is the installable TokenGraph plugin for normal Codex users.
+This folder is the installable TokenGraph plugin for Codex and Claude Code users.
 
-It includes the compiled MCP runtime under \`dist/\`, the plugin manifest, MCP config, skills, package metadata, and license. A normal user install from the repository marketplace should not require \`pnpm install\`, \`pnpm build\`, TypeScript, or a local dependency install inside this folder.
+It includes the self-contained MCP runtime at \`dist/index.js\`, host manifests, MCP configs, skills, package metadata, and license. A normal user install from a marketplace should not require \`pnpm install\`, \`pnpm build\`, TypeScript, or a local dependency install inside this folder.
 
 ## Install
 
@@ -91,6 +91,8 @@ codex plugin marketplace add C:\\path\\to\\TokenGraph
 \`\`\`
 
 Then install \`tokengraph\` from that marketplace and start a new Codex thread. The root marketplace points to \`./release/tokengraph\`.
+
+For Claude Code, add the repository's \`.claude-plugin/marketplace.json\` marketplace and install \`tokengraph\`. Claude launches through \`\${CLAUDE_PLUGIN_ROOT}\` and forwards \`\${CLAUDE_PROJECT_DIR}\` as the trusted workspace root.
 
 ## Runtime
 
@@ -141,9 +143,16 @@ async function copyInstallablePlugin(packageDir, packageJson, version) {
   await mkdir(packageDir, { recursive: true });
 
   await copyRequiredPath(resolve(pluginRoot, ".codex-plugin"), resolve(packageDir, ".codex-plugin"));
-  await copyRequiredPath(resolve(pluginRoot, "dist"), resolve(packageDir, "dist"));
+  await mkdir(resolve(packageDir, "dist"), { recursive: true });
+  await copyRequiredPath(resolve(pluginRoot, "dist", "index.js"), resolve(packageDir, "dist", "index.js"));
+  // The build marks the source bundle executable, but release installs launch it
+  // with "node", and a copied executable bit flips the committed file mode on
+  // filemode-aware systems, breaking the CI reproducibility check.
+  await chmod(resolve(packageDir, "dist", "index.js"), 0o644);
   await copyRequiredPath(resolve(pluginRoot, "skills"), resolve(packageDir, "skills"));
   await copyRequiredPath(resolve(pluginRoot, ".mcp.json"), resolve(packageDir, ".mcp.json"));
+  await copyRequiredPath(resolve(pluginRoot, ".claude-plugin"), resolve(packageDir, ".claude-plugin"));
+  await copyRequiredPath(resolve(pluginRoot, ".mcp.claude.json"), resolve(packageDir, ".mcp.claude.json"));
   await copyRequiredPath(resolve(repoRoot, "LICENSE"), resolve(packageDir, "LICENSE"));
   await writeReleaseMetadata(packageDir, packageJson, version);
 
@@ -181,7 +190,6 @@ async function runPackage() {
   }
 
   await assertReadable(resolve(pluginRoot, "dist", "index.js"), "built MCP entry");
-  await assertReadable(resolve(pluginRoot, "dist", "server.js"), "built MCP server");
 
   if (args.release) {
     await copyInstallablePlugin(args.releaseDir, packageJson, version);

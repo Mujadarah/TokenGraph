@@ -1,11 +1,12 @@
 ---
 name: memory-curator
 description: Use TokenGraph memory review and decision capture to retrieve, qualify, and store durable project memory without injecting stale assumptions.
+when_to_use: Use when a coding agent must recall, compare, qualify, or record durable project decisions.
 ---
 
 # Memory Curator
 
-Use this skill when Codex needs to recall project decisions, compare current work with known memories, or decide whether a new durable memory should be stored.
+Use this skill when a coding agent needs to recall project decisions, compare current work with known memories, or decide whether a new durable memory should be stored.
 
 ## MCP tools to call
 

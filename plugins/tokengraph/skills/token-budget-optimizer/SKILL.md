@@ -1,11 +1,12 @@
 ---
 name: token-budget-optimizer
 description: Use TokenGraph profiles, planner budgets, token estimates, and compression tools to keep context compact without lowering implementation quality.
+when_to_use: Use when a coding agent risks excessive context use or needs a tighter retrieval profile.
 ---
 
 # Token Budget Optimizer
 
-Use this skill when a task risks excessive context use or when Codex needs a tighter retrieval profile without hiding important implementation detail.
+Use this skill when a task risks excessive context use or when a coding agent needs a tighter retrieval profile without hiding important implementation detail.
 
 ## MCP tools to call
 

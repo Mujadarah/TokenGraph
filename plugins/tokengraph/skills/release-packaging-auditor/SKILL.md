@@ -1,6 +1,7 @@
 ---
 name: release-packaging-auditor
-description: Use TokenGraph routing plus local validation commands to audit Codex plugin release packaging and one-click install readiness.
+description: Use TokenGraph routing plus local validation commands to audit coding-agent plugin release packaging and one-click install readiness.
+when_to_use: Use when a coding agent changes manifests, MCP config, release folders, skills, docs, or packaging gates.
 ---
 
 # Release Packaging Auditor
@@ -14,7 +15,7 @@ Use this skill when changing plugin manifests, marketplace metadata, MCP config,
 3. Call `tokengraph_compress_output` for long build, package, smoke, validation, or diff output.
 4. Call `tokengraph_project_map` to confirm the repository shape and release/source separation.
 5. Call `tokengraph_show_wiki_page` when existing wiki pages can orient packaging or release decisions.
-6. Call `tokengraph_review_memories` for prior release, cache, or Codex install decisions.
+6. Call `tokengraph_review_memories` for prior release, cache, or coding-agent install decisions.
 
 ## Operating rules
 

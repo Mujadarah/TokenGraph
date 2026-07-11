@@ -252,9 +252,12 @@ describe("tokengraph release package command", () => {
 
     const releaseRoot = resolve(repoRoot, "release", "tokengraph");
     await expect(access(resolve(releaseRoot, ".codex-plugin", "plugin.json"))).resolves.toBeUndefined();
+    await expect(access(resolve(releaseRoot, ".claude-plugin", "plugin.json"))).resolves.toBeUndefined();
     await expect(access(resolve(releaseRoot, ".mcp.json"))).resolves.toBeUndefined();
+    await expect(access(resolve(releaseRoot, ".mcp.claude.json"))).resolves.toBeUndefined();
     await expect(access(resolve(releaseRoot, "dist", "index.js"))).resolves.toBeUndefined();
-    await expect(access(resolve(releaseRoot, "dist", "server.js"))).resolves.toBeUndefined();
+    await expect(access(resolve(releaseRoot, "dist", "server.js"))).rejects.toThrow();
+    await expect(access(resolve(releaseRoot, "dist", "core"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "skills", "tokengraph", "SKILL.md"))).resolves.toBeUndefined();
     await expect(access(resolve(releaseRoot, "README.md"))).resolves.toBeUndefined();
     await expect(access(resolve(releaseRoot, "package.json"))).resolves.toBeUndefined();
@@ -283,16 +286,17 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.17.0"
+      version: "0.18.0"
     });
-    expect(report.packageDir).toBe(resolve(outRoot, "tokengraph-0.17.0"));
+    expect(report.packageDir).toBe(resolve(outRoot, "tokengraph-0.18.0"));
     expect(report.marketplacePath).toBe(resolve(outRoot, ".agents", "plugins", "marketplace.json"));
     expect(report.files).toEqual(
       expect.arrayContaining([
         ".codex-plugin/plugin.json",
+        ".claude-plugin/plugin.json",
         ".mcp.json",
+        ".mcp.claude.json",
         "dist/index.js",
-        "dist/server.js",
         "skills/tokengraph/SKILL.md",
         "README.md",
         "LICENSE",
@@ -308,7 +312,7 @@ describe("tokengraph release package command", () => {
     };
     expect(marketplace.plugins?.[0]).toMatchObject({
       name: "tokengraph",
-      source: { path: "./tokengraph-0.17.0" }
+      source: { path: "./tokengraph-0.18.0" }
     });
   });
 
@@ -329,15 +333,16 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.17.0",
+      version: "0.18.0",
       releaseDir: releaseRoot
     });
     expect(report.files).toEqual(
       expect.arrayContaining([
         ".codex-plugin/plugin.json",
+        ".claude-plugin/plugin.json",
         ".mcp.json",
+        ".mcp.claude.json",
         "dist/index.js",
-        "dist/server.js",
         "skills/tokengraph/SKILL.md",
         "README.md",
         "LICENSE",

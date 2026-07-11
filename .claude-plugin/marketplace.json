@@ -1,0 +1,12 @@
+{
+  "name": "tokengraph",
+  "owner": {
+    "name": "Mujadarah"
+  },
+  "plugins": [
+    {
+      "name": "tokengraph",
+      "source": "./release/tokengraph"
+    }
+  ]
+}

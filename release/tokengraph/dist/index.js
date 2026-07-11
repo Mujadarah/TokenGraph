@@ -23114,13 +23114,13 @@ function sqlSummary(project, query, limit) {
   return rows.filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
 }
 function createTokenGraphServer(options = {}) {
-  const server = new McpServer({ name: "tokengraph", version: "0.17.0" });
+  const server = new McpServer({ name: "tokengraph", version: "0.18.0" });
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
   server.registerTool(
     "tokengraph_index_project",
     {
       title: "Index Project",
-      description: "Use this when Codex needs a compact local project map before reading raw files.",
+      description: "Use this when the coding agent needs a compact local project map before reading raw files.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({
         root: string2().optional().describe("Workspace root to index. Defaults to the MCP server current working directory."),
@@ -23400,7 +23400,7 @@ ${changedFiles.join("\n")}`, 8);
     "tokengraph_project_map",
     {
       title: "Show Project Map",
-      description: "Use this when Codex needs a compact overview of indexed modules, symbols, SQL objects, and freshness.",
+      description: "Use this when the coding agent needs a compact overview of indexed modules, symbols, SQL objects, and freshness.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({ root: string2().optional() })
     },
@@ -23532,7 +23532,7 @@ ${changedFiles.join("\n")}`, 8);
     "tokengraph_explain_symbol",
     {
       title: "Explain Symbol",
-      description: "Use this when Codex needs to know why a file or symbol is relevant before reading it.",
+      description: "Use this when the coding agent needs to know why a file or symbol is relevant before reading it.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({ root: string2().optional(), target: string2().min(1) })
     },
@@ -23558,7 +23558,7 @@ ${changedFiles.join("\n")}`, 8);
     "tokengraph_compress_output",
     {
       title: "Compress Output",
-      description: "Use this to compress test, build, install, diff, or log output before Codex reads a long raw output.",
+      description: "Use this to compress test, build, install, diff, or log output before the coding agent reads a long raw output.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({
         kind: _enum(["test", "build", "install", "diff", "log"]),

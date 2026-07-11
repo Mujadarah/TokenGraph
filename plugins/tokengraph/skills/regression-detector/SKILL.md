@@ -1,6 +1,7 @@
 ---
 name: regression-detector
 description: Use TokenGraph graph, SQL, memory, and planner context to assess change risk and select regression tests.
+when_to_use: Use when a coding agent reviews a diff, prepares tests, or estimates affected graph, SQL, memory, or route behavior.
 ---
 
 # Regression Detector
