@@ -946,7 +946,7 @@ export function createTokenGraphServer(options = {}) {
     server.registerTool("tokengraph_recall_memory", {
         title: "Recall Memory",
         description: "Use this to retrieve relevant active memories. Audit mode is required to include deprecated or deleted memories.",
-        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
         inputSchema: z.object({
             root: z.string().optional(),
             query: z.string().optional(),

@@ -20111,11 +20111,22 @@ async function updateTokenGraphConfig(root, update) {
 }
 
 // src/core/token.ts
+var DENSE_SCRIPT_CHARACTER = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u;
+var PICTOGRAPHIC_CHARACTER = new RegExp("\\p{Extended_Pictographic}", "u");
 function estimateTokens(text) {
   if (!text.trim()) {
     return 0;
   }
-  return Math.max(1, Math.ceil(text.length / 4));
+  let denseCharacters = 0;
+  let regularCharacters = 0;
+  for (const character of text) {
+    if (DENSE_SCRIPT_CHARACTER.test(character) || PICTOGRAPHIC_CHARACTER.test(character)) {
+      denseCharacters += 1;
+    } else {
+      regularCharacters += 1;
+    }
+  }
+  return Math.max(1, denseCharacters + Math.ceil(regularCharacters / 4));
 }
 function estimateSavings(originalText, compressedText) {
   const original = estimateTokens(originalText);
@@ -20557,11 +20568,11 @@ var ACTIONABLE_PATTERNS = [
   /\bconflict\b/i,
   /\bmissing\b/i
 ];
-var MAX_INPUT_BYTES = 1024 * 1024;
+var MAX_INPUT_CHARS = 1024 * 1024;
 var MAX_INPUT_LINES = 1e4;
 function compressOutput(input) {
-  const truncatedByBytes = input.text.length > MAX_INPUT_BYTES;
-  const boundedText = truncatedByBytes ? input.text.slice(0, MAX_INPUT_BYTES) : input.text;
+  const truncatedByChars = input.text.length > MAX_INPUT_CHARS;
+  const boundedText = truncatedByChars ? input.text.slice(0, MAX_INPUT_CHARS) : input.text;
   const lines = boundedText.split(/\r?\n/, MAX_INPUT_LINES + 1).map((line) => line.trim());
   const truncatedByLines = lines.length > MAX_INPUT_LINES;
   if (truncatedByLines) {
@@ -20584,7 +20595,7 @@ function compressOutput(input) {
   const summary = fallbackLines.length ? `${input.kind} output: ${fallbackLines.slice(0, 3).join(" | ")}` : `${input.kind} output contained no actionable lines.`;
   const compressedText = [summary, ...fallbackLines].join("\n");
   const estimatedTokens = estimateSavings(input.text, compressedText);
-  const omittedLineCount = Math.max(0, lines.length - fallbackLines.length) + (truncatedByBytes || truncatedByLines ? 1 : 0);
+  const omittedLineCount = Math.max(0, lines.length - fallbackLines.length) + (truncatedByChars || truncatedByLines ? 1 : 0);
   return {
     kind: input.kind,
     summary,
@@ -20903,6 +20914,10 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
       graph.exclusions.push({ path: relativePath, reason: "hidden" });
       continue;
     }
+    if (entry.isSymbolicLink()) {
+      graph.exclusions.push({ path: relativePath, reason: "symlink" });
+      continue;
+    }
     if (entry.isDirectory()) {
       if (depth + 1 > state.budget.maxDepth || state.directories >= state.budget.maxDirectories) {
         graph.exclusions.push({ path: relativePath, reason: "budget" });
@@ -21023,6 +21038,11 @@ async function scanProjectFileMetadata(root, options) {
       if (entry.name.startsWith(".")) {
         rows.push({ path: relativePath, reason: "hidden" });
         exclusions.push({ path: relativePath, reason: "hidden" });
+        continue;
+      }
+      if (entry.isSymbolicLink()) {
+        rows.push({ path: relativePath, reason: "symlink" });
+        exclusions.push({ path: relativePath, reason: "symlink" });
         continue;
       }
       if (entry.isDirectory()) {
@@ -21182,6 +21202,21 @@ function stripOuterParens(value) {
 }
 function splitCommaList(value) {
   return value.split(",").map(normalizeSqlName).filter(Boolean);
+}
+function firstSqlToken(value) {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('"')) {
+    return trimmed.split(/\s+/)[0] ?? "";
+  }
+  for (let index = 1; index < trimmed.length; index += 1) {
+    if (trimmed[index] !== '"') continue;
+    if (trimmed[index + 1] === '"') {
+      index += 1;
+      continue;
+    }
+    return trimmed.slice(0, index + 1);
+  }
+  return trimmed;
 }
 function splitColumns(body) {
   const columns = [];
@@ -21353,7 +21388,7 @@ function parsePostgresMigration(filePath, sql) {
       const columnDefs = splitColumns(match[2]);
       const table = { name: tableName, columns: [], filePath };
       for (const columnDef of columnDefs) {
-        const columnName = normalizeSqlName(columnDef.split(/\s+/)[0] ?? "");
+        const columnName = normalizeSqlName(firstSqlToken(columnDef));
         const namedConstraint = columnDef.match(/\bconstraint\s+("?[\w]+"?)\s+(primary\s+key|foreign\s+key|unique|check|exclude)\b([\s\S]*)/i);
         if (namedConstraint && /^\s*constraint\b/i.test(columnDef)) {
           const kind = normalizeSqlName(namedConstraint[2]).toLowerCase();
@@ -22188,9 +22223,11 @@ var MemoryStore = class _MemoryStore {
     const memories = await this.list();
     const baseMemory = input.id ? memories.find((memory) => memory.id === input.id) : void 0;
     const queryText = input.query ?? (input.candidate ? `${input.candidate.type} ${input.candidate.title} ${input.candidate.body} ${input.candidate.tags.join(" ")}` : "");
-    const terms = tokenize(baseMemory ? `${baseMemory.type} ${baseMemory.title} ${baseMemory.body} ${baseMemory.tags.join(" ")}` : queryText);
+    const terms = tokenize(
+      baseMemory ? `${baseMemory.title} ${baseMemory.body} ${baseMemory.tags.join(" ")}` : input.candidate ? `${input.candidate.title} ${input.candidate.body} ${input.candidate.tags.join(" ")}` : queryText
+    );
     return memories.filter((memory) => memory.id !== input.id).map((memory) => {
-      const memoryTerms = tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`);
+      const memoryTerms = tokenize(`${memory.title} ${memory.body} ${memory.tags.join(" ")}`);
       const matchedTerms2 = unique3(terms.filter((term) => memoryTerms.some((part) => part.includes(term) || term.includes(part))));
       const sameType = input.candidate?.type ? memory.type === input.candidate.type : baseMemory ? memory.type === baseMemory.type : true;
       const contradictionHint = /\b(no|not|never|avoid|prefer|instead|deprecated|replace|use)\b/i.test(`${queryText} ${memory.title} ${memory.body}`);
@@ -22421,7 +22458,7 @@ function relatedSql(project, changedFiles, text) {
 function filterRuleFindings(findings, changedFiles) {
   const changed = new Set(changedFiles);
   return findings.filter((finding) => {
-    if (!finding.filePath && !finding.targetPath) return false;
+    if (!finding.filePath && !finding.targetPath) return Boolean(finding.sourcePath);
     return finding.filePath !== void 0 && changed.has(finding.filePath) || finding.targetPath !== void 0 && changed.has(finding.targetPath);
   });
 }
@@ -23770,7 +23807,7 @@ ${changedFiles.join("\n")}`, 8);
     {
       title: "Recall Memory",
       description: "Use this to retrieve relevant active memories. Audit mode is required to include deprecated or deleted memories.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: object({
         root: string2().optional(),
         query: string2().optional(),

@@ -213,11 +213,15 @@ export class MemoryStore {
         const memories = await this.list();
         const baseMemory = input.id ? memories.find((memory) => memory.id === input.id) : undefined;
         const queryText = input.query ?? (input.candidate ? `${input.candidate.type} ${input.candidate.title} ${input.candidate.body} ${input.candidate.tags.join(" ")}` : "");
-        const terms = tokenize(baseMemory ? `${baseMemory.type} ${baseMemory.title} ${baseMemory.body} ${baseMemory.tags.join(" ")}` : queryText);
+        const terms = tokenize(baseMemory
+            ? `${baseMemory.title} ${baseMemory.body} ${baseMemory.tags.join(" ")}`
+            : input.candidate
+                ? `${input.candidate.title} ${input.candidate.body} ${input.candidate.tags.join(" ")}`
+                : queryText);
         return memories
             .filter((memory) => memory.id !== input.id)
             .map((memory) => {
-            const memoryTerms = tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`);
+            const memoryTerms = tokenize(`${memory.title} ${memory.body} ${memory.tags.join(" ")}`);
             const matchedTerms = unique(terms.filter((term) => memoryTerms.some((part) => part.includes(term) || term.includes(part))));
             const sameType = input.candidate?.type ? memory.type === input.candidate.type : baseMemory ? memory.type === baseMemory.type : true;
             const contradictionHint = /\b(no|not|never|avoid|prefer|instead|deprecated|replace|use)\b/i.test(`${queryText} ${memory.title} ${memory.body}`);

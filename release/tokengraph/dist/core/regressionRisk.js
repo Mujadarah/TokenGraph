@@ -132,7 +132,7 @@ function filterRuleFindings(findings, changedFiles) {
     const changed = new Set(changedFiles);
     return findings.filter((finding) => {
         if (!finding.filePath && !finding.targetPath)
-            return false;
+            return Boolean(finding.sourcePath);
         return (finding.filePath !== undefined && changed.has(finding.filePath)) || (finding.targetPath !== undefined && changed.has(finding.targetPath));
     });
 }
