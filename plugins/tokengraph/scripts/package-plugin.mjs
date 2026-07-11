@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { access, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -145,6 +145,10 @@ async function copyInstallablePlugin(packageDir, packageJson, version) {
   await copyRequiredPath(resolve(pluginRoot, ".codex-plugin"), resolve(packageDir, ".codex-plugin"));
   await mkdir(resolve(packageDir, "dist"), { recursive: true });
   await copyRequiredPath(resolve(pluginRoot, "dist", "index.js"), resolve(packageDir, "dist", "index.js"));
+  // The build marks the source bundle executable, but release installs launch it
+  // with "node", and a copied executable bit flips the committed file mode on
+  // filemode-aware systems, breaking the CI reproducibility check.
+  await chmod(resolve(packageDir, "dist", "index.js"), 0o644);
   await copyRequiredPath(resolve(pluginRoot, "skills"), resolve(packageDir, "skills"));
   await copyRequiredPath(resolve(pluginRoot, ".mcp.json"), resolve(packageDir, ".mcp.json"));
   await copyRequiredPath(resolve(pluginRoot, ".claude-plugin"), resolve(packageDir, ".claude-plugin"));
