@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { access, readFile, readdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -265,13 +265,30 @@ const documentedToolNames = new Set(Array.from(sourceReadme.matchAll(/`(tokengra
 for (const toolName of registeredToolNames) {
   assert(documentedToolNames.has(toolName), `plugin README must document registered tool ${toolName}`);
 }
+
+async function collectFiles(root) {
+  const entries = await readdir(root, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const path = resolve(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await collectFiles(path));
+    } else if (entry.isFile()) {
+      files.push(path);
+    }
+  }
+  return files;
+}
 const personalWindowsProfilePathPattern = /C:\\Users\\(?!example(?:\\|$))[^\\\s]+/i;
-for (const [label, content] of [
-  ["root README", rootReadme],
-  ["source plugin README", sourceReadme],
-  ["release README", releaseReadme]
-]) {
-  assert(!personalWindowsProfilePathPattern.test(content), `${label} must not contain personal Windows profile paths`);
+const packagedFiles = [
+  ...await collectFiles(pluginRoot),
+  ...await collectFiles(releaseRoot)
+].filter((path) => !path.includes(`${sep}node_modules${sep}`));
+for (const filePath of packagedFiles) {
+  const content = await readFile(filePath, "utf8").catch(() => undefined);
+  if (content !== undefined) {
+    assert(!personalWindowsProfilePathPattern.test(content), `packaged file ${filePath} must not contain personal Windows profile paths`);
+  }
 }
 assert(releaseManifest.name === manifest.name, "release plugin manifest name must match source manifest");
 assert(releaseManifest.version?.split("+", 1)[0] === packageJson.version, "release plugin manifest base version must match package version");

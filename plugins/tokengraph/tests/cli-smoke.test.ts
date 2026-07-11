@@ -221,6 +221,12 @@ describe("tokengraph focused skills", () => {
 });
 
 describe("tokengraph release package command", () => {
+  it("scans every packaged text file for personal paths", async () => {
+    const validator = await readFile(resolve("scripts", "validate-plugin.mjs"), "utf8");
+    expect(validator).toMatch(/releaseSkillsPath/);
+    expect(validator).toMatch(/packaged.*files|packagedFiles/i);
+  });
+
   it("keeps the root marketplace pointed at a committed installable release plugin", async () => {
     const repoRoot = resolve("..", "..");
     const marketplace = JSON.parse(await readFile(resolve(repoRoot, ".agents", "plugins", "marketplace.json"), "utf8")) as {

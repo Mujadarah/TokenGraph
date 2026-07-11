@@ -1634,6 +1634,29 @@ describe("JsonTokenGraphStore", () => {
 });
 
 describe("assessChangeRisk", () => {
+  it("retains project-wide marketplace findings", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".agents", "plugins"), { recursive: true });
+    await writeFile(
+      join(root, ".agents", "plugins", "marketplace.json"),
+      JSON.stringify({ plugins: [{ name: "tokengraph", source: { path: "./plugins/tokengraph" } }] })
+    );
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "changed.ts"), "export const changed = true;\n");
+
+    const report = await assessChangeRisk({
+      root,
+      changedFiles: ["src/changed.ts"],
+      project: await indexProject(root),
+      rules: [],
+      memories: []
+    });
+
+    expect(report.affectedRules).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "marketplace-target", sourcePath: "./plugins/tokengraph" })])
+    );
+  });
+
   it("scores regression risk from graph, SQL, rules, tests, and memories", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "app", "patients"), { recursive: true });
