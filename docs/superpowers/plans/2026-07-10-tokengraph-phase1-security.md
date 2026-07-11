@@ -91,7 +91,7 @@ function createWorkspaceResolver(server: McpServer, provider?: () => Promise<str
 }
 ```
 
-Implement `resolveTrustedWorkspace` with environment precedence (`CLAUDE_PROJECT_DIR`, then `TOKENGRAPH_WORKSPACE_ROOT`) and an `await server.server.listRoots({}, { timeout: 1000 })` fallback. Create the resolver after constructing `McpServer`, pass it through every existing tool handler, and update `root` parameter descriptions.
+Implement `resolveTrustedWorkspace` with environment precedence (`CLAUDE_PROJECT_DIR`, then `TOKENGRAPH_WORKSPACE_ROOT`) and an `await server.server.listRoots({}, { timeout: 1000 })` fallback. Update `isPluginRoot` to recognize both `.codex-plugin/plugin.json` and `.claude-plugin/plugin.json`, so a Claude plugin-cache launch also fails closed. Create the resolver after constructing `McpServer`, pass it through every existing tool handler, and update `root` parameter descriptions.
 
 - [ ] **Step 4: Verify the focused tests pass**
 
