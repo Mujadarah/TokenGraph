@@ -490,6 +490,21 @@ describe("scanProject", () => {
     expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/generated", reason: "ignored" }));
   });
 
+  it("keeps content hashes stable across line endings", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    const file = join(root, "src", "line-endings.ts");
+    await writeFile(file, "export const value = 1;\nexport const other = 2;\n");
+    const lf = await scanProject(root);
+
+    await writeFile(file, "export const value = 1;\r\nexport const other = 2;\r\n");
+    const crlf = await scanProject(root);
+
+    expect(crlf.files.find((entry) => entry.path === "src/line-endings.ts")?.contentHash).toBe(
+      lf.files.find((entry) => entry.path === "src/line-endings.ts")?.contentHash
+    );
+  });
+
   it("stops indexing once the configured file budget is reached", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });

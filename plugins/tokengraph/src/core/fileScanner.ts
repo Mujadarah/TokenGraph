@@ -59,7 +59,7 @@ function normalizePath(path: string): string {
 }
 
 function hashText(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
+  return createHash("sha256").update(text.replace(/\r\n?/g, "\n")).digest("hex");
 }
 
 function exclusionForName(name: string): Exclusion["reason"] | undefined {
