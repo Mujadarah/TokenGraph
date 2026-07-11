@@ -177,6 +177,18 @@ Status: complete
 - Host-neutral docs cover Codex plugin packaging, Claude Code MCP config, generic MCP stdio clients, Cursor, and Windsurf/Cascade.
 - Codex remains the first target, with one shared MCP server and host-specific packaging or docs only.
 
+## v0.18 - Security, Correctness, And Claude Code Packaging
+
+Status: complete
+
+- Tool workspace roots are confined to a host-provided trusted root, fail closed for plugin-root launches, and reject filesystem and home directories.
+- Architecture rule patterns are validated in a bounded worker before persisting, so catastrophic backtracking patterns are rejected at save time.
+- Indexing is trustworthy under concurrency: per-root index refresh and memory read-modify-write mutations are serialized, declaration end-line hints balance braces, parentheses, and brackets, and refreshed scan signatures persist after metadata-only changes.
+- SQL and scanning fidelity: malformed migration warnings surface in the project map, unquoted identifiers are case-folded, nested gitignore files are honored, App Router layouts no longer duplicate routes, and content hashes canonicalize line endings.
+- Honesty and hygiene: index-writing tools no longer claim to be read-only, the plugin README documents every registered tool, project-wide findings are retained in change-risk output, all packaged files are scanned for personal paths, symlinks record explicit exclusions, and token estimates are script-aware.
+- The release ships only the self-contained `dist/index.js` runtime plus Claude Code marketplace, plugin, and MCP manifests with trusted project-root forwarding.
+- CI validates frozen installs, typecheck, tests, build, smoke, plugin validation, non-ASCII scans, and byte-reproducible committed releases.
+
 ## Later
 
 Ideas under consideration:

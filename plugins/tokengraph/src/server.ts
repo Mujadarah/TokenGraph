@@ -406,7 +406,7 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
 }
 
 export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWorkspaceProvider } = {}): McpServer {
-  const server = new McpServer({ name: "tokengraph", version: "0.17.0" });
+  const server = new McpServer({ name: "tokengraph", version: "0.18.0" });
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
 
   server.registerTool(

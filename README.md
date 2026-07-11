@@ -19,7 +19,7 @@ Large coding sessions often waste tokens by repeatedly reading files, logs, migr
 
 ## Current Version
 
-TokenGraph is currently at `0.17.0`.
+TokenGraph is currently at `0.18.0`.
 
 Highlights:
 

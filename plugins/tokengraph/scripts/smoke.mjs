@@ -196,7 +196,7 @@ async function runSmoke() {
     await client.request("initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-cli-smoke", version: "0.17.0" }
+      clientInfo: { name: "tokengraph-cli-smoke", version: "0.18.0" }
     });
     client.notify("notifications/initialized");
 

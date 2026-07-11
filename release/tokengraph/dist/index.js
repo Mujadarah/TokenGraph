@@ -23114,7 +23114,7 @@ function sqlSummary(project, query, limit) {
   return rows.filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
 }
 function createTokenGraphServer(options = {}) {
-  const server = new McpServer({ name: "tokengraph", version: "0.17.0" });
+  const server = new McpServer({ name: "tokengraph", version: "0.18.0" });
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
   server.registerTool(
     "tokengraph_index_project",

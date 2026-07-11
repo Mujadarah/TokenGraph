@@ -4,7 +4,7 @@ TokenGraph is a local-first coding-agent plugin that reduces wasted context by r
 
 This folder is the maintainer development source plugin. Normal users should install TokenGraph from the repository marketplace, which points to `release/tokengraph/`, not this source folder. The source folder is only directly installable after maintainers run `pnpm build` and create current `dist/` output.
 
-## What v0.17.0 includes
+## What v0.18.0 includes
 
 - Codex and Claude Code plugin manifests and release marketplace entries.
 - Focused coding-agent skills for graph retrieval, root-cause debugging, architecture consistency, context compression, regression detection, token budgets, memory curation, and release packaging audits.
@@ -147,7 +147,7 @@ The repo marketplace file is `.agents/plugins/marketplace.json`. Its normal user
 
 ## Privacy
 
-TokenGraph v0.17.0 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key, cloud sync, embeddings service, or paid external API. Token counts and savings are estimates, not exact measurements.
+TokenGraph v0.18.0 is local-only. It stores project state under `.tokengraph/` in the indexed workspace and does not require an OpenAI API key, cloud sync, embeddings service, or paid external API. Token counts and savings are estimates, not exact measurements.
 
 ## License
 

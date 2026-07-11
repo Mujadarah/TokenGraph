@@ -304,7 +304,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(100, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.18.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -386,7 +386,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(110, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.18.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -434,7 +434,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(115, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.18.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -514,7 +514,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(120, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.18.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -574,7 +574,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(130, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.18.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -1276,7 +1276,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(60, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.18.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -1339,7 +1339,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(70, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.18.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -1385,7 +1385,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(80, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.17.0" }
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.18.0" }
     });
     send({ method: "notifications/initialized" });
 

@@ -286,9 +286,9 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.17.0"
+      version: "0.18.0"
     });
-    expect(report.packageDir).toBe(resolve(outRoot, "tokengraph-0.17.0"));
+    expect(report.packageDir).toBe(resolve(outRoot, "tokengraph-0.18.0"));
     expect(report.marketplacePath).toBe(resolve(outRoot, ".agents", "plugins", "marketplace.json"));
     expect(report.files).toEqual(
       expect.arrayContaining([
@@ -312,7 +312,7 @@ describe("tokengraph release package command", () => {
     };
     expect(marketplace.plugins?.[0]).toMatchObject({
       name: "tokengraph",
-      source: { path: "./tokengraph-0.17.0" }
+      source: { path: "./tokengraph-0.18.0" }
     });
   });
 
@@ -333,7 +333,7 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.17.0",
+      version: "0.18.0",
       releaseDir: releaseRoot
     });
     expect(report.files).toEqual(
