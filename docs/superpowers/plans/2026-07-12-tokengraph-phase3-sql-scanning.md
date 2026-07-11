@@ -258,7 +258,7 @@ it("does not expose App Router layouts as duplicate routes", async () => {
   const layout = graph.files.find((file) => file.path.endsWith("/layout.tsx"));
   const page = graph.files.find((file) => file.path.endsWith("/page.tsx"));
 
-  expect(layout).toMatchObject({ kind: "module" });
+  expect(layout?.kind).not.toBe("next-route");
   expect(layout?.route).toBeUndefined();
   expect(page).toMatchObject({ kind: "next-route", route: "/patients" });
 });

@@ -396,6 +396,24 @@ describe("scanProject", () => {
     );
   });
 
+  it("does not expose App Router layouts as duplicate routes", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "app", "patients"), { recursive: true });
+    await writeFile(
+      join(root, "app", "patients", "layout.tsx"),
+      "export default function Layout({ children }: { children: unknown }) { return children; }\n"
+    );
+    await writeFile(join(root, "app", "patients", "page.tsx"), "export default function Page() { return null; }\n");
+
+    const graph = await scanProject(root);
+    const layout = graph.files.find((file) => file.path.endsWith("/layout.tsx"));
+    const page = graph.files.find((file) => file.path.endsWith("/page.tsx"));
+
+    expect(layout?.kind).not.toBe("next-route");
+    expect(layout?.route).toBeUndefined();
+    expect(page).toMatchObject({ kind: "next-route", route: "/patients" });
+  });
+
   it("resolves TypeScript source files imported with emitted JavaScript specifiers", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });

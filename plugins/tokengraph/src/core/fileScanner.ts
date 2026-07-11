@@ -121,7 +121,7 @@ function nextRouteForPath(path: string): string | undefined {
   const parts = path.split("/");
   const fileName = parts.at(-1) ?? "";
   if (path.startsWith("app/")) {
-    if (!/^(page|route|layout)\.[jt]sx?$/.test(fileName)) {
+    if (!/^(page|route)\.[jt]sx?$/.test(fileName)) {
       return undefined;
     }
     const routeParts = parts.slice(1, -1).filter((part) => !part.startsWith("("));
