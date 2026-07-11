@@ -1,5 +1,38 @@
 function normalizeSqlName(name) {
-    return name.replace(/"/g, "").replace(/\s+/g, " ").trim();
+    const segments = [];
+    let current = "";
+    let quoted = false;
+    for (let index = 0; index < name.length; index += 1) {
+        const char = name[index];
+        const next = name[index + 1];
+        if (char === '"') {
+            current += char;
+            if (quoted && next === '"') {
+                current += next;
+                index += 1;
+            }
+            else {
+                quoted = !quoted;
+            }
+            continue;
+        }
+        if (char === "." && !quoted) {
+            segments.push(current);
+            current = "";
+            continue;
+        }
+        current += char;
+    }
+    segments.push(current);
+    return segments
+        .map((segment) => {
+        const trimmed = segment.trim();
+        if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+            return trimmed.slice(1, -1).replace(/""/g, '"');
+        }
+        return trimmed.replace(/"/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    })
+        .join(".");
 }
 function stripOuterParens(value) {
     let text = value.trim();
@@ -28,6 +61,22 @@ function splitCommaList(value) {
         .split(",")
         .map(normalizeSqlName)
         .filter(Boolean);
+}
+function firstSqlToken(value) {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('"')) {
+        return trimmed.split(/\s+/)[0] ?? "";
+    }
+    for (let index = 1; index < trimmed.length; index += 1) {
+        if (trimmed[index] !== '"')
+            continue;
+        if (trimmed[index + 1] === '"') {
+            index += 1;
+            continue;
+        }
+        return trimmed.slice(0, index + 1);
+    }
+    return trimmed;
 }
 function splitColumns(body) {
     const columns = [];
@@ -142,7 +191,14 @@ function sqlStatements(sql) {
     if (current.trim()) {
         statements.push({ text: current, index: statementStart });
     }
-    return statements;
+    const warningMessage = state === "dollar"
+        ? "SQL parser reached end of file inside a dollar-quoted block; later statements may be unindexed."
+        : state === "single"
+            ? "SQL parser reached end of file inside a single-quoted string; later statements may be unindexed."
+            : state === "double"
+                ? "SQL parser reached end of file inside a double-quoted identifier; later statements may be unindexed."
+                : undefined;
+    return { statements, warningMessage };
 }
 function emptyGraph() {
     return {
@@ -158,12 +214,17 @@ function emptyGraph() {
         extensions: [],
         grants: [],
         materializedViews: [],
-        history: []
+        history: [],
+        warnings: []
     };
 }
 export function parsePostgresMigration(filePath, sql) {
     const graph = emptyGraph();
-    const statements = sqlStatements(sql);
+    const scan = sqlStatements(sql);
+    const statements = scan.statements;
+    if (scan.warningMessage) {
+        graph.warnings.push({ filePath, message: scan.warningMessage });
+    }
     const history = [];
     const remember = (entry, position) => {
         history.push({ ...entry, filePath, order: 0, position });
@@ -199,7 +260,7 @@ export function parsePostgresMigration(filePath, sql) {
             const columnDefs = splitColumns(match[2]);
             const table = { name: tableName, columns: [], filePath };
             for (const columnDef of columnDefs) {
-                const columnName = normalizeSqlName(columnDef.split(/\s+/)[0] ?? "");
+                const columnName = normalizeSqlName(firstSqlToken(columnDef));
                 const namedConstraint = columnDef.match(/\bconstraint\s+("?[\w]+"?)\s+(primary\s+key|foreign\s+key|unique|check|exclude)\b([\s\S]*)/i);
                 if (namedConstraint && /^\s*constraint\b/i.test(columnDef)) {
                     const kind = normalizeSqlName(namedConstraint[2]).toLowerCase();
@@ -407,6 +468,7 @@ export function mergeSqlGraphs(graphs) {
         merged.grants.push(...graph.grants);
         merged.materializedViews.push(...graph.materializedViews);
         merged.history.push(...graph.history);
+        merged.warnings.push(...graph.warnings);
     }
     merged.history.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.order - b.order || a.name.localeCompare(b.name));
     return merged;

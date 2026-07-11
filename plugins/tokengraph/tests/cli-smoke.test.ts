@@ -63,6 +63,22 @@ describe("tokengraph CLI smoke command", () => {
     );
   });
 
+  it("checks README tool coverage for every previously omitted MCP tool", async () => {
+    const readme = await readFile("README.md", "utf8");
+    for (const toolName of [
+      "tokengraph_compress_output",
+      "tokengraph_explain_symbol",
+      "tokengraph_plan_context",
+      "tokengraph_project_map",
+      "tokengraph_remember_decision",
+      "tokengraph_search_graph",
+      "tokengraph_show_token_savings",
+      "tokengraph_summarize_sql"
+    ]) {
+      expect(readme).toContain(`\`${toolName}\``);
+    }
+  });
+
   it("accepts the literal pnpm argument separator before smoke options", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
@@ -205,6 +221,12 @@ describe("tokengraph focused skills", () => {
 });
 
 describe("tokengraph release package command", () => {
+  it("scans every packaged text file for personal paths", async () => {
+    const validator = await readFile(resolve("scripts", "validate-plugin.mjs"), "utf8");
+    expect(validator).toMatch(/releaseSkillsPath/);
+    expect(validator).toMatch(/packaged.*files|packagedFiles/i);
+  });
+
   it("keeps the root marketplace pointed at a committed installable release plugin", async () => {
     const repoRoot = resolve("..", "..");
     const marketplace = JSON.parse(await readFile(resolve(repoRoot, ".agents", "plugins", "marketplace.json"), "utf8")) as {

@@ -146,7 +146,8 @@ describe("TokenGraph MCP stdio server", () => {
     send({ method: "notifications/initialized" });
 
     const listed = await request(2, "tools/list");
-    const toolNames = ((listed.tools as Array<{ name: string }> | undefined) ?? []).map((tool) => tool.name);
+    const listedTools = (listed.tools as Array<{ name: string; annotations?: { readOnlyHint?: boolean; idempotentHint?: boolean } }> | undefined) ?? [];
+    const toolNames = listedTools.map((tool) => tool.name);
     expect(toolNames).toEqual(
       expect.arrayContaining([
         "tokengraph_index_project",
@@ -179,6 +180,23 @@ describe("TokenGraph MCP stdio server", () => {
         "tokengraph_assess_change_risk"
       ])
     );
+    const indexWritingTools = [
+      "tokengraph_check_architecture",
+      "tokengraph_trace_failure",
+      "tokengraph_assess_change_risk",
+      "tokengraph_project_map",
+      "tokengraph_plan_context",
+      "tokengraph_search_graph",
+      "tokengraph_explain_symbol",
+      "tokengraph_summarize_sql",
+      "tokengraph_compress_context",
+      "tokengraph_export_project_map",
+      "tokengraph_show_token_savings"
+    ];
+    for (const name of indexWritingTools) {
+      expect(listedTools.find((tool) => tool.name === name)?.annotations?.readOnlyHint, name).toBe(false);
+    }
+    expect(listedTools.find((tool) => tool.name === "tokengraph_recall_memory")?.annotations?.idempotentHint).toBe(false);
 
     const missingStatus = await request(3, "tools/call", {
       name: "tokengraph_index_status",

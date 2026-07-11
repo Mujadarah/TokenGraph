@@ -1,4 +1,4 @@
-import { access, cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -490,6 +490,25 @@ describe("scanProject", () => {
     expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/generated", reason: "ignored" }));
   });
 
+  it("records symlink entries as explicit exclusions", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    const target = join(root, "src", "real.ts");
+    const link = join(root, "src", "linked.ts");
+    await writeFile(target, "export const real = true;\n");
+    try {
+      await symlink(target, link, "file");
+    } catch (error) {
+      if (["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) return;
+      throw error;
+    }
+
+    const graph = await scanProject(root);
+
+    expect(graph.files.map((file) => file.path)).toEqual(["src/real.ts"]);
+    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/linked.ts", reason: "symlink" }));
+  });
+
   it("keeps content hashes stable across line endings", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
@@ -524,6 +543,15 @@ describe("scanProject", () => {
 });
 
 describe("parsePostgresMigration", () => {
+  it("preserves quoted column names containing spaces", () => {
+    const graph = parsePostgresMigration(
+      "supabase/migrations/006_columns.sql",
+      "create table public.notes (\"Display Name\" text, id uuid primary key);"
+    );
+
+    expect(graph.tables).toEqual([expect.objectContaining({ name: "public.notes", columns: ["Display Name", "id"] })]);
+  });
+
   it("reports a case-mismatched dollar quote instead of silently dropping later SQL", () => {
     const graph = parsePostgresMigration(
       "supabase/migrations/003_malformed.sql",
@@ -1449,6 +1477,12 @@ describe("buildContextPlan", () => {
 });
 
 describe("compressOutput", () => {
+  it("names the text cap according to its character semantics", async () => {
+    const source = await readFile("src/core/compressor.ts", "utf8");
+    expect(source).toContain("MAX_INPUT_CHARS");
+    expect(source).not.toContain("MAX_INPUT_BYTES");
+  });
+
   it("keeps actionable test failure details and reports token savings", () => {
     const noisyLog = [
       "PASS services/account.test.ts",
@@ -1634,6 +1668,29 @@ describe("JsonTokenGraphStore", () => {
 });
 
 describe("assessChangeRisk", () => {
+  it("retains project-wide marketplace findings", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".agents", "plugins"), { recursive: true });
+    await writeFile(
+      join(root, ".agents", "plugins", "marketplace.json"),
+      JSON.stringify({ plugins: [{ name: "tokengraph", source: { path: "./plugins/tokengraph" } }] })
+    );
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "changed.ts"), "export const changed = true;\n");
+
+    const report = await assessChangeRisk({
+      root,
+      changedFiles: ["src/changed.ts"],
+      project: await indexProject(root),
+      rules: [],
+      memories: []
+    });
+
+    expect(report.affectedRules).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "marketplace-target", sourcePath: "./plugins/tokengraph" })])
+    );
+  });
+
   it("scores regression risk from graph, SQL, rules, tests, and memories", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "app", "patients"), { recursive: true });
@@ -1710,6 +1767,11 @@ describe("assessChangeRisk", () => {
 describe("tokenize", () => {
   it("splits camelCase before lowercasing", () => {
     expect(tokenize("PatientCard fetchUserById")).toEqual(expect.arrayContaining(["patient", "card", "fetch", "user", "by", "id"]));
+  });
+
+  it("estimates dense scripts and emoji closer to one token per code point", () => {
+    expect(estimateTokens("\u60a8\u8005\u60a8\u8005")).toBeGreaterThanOrEqual(4);
+    expect(estimateTokens("\u{1F642}\u{1F642}")).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -1918,6 +1980,23 @@ describe("MemoryStore", () => {
       ])
     );
     expect(await store.list()).toEqual(expect.arrayContaining([expect.objectContaining({ id: existing.id, status: "active" })]));
+  });
+
+  it("does not flag same-type memories when only one body term overlaps", async () => {
+    const root = await makeRoot();
+    const store = new MemoryStore(memoryPath(root));
+    await store.add({ type: "architecture", title: "Patient read", body: "Cache patient rows.", tags: [] });
+
+    const conflicts = await store.findConflicts({
+      candidate: {
+        type: "architecture",
+        title: "Billing write",
+        body: "Cache billing invoices.",
+        tags: []
+      }
+    });
+
+    expect(conflicts).toEqual([]);
   });
 });
 

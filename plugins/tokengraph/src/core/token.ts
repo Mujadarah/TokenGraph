@@ -1,8 +1,20 @@
+const DENSE_SCRIPT_CHARACTER = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u;
+const PICTOGRAPHIC_CHARACTER = /\p{Extended_Pictographic}/u;
+
 export function estimateTokens(text: string): number {
   if (!text.trim()) {
     return 0;
   }
-  return Math.max(1, Math.ceil(text.length / 4));
+  let denseCharacters = 0;
+  let regularCharacters = 0;
+  for (const character of text) {
+    if (DENSE_SCRIPT_CHARACTER.test(character) || PICTOGRAPHIC_CHARACTER.test(character)) {
+      denseCharacters += 1;
+    } else {
+      regularCharacters += 1;
+    }
+  }
+  return Math.max(1, denseCharacters + Math.ceil(regularCharacters / 4));
 }
 
 export function estimateSavings(originalText: string, compressedText: string) {

@@ -25,6 +25,7 @@ This folder is the maintainer development source plugin. Normal Codex users shou
 - Trust docs for privacy, security, permissions, local storage, limitations, and release install behavior.
 - Host-neutral docs for Codex, Claude Code, generic MCP stdio clients, Cursor, and Windsurf/Cascade.
 - Config tools: `tokengraph_get_config`, `tokengraph_set_profile`, and `tokengraph_update_config`.
+- Core routing tools: `tokengraph_compress_output`, `tokengraph_explain_symbol`, `tokengraph_plan_context`, `tokengraph_project_map`, `tokengraph_remember_decision`, `tokengraph_search_graph`, `tokengraph_show_token_savings`, and `tokengraph_summarize_sql`.
 - Token-saving profiles: `conservative`, `balanced`, and `aggressive`.
 - Profile-aware context planning with estimated token budgets and raw-read warning thresholds.
 - Local project wiki generation under `.tokengraph/wiki/` with deterministic Markdown pages.

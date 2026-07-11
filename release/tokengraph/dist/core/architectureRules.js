@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { assertSafeArchitectureRulePatterns } from "./patternSafety.js";
 const DEFAULT_SEVERITY = "warning";
 const CURRENT_RULES_SCHEMA_VERSION = 1;
 function nowIso() {
@@ -70,6 +71,7 @@ export class ArchitectureRuleStore {
     async add(input) {
         return this.enqueueWrite(async () => {
             const rules = await this.list();
+            await assertSafeArchitectureRulePatterns(input);
             const rule = normalizeRule(input);
             rules.push(rule);
             await this.writeAtomic(rules);
@@ -92,6 +94,7 @@ export class ArchitectureRuleStore {
                 severity: update.severity ?? current.severity,
                 updatedAt: nowIso()
             };
+            await assertSafeArchitectureRulePatterns(next);
             rules[index] = next;
             await this.writeAtomic(rules);
             return next;

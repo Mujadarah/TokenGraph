@@ -79,6 +79,22 @@ function splitCommaList(value: string): string[] {
     .filter(Boolean);
 }
 
+function firstSqlToken(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('"')) {
+    return trimmed.split(/\s+/)[0] ?? "";
+  }
+  for (let index = 1; index < trimmed.length; index += 1) {
+    if (trimmed[index] !== '"') continue;
+    if (trimmed[index + 1] === '"') {
+      index += 1;
+      continue;
+    }
+    return trimmed.slice(0, index + 1);
+  }
+  return trimmed;
+}
+
 function splitColumns(body: string): string[] {
   const columns: string[] = [];
   let current = "";
@@ -277,7 +293,7 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
     const columnDefs = splitColumns(match[2]);
     const table: SqlTable = { name: tableName, columns: [], filePath };
     for (const columnDef of columnDefs) {
-      const columnName = normalizeSqlName(columnDef.split(/\s+/)[0] ?? "");
+      const columnName = normalizeSqlName(firstSqlToken(columnDef));
       const namedConstraint = columnDef.match(/\bconstraint\s+("?[\w]+"?)\s+(primary\s+key|foreign\s+key|unique|check|exclude)\b([\s\S]*)/i);
       if (namedConstraint && /^\s*constraint\b/i.test(columnDef)) {
         const kind = normalizeSqlName(namedConstraint[2]).toLowerCase() as SqlConstraint["kind"];

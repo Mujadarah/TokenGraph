@@ -642,7 +642,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       title: "Check Architecture",
       description: "Use this to check imports, selected module tests, SQL security warnings, and marketplace target sanity against local architecture rules.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({
         root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
         files: z.array(z.string()).optional().describe("Optional selected module paths for required-test checks.")
@@ -661,7 +661,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       title: "Trace Failure",
       description: "Use this to compress failure output and route debugging through graph-related files, imports, SQL, memories, hypotheses, and first reads.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({
         root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
         kind: z.enum(["test", "build", "runtime", "install", "log"]),
@@ -683,7 +683,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       title: "Assess Change Risk",
       description: "Use this to estimate regression risk for changed files using graph, routes, tests, SQL, architecture rules, memories, and targeted test recommendations.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({
         root: z.string().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
         changedFiles: z.array(z.string().min(1)).min(1),
@@ -706,7 +706,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       title: "Show Project Map",
       description: "Use this when Codex needs a compact overview of indexed modules, symbols, SQL objects, and freshness.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({ root: z.string().optional() })
     },
     async ({ root }) => {
@@ -785,7 +785,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       title: "Plan Context",
       description: "Use this before raw file exploration to get the smallest likely files, SQL objects, tests, and memories for a task.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({
         root: z.string().optional(),
         task: z.string().min(3).describe("The coding task or question to route."),
@@ -827,7 +827,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       title: "Search Graph",
       description: "Use this to search indexed files, symbols, SQL tables, and routes without reading raw source.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({
         root: z.string().optional(),
         query: z.string().min(2),
@@ -845,7 +845,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       title: "Explain Symbol",
       description: "Use this when Codex needs to know why a file or symbol is relevant before reading it.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({ root: z.string().optional(), target: z.string().min(1) })
     },
     async ({ root, target }) => {
@@ -859,7 +859,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       title: "Summarize SQL",
       description: "Use this when a task touches data, auth, reports, RLS, migrations, or persistence.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({ root: z.string().optional(), query: z.string().min(2), limit: z.number().int().min(1).max(50).optional() })
     },
     async ({ root, query, limit }) => {
@@ -889,7 +889,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       title: "Compress Context",
       description:
         "Use this to compress prompts, memories, diffs, SQL, wiki text, logs, or mixed context while preserving exact implementation-critical references and first-read recommendations.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({
         root: z.string().optional(),
         task: z.string().min(1),
@@ -1133,7 +1133,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       title: "Recall Memory",
       description: "Use this to retrieve relevant active memories. Audit mode is required to include deprecated or deleted memories.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: z.object({
         root: z.string().optional(),
         query: z.string().optional(),
@@ -1172,7 +1172,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       title: "Export Project Map",
       description: "Use this to export a compact visual project map without raw source content.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({
         root: z.string().optional(),
         format: z.enum(["mermaid", "json"]).default("mermaid"),
@@ -1190,7 +1190,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       title: "Show Token Savings",
       description: "Use this to estimate how many tokens TokenGraph avoided by using the compact local index.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({ root: z.string().optional() })
     },
     async ({ root }) => {

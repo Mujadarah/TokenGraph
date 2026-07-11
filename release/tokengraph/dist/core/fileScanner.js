@@ -20,7 +20,7 @@ function normalizePath(path) {
     return path.split(sep).join("/");
 }
 function hashText(text) {
-    return createHash("sha256").update(text).digest("hex");
+    return createHash("sha256").update(text.replace(/\r\n?/g, "\n")).digest("hex");
 }
 function exclusionForName(name) {
     if (DEPENDENCY_DIRS.has(name))
@@ -31,17 +31,26 @@ function exclusionForName(name) {
         return "secret";
     return undefined;
 }
-async function loadRootIgnore(root) {
-    const matcher = createIgnore();
+async function loadIgnoreScopes(base, inherited = []) {
+    let content;
     try {
-        matcher.add(await readFile(join(root, ".gitignore"), "utf8"));
+        content = await readFile(join(base, ".gitignore"), "utf8");
     }
     catch (error) {
         if (error.code !== "ENOENT") {
             throw error;
         }
+        return inherited;
     }
-    return matcher;
+    const matcher = createIgnore();
+    matcher.add(content);
+    return [...inherited, { base, matcher }];
+}
+function isIgnored(scopes, absolutePath, isDirectory) {
+    return scopes.some(({ base, matcher }) => {
+        const path = normalizePath(relative(base, absolutePath));
+        return Boolean(path) && matcher.ignores(isDirectory ? `${path}/` : path);
+    });
 }
 function languageForExtension(extension) {
     switch (extension) {
@@ -71,7 +80,7 @@ function nextRouteForPath(path) {
     const parts = path.split("/");
     const fileName = parts.at(-1) ?? "";
     if (path.startsWith("app/")) {
-        if (!/^(page|route|layout)\.[jt]sx?$/.test(fileName)) {
+        if (!/^(page|route)\.[jt]sx?$/.test(fileName)) {
             return undefined;
         }
         const routeParts = parts.slice(1, -1).filter((part) => !part.startsWith("("));
@@ -124,14 +133,24 @@ function lineForIndex(content, index) {
 function declarationEndLine(content, startLine) {
     const lines = maskCodeStringsAndComments(content).split(/\r?\n/);
     let braceDepth = 0;
+    let parenDepth = 0;
+    let bracketDepth = 0;
     for (let index = startLine - 1; index < lines.length; index += 1) {
         const line = lines[index];
         braceDepth += (line.match(/\{/g) ?? []).length;
         braceDepth -= (line.match(/\}/g) ?? []).length;
-        if (index === startLine - 1 && braceDepth <= 0) {
+        parenDepth += (line.match(/\(/g) ?? []).length;
+        parenDepth -= (line.match(/\)/g) ?? []).length;
+        bracketDepth += (line.match(/\[/g) ?? []).length;
+        bracketDepth -= (line.match(/\]/g) ?? []).length;
+        if (index === startLine - 1 && braceDepth <= 0 && parenDepth <= 0 && bracketDepth <= 0) {
             return startLine;
         }
-        if (index > startLine - 1 && braceDepth <= 0 && /[};]\s*$/.test(line.trim())) {
+        if (index > startLine - 1 &&
+            braceDepth <= 0 &&
+            parenDepth <= 0 &&
+            bracketDepth <= 0 &&
+            /[};)\]]\s*;?\s*$/.test(line.trim())) {
             return index + 1;
         }
     }
@@ -289,7 +308,8 @@ function budgetFromOptions(options) {
 function addUnreadable(graph, path) {
     graph.exclusions.push({ path: path || ".", reason: "unreadable" });
 }
-async function walk(root, current, graph, ignoreMatcher, state, depth) {
+async function walk(root, current, graph, ignoreScopes, state, depth) {
+    const currentScopes = current === root ? ignoreScopes : await loadIgnoreScopes(current, ignoreScopes);
     let entries;
     try {
         entries = await readdir(current, { withFileTypes: true });
@@ -305,8 +325,7 @@ async function walk(root, current, graph, ignoreMatcher, state, depth) {
         if (entry.name === ".tokengraph") {
             continue;
         }
-        const ignorePath = entry.isDirectory() ? `${relativePath}/` : relativePath;
-        if (relativePath && ignoreMatcher.ignores(ignorePath)) {
+        if (relativePath && isIgnored(currentScopes, absolute, entry.isDirectory())) {
             graph.exclusions.push({ path: relativePath, reason: "ignored" });
             continue;
         }
@@ -319,13 +338,17 @@ async function walk(root, current, graph, ignoreMatcher, state, depth) {
             graph.exclusions.push({ path: relativePath, reason: "hidden" });
             continue;
         }
+        if (entry.isSymbolicLink()) {
+            graph.exclusions.push({ path: relativePath, reason: "symlink" });
+            continue;
+        }
         if (entry.isDirectory()) {
             if (depth + 1 > state.budget.maxDepth || state.directories >= state.budget.maxDirectories) {
                 graph.exclusions.push({ path: relativePath, reason: "budget" });
                 continue;
             }
             state.directories += 1;
-            await walk(root, absolute, graph, ignoreMatcher, state, depth + 1);
+            await walk(root, absolute, graph, currentScopes, state, depth + 1);
             continue;
         }
         if (!entry.isFile()) {
@@ -385,7 +408,7 @@ async function walk(root, current, graph, ignoreMatcher, state, depth) {
     }
 }
 export async function scanProject(root, options) {
-    const ignoreMatcher = await loadRootIgnore(root);
+    const ignoreScopes = await loadIgnoreScopes(root);
     const graph = {
         root,
         files: [],
@@ -393,7 +416,7 @@ export async function scanProject(root, options) {
         imports: [],
         exclusions: []
     };
-    await walk(root, root, graph, ignoreMatcher, { budget: budgetFromOptions(options), directories: 0, totalBytes: 0, onFileContent: options?.onFileContent }, 0);
+    await walk(root, root, graph, ignoreScopes, { budget: budgetFromOptions(options), directories: 0, totalBytes: 0, onFileContent: options?.onFileContent }, 0);
     graph.files.sort((a, b) => a.path.localeCompare(b.path));
     resolveLocalImports(root, graph);
     graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name));
@@ -405,7 +428,7 @@ export async function scanProjectSignature(root, options) {
     return (await scanProjectFileMetadata(root, options)).scanSignature;
 }
 export async function scanProjectFileMetadata(root, options) {
-    const ignoreMatcher = await loadRootIgnore(root);
+    const ignoreScopes = await loadIgnoreScopes(root);
     const rows = [];
     const files = [];
     const exclusions = [];
@@ -413,7 +436,8 @@ export async function scanProjectFileMetadata(root, options) {
     let directories = 0;
     let fileCount = 0;
     let totalBytes = 0;
-    async function walkSignature(current, depth) {
+    async function walkSignature(current, depth, inheritedScopes) {
+        const currentScopes = current === root ? inheritedScopes : await loadIgnoreScopes(current, inheritedScopes);
         let entries;
         try {
             entries = await readdir(current, { withFileTypes: true });
@@ -428,8 +452,7 @@ export async function scanProjectFileMetadata(root, options) {
             const relativePath = normalizePath(relative(root, absolute));
             if (entry.name === ".tokengraph")
                 continue;
-            const ignorePath = entry.isDirectory() ? `${relativePath}/` : relativePath;
-            if (relativePath && ignoreMatcher.ignores(ignorePath)) {
+            if (relativePath && isIgnored(currentScopes, absolute, entry.isDirectory())) {
                 rows.push({ path: relativePath, reason: "ignored" });
                 exclusions.push({ path: relativePath, reason: "ignored" });
                 continue;
@@ -445,6 +468,11 @@ export async function scanProjectFileMetadata(root, options) {
                 exclusions.push({ path: relativePath, reason: "hidden" });
                 continue;
             }
+            if (entry.isSymbolicLink()) {
+                rows.push({ path: relativePath, reason: "symlink" });
+                exclusions.push({ path: relativePath, reason: "symlink" });
+                continue;
+            }
             if (entry.isDirectory()) {
                 if (depth + 1 > budget.maxDepth || directories >= budget.maxDirectories) {
                     rows.push({ path: relativePath, reason: "budget" });
@@ -452,7 +480,7 @@ export async function scanProjectFileMetadata(root, options) {
                     continue;
                 }
                 directories += 1;
-                await walkSignature(absolute, depth + 1);
+                await walkSignature(absolute, depth + 1, currentScopes);
                 continue;
             }
             if (!entry.isFile())
@@ -514,7 +542,7 @@ export async function scanProjectFileMetadata(root, options) {
             totalBytes += size;
         }
     }
-    await walkSignature(root, 0);
+    await walkSignature(root, 0, ignoreScopes);
     files.sort((a, b) => a.path.localeCompare(b.path));
     exclusions.sort((a, b) => a.path.localeCompare(b.path));
     return { files, exclusions, scanSignature: hashText(JSON.stringify(rows)) };

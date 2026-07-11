@@ -384,6 +384,10 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreScope
       graph.exclusions.push({ path: relativePath, reason: "hidden" });
       continue;
     }
+    if (entry.isSymbolicLink()) {
+      graph.exclusions.push({ path: relativePath, reason: "symlink" });
+      continue;
+    }
     if (entry.isDirectory()) {
       if (depth + 1 > state.budget.maxDepth || state.directories >= state.budget.maxDirectories) {
         graph.exclusions.push({ path: relativePath, reason: "budget" });
@@ -511,6 +515,11 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
       if (entry.name.startsWith(".")) {
         rows.push({ path: relativePath, reason: "hidden" });
         exclusions.push({ path: relativePath, reason: "hidden" });
+        continue;
+      }
+      if (entry.isSymbolicLink()) {
+        rows.push({ path: relativePath, reason: "symlink" });
+        exclusions.push({ path: relativePath, reason: "symlink" });
         continue;
       }
       if (entry.isDirectory()) {

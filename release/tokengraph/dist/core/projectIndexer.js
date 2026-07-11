@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { resolveProjectImports, scanProject, scanProjectFile, scanProjectFileMetadata } from "./fileScanner.js";
 import { mergeSqlGraphs, parsePostgresMigration } from "./sqlParser.js";
-export const CURRENT_INDEX_SCHEMA_VERSION = 2;
+export const CURRENT_INDEX_SCHEMA_VERSION = 3;
 function fingerprintPayload(value) {
     return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -43,7 +43,8 @@ function emptySqlGraph() {
         extensions: [],
         grants: [],
         materializedViews: [],
-        history: []
+        history: [],
+        warnings: []
     };
 }
 function sqlGraphForFiles(sql, filePaths) {
@@ -60,7 +61,8 @@ function sqlGraphForFiles(sql, filePaths) {
         extensions: sql.extensions.filter((entry) => filePaths.has(entry.filePath)),
         grants: sql.grants.filter((entry) => filePaths.has(entry.filePath)),
         materializedViews: sql.materializedViews.filter((entry) => filePaths.has(entry.filePath)),
-        history: sql.history.filter((entry) => filePaths.has(entry.filePath))
+        history: sql.history.filter((entry) => filePaths.has(entry.filePath)),
+        warnings: sql.warnings.filter((entry) => filePaths.has(entry.filePath))
     };
 }
 function sortGraph(graph) {
@@ -109,11 +111,7 @@ export async function indexProject(root, options = {}) {
     return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), options.scanSignature ?? metadata.scanSignature, scanMetadataFromFiles(metadata.files));
 }
 function metadataChanged(previous, current) {
-    return (!previous ||
-        previous.size !== current.size ||
-        previous.mtimeNs !== current.mtimeNs ||
-        previous.ctimeNs !== current.ctimeNs ||
-        previous.contentHash !== current.contentHash);
+    return !previous || previous.contentHash !== current.contentHash || previous.language !== current.language || previous.extension !== current.extension;
 }
 export async function updateProjectIndexIncremental(root, existingIndex) {
     if (existingIndex.root !== root) {
