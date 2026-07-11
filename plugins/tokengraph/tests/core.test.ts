@@ -276,6 +276,27 @@ describe("scanProject", () => {
     );
   });
 
+  it("ends an arrow declaration at its closing parenthesis", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(
+      join(root, "src", "factory.ts"),
+      [
+        "export const makePatient = () => (",
+        "  {",
+        "    id: 'patient-1'",
+        "  }",
+        ");",
+        "",
+        "export const unrelated = true;"
+      ].join("\n")
+    );
+
+    const graph = await scanProject(root);
+
+    expect(graph.symbols.find((symbol) => symbol.name === "makePatient")).toMatchObject({ startLine: 1, endLine: 5 });
+  });
+
   it("extracts compact TypeScript graph data and excludes secrets and dependency output", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "app", "patients", "[id]"), { recursive: true });
@@ -1668,6 +1689,37 @@ describe("MemoryStore", () => {
 
     const titles = (await first.list()).map((memory) => memory.title).sort();
     expect(titles).toEqual(["First decision", "Second decision"]);
+  });
+
+  it("preserves concurrent memory lifecycle mutations", async () => {
+    const root = await makeRoot();
+    const store = new MemoryStore(memoryPath(root));
+    const memory = await store.add({
+      type: "architecture",
+      title: "Keep lifecycle evidence",
+      body: "Concurrent lifecycle updates must all survive.",
+      tags: []
+    });
+
+    await Promise.all([
+      store.link(memory.id, { linkedFiles: ["src/first.ts"], evidence: ["linked-first"] }),
+      store.link(memory.id, { linkedFiles: ["src/second.ts"], evidence: ["linked-second"] }),
+      store.confirm(memory.id, ["confirmed-first"]),
+      store.confirm(memory.id, ["confirmed-second"]),
+      store.deprecate(memory.id, ["mem-replacement-a"], ["deprecated-first"]),
+      store.deprecate(memory.id, ["mem-replacement-b"], ["deprecated-second"])
+    ]);
+
+    const [updated] = await store.list({ includeDeprecated: true });
+    expect(updated).toMatchObject({
+      id: memory.id,
+      status: "deprecated",
+      confidence: "high",
+      linkedFiles: expect.arrayContaining(["src/first.ts", "src/second.ts"]),
+      supersededBy: expect.arrayContaining(["mem-replacement-a", "mem-replacement-b"]),
+      evidence: expect.arrayContaining(["linked-first", "linked-second", "confirmed-first", "confirmed-second", "deprecated-first", "deprecated-second"]),
+      confirmedAt: expect.any(String)
+    });
   });
 
   it("tracks lifecycle metadata and excludes deprecated or deleted memories from normal recall", async () => {
