@@ -1,4 +1,4 @@
-import { access, cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -488,6 +488,25 @@ describe("scanProject", () => {
     expect(graph.files.map((file) => file.path)).toEqual(["src/real.ts"]);
     expect(project.files.map((file) => file.path)).toEqual(["src/real.ts"]);
     expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/generated", reason: "ignored" }));
+  });
+
+  it("records symlink entries as explicit exclusions", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    const target = join(root, "src", "real.ts");
+    const link = join(root, "src", "linked.ts");
+    await writeFile(target, "export const real = true;\n");
+    try {
+      await symlink(target, link, "file");
+    } catch (error) {
+      if (["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) return;
+      throw error;
+    }
+
+    const graph = await scanProject(root);
+
+    expect(graph.files.map((file) => file.path)).toEqual(["src/real.ts"]);
+    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/linked.ts", reason: "symlink" }));
   });
 
   it("keeps content hashes stable across line endings", async () => {
@@ -1749,6 +1768,11 @@ describe("tokenize", () => {
   it("splits camelCase before lowercasing", () => {
     expect(tokenize("PatientCard fetchUserById")).toEqual(expect.arrayContaining(["patient", "card", "fetch", "user", "by", "id"]));
   });
+
+  it("estimates dense scripts and emoji closer to one token per code point", () => {
+    expect(estimateTokens("患者患者")).toBeGreaterThanOrEqual(4);
+    expect(estimateTokens("🙂🙂")).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe("MemoryStore", () => {
@@ -1956,6 +1980,23 @@ describe("MemoryStore", () => {
       ])
     );
     expect(await store.list()).toEqual(expect.arrayContaining([expect.objectContaining({ id: existing.id, status: "active" })]));
+  });
+
+  it("does not flag same-type memories when only one body term overlaps", async () => {
+    const root = await makeRoot();
+    const store = new MemoryStore(memoryPath(root));
+    await store.add({ type: "architecture", title: "Patient read", body: "Cache patient rows.", tags: [] });
+
+    const conflicts = await store.findConflicts({
+      candidate: {
+        type: "architecture",
+        title: "Billing write",
+        body: "Cache billing invoices.",
+        tags: []
+      }
+    });
+
+    expect(conflicts).toEqual([]);
   });
 });
 
