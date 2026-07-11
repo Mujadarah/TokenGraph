@@ -3,7 +3,7 @@ import { resolveProjectImports, scanProject, scanProjectFile, scanProjectFileMet
 import { mergeSqlGraphs, parsePostgresMigration } from "./sqlParser.js";
 import type { CodeGraph, FileScanMetadata, ProjectIndex, ProjectScanMetadata, SqlGraph } from "./types.js";
 
-export const CURRENT_INDEX_SCHEMA_VERSION = 2;
+export const CURRENT_INDEX_SCHEMA_VERSION = 3;
 
 export interface IndexUpdateResult {
   index: ProjectIndex;
@@ -60,7 +60,8 @@ function emptySqlGraph(): SqlGraph {
     extensions: [],
     grants: [],
     materializedViews: [],
-    history: []
+    history: [],
+    warnings: []
   };
 }
 
@@ -78,7 +79,8 @@ function sqlGraphForFiles(sql: SqlGraph, filePaths: Set<string>): SqlGraph {
     extensions: sql.extensions.filter((entry) => filePaths.has(entry.filePath)),
     grants: sql.grants.filter((entry) => filePaths.has(entry.filePath)),
     materializedViews: sql.materializedViews.filter((entry) => filePaths.has(entry.filePath)),
-    history: sql.history.filter((entry) => filePaths.has(entry.filePath))
+    history: sql.history.filter((entry) => filePaths.has(entry.filePath)),
+    warnings: sql.warnings.filter((entry) => filePaths.has(entry.filePath))
   };
 }
 
@@ -133,13 +135,7 @@ export async function indexProject(root: string, options: { scanSignature?: stri
 }
 
 function metadataChanged(previous: FileScanMetadata | undefined, current: FileScanMetadata): boolean {
-  return (
-    !previous ||
-    previous.size !== current.size ||
-    previous.mtimeNs !== current.mtimeNs ||
-    previous.ctimeNs !== current.ctimeNs ||
-    previous.contentHash !== current.contentHash
-  );
+  return !previous || previous.contentHash !== current.contentHash || previous.language !== current.language || previous.extension !== current.extension;
 }
 
 export async function updateProjectIndexIncremental(root: string, existingIndex: ProjectIndex): Promise<IndexUpdateResult> {

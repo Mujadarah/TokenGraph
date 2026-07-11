@@ -396,6 +396,24 @@ describe("scanProject", () => {
     );
   });
 
+  it("does not expose App Router layouts as duplicate routes", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "app", "patients"), { recursive: true });
+    await writeFile(
+      join(root, "app", "patients", "layout.tsx"),
+      "export default function Layout({ children }: { children: unknown }) { return children; }\n"
+    );
+    await writeFile(join(root, "app", "patients", "page.tsx"), "export default function Page() { return null; }\n");
+
+    const graph = await scanProject(root);
+    const layout = graph.files.find((file) => file.path.endsWith("/layout.tsx"));
+    const page = graph.files.find((file) => file.path.endsWith("/page.tsx"));
+
+    expect(layout?.kind).not.toBe("next-route");
+    expect(layout?.route).toBeUndefined();
+    expect(page).toMatchObject({ kind: "next-route", route: "/patients" });
+  });
+
   it("resolves TypeScript source files imported with emitted JavaScript specifiers", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
@@ -457,6 +475,40 @@ describe("scanProject", () => {
     expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "generated", reason: "ignored" }));
   });
 
+  it("honors nested gitignore files", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src", "generated"), { recursive: true });
+    await writeFile(join(root, "src", ".gitignore"), "generated/\n");
+    await writeFile(join(root, "src", "generated", "client.ts"), "export const generated = true;\n");
+    await writeFile(join(root, "src", "real.ts"), "export const real = true;\n");
+
+    const graph = await scanProject(root);
+    const project = await indexProject(root);
+
+    expect(graph.files.map((file) => file.path)).toEqual(["src/real.ts"]);
+    expect(project.files.map((file) => file.path)).toEqual(["src/real.ts"]);
+    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/generated", reason: "ignored" }));
+  });
+
+  it("keeps content hashes stable across line endings", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    const file = join(root, "src", "line-endings.ts");
+    await writeFile(file, "export const value = 1;\nexport const other = 2;\n");
+    const lf = await scanProject(root);
+    const initialIndex = await indexProject(root);
+
+    await writeFile(file, "export const value = 1;\r\nexport const other = 2;\r\n");
+    const crlf = await scanProject(root);
+    const updatedIndex = await updateProjectIndexIncremental(root, initialIndex);
+
+    expect(crlf.files.find((entry) => entry.path === "src/line-endings.ts")?.contentHash).toBe(
+      lf.files.find((entry) => entry.path === "src/line-endings.ts")?.contentHash
+    );
+    expect(updatedIndex.changedFiles).toEqual([]);
+    expect(updatedIndex.parsedFiles).toEqual([]);
+  });
+
   it("stops indexing once the configured file budget is reached", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
@@ -472,6 +524,58 @@ describe("scanProject", () => {
 });
 
 describe("parsePostgresMigration", () => {
+  it("reports a case-mismatched dollar quote instead of silently dropping later SQL", () => {
+    const graph = parsePostgresMigration(
+      "supabase/migrations/003_malformed.sql",
+      [
+        "create function public.bad() returns void as $FUNC$",
+        "begin",
+        "  perform 1;",
+        "end;",
+        "$func$;",
+        "create table public.after_bad (id uuid primary key);"
+      ].join("\n")
+    );
+
+    expect(graph.warnings).toEqual([
+      expect.objectContaining({ filePath: "supabase/migrations/003_malformed.sql", message: expect.stringMatching(/dollar/i) })
+    ]);
+    expect(graph.tables).toEqual([]);
+  });
+
+  it("reports an unterminated SQL string", () => {
+    const graph = parsePostgresMigration(
+      "supabase/migrations/004_unterminated.sql",
+      [
+        "insert into public.seed_notes (body) values ('unfinished);",
+        "create table public.after_bad (id uuid primary key);"
+      ].join("\n")
+    );
+
+    expect(graph.warnings).toEqual([
+      expect.objectContaining({ filePath: "supabase/migrations/004_unterminated.sql", message: expect.stringMatching(/single-quoted/i) })
+    ]);
+  });
+
+  it("folds unquoted SQL identifiers but preserves quoted identifiers", () => {
+    const graph = parsePostgresMigration(
+      "supabase/migrations/005_case.sql",
+      [
+        "create table PUBLIC.Patients (ID uuid primary key);",
+        "create policy read_patients on public.PATIENTS for select using (true);",
+        "create table public.\"PatientNotes\" (\"DisplayName\" text);"
+      ].join("\n")
+    );
+
+    expect(graph.tables).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "public.patients", columns: ["id"] }),
+        expect.objectContaining({ name: "public.PatientNotes", columns: ["DisplayName"] })
+      ])
+    );
+    expect(graph.policies).toEqual(expect.arrayContaining([expect.objectContaining({ table: "public.patients" })]));
+  });
+
   it("extracts tables, columns, relations, policies, indexes, triggers, functions, and views", () => {
     const sql = `
       create table public.patients (
