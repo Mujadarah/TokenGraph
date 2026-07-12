@@ -10,6 +10,8 @@ Use this skill when a coding agent needs to recall project decisions, compare cu
 
 ## MCP tools to call
 
+Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and do not attempt to read project memory from an untrusted root.
+
 1. Call `tokengraph_review_memories` with a narrow query before relying on memory.
 2. Call `tokengraph_plan_context` when memories should be ranked alongside files, tests, and SQL objects.
 3. Call `tokengraph_remember_decision` only for deliberate, durable project decisions that are useful later.

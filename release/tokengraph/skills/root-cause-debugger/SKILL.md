@@ -10,6 +10,8 @@ Use this skill when investigating test, build, runtime, install, or log failures
 
 ## MCP tools to call
 
+Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and do not retry project-aware diagnostics against arbitrary roots.
+
 1. Call `tokengraph_trace_failure` with the exact failure text, failure kind, root, task, and profile when available.
 2. If `tokengraph_trace_failure` is unavailable, call `tokengraph_compress_output` on long failure output before using it as context.
 3. Call `tokengraph_index_status` and refresh with `tokengraph_index_project` when the index is missing or stale.

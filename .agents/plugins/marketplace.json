@@ -1,7 +1,7 @@
 {
-  "name": "personal",
+  "name": "tokengraph",
   "interface": {
-    "displayName": "Personal"
+    "displayName": "TokenGraph"
   },
   "plugins": [
     {
@@ -14,7 +14,7 @@
         "installation": "AVAILABLE",
         "authentication": "ON_INSTALL"
       },
-      "category": "Productivity"
+      "category": "Developer Tools"
     }
   ]
 }

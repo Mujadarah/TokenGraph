@@ -10,6 +10,8 @@ Use this skill when a prompt, diff, log, test output, SQL block, memory set, or 
 
 ## MCP tools to call
 
+Call `tokengraph_setup_status` first when compression needs project context. If it reports `blocked`, follow its recovery steps and do not claim project-aware compression was used.
+
 1. Call `tokengraph_compress_context` for prompt, memory, diff, SQL, wiki, and mixed context.
 2. Call `tokengraph_compress_output` for logs, tests, builds, installs, diffs, and mixed command output.
 3. Call `tokengraph_plan_context` to replace broad background with targeted first reads.

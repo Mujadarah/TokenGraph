@@ -10,6 +10,8 @@ Use this skill when a coding agent needs to understand project structure, likely
 
 ## MCP tools to call
 
+Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and do not retry graph tools with arbitrary roots.
+
 1. Call `tokengraph_get_config` to understand the active profile and context limits.
 2. Call `tokengraph_index_status` with the explicit workspace root. If the index is missing or stale, call `tokengraph_index_project`.
 3. Prefer `tokengraph_show_wiki_page` for overview, structure, routes, database, and decisions orientation.

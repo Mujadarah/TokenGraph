@@ -10,6 +10,8 @@ Use this skill when reviewing or implementing changes that may affect module bou
 
 ## MCP tools to call
 
+Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and do not retry project tools with untrusted roots.
+
 1. Call `tokengraph_index_status` and refresh with `tokengraph_index_project` when needed.
 2. Call `tokengraph_project_map` to inspect module groups, routes, imports, and SQL object counts.
 3. Call `tokengraph_plan_context` with the architecture concern as the task.

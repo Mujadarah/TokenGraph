@@ -12,6 +12,8 @@ Use TokenGraph as the context router before raw repository exploration.
 
 For coding tasks in a project where TokenGraph MCP tools are available, use this order:
 
+Call `tokengraph_setup_status` first. If it reports `blocked`, follow its host-specific recovery steps and explain that project tools remain fail-closed; do not keep retrying project tools with arbitrary roots. After the user updates host configuration, start a new Codex task or run `/reload-plugins` in Claude Code.
+
 1. Call `tokengraph_get_config` when available to see the active token-saving profile and local limits.
 2. Call `tokengraph_index_status` when available. Pass the current workspace root explicitly when the tool schema offers `root`; plugin installs may launch the MCP server from the plugin directory rather than the user's project. If the tool says TokenGraph is running from its plugin directory, retry with the explicit workspace root. If the status reports `missing` or `stale`, call `tokengraph_index_project` with the same root. Use `fullReindex: true` only when the user asks for a full rebuild or the index looks corrupt.
 3. After indexing, use `tokengraph_generate_wiki` when the wiki is missing or stale. If `wikiGenerationEnabled` is true, indexing should refresh it automatically; still check `wikiStatus` before trusting a page.
@@ -41,6 +43,7 @@ If the TokenGraph MCP tools are not exposed in the current thread, say that brie
 ## Useful Prompts
 
 - "Use TokenGraph to index this project and show the project map."
+- "Use TokenGraph to check whether this host is ready to access the project."
 - "Use TokenGraph to generate the local wiki and show the overview page."
 - "Use TokenGraph to switch to the aggressive token-saving profile."
 - "Use TokenGraph to check whether this project index is stale."

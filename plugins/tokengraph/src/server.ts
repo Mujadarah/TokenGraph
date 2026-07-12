@@ -91,37 +91,124 @@ async function isPluginRoot(root: string): Promise<boolean> {
 }
 
 type TrustedWorkspaceProvider = () => Promise<string | undefined>;
+type TrustedWorkspaceSource = "CLAUDE_PROJECT_DIR" | "TOKENGRAPH_WORKSPACE_ROOT" | "mcp-roots" | "process-cwd" | "injected";
 
-async function resolveTrustedWorkspace(server: McpServer): Promise<string | undefined> {
-  const configured = process.env.CLAUDE_PROJECT_DIR?.trim() || process.env.TOKENGRAPH_WORKSPACE_ROOT?.trim();
-  if (configured) return configured;
+interface TrustedWorkspaceCandidate {
+  source: TrustedWorkspaceSource;
+  root: string;
+}
+
+interface WorkspaceSetupStatus {
+  status: "ready" | "blocked";
+  host: "claude-code" | "codex" | "unknown";
+  trustedWorkspace: TrustedWorkspaceCandidate | null;
+  blockingReason: "missing-trusted-workspace" | "unsafe-trusted-workspace" | "unreadable-trusted-workspace" | null;
+  pluginRootLaunch: boolean;
+  message: string;
+  nextSteps: string[];
+}
+
+async function resolveTrustedWorkspace(server: McpServer): Promise<TrustedWorkspaceCandidate | undefined> {
+  const claudeRoot = process.env.CLAUDE_PROJECT_DIR?.trim();
+  if (claudeRoot) return { source: "CLAUDE_PROJECT_DIR", root: claudeRoot };
+  const codexRoot = process.env.TOKENGRAPH_WORKSPACE_ROOT?.trim();
+  if (codexRoot) return { source: "TOKENGRAPH_WORKSPACE_ROOT", root: codexRoot };
 
   try {
     const roots = await server.server.listRoots({}, { timeout: 1_000 });
     const fileRoot = roots.roots.find((root) => root.uri.startsWith("file://"));
-    return fileRoot ? fileURLToPath(fileRoot.uri) : undefined;
+    return fileRoot ? { source: "mcp-roots", root: fileURLToPath(fileRoot.uri) } : undefined;
   } catch {
     return undefined;
   }
 }
 
+function detectedHost(): WorkspaceSetupStatus["host"] {
+  if (process.env.CLAUDE_PROJECT_DIR?.trim() || process.env.CLAUDE_CODE) return "claude-code";
+  if (Object.keys(process.env).some((name) => name.startsWith("CODEX_"))) return "codex";
+  return "unknown";
+}
+
+async function inspectWorkspaceSetup(server: McpServer, provider?: TrustedWorkspaceProvider): Promise<WorkspaceSetupStatus> {
+  const cwd = await realpath(process.cwd());
+  const pluginRootLaunch = await isPluginRoot(cwd);
+  const injected = provider ? await provider() : undefined;
+  const candidate = injected
+    ? { source: "injected" as const, root: injected }
+    : await resolveTrustedWorkspace(server) ?? (!pluginRootLaunch ? { source: "process-cwd" as const, root: cwd } : undefined);
+  const nextSteps = [
+    "Codex PowerShell: $env:TOKENGRAPH_WORKSPACE_ROOT=(Get-Location).Path; codex",
+    "Codex POSIX shell: TOKENGRAPH_WORKSPACE_ROOT=\"$PWD\" codex",
+    "Claude Code normally forwards CLAUDE_PROJECT_DIR automatically.",
+    "After changing host configuration, start a new Codex task or run /reload-plugins in Claude Code."
+  ];
+
+  if (!candidate) {
+    return {
+      status: "blocked",
+      host: detectedHost(),
+      trustedWorkspace: null,
+      blockingReason: "missing-trusted-workspace",
+      pluginRootLaunch,
+      message: "TokenGraph needs a trusted workspace from the host before project tools can access files.",
+      nextSteps
+    };
+  }
+
+  let root: string;
+  try {
+    root = await realpath(candidate.root);
+  } catch {
+    return {
+      status: "blocked",
+      host: detectedHost(),
+      trustedWorkspace: { ...candidate, root: resolve(candidate.root) },
+      blockingReason: "unreadable-trusted-workspace",
+      pluginRootLaunch,
+      message: "The host-provided TokenGraph workspace does not exist or is not readable.",
+      nextSteps
+    };
+  }
+
+  const home = await realpath(homedir());
+  const trustedWorkspace = { ...candidate, root };
+  if (root === parse(root).root || root === home) {
+    return {
+      status: "blocked",
+      host: detectedHost(),
+      trustedWorkspace,
+      blockingReason: "unsafe-trusted-workspace",
+      pluginRootLaunch,
+      message: "TokenGraph refuses filesystem and home directories as trusted workspace roots.",
+      nextSteps
+    };
+  }
+
+  return {
+    status: "ready",
+    host: detectedHost(),
+    trustedWorkspace,
+    blockingReason: null,
+    pluginRootLaunch,
+    message: "TokenGraph has a safe host-provided workspace boundary.",
+    nextSteps: []
+  };
+}
+
 function createWorkspaceResolver(server: McpServer, provider?: TrustedWorkspaceProvider) {
   return async (inputRoot?: string): Promise<string> => {
-    const cwd = await realpath(process.cwd());
-    const configured = await (provider?.() ?? resolveTrustedWorkspace(server));
-    const allowedRoot = configured
-      ? await realpath(configured)
-      : await isPluginRoot(cwd)
-        ? undefined
-        : cwd;
-    if (!allowedRoot) {
+    const setup = await inspectWorkspaceSetup(server, provider);
+    if (setup.blockingReason === "missing-trusted-workspace") {
       throw new Error("TokenGraph needs a trusted workspace root from the host before it can access project files.");
     }
-
-    const home = await realpath(homedir());
-    if (allowedRoot === parse(allowedRoot).root || allowedRoot === home) {
+    if (setup.blockingReason === "unsafe-trusted-workspace") {
       throw new Error("TokenGraph refuses filesystem and home directories as workspace roots.");
     }
+    if (setup.blockingReason === "unreadable-trusted-workspace") {
+      throw new Error(setup.message);
+    }
+    const allowedRoot = setup.trustedWorkspace?.root;
+    if (!allowedRoot) throw new Error(setup.message);
 
     const requested = inputRoot?.trim() ? resolve(allowedRoot, inputRoot.trim()) : allowedRoot;
     let resolvedRoot: string;
@@ -406,8 +493,19 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
 }
 
 export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWorkspaceProvider } = {}): McpServer {
-  const server = new McpServer({ name: "tokengraph", version: "0.18.0" });
+  const server = new McpServer({ name: "tokengraph", version: "0.19.0" });
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
+
+  server.registerTool(
+    "tokengraph_setup_status",
+    {
+      title: "TokenGraph Setup Status",
+      description: "Use this when TokenGraph project tools are blocked to diagnose host workspace trust without reading project files.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({})
+    },
+    async () => ok(await inspectWorkspaceSetup(server, options.trustedWorkspace))
+  );
 
   server.registerTool(
     "tokengraph_index_project",

@@ -1,20 +1,34 @@
 # TokenGraph Release Plugin
 
-This folder is the installable TokenGraph plugin for Codex and Claude Code users.
+This folder is the installable TokenGraph 0.19.0 plugin for Codex and Claude Code users.
 
-It includes the self-contained MCP runtime at `dist/index.js`, host manifests, MCP configs, skills, package metadata, and license. A normal user install from a marketplace should not require `pnpm install`, `pnpm build`, TypeScript, or a local dependency install inside this folder.
+It includes the self-contained Node.js 22 MCP runtime at `dist/index.js`, host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
 
 ## Install
 
-Add the repository root as a Codex marketplace source:
+Recommended GitHub install for Codex:
 
 ```powershell
-codex plugin marketplace add C:\path\to\TokenGraph
+codex plugin marketplace add Mujadarah/TokenGraph
+codex plugin add tokengraph@tokengraph
 ```
 
-Then install `tokengraph` from that marketplace and start a new Codex thread. The root marketplace points to `./release/tokengraph`.
+For an extracted release ZIP, add the bundle directory that contains this `tokengraph/` folder, not this plugin folder itself:
 
-For Claude Code, add the repository's `.claude-plugin/marketplace.json` marketplace and install `tokengraph`. Claude launches through `${CLAUDE_PLUGIN_ROOT}` and forwards `${CLAUDE_PROJECT_DIR}` as the trusted workspace root.
+```powershell
+codex plugin marketplace add C:\path\to\tokengraph-0.19.0
+codex plugin add tokengraph@tokengraph
+```
+
+Claude Code GitHub install:
+
+```text
+/plugin marketplace add Mujadarah/TokenGraph
+/plugin install tokengraph@tokengraph
+/reload-plugins
+```
+
+Claude launches through `${CLAUDE_PLUGIN_ROOT}` and forwards `${CLAUDE_PROJECT_DIR}`. Codex must provide MCP Roots or inherit `TOKENGRAPH_WORKSPACE_ROOT`. Call `tokengraph_setup_status` before project tools; it diagnoses setup without granting filesystem trust.
 
 ## Runtime
 
@@ -26,7 +40,7 @@ node ./dist/index.js
 
 The server is local-first. It indexes the selected workspace locally and stores project state under `.tokengraph/` in that workspace.
 
-TokenGraph does not require an OpenAI API key, cloud sync, an embeddings service, telemetry, or a paid external API. Token savings are estimates.
+TokenGraph stores project state under `.tokengraph/` inside the trusted workspace. Token savings are estimates.
 
 ## Maintainers
 
@@ -39,4 +53,4 @@ pnpm package:plugin -- --release
 pnpm validate:plugin
 ```
 
-Version: 0.18.0
+Version: 0.19.0

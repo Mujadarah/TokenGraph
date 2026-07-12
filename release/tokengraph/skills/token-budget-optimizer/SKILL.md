@@ -10,6 +10,8 @@ Use this skill when a task risks excessive context use or when a coding agent ne
 
 ## MCP tools to call
 
+Call `tokengraph_setup_status` first when project-aware planning is needed. If it reports `blocked`, follow its recovery steps before using project tools.
+
 1. Call `tokengraph_get_config` to inspect the active token-saving profile and limits.
 2. Call `tokengraph_set_profile` only when the user asks for a different profile or the task clearly needs a temporary conservative, balanced, or aggressive mode.
 3. Call `tokengraph_update_config` for explicit local limits when requested.

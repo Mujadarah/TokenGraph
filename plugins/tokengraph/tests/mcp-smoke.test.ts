@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -8,12 +8,14 @@ import { indexProject } from "../src/core/projectIndexer.js";
 
 interface JsonRpcResponse {
   id?: number | string;
+  method?: string;
   result?: unknown;
   error?: { code: number; message: string };
 }
 
 const tempRoots: string[] = [];
 let server: ChildProcessWithoutNullStreams | undefined;
+let advertisedRoots: Array<{ uri: string; name?: string }> | undefined;
 const serverEntry = resolve("dist/index.js");
 
 async function makeRoot(): Promise<string> {
@@ -41,6 +43,10 @@ function readResponse(id: number, timeoutMs = 5000): Promise<JsonRpcResponse> {
       for (const line of lines) {
         if (!line.trim()) continue;
         const parsed = JSON.parse(line) as JsonRpcResponse;
+        if (parsed.method === "roots/list" && parsed.id !== undefined && advertisedRoots) {
+          send({ id: parsed.id, result: { roots: advertisedRoots } });
+          continue;
+        }
         if (parsed.id === id) {
           cleanup();
           resolve(parsed);
@@ -113,6 +119,7 @@ async function stopServer() {
 }
 
 beforeEach(() => {
+  advertisedRoots = undefined;
   startServer();
 });
 
@@ -151,6 +158,7 @@ describe("TokenGraph MCP stdio server", () => {
     expect(toolNames).toEqual(
       expect.arrayContaining([
         "tokengraph_index_project",
+        "tokengraph_setup_status",
         "tokengraph_index_status",
         "tokengraph_reset_project",
         "tokengraph_get_config",
@@ -180,6 +188,7 @@ describe("TokenGraph MCP stdio server", () => {
         "tokengraph_assess_change_risk"
       ])
     );
+    expect(listedTools.find((tool) => tool.name === "tokengraph_setup_status")?.annotations?.readOnlyHint).toBe(true);
     const indexWritingTools = [
       "tokengraph_check_architecture",
       "tokengraph_trace_failure",
@@ -1077,6 +1086,18 @@ describe("TokenGraph MCP stdio server", () => {
     });
     send({ method: "notifications/initialized" });
 
+    const setup = await request(42, "tools/call", {
+      name: "tokengraph_setup_status",
+      arguments: {}
+    });
+    expect(setup.structuredContent).toMatchObject({
+      status: "blocked",
+      trustedWorkspace: null,
+      blockingReason: "missing-trusted-workspace",
+      pluginRootLaunch: true
+    });
+    expect(JSON.stringify(setup)).toMatch(/TOKENGRAPH_WORKSPACE_ROOT/);
+
     const mapped = await request(41, "tools/call", {
       name: "tokengraph_project_map",
       arguments: { root }
@@ -1101,11 +1122,90 @@ describe("TokenGraph MCP stdio server", () => {
     });
     send({ method: "notifications/initialized" });
 
+    const setup = await request(45, "tools/call", {
+      name: "tokengraph_setup_status",
+      arguments: {}
+    });
+    expect(setup.structuredContent).toMatchObject({
+      status: "ready",
+      trustedWorkspace: { source: "TOKENGRAPH_WORKSPACE_ROOT", root },
+      blockingReason: null,
+      pluginRootLaunch: true
+    });
+
     const mapped = await request(44, "tools/call", {
       name: "tokengraph_project_map",
       arguments: { root }
     });
     expect(mapped.structuredContent).toMatchObject({ root, counts: { files: 1 } });
+  });
+
+  it("reports Claude Code workspace trust without granting a different root", async () => {
+    const root = await makeRoot();
+    const outsideRoot = await makeRoot();
+    await stopServer();
+    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: "", CLAUDE_PROJECT_DIR: root });
+
+    await request(46, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.19.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const setup = await request(47, "tools/call", { name: "tokengraph_setup_status", arguments: {} });
+    expect(setup.structuredContent).toMatchObject({
+      status: "ready",
+      host: "claude-code",
+      trustedWorkspace: { source: "CLAUDE_PROJECT_DIR", root }
+    });
+
+    const mapped = await request(48, "tools/call", {
+      name: "tokengraph_project_map",
+      arguments: { root: outsideRoot }
+    });
+    expect(mapped.isError).toBe(true);
+    expect(JSON.stringify(mapped)).toMatch(/outside the trusted workspace/i);
+  });
+
+  it("reports MCP Roots workspace trust when the client advertises a file root", async () => {
+    const root = await makeRoot();
+    advertisedRoots = [{ uri: new URL(`file:///${root.replace(/\\/g, "/")}`).href, name: "workspace" }];
+    await stopServer();
+    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: "", CLAUDE_PROJECT_DIR: "" });
+
+    await request(49, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: { roots: { listChanged: false } },
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.19.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const setup = await request(50, "tools/call", { name: "tokengraph_setup_status", arguments: {} });
+    expect(setup.structuredContent).toMatchObject({
+      status: "ready",
+      trustedWorkspace: { source: "mcp-roots", root }
+    });
+  });
+
+  it("reports unsafe host roots as blocked", async () => {
+    const unsafeRoot = homedir();
+    await stopServer();
+    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: unsafeRoot, CLAUDE_PROJECT_DIR: "" });
+
+    await request(51, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-smoke-test", version: "0.19.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const setup = await request(52, "tools/call", { name: "tokengraph_setup_status", arguments: {} });
+    expect(setup.structuredContent).toMatchObject({
+      status: "blocked",
+      blockingReason: "unsafe-trusted-workspace",
+      trustedWorkspace: { source: "TOKENGRAPH_WORKSPACE_ROOT", root: unsafeRoot }
+    });
   });
 
   it("summarizes v0.5 SQL objects over JSON-RPC stdio", async () => {

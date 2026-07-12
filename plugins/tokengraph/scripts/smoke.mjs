@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultServerEntry = resolve(pluginRoot, "dist", "index.js");
 const requiredTools = [
+  "tokengraph_setup_status",
   "tokengraph_index_status",
   "tokengraph_get_config",
   "tokengraph_set_profile",
@@ -196,7 +197,7 @@ async function runSmoke() {
     await client.request("initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-cli-smoke", version: "0.18.0" }
+      clientInfo: { name: "tokengraph-cli-smoke", version: "0.19.0" }
     });
     client.notify("notifications/initialized");
 

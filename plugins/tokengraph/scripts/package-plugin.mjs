@@ -2,6 +2,7 @@
 import { access, chmod, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { zipSync } from "fflate";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(pluginRoot, "..", "..");
@@ -12,7 +13,7 @@ function usage() {
   return [
     "Usage: node scripts/package-plugin.mjs [--out <directory>] [--release] [--out-release <directory>] [--json]",
     "",
-    "Builds a distributable TokenGraph plugin folder containing compiled dist output.",
+    "Builds a standalone Codex and Claude Code marketplace bundle containing compiled dist output.",
     "",
     "Default output remains artifacts/tokengraph-<version>/ for local release testing.",
     "--release writes the committed one-click install plugin at release/tokengraph/.",
@@ -78,21 +79,35 @@ async function copyRequiredPath(source, destination) {
 function buildReleaseReadme(version) {
   return `# TokenGraph Release Plugin
 
-This folder is the installable TokenGraph plugin for Codex and Claude Code users.
+This folder is the installable TokenGraph ${version} plugin for Codex and Claude Code users.
 
-It includes the self-contained MCP runtime at \`dist/index.js\`, host manifests, MCP configs, skills, package metadata, and license. A normal user install from a marketplace should not require \`pnpm install\`, \`pnpm build\`, TypeScript, or a local dependency install inside this folder.
+It includes the self-contained Node.js 22 MCP runtime at \`dist/index.js\`, host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
 
 ## Install
 
-Add the repository root as a Codex marketplace source:
+Recommended GitHub install for Codex:
 
 \`\`\`powershell
-codex plugin marketplace add C:\\path\\to\\TokenGraph
+codex plugin marketplace add Mujadarah/TokenGraph
+codex plugin add tokengraph@tokengraph
 \`\`\`
 
-Then install \`tokengraph\` from that marketplace and start a new Codex thread. The root marketplace points to \`./release/tokengraph\`.
+For an extracted release ZIP, add the bundle directory that contains this \`tokengraph/\` folder, not this plugin folder itself:
 
-For Claude Code, add the repository's \`.claude-plugin/marketplace.json\` marketplace and install \`tokengraph\`. Claude launches through \`\${CLAUDE_PLUGIN_ROOT}\` and forwards \`\${CLAUDE_PROJECT_DIR}\` as the trusted workspace root.
+\`\`\`powershell
+codex plugin marketplace add C:\\path\\to\\tokengraph-${version}
+codex plugin add tokengraph@tokengraph
+\`\`\`
+
+Claude Code GitHub install:
+
+\`\`\`text
+/plugin marketplace add Mujadarah/TokenGraph
+/plugin install tokengraph@tokengraph
+/reload-plugins
+\`\`\`
+
+Claude launches through \`\${CLAUDE_PLUGIN_ROOT}\` and forwards \`\${CLAUDE_PROJECT_DIR}\`. Codex must provide MCP Roots or inherit \`TOKENGRAPH_WORKSPACE_ROOT\`. Call \`tokengraph_setup_status\` before project tools; it diagnoses setup without granting filesystem trust.
 
 ## Runtime
 
@@ -104,7 +119,7 @@ node ./dist/index.js
 
 The server is local-first. It indexes the selected workspace locally and stores project state under \`.tokengraph/\` in that workspace.
 
-TokenGraph does not require an OpenAI API key, cloud sync, an embeddings service, telemetry, or a paid external API. Token savings are estimates.
+TokenGraph stores project state under \`.tokengraph/\` inside the trusted workspace. Token savings are estimates.
 
 ## Maintainers
 
@@ -176,14 +191,62 @@ async function listFiles(root, base = root) {
   return files;
 }
 
+function buildCodexMarketplace(pluginPath) {
+  return {
+    name: "tokengraph",
+    interface: { displayName: "TokenGraph" },
+    plugins: [{
+      name: "tokengraph",
+      source: { source: "local", path: pluginPath },
+      policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+      category: "Developer Tools"
+    }]
+  };
+}
+
+function buildClaudeMarketplace(version, pluginPath) {
+  return {
+    name: "tokengraph",
+    owner: { name: "Mujadarah" },
+    metadata: {
+      description: "Local-first project context routing for Codex and Claude Code."
+    },
+    plugins: [{
+      name: "tokengraph",
+      source: pluginPath,
+      version,
+      description: "Route coding agents through compact local code, SQL, memory, wiki, and log context.",
+      category: "Developer Tools",
+      tags: ["mcp", "code-intelligence", "local-first", "context"]
+    }]
+  };
+}
+
+async function writeMarketplace(path, value) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function writeDeterministicArchive(bundleDir, archivePath) {
+  const files = await listFiles(bundleDir);
+  const entries = {};
+  for (const file of files) {
+    entries[file] = [await readFile(resolve(bundleDir, file)), { mtime: new Date("1980-01-01T00:00:00.000Z") }];
+  }
+  await writeFile(archivePath, zipSync(entries, { level: 9, mtime: new Date("1980-01-01T00:00:00.000Z") }));
+}
+
 async function runPackage() {
   const args = parseArgs(process.argv.slice(2));
   const packageJson = await readJson(resolve(pluginRoot, "package.json"));
   const manifest = await readJson(resolve(pluginRoot, ".codex-plugin", "plugin.json"));
   const version = packageJson.version;
   const packageName = `tokengraph-${version}`;
-  const packageDir = resolve(args.outRoot, packageName);
-  const marketplacePath = resolve(args.outRoot, ".agents", "plugins", "marketplace.json");
+  const bundleDir = resolve(args.outRoot, packageName);
+  const packageDir = resolve(bundleDir, "tokengraph");
+  const archivePath = resolve(args.outRoot, `${packageName}.zip`);
+  const codexMarketplacePath = resolve(bundleDir, ".agents", "plugins", "marketplace.json");
+  const claudeMarketplacePath = resolve(bundleDir, ".claude-plugin", "marketplace.json");
 
   if (manifest.version?.split("+", 1)[0] !== version) {
     throw new Error(`Plugin manifest base version ${manifest.version} does not match package version ${version}.`);
@@ -202,38 +265,23 @@ async function runPackage() {
     };
   }
 
+  await rm(bundleDir, { recursive: true, force: true });
+  await rm(archivePath, { force: true });
   await mkdir(args.outRoot, { recursive: true });
   await copyInstallablePlugin(packageDir, packageJson, version);
-
-  const marketplace = {
-    name: "tokengraph-release",
-    interface: {
-      displayName: "TokenGraph Release"
-    },
-    plugins: [
-      {
-        name: "tokengraph",
-        source: {
-          source: "local",
-          path: `./${packageName}`
-        },
-        policy: {
-          installation: "AVAILABLE",
-          authentication: "ON_INSTALL"
-        },
-        category: "Productivity"
-      }
-    ]
-  };
-  await mkdir(dirname(marketplacePath), { recursive: true });
-  await writeFile(marketplacePath, `${JSON.stringify(marketplace, null, 2)}\n`);
+  await writeMarketplace(codexMarketplacePath, buildCodexMarketplace("./tokengraph"));
+  await writeMarketplace(claudeMarketplacePath, buildClaudeMarketplace(version, "./tokengraph"));
+  await writeDeterministicArchive(bundleDir, archivePath);
 
   return {
     status: "ok",
-    mode: "artifact",
+    mode: "bundle",
     version,
+    bundleDir,
     packageDir,
-    marketplacePath,
+    archivePath,
+    codexMarketplacePath,
+    claudeMarketplacePath,
     files: await listFiles(packageDir)
   };
 }
@@ -248,8 +296,8 @@ runPackage()
     if (report.mode === "release") {
       console.log(`TokenGraph release plugin updated at ${report.releaseDir}`);
     } else {
-      console.log(`TokenGraph plugin package created at ${report.packageDir}`);
-      console.log(`Marketplace file created at ${report.marketplacePath}`);
+      console.log(`TokenGraph marketplace bundle created at ${report.bundleDir}`);
+      console.log(`TokenGraph release archive created at ${report.archivePath}`);
     }
     console.log(`Files packaged: ${report.files.length}`);
   })
