@@ -1,0 +1,1 @@
+{"name":"evidence-project","private":true,"scripts":{"test":"vitest run","build":"tsc","smoke":"node scripts/smoke.mjs","validate:plugin":"node scripts/validate-plugin.mjs"}}

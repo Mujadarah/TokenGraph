@@ -1,19 +1,23 @@
 # Current Benchmark Results
 
-Current results are generated from local fixtures with:
+Run the deterministic evidence benchmark from `plugins/tokengraph`:
 
 ```powershell
-cd plugins\tokengraph
 pnpm benchmark -- --json
 ```
 
-The harness reports task-level estimated savings for code graph routing, SQL graph routing, memory recall, wiki orientation, log compression, root cause debugging, regression risk, architecture checks, and release packaging validation.
+The current checked-in corpus and fixture produce:
 
-These numbers are not universal claims. They are local fixture estimates meant to catch regressions in benchmark coverage and proof discipline.
+- Corpus: `evidence-v1`.
+- Tasks: 30.
+- Category counts: code routing 5, SQL/security 5, debugging 4, change risk 4, compression 4, memory/wiki 4, release packaging 4.
+- Critical-constraint preservation: 100%.
+- Critical false negatives: 0.
+- Required-file recall: 1.0 against the checked-in 0.85 baseline.
+- Median net estimated savings: 925 tokens after compact, tool, and footer overhead.
+- Deterministic release gate: pass.
+- Task failures: 11. Ten include forbidden-file false positives exposed by broad lexical matches or import closure; two identify a missing expected test recommendation, with one task reporting both conditions.
 
-## Current Status
+Calibration entries contain four or five observations per category. Every category is therefore low-confidence; the benchmark does not claim statistical confidence from these samples.
 
-- Harness: `plugins/tokengraph/scripts/benchmark.mjs`
-- Fixture root: `plugins/tokengraph/tests/fixtures/next-supabase`
-- Claims policy: no universal 95 percent token reduction claim
-- Quality policy: compression and routing must preserve the option to perform targeted raw reads when needed
+These results are deterministic fixture evidence, not universal agent-output proof. They do not demonstrate patch quality or exact billed-token savings. Paired Codex and Claude evaluation remains a later release gate.

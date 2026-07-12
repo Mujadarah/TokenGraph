@@ -139,42 +139,46 @@ describe("tokengraph benchmark harness and trust docs", () => {
       { cwd: process.cwd() }
     );
     const report = JSON.parse(stdout) as {
-      status: string;
-      claimsPolicy: string[];
+      schemaId: string;
+      corpusVersion: string;
       tasks: Array<{
-        taskType: string;
+        category: string;
         metrics: Record<string, unknown>;
       }>;
+      aggregate: { taskCount: number; categoryCounts: Record<string, number>; medianNetSavings: number };
+      releaseGate: { passed: boolean; failureReasons: string[] };
+      calibration: { categories: Record<string, { observations: number; confidence: string }> };
     };
 
-    expect(report.status).toBe("ok");
-    expect(report.claimsPolicy.join("\n")).toMatch(/Do not claim universal 95 percent token reduction/i);
-    expect(report.tasks.map((task) => task.taskType).sort()).toEqual([
-      "architecture-check",
-      "code-graph-routing",
-      "log-compression",
-      "memory-recall",
-      "regression-risk",
-      "release-packaging-validation",
-      "root-cause-debugging",
-      "sql-graph-routing",
-      "wiki-orientation"
+    expect(report.schemaId).toBe("tokengraph-evidence-benchmark-report");
+    expect(report.corpusVersion).toBe("evidence-v1");
+    expect(report.aggregate.taskCount).toBe(30);
+    expect(Object.keys(report.aggregate.categoryCounts).sort()).toEqual([
+      "change-risk",
+      "code-routing",
+      "compression",
+      "debugging",
+      "memory-wiki",
+      "release-packaging",
+      "sql-security"
     ]);
+    expect(report.aggregate.medianNetSavings).toBeGreaterThan(0);
+    expect(report.releaseGate).toEqual({ passed: true, failureReasons: [] });
     for (const task of report.tasks) {
       expect(task.metrics).toMatchObject({
-        filesRead: expect.any(Number),
-        rawLinesRead: expect.any(Number),
-        estimatedInputTokens: expect.any(Number),
-        estimatedOutputTokens: expect.any(Number),
-        mcpToolCalls: expect.any(Number),
-        timeToUsefulPatchScopeMs: expect.any(Number),
-        falsePositiveFiles: expect.any(Number),
-        falseNegativeFiles: expect.any(Number),
-        testsRecommended: expect.any(Number),
-        testsPassed: expect.any(Number),
-        estimatedTokensAvoided: expect.any(Number)
+        requiredFileRecall: expect.any(Number),
+        falsePositives: expect.any(Array),
+        falseNegatives: expect.any(Array),
+        criticalConstraintPreservation: expect.any(Number),
+        recommendedTests: expect.any(Array),
+        rawTokens: expect.any(Number),
+        compactTokens: expect.any(Number),
+        toolOverheadTokens: expect.any(Number),
+        netEstimatedSavings: expect.any(Number),
+        failureReasons: expect.any(Array)
       });
     }
+    expect(Object.values(report.calibration.categories).every((entry) => entry.observations < 10 && entry.confidence === "low")).toBe(true);
   });
 
   it("ships benchmark and trust documentation with required cautionary statements", async () => {

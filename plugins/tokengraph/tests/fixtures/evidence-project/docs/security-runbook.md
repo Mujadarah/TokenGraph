@@ -1,0 +1,7 @@
+# Tenant security runbook
+
+Every patient and audit query is tenant scoped. Reviewers start with the relevant migration, identify whether row level security is enabled, inspect every policy command and role, and verify that the using and check expressions bind the row to the authenticated tenant. A service-layer filter is useful defense in depth but never replaces a database policy. Changes involving tenant identifiers, authentication helpers, policy roles, grants, security-definer functions, or migrations require a focused security review.
+
+The review records the exact migration path, affected table, policy name, command, role, and expression. It checks that indexes support the tenant predicate without becoming a substitute for authorization. It also checks audit behavior: access to patient data produces an event, the audit row carries tenant identity, and access to audit data is itself tenant scoped. Error handling must not disclose secrets or cross-tenant identifiers.
+
+Regression evidence includes a focused service test, migration parsing evidence, and an explicit manual review warning. A broad green test suite does not by itself prove tenant isolation. When compact context omits surrounding SQL, the agent reads the targeted migration segment before changing a policy. It must never infer that an absent warning means a policy is safe. Deterministic fixtures demonstrate that the router retained known constraints; they do not prove behavior in an arbitrary production schema.
