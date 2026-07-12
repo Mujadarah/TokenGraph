@@ -15,10 +15,10 @@ Follow the common lifecycle in the general `tokengraph` skill:
 
 1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root; if blocked, follow recovery and do not invent a taskId.
 2. Call `tokengraph_prepare_context({ root: trusted root, task })` once and capture its taskId.
-3. Reuse the exact taskId and trusted root. Call `tokengraph_recall({ taskId, root?, mode: "review", query, audit: true })` for conflict, stale-state, or lifecycle review; use recall mode for a narrow current lookup.
+3. Reuse the exact taskId and trusted root. Call `tokengraph_recall({ taskId, root: trusted root, mode: "review", query, audit: true })` for conflict, stale-state, or lifecycle review; use recall mode with the same exact captured root for a narrow current lookup.
 4. Verify drift-prone claims with current evidence from `tokengraph_query_context` and targeted local checks.
-5. When durable knowledge is warranted, call `tokengraph_propose_knowledge({ taskId, root?, action: "propose", ... })`. List, approve, or reject only as explicitly requested. Approval is review state, not content application: never claim approved content was applied while `applicationStatus` is pending. Pause for approval or application and verify applied content separately.
-6. Call `tokengraph_task_report({ taskId, root?, disposition: "complete" })` only after the requested recall or fully applied and verified curation outcome is complete. Use `tokengraph_task_report({ taskId, root?, disposition: "pause" })` for approval, application, missing evidence, blocked setup after creation, or unfinished work.
+5. When durable knowledge is warranted, call `tokengraph_propose_knowledge({ taskId, root: trusted root, action: "propose", ... })`. List, approve, or reject only as explicitly requested and with the same exact captured root. Approval is review state, not content application: never claim approved content was applied while `applicationStatus` is pending. Pause for approval or application and verify applied content separately.
+6. Call `tokengraph_task_report({ taskId, root: trusted root, disposition: "complete" })` only after the requested recall or fully applied and verified curation outcome is complete. Use `tokengraph_task_report({ taskId, root: trusted root, disposition: "pause" })` for approval, application, missing evidence, blocked setup after creation, or unfinished work.
 
 Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use the existing narrow local memory/current-state fallback, and claim no savings or graph-backed evidence.
 
