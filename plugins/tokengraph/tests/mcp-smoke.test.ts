@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { indexProject } from "../src/core/projectIndexer.js";
+import { createTokenGraphServer } from "../src/server.js";
 
 interface JsonRpcResponse {
   id?: number | string;
@@ -17,6 +18,52 @@ const tempRoots: string[] = [];
 let server: ChildProcessWithoutNullStreams | undefined;
 let advertisedRoots: Array<{ uri: string; name?: string }> | undefined;
 const serverEntry = resolve("dist/index.js");
+const coreToolNames = [
+  "tokengraph_analyze",
+  "tokengraph_compress",
+  "tokengraph_prepare_context",
+  "tokengraph_propose_knowledge",
+  "tokengraph_query_context",
+  "tokengraph_recall",
+  "tokengraph_setup",
+  "tokengraph_task_report"
+];
+const legacyToolNames = [
+  "tokengraph_add_rule",
+  "tokengraph_assess_change_risk",
+  "tokengraph_check_architecture",
+  "tokengraph_compress_context",
+  "tokengraph_compress_output",
+  "tokengraph_confirm_memory",
+  "tokengraph_delete_memory",
+  "tokengraph_delete_rule",
+  "tokengraph_deprecate_memory",
+  "tokengraph_explain_symbol",
+  "tokengraph_export_project_map",
+  "tokengraph_find_memory_conflicts",
+  "tokengraph_generate_wiki",
+  "tokengraph_get_config",
+  "tokengraph_index_project",
+  "tokengraph_index_status",
+  "tokengraph_link_memory",
+  "tokengraph_list_rules",
+  "tokengraph_plan_context",
+  "tokengraph_project_map",
+  "tokengraph_recall_memory",
+  "tokengraph_remember_decision",
+  "tokengraph_reset_project",
+  "tokengraph_review_memories",
+  "tokengraph_search_graph",
+  "tokengraph_set_profile",
+  "tokengraph_setup_status",
+  "tokengraph_show_token_savings",
+  "tokengraph_show_wiki_page",
+  "tokengraph_summarize_sql",
+  "tokengraph_trace_failure",
+  "tokengraph_update_config",
+  "tokengraph_update_memory",
+  "tokengraph_update_rule"
+];
 
 async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "tokengraph-mcp-"));
@@ -92,6 +139,9 @@ async function request(id: number, method: string, params?: Record<string, unkno
 
 function startServer(cwd: string = process.cwd(), env: NodeJS.ProcessEnv = {}) {
   const childEnv = { ...process.env, ...env };
+  if (!Object.prototype.hasOwnProperty.call(env, "TOKENGRAPH_TOOL_SURFACE")) {
+    childEnv.TOKENGRAPH_TOOL_SURFACE = "full";
+  }
   if (!env.TOKENGRAPH_WORKSPACE_ROOT && !env.CLAUDE_PROJECT_DIR && cwd !== process.cwd()) {
     childEnv.TOKENGRAPH_WORKSPACE_ROOT = cwd;
   }
@@ -129,6 +179,203 @@ afterEach(async () => {
 });
 
 describe("TokenGraph MCP stdio server", () => {
+  it("advertises exactly eight intent-level tools by default with compact schemas and discovery instructions", async () => {
+    await stopServer();
+    startServer(process.cwd(), { TOKENGRAPH_TOOL_SURFACE: undefined });
+    const initialized = await request(9000, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-core-surface-test", version: "0.20.0" }
+    });
+    send({ method: "notifications/initialized" });
+    const listed = await request(9001, "tools/list");
+    const tools = (listed.tools as Array<{
+      name: string;
+      inputSchema: unknown;
+      annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
+    }>).sort((left, right) => left.name.localeCompare(right.name));
+
+    expect(tools.map((tool) => tool.name)).toEqual(coreToolNames);
+    expect(new Set(tools.map((tool) => tool.name)).size).toBe(8);
+    expect(JSON.stringify(initialized.instructions).slice(0, 2048)).toMatch(/debug|risk|architecture|memory|compress|context/i);
+    expect(JSON.stringify(initialized.instructions)).toMatch(/task-scoped/i);
+    expect(tools.every((tool) => tool.annotations?.destructiveHint === false)).toBe(true);
+    expect(tools.find((tool) => tool.name === "tokengraph_setup")?.annotations?.readOnlyHint).toBe(true);
+    expect(tools.find((tool) => tool.name === "tokengraph_recall")?.annotations?.readOnlyHint).toBe(false);
+    expect(tools.find((tool) => tool.name === "tokengraph_propose_knowledge")?.annotations?.readOnlyHint).toBe(false);
+    expect(tools.find((tool) => tool.name === "tokengraph_task_report")?.annotations?.readOnlyHint).toBe(false);
+    for (const name of ["tokengraph_query_context", "tokengraph_compress", "tokengraph_analyze", "tokengraph_propose_knowledge"]) {
+      const schema = JSON.stringify(tools.find((tool) => tool.name === name)?.inputSchema);
+      expect(schema).toMatch(/oneOf|anyOf/);
+    }
+  });
+
+  it("retains all legacy contracts behind the full surface and materially reduces default schema tokens", async () => {
+    await stopServer();
+    startServer(process.cwd(), { TOKENGRAPH_TOOL_SURFACE: "full" });
+    await request(9010, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-full-surface-test", version: "0.20.0" }
+    });
+    send({ method: "notifications/initialized" });
+    const listed = await request(9011, "tools/list");
+    const tools = listed.tools as Array<{ name: string; description?: string; inputSchema: unknown }>;
+    const names = tools.map((tool) => tool.name).sort();
+
+    expect(names).toEqual([...coreToolNames, ...legacyToolNames].sort());
+    expect(new Set(names).size).toBe(42);
+    expect(tools.filter((tool) => legacyToolNames.includes(tool.name)).every((tool) => /legacy|deprecated/i.test(tool.description ?? ""))).toBe(true);
+    const coreSchemaTokens = Math.ceil(JSON.stringify(tools.filter((tool) => coreToolNames.includes(tool.name)).map((tool) => tool.inputSchema)).length / 4);
+    const legacySchemaTokens = Math.ceil(JSON.stringify(tools.filter((tool) => legacyToolNames.includes(tool.name)).map((tool) => tool.inputSchema)).length / 4);
+    expect(coreSchemaTokens).toBeGreaterThan(0);
+    expect(coreSchemaTokens).toBeLessThan(legacySchemaTokens);
+  });
+
+  it("rejects an invalid tool surface at startup and names the valid values", async () => {
+    const previous = process.env.TOKENGRAPH_TOOL_SURFACE;
+    try {
+      for (const invalid of ["wide", "FULL", " core "]) {
+        process.env.TOKENGRAPH_TOOL_SURFACE = invalid;
+        expect(() => createTokenGraphServer()).toThrow(/TOKENGRAPH_TOOL_SURFACE[\s\S]*core[\s\S]*full/i);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.TOKENGRAPH_TOOL_SURFACE;
+      else process.env.TOKENGRAPH_TOOL_SURFACE = previous;
+    }
+  });
+
+  it("routes a task through all eight core tools without merging ledgers or storing duplicate retry events", async () => {
+    const trustedRoot = await makeRoot();
+    const firstRoot = join(trustedRoot, "first");
+    const secondRoot = join(trustedRoot, "second");
+    await Promise.all([mkdir(join(firstRoot, "src"), { recursive: true }), mkdir(join(secondRoot, "src"), { recursive: true })]);
+    await writeFile(join(firstRoot, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
+    await writeFile(join(secondRoot, "src", "other.ts"), "export const other = true;");
+    await stopServer();
+    startServer(trustedRoot, { TOKENGRAPH_TOOL_SURFACE: "full" });
+    await request(9030, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-core-workflow-test", version: "0.20.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const setupCall = await request(9031, "tools/call", { name: "tokengraph_setup", arguments: {} });
+    expect(setupCall.structuredContent).toMatchObject({ surface: "full", capabilities: expect.any(Object) });
+    const preparedCall = await request(9032, "tools/call", {
+      name: "tokengraph_prepare_context",
+      arguments: { root: "first", task: "Debug patient summary", profile: "balanced", budgets: { maxFiles: 4 }, host: "codex" }
+    });
+    const prepared = preparedCall.structuredContent as { taskId: string; index: { status: string }; plan: unknown; wikiStatus: unknown };
+    expect(prepared).toMatchObject({ taskId: expect.any(String), index: { status: expect.any(String) }, plan: expect.any(Object), wikiStatus: expect.any(Object) });
+    const rememberedCall = await request(9046, "tools/call", {
+      name: "tokengraph_remember_decision",
+      arguments: { root: "first", type: "lesson", title: "Audit-only memory", body: "audit-only patient history", tags: ["audit-only"] }
+    });
+    const remembered = rememberedCall.structuredContent as { memory: { id: string } };
+    await request(9047, "tools/call", {
+      name: "tokengraph_deprecate_memory",
+      arguments: { root: "first", id: remembered.memory.id }
+    });
+    const normalRecallCall = await request(9048, "tools/call", {
+      name: "tokengraph_recall",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "recall", query: "audit-only" }
+    });
+    expect(normalRecallCall.structuredContent).toMatchObject({ result: { memories: [] } });
+    const auditRecallCall = await request(9049, "tools/call", {
+      name: "tokengraph_recall",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "recall", query: "audit-only", audit: true }
+    });
+    expect(auditRecallCall.structuredContent).toMatchObject({ result: { memories: [expect.objectContaining({ id: remembered.memory.id })] } });
+
+    const overviewCall = await request(9033, "tools/call", {
+      name: "tokengraph_query_context",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "overview" }
+    });
+    expect(overviewCall.structuredContent).toMatchObject({ mode: "overview", result: expect.any(Object) });
+    await request(9034, "tools/call", {
+      name: "tokengraph_query_context",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "overview" }
+    });
+    const searchCall = await request(9035, "tools/call", {
+      name: "tokengraph_query_context",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "search", query: "patient summary", limit: 5 }
+    });
+    expect(searchCall.structuredContent).toMatchObject({ mode: "search", result: expect.any(Object) });
+    const invalidSymbol = await request(9036, "tools/call", {
+      name: "tokengraph_query_context",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "symbol" }
+    });
+    expect(invalidSymbol).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/invalid (arguments|input)/i) }] });
+
+    const compressedOutputCall = await request(9037, "tools/call", {
+      name: "tokengraph_compress",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "output", kind: "test", text: "PASS patient summary\nPASS patient route", maxLines: 5 }
+    });
+    expect(compressedOutputCall.structuredContent).toMatchObject({ mode: "output", result: expect.any(Object), estimates: expect.any(Object) });
+    const compressedContextCall = await request(9038, "tools/call", {
+      name: "tokengraph_compress",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "context", task: "Debug patient summary", contentKind: "mixed", text: "patient summary failure" }
+    });
+    expect(compressedContextCall.structuredContent).toMatchObject({ mode: "context", result: expect.any(Object), estimates: expect.any(Object) });
+
+    const recallCall = await request(9039, "tools/call", {
+      name: "tokengraph_recall",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "recall", query: "patient", limit: 5 }
+    });
+    expect(recallCall.structuredContent).toMatchObject({ mode: "recall", result: expect.any(Object) });
+    const analyzeCall = await request(9040, "tools/call", {
+      name: "tokengraph_analyze",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "architecture", files: ["src/patientSummary.ts"] }
+    });
+    expect(analyzeCall.structuredContent).toMatchObject({ mode: "architecture", result: expect.any(Object) });
+
+    const proposedCall = await request(9041, "tools/call", {
+      name: "tokengraph_propose_knowledge",
+      arguments: {
+        root: "first", taskId: prepared.taskId, action: "propose", type: "wiki", title: "Patient summary",
+        rationale: "Document the patient summary entry point", proposedContent: "Patient summaries begin at the indexed function.",
+        sourceFingerprints: ["source-1"], affectedIdentifiers: ["patient-summary"]
+      }
+    });
+    const proposed = proposedCall.structuredContent as { suggestion: { id: string } };
+    expect(proposed.suggestion.id).toEqual(expect.any(String));
+    const distinctProposalCall = await request(9050, "tools/call", {
+      name: "tokengraph_propose_knowledge",
+      arguments: {
+        root: "first", taskId: prepared.taskId, action: "propose", type: "wiki", title: "Patient summary",
+        rationale: "Document a distinct patient summary source", proposedContent: "Patient summaries begin at the indexed function.",
+        sourceFingerprints: ["source-2"], affectedIdentifiers: ["patient-summary-details"]
+      }
+    });
+    expect(distinctProposalCall.structuredContent).toMatchObject({ suggestion: { id: expect.not.stringMatching(new RegExp(`^${proposed.suggestion.id}$`)) } });
+    const approvedCall = await request(9042, "tools/call", {
+      name: "tokengraph_propose_knowledge",
+      arguments: { root: "first", taskId: prepared.taskId, action: "approve", id: proposed.suggestion.id }
+    });
+    expect(approvedCall.structuredContent).toMatchObject({ applicationStatus: "pending" });
+    const listedCall = await request(9043, "tools/call", {
+      name: "tokengraph_propose_knowledge",
+      arguments: { root: "first", taskId: prepared.taskId, action: "list" }
+    });
+    expect(listedCall.structuredContent).toMatchObject({ suggestions: expect.any(Array) });
+
+    const wrongRoot = await request(9044, "tools/call", {
+      name: "tokengraph_recall",
+      arguments: { root: "second", taskId: prepared.taskId, mode: "review" }
+    });
+    expect(wrongRoot).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/ledger|not found/i) }] });
+
+    const reportCall = await request(9045, "tools/call", {
+      name: "tokengraph_task_report",
+      arguments: { root: "first", taskId: prepared.taskId, disposition: "complete" }
+    });
+    const report = reportCall.structuredContent as { disposition: string; report: { taskId: string; eventCount: number } };
+    expect(report).toMatchObject({ disposition: "complete", report: { taskId: prepared.taskId, eventCount: expect.any(Number) } });
+    expect(report.report.eventCount).toBe(13);
+  });
+
   it("lists tools, reports index status, indexes, and resets over JSON-RPC stdio", async () => {
     const root = await makeRoot();
     await stopServer();

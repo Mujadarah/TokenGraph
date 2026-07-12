@@ -56,12 +56,37 @@ describe("tokengraph CLI smoke command", () => {
       root,
       indexStateBeforeMap: "missing",
       filesIndexed: 1,
-      wikiStatus: "fresh"
+      wikiStatus: "missing"
     });
-    expect(report.wikiPageSlugs).toContain("overview");
-    expect(report.tools).toEqual(
-      expect.arrayContaining(["tokengraph_index_status", "tokengraph_project_map", "tokengraph_plan_context", "tokengraph_generate_wiki"])
+    expect(report.wikiPageSlugs).toEqual([]);
+    expect(report.tools).toEqual([
+      "tokengraph_analyze",
+      "tokengraph_compress",
+      "tokengraph_prepare_context",
+      "tokengraph_propose_knowledge",
+      "tokengraph_query_context",
+      "tokengraph_recall",
+      "tokengraph_setup",
+      "tokengraph_task_report"
+    ]);
+    expect(report).toMatchObject({ toolSurface: "core", taskId: expect.any(String) });
+  });
+
+  it("validates the opt-in full MCP surface", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [resolve("scripts", "smoke.mjs"), "--root", root, "--surface", "full", "--json"],
+      { cwd: process.cwd() }
     );
+    const report = JSON.parse(stdout) as { status: string; toolSurface: string; tools: string[] };
+    expect(report).toMatchObject({ status: "ok", toolSurface: "full" });
+    expect(report.tools).toHaveLength(42);
+    expect(new Set(report.tools).size).toBe(42);
+    expect(report.tools).toEqual(expect.arrayContaining(["tokengraph_setup", "tokengraph_index_project", "tokengraph_recall_memory"]));
   });
 
   it("checks README tool coverage for every previously omitted MCP tool", async () => {

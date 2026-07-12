@@ -26,11 +26,24 @@ TokenGraph project tools accept paths only inside a host-provided trusted worksp
 3. A file root returned through MCP Roots.
 4. The process working directory only when the server is not running from an installed plugin directory.
 
-`tokengraph_setup_status` is rootless and read-only. It reports whether setup is ready, the trust source, and exact recovery steps. It never accepts or grants a workspace. Filesystem roots, home directories, unreadable roots, and requested paths outside the trusted workspace remain blocked.
+`tokengraph_setup` is rootless and read-only. It reports whether setup is ready, the trust source, the selected tool surface, and exact recovery steps. It never accepts or grants a workspace. Filesystem roots, home directories, unreadable roots, and requested paths outside the trusted workspace remain blocked.
 
 ## MCP tools
 
-Setup and indexing:
+The default `TOKENGRAPH_TOOL_SURFACE=core` surface exposes exactly eight intent-level, task-scoped tools:
+
+- `tokengraph_setup`
+- `tokengraph_prepare_context`
+- `tokengraph_query_context`
+- `tokengraph_compress`
+- `tokengraph_recall`
+- `tokengraph_analyze`
+- `tokengraph_propose_knowledge`
+- `tokengraph_task_report`
+
+Set `TOKENGRAPH_TOOL_SURFACE=full` before starting the MCP host to add the 34 deprecated compatibility tools below. Their names, schemas, and behavior remain available during migration; prefer the core tools for new tasks.
+
+Legacy setup and indexing:
 
 - `tokengraph_setup_status`
 - `tokengraph_index_project`
@@ -40,7 +53,7 @@ Setup and indexing:
 - `tokengraph_set_profile`
 - `tokengraph_update_config`
 
-Retrieval, wiki, and SQL:
+Legacy retrieval, wiki, and SQL:
 
 - `tokengraph_project_map`
 - `tokengraph_generate_wiki`
@@ -50,13 +63,13 @@ Retrieval, wiki, and SQL:
 - `tokengraph_explain_symbol`
 - `tokengraph_summarize_sql`
 
-Compression and savings:
+Legacy compression and savings:
 
 - `tokengraph_compress_output`
 - `tokengraph_compress_context`
 - `tokengraph_show_token_savings`
 
-Memory lifecycle:
+Legacy memory lifecycle:
 
 - `tokengraph_remember_decision`
 - `tokengraph_review_memories`
@@ -68,7 +81,7 @@ Memory lifecycle:
 - `tokengraph_link_memory`
 - `tokengraph_recall_memory`
 
-Architecture and review:
+Legacy architecture and review:
 
 - `tokengraph_list_rules`
 - `tokengraph_add_rule`

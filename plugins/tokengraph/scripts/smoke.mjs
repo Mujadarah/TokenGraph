@@ -7,38 +7,19 @@ import { fileURLToPath } from "node:url";
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultServerEntry = resolve(pluginRoot, "dist", "index.js");
 const requiredTools = [
-  "tokengraph_setup_status",
-  "tokengraph_index_status",
-  "tokengraph_get_config",
-  "tokengraph_set_profile",
-  "tokengraph_update_config",
-  "tokengraph_project_map",
-  "tokengraph_plan_context",
-  "tokengraph_compress_output",
-  "tokengraph_compress_context",
-  "tokengraph_review_memories",
-  "tokengraph_update_memory",
-  "tokengraph_delete_memory",
-  "tokengraph_deprecate_memory",
-  "tokengraph_confirm_memory",
-  "tokengraph_find_memory_conflicts",
-  "tokengraph_link_memory",
-  "tokengraph_recall_memory",
-  "tokengraph_export_project_map",
-  "tokengraph_generate_wiki",
-  "tokengraph_show_wiki_page",
-  "tokengraph_list_rules",
-  "tokengraph_add_rule",
-  "tokengraph_update_rule",
-  "tokengraph_delete_rule",
-  "tokengraph_check_architecture",
-  "tokengraph_trace_failure",
-  "tokengraph_assess_change_risk"
+  "tokengraph_setup",
+  "tokengraph_prepare_context",
+  "tokengraph_query_context",
+  "tokengraph_compress",
+  "tokengraph_recall",
+  "tokengraph_analyze",
+  "tokengraph_propose_knowledge",
+  "tokengraph_task_report"
 ];
 
 function usage() {
   return [
-    "Usage: node scripts/smoke.mjs [--root <project-root>] [--server <dist/index.js>] [--json] [--timeout <ms>]",
+    "Usage: node scripts/smoke.mjs [--root <project-root>] [--server <dist/index.js>] [--surface <core|full>] [--json] [--timeout <ms>]",
     "",
     "Validates the built TokenGraph stdio MCP server outside Codex by listing tools",
     "and calling read-only project context tools against a local project root."
@@ -49,6 +30,7 @@ function parseArgs(argv) {
   const args = {
     root: process.cwd(),
     server: defaultServerEntry,
+    surface: "core",
     json: false,
     timeoutMs: 10000
   };
@@ -60,6 +42,8 @@ function parseArgs(argv) {
       args.root = readOptionValue(argv, ++index, "--root");
     } else if (arg === "--server") {
       args.server = readOptionValue(argv, ++index, "--server");
+    } else if (arg === "--surface") {
+      args.surface = readOptionValue(argv, ++index, "--surface");
     } else if (arg === "--json") {
       args.json = true;
     } else if (arg === "--timeout") {
@@ -73,6 +57,9 @@ function parseArgs(argv) {
   }
   if (!Number.isInteger(args.timeoutMs) || args.timeoutMs < 1000) {
     throw new Error("--timeout must be an integer greater than or equal to 1000.");
+  }
+  if (args.surface !== "core" && args.surface !== "full") {
+    throw new Error("--surface must be either core or full.");
   }
   return args;
 }
@@ -187,7 +174,7 @@ async function runSmoke() {
 
   const child = spawn(process.execPath, [serverEntry], {
     cwd: root,
-    env: { ...process.env, TOKENGRAPH_WORKSPACE_ROOT: root },
+    env: { ...process.env, TOKENGRAPH_WORKSPACE_ROOT: root, TOKENGRAPH_TOOL_SURFACE: args.surface },
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true
   });
@@ -207,82 +194,72 @@ async function runSmoke() {
     if (missingTools.length) {
       throw new Error(`Missing required tools: ${missingTools.join(", ")}`);
     }
+    const expectedToolCount = args.surface === "core" ? 8 : 42;
+    if (tools.length !== expectedToolCount || new Set(tools).size !== expectedToolCount) {
+      throw new Error(`Expected ${expectedToolCount} unique ${args.surface} tools, received ${tools.length}.`);
+    }
 
-    const status = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_index_status", arguments: { root } }),
-      "tokengraph_index_status"
+    const setup = assertToolResult(
+      await client.request("tools/call", { name: "tokengraph_setup", arguments: {} }),
+      "tokengraph_setup"
     );
-    const map = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_project_map", arguments: { root } }),
-      "tokengraph_project_map"
-    );
-    const plan = assertToolResult(
+    const prepared = assertToolResult(
       await client.request("tools/call", {
-        name: "tokengraph_plan_context",
-        arguments: { root, task: "TokenGraph CLI smoke validation", profile: "aggressive", maxFiles: 3, maxSqlObjects: 3, maxMemories: 0 }
+        name: "tokengraph_prepare_context",
+        arguments: { root, task: "TokenGraph CLI smoke validation", profile: "aggressive", budgets: { maxFiles: 3, maxSqlObjects: 3, maxMemories: 0 } }
       }),
-      "tokengraph_plan_context"
+      "tokengraph_prepare_context"
     );
-    const config = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_get_config", arguments: { root } }),
-      "tokengraph_get_config"
+    const overview = assertToolResult(
+      await client.request("tools/call", { name: "tokengraph_query_context", arguments: { root, taskId: prepared.taskId, mode: "overview" } }),
+      "tokengraph_query_context"
     );
-    const savings = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_show_token_savings", arguments: { root } }),
-      "tokengraph_show_token_savings"
-    );
-    const memoryReview = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_review_memories", arguments: { root, query: "smoke validation", limit: 5 } }),
-      "tokengraph_review_memories"
-    );
-    const projectMapExport = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_export_project_map", arguments: { root, format: "mermaid", limit: 25 } }),
-      "tokengraph_export_project_map"
-    );
-    const compressedContext = assertToolResult(
+    const compressed = assertToolResult(
       await client.request("tools/call", {
-        name: "tokengraph_compress_context",
+        name: "tokengraph_compress",
         arguments: {
-          root,
-          task: "TokenGraph CLI smoke validation must preserve public API smokeValidation",
-          contentKind: "mixed",
-          preserveRawReferences: true,
-          text: [
-            "User constraint: Do not remove public API smokeValidation.",
-            "FAIL scripts/smoke.mjs > smoke validation > keeps required tools",
-            "AssertionError: expected tool to be listed",
-            "Security warning: local-only MCP context must not require telemetry."
-          ].join("\n")
+          root, taskId: prepared.taskId, mode: "output", kind: "test",
+          text: "FAIL scripts/smoke.mjs > smoke validation > keeps required tools\nAssertionError: expected tool to be listed"
         }
       }),
-      "tokengraph_compress_context"
+      "tokengraph_compress"
     );
-    const generatedWiki = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_generate_wiki", arguments: { root } }),
-      "tokengraph_generate_wiki"
+    const memoryReview = assertToolResult(
+      await client.request("tools/call", { name: "tokengraph_recall", arguments: { root, taskId: prepared.taskId, mode: "review", query: "smoke validation", limit: 5 } }),
+      "tokengraph_recall"
     );
-    const overviewWiki = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_show_wiki_page", arguments: { root, slug: "overview" } }),
-      "tokengraph_show_wiki_page"
+    const analysis = assertToolResult(
+      await client.request("tools/call", { name: "tokengraph_analyze", arguments: { root, taskId: prepared.taskId, mode: "architecture" } }),
+      "tokengraph_analyze"
+    );
+    const knowledge = assertToolResult(
+      await client.request("tools/call", { name: "tokengraph_propose_knowledge", arguments: { root, taskId: prepared.taskId, action: "list" } }),
+      "tokengraph_propose_knowledge"
+    );
+    const completed = assertToolResult(
+      await client.request("tools/call", { name: "tokengraph_task_report", arguments: { root, taskId: prepared.taskId, disposition: "complete" } }),
+      "tokengraph_task_report"
     );
 
     return {
       status: "ok",
       root,
       serverEntry,
+      toolSurface: setup.surface,
       tools,
-      indexStateBeforeMap: status.state,
-      filesIndexed: map.counts?.files ?? 0,
-      symbolsIndexed: map.counts?.symbols ?? 0,
-      recommendedFirstReads: plan.recommendedFirstReads ?? [],
-      activeProfile: config.tokenSavingProfile,
-      estimatedTokensAvoided: savings.avoided ?? 0,
-      memoriesReviewed: memoryReview.totalMemories ?? 0,
-      exportedMapNodes: projectMapExport.nodeCount ?? 0,
-      exportedMapEdges: projectMapExport.edgeCount ?? 0,
-      compressedContextConfidence: compressedContext.confidence ?? "unknown",
-      wikiPageSlugs: (generatedWiki.pages ?? []).map((page) => page.slug),
-      wikiStatus: overviewWiki.wikiStatus?.state ?? "unknown"
+      taskId: prepared.taskId,
+      indexStateBeforeMap: prepared.index?.previousStatus ?? "unknown",
+      filesIndexed: overview.result?.counts?.files ?? 0,
+      symbolsIndexed: overview.result?.counts?.symbols ?? 0,
+      recommendedFirstReads: prepared.plan?.recommendedFirstReads ?? [],
+      activeProfile: prepared.plan?.profile ?? "unknown",
+      estimatedTokensAvoided: Math.max(0, (compressed.estimates?.original ?? 0) - (compressed.estimates?.compact ?? 0) - (compressed.estimates?.overhead ?? 0)),
+      memoriesReviewed: memoryReview.result?.totalMemories ?? 0,
+      architectureStatus: analysis.result?.status ?? "unknown",
+      knowledgeSuggestions: knowledge.suggestions?.length ?? 0,
+      taskEventCount: completed.report?.eventCount ?? 0,
+      wikiPageSlugs: [],
+      wikiStatus: prepared.wikiStatus?.state ?? "missing"
     };
   } finally {
     await client.close();
