@@ -1,10 +1,60 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 export interface JsonTokenGraphStoreOptions {
   schemaVersion: number;
   dataKey: string;
+}
+
+const FILE_LOCK_ATTEMPTS = 200;
+const FILE_LOCK_WAIT_MS = 10;
+const FILE_LOCK_STALE_MS = 30_000;
+
+async function wait(milliseconds: number): Promise<void> {
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+function isTransientWindowsFsError(error: unknown): boolean {
+  return process.platform === "win32" && ["EPERM", "EBUSY", "EACCES"].includes(String((error as NodeJS.ErrnoException).code));
+}
+
+async function retryTransientWindowsFs<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isTransientWindowsFsError(error) || attempt >= 19) throw error;
+      await wait(FILE_LOCK_WAIT_MS);
+    }
+  }
+}
+
+export async function withFileLock<T>(lockPath: string, operation: () => Promise<T>): Promise<T> {
+  await mkdir(dirname(lockPath), { recursive: true });
+  for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        return await operation();
+      } finally {
+        await handle.close();
+        await retryTransientWindowsFs(async () => rm(lockPath, { force: true }));
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" && !isTransientWindowsFsError(error)) throw error;
+      try {
+        const lockStats = await stat(lockPath);
+        if (Date.now() - lockStats.mtimeMs > FILE_LOCK_STALE_MS) {
+          await retryTransientWindowsFs(async () => rm(lockPath, { force: true }));
+        }
+      } catch (lockError) {
+        if ((lockError as NodeJS.ErrnoException).code !== "ENOENT" && !isTransientWindowsFsError(lockError)) throw lockError;
+      }
+      await wait(FILE_LOCK_WAIT_MS);
+    }
+  }
+  throw new Error("Timed out waiting for a persistence file lock.");
 }
 
 export async function canonicalPersistenceLockKey(root: string, ...segments: string[]): Promise<string> {

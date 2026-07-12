@@ -15,7 +15,7 @@ pnpm package:plugin -- --json
 pnpm package:plugin -- --release --json
 ```
 
-`pnpm build` produces a self-contained Node.js 22 MCP entry at `dist/index.js`. `pnpm package:plugin` creates a standalone Codex/Claude marketplace directory and deterministic ZIP under the repository `artifacts/` directory. `pnpm package:plugin -- --release` regenerates the committed `release/tokengraph/` plugin.
+`pnpm build` produces self-contained Node.js 22 entries at `dist/index.js` for MCP and `dist/hooks.js` for lifecycle hooks. `pnpm package:plugin` creates a standalone Codex/Claude marketplace directory and deterministic ZIP under the repository `artifacts/` directory. `pnpm package:plugin -- --release` regenerates the committed `release/tokengraph/` plugin.
 
 ## Workspace trust
 
@@ -94,7 +94,15 @@ Legacy architecture and review:
 
 ## Packaging contract
 
-The installable plugin contains host manifests, MCP configuration, the bundled `dist/index.js`, skills, README, package metadata, and license. It excludes source, tests, scripts, development dependencies, local state, `dist/server.js`, and `dist/core/`.
+The installable plugin contains host manifests, MCP configuration, `hooks/hooks.json`, the bundled `dist/index.js` and `dist/hooks.js` entries, skills, README, package metadata, and license. It excludes source, tests, scripts, development dependencies, local state, `dist/server.js`, and `dist/core/`.
+
+## Lifecycle hooks
+
+The default `hooks/hooks.json` is auto-discovered by Codex and Claude Code. PostToolUse associates task-aware core tools with a host session, while Stop asks for exactly one pause-or-complete `tokengraph_task_report` call or the exact stored canonical footer. A repeated Stop continuation never blocks again. Paused tasks, unrelated tools, interrupts, and API failures do not produce completion claims.
+
+The adapter reads only documented hook fields and fixed structured MCP response fields. It stores a minimal 30-day session pointer in the host-provided plugin data directory: schema/version, a SHA-256 session hash, task id, trusted root, turn id, and timestamp. It does not store prompts, transcripts, tool inputs, tool responses, or raw response text. Missing or corrupt state fails open with an honest warning and never fabricates savings.
+
+Codex users must review and trust plugin hooks before they run. Hooks can be disabled globally with `[features] hooks = false`; Claude Code users can inspect them with `/hooks` and disable all hooks with `"disableAllHooks": true`. When hooks are off or unavailable, call `tokengraph_task_report` explicitly.
 
 Do not edit `release/tokengraph/` by hand. Change source or the package generator, then regenerate it.
 

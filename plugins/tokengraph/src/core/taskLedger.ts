@@ -10,7 +10,7 @@ import {
   type TaskCalibration,
   type TaskReport
 } from "./taskEstimator.js";
-import { canonicalPersistenceLockKey, writeJsonAtomic } from "./storage.js";
+import { canonicalPersistenceLockKey, withFileLock, writeJsonAtomic } from "./storage.js";
 
 export const TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger" as const;
 export const TASK_LEDGER_SCHEMA_VERSION = 1 as const;
@@ -264,7 +264,8 @@ function netEstimate(event: TaskEvent): number {
 async function enqueueLedgerOperation<T>(root: string, taskId: string, operation: () => Promise<T>): Promise<T> {
   const key = await canonicalPersistenceLockKey(root, ".tokengraph", "tasks", `${taskId}.json`);
   const previous = taskLedgerWriteChains.get(key) ?? Promise.resolve();
-  const current = previous.then(operation, operation);
+  const runWithFileLock = async (): Promise<T> => withFileLock(`${taskLedgerPath(root, taskId)}.lock`, operation);
+  const current = previous.then(runWithFileLock, runWithFileLock);
   let settled: Promise<void>;
   const cleanUp = (): void => {
     if (taskLedgerWriteChains.get(key) === settled) {
@@ -310,19 +311,19 @@ export async function attachTaskHostContext(
 ): Promise<TaskLedger> {
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await requireTaskLedger(root, taskId);
-    if (context.host !== "codex" && context.host !== "claude") {
-      throw new Error("Host context must identify codex or claude.");
+    if (context.host !== "codex" && context.host !== "claude" && context.host !== "unknown") {
+      throw new Error("Host context must identify codex, claude, or unknown.");
     }
     if (!isIdentifier(context.sessionId)) throw new Error("Session id must be non-empty.");
     if (!isIdentifier(context.turnId)) throw new Error("Turn id must be non-empty.");
-    if (ledger.host !== "unknown" && ledger.host !== context.host) {
+    if (context.host !== "unknown" && ledger.host !== "unknown" && ledger.host !== context.host) {
       throw new Error(`Host context conflict: task is already associated with ${ledger.host}.`);
     }
     if (ledger.sessionId !== undefined && ledger.sessionId !== context.sessionId) {
       throw new Error("Session context conflict: task is already associated with another session id.");
     }
 
-    ledger.host = context.host;
+    if (context.host !== "unknown") ledger.host = context.host;
     ledger.sessionId = context.sessionId;
     ledger.turnId = context.turnId;
     ledger.updatedAt = new Date().toISOString();

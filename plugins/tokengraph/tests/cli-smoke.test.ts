@@ -314,6 +314,8 @@ describe("tokengraph release package command", () => {
     const validator = await readFile(resolve("scripts", "validate-plugin.mjs"), "utf8");
     expect(validator).toMatch(/releaseSkillsPath/);
     expect(validator).toMatch(/packaged.*files|packagedFiles/i);
+    expect(validator).toMatch(/STALE_RELEASE_HOOK_TRANSITION_SHA256/);
+    expect(validator).toMatch(/createHash\("sha256"\)/);
   });
 
   it("keeps the root marketplace pointed at a committed installable release plugin", async () => {
@@ -347,6 +349,9 @@ describe("tokengraph release package command", () => {
     await expect(access(resolve(releaseRoot, ".mcp.json"))).resolves.toBeUndefined();
     await expect(access(resolve(releaseRoot, ".mcp.claude.json"))).resolves.toBeUndefined();
     await expect(access(resolve(releaseRoot, "dist", "index.js"))).resolves.toBeUndefined();
+    // Phase 3 transition: the committed v0.19 release remains valid until Phase 5 regenerates it.
+    await expect(access(resolve(releaseRoot, "dist", "hooks.js"))).rejects.toThrow();
+    await expect(access(resolve(releaseRoot, "hooks", "hooks.json"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "dist", "server.js"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "dist", "core"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "skills", "tokengraph", "SKILL.md"))).resolves.toBeUndefined();
@@ -393,7 +398,9 @@ describe("tokengraph release package command", () => {
         ".claude-plugin/plugin.json",
         ".mcp.json",
         ".mcp.claude.json",
+        "dist/hooks.js",
         "dist/index.js",
+        "hooks/hooks.json",
         "skills/tokengraph/SKILL.md",
         "README.md",
         "LICENSE",
@@ -429,6 +436,8 @@ describe("tokengraph release package command", () => {
     expect(archiveListing).toEqual(expect.arrayContaining([
       ".agents/plugins/marketplace.json",
       ".claude-plugin/marketplace.json",
+      "tokengraph/dist/hooks.js",
+      "tokengraph/hooks/hooks.json",
       "tokengraph/dist/index.js"
     ]));
     expect(archiveListing.join("\n")).not.toMatch(/tokengraph\/(src|tests|node_modules)\//);
@@ -479,7 +488,9 @@ describe("tokengraph release package command", () => {
         ".claude-plugin/plugin.json",
         ".mcp.json",
         ".mcp.claude.json",
+        "dist/hooks.js",
         "dist/index.js",
+        "hooks/hooks.json",
         "skills/tokengraph/SKILL.md",
         "README.md",
         "LICENSE",

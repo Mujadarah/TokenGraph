@@ -92,7 +92,7 @@ describe("bundled skill contracts", () => {
     expect(body).toMatch(/blocked setup.*recovery/is);
     expect(body).toMatch(/exact taskId/i);
     expect(body).toMatch(/never.*completed.*taskId/is);
-    expect(body).toMatch(/hook enforcement.*Phase 3/i);
+    expect(body).toMatch(/lifecycle hook.*normal Stop/i);
   });
 
   const specialized: Record<string, RegExp[]> = {

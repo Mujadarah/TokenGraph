@@ -7,6 +7,7 @@ Official references:
 - https://developers.openai.com/codex/plugins
 - https://developers.openai.com/codex/plugins/build
 - https://developers.openai.com/codex/mcp
+- https://developers.openai.com/codex/hooks
 
 ## Install from GitHub
 
@@ -34,6 +35,21 @@ TOKENGRAPH_WORKSPACE_ROOT="$PWD" codex
 For Codex Desktop, the task must receive MCP Roots or the app process must inherit `TOKENGRAPH_WORKSPACE_ROOT`. A root argument passed by a tool caller is never treated as authority.
 
 Call `tokengraph_setup_status` first. A `blocked` result includes the missing or unsafe trust reason and recovery commands without reading project files. A `ready` result identifies the trusted source and root.
+
+## Lifecycle hook trust and control
+
+Codex auto-discovers TokenGraph's `hooks/hooks.json`, but installing or enabling a plugin does not trust its hooks. Review and trust the current definition before expecting PostToolUse task tracking or Stop completion checks. Codex supplies `PLUGIN_ROOT`/`PLUGIN_DATA` and the Claude-compatible aliases used by the shared adapter.
+
+The hook stores only a session hash, task id, trusted root, turn id, schema/version, and timestamp in plugin data for up to 30 days. It never stores prompts, transcripts, or tool payloads. On a normal Stop it can request one exact pause-or-complete report call or the exact canonical footer. Its retry continuation fails open with a warning rather than looping.
+
+To disable hooks globally, set this in Codex `config.toml` and restart the task:
+
+```toml
+[features]
+hooks = false
+```
+
+When the hook is disabled, untrusted, missing state, or the turn ends through an interrupt or API failure, call `tokengraph_task_report` explicitly. Those abnormal endings are not completion claims.
 
 ## Install an extracted release bundle
 

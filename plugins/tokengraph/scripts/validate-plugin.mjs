@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { access, readFile, readdir } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,11 @@ const requiredFocusedSkillDirs = [
   "memory-curator",
   "release-packaging-auditor"
 ];
+const STALE_RELEASE_HOOK_TRANSITION_SHA256 = {
+  entry: "4bf2d6eef68c8a625525573ec64c8d40d7a10d7735aa7bab5298fccc080772f1",
+  readme: "ee606e4bf0adf4ed93bc359b144085eed17d95d47b8f4bb18e5783262bf41451",
+  manifest: "a5b55b47e26ab685a31d9a3e88c2048fa9ca1d4de28b60a0f86b0f7d7b955baf"
+};
 
 function fail(message) {
   console.error(`TokenGraph plugin validation failed: ${message}`);
@@ -96,6 +102,19 @@ async function assertSkillFrontmatter(skillsRoot, label, coreLifecycle = false) 
   return skillFiles;
 }
 
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function sha256(path) {
+  return createHash("sha256").update(await readFile(path)).digest("hex");
+}
+
 async function inspectSkillContract(skillsRoot, label) {
   const skillFiles = await collectSkillFiles(skillsRoot);
   const skills = await Promise.all(skillFiles.map((skillFile) => readFile(skillFile, "utf8")));
@@ -140,12 +159,16 @@ const claudeManifestPath = resolve(pluginRoot, ".claude-plugin", "plugin.json");
 const claudeMcpPath = resolve(pluginRoot, ".mcp.claude.json");
 const skillsPath = resolve(pluginRoot, "skills");
 const distEntryPath = resolve(pluginRoot, "dist", "index.js");
+const distHooksPath = resolve(pluginRoot, "dist", "hooks.js");
+const hooksManifestPath = resolve(pluginRoot, "hooks", "hooks.json");
 const distServerPath = resolve(pluginRoot, "dist", "index.js");
 const distReviewPath = resolve(pluginRoot, "dist", "core", "review.js");
 const releaseRoot = resolve(repoRoot, "release", "tokengraph");
 const releaseManifestPath = resolve(releaseRoot, ".codex-plugin", "plugin.json");
 const releaseMcpPath = resolve(releaseRoot, ".mcp.json");
 const releaseDistEntryPath = resolve(releaseRoot, "dist", "index.js");
+const releaseDistHooksPath = resolve(releaseRoot, "dist", "hooks.js");
+const releaseHooksManifestPath = resolve(releaseRoot, "hooks", "hooks.json");
 const releaseDistCorePath = resolve(releaseRoot, "dist", "core");
 const releaseSkillsPath = resolve(releaseRoot, "skills");
 const releasePackageJsonPath = resolve(releaseRoot, "package.json");
@@ -170,6 +193,8 @@ const mcp = await readJson(mcpPath);
 const claudeManifest = await readJson(claudeManifestPath);
 const claudeMcp = await readJson(claudeMcpPath);
 const distServer = await readFile(distServerPath, "utf8").catch((error) => fail(`cannot read bundled MCP entry: ${error.message}`));
+const distHooks = await readFile(distHooksPath, "utf8").catch((error) => fail(`cannot read bundled lifecycle hook entry: ${error.message}`));
+const hooksManifest = await readJson(hooksManifestPath);
 const distReview = await readFile(distReviewPath, "utf8").catch((error) => fail(`cannot read built review helpers: ${error.message}`));
 
 assert(packageJson.name === "tokengraph", "package name must be tokengraph");
@@ -185,9 +210,24 @@ assert(manifest.name === "tokengraph", "plugin manifest name must be tokengraph"
 assert(manifest.version?.split("+", 1)[0] === packageJson.version, "plugin manifest base version must match package version");
 assert(manifest.skills === "./skills/", "plugin manifest must point skills to ./skills/");
 assert(manifest.mcpServers === "./.mcp.json", "plugin manifest must point mcpServers to ./.mcp.json");
+assert(manifest.hooks === undefined, "plugin manifest must use default hooks/hooks.json auto-discovery");
 assert(claudeManifest.name === "tokengraph", "Claude plugin manifest name must be tokengraph");
 assert(claudeManifest.version === packageJson.version, "Claude plugin manifest version must match package version");
 assert(claudeManifest.mcpServers === "./.mcp.claude.json", "Claude plugin manifest must point at ./.mcp.claude.json");
+assert(claudeManifest.hooks === undefined, "Claude plugin manifest must use default hooks/hooks.json auto-discovery");
+assert(Object.keys(hooksManifest.hooks ?? {}).sort().join(",") === "PostToolUse,Stop", "hook manifest must define only PostToolUse and Stop");
+const postToolHook = hooksManifest.hooks?.PostToolUse?.[0];
+const stopHook = hooksManifest.hooks?.Stop?.[0];
+const postMatcher = new RegExp(postToolHook?.matcher ?? "a^");
+for (const toolName of ["tokengraph_prepare_context", "tokengraph_query_context", "tokengraph_compress", "tokengraph_recall", "tokengraph_analyze", "tokengraph_propose_knowledge", "tokengraph_task_report"]) {
+  assert(postMatcher.test(`mcp__tokengraph__${toolName}`), `PostToolUse matcher must include ${toolName}`);
+}
+assert(postToolHook?.hooks?.length === 1 && postToolHook.hooks[0]?.type === "command", "PostToolUse must use one command hook");
+assert(postToolHook?.hooks?.[0]?.command === 'node "${CLAUDE_PLUGIN_ROOT}/dist/hooks.js" post-tool-use', "PostToolUse command must use the cross-host Node adapter");
+assert(stopHook?.hooks?.length === 1 && stopHook.hooks[0]?.type === "command", "Stop must use one command hook");
+assert(stopHook?.hooks?.[0]?.command === 'node "${CLAUDE_PLUGIN_ROOT}/dist/hooks.js" stop', "Stop command must use the cross-host Node adapter");
+assert(distHooks.includes("tokengraph-hook-session"), "built lifecycle hook must include the private session pointer schema");
+assert(!distHooks.includes("createTokenGraphServer"), "built lifecycle hook must not bundle or start the MCP server entry");
 const claudeMarketplacePlugin = claudeMarketplace.plugins?.find((plugin) => plugin.name === "tokengraph");
 assert(claudeMarketplace.name === "tokengraph", "Claude marketplace must be named tokengraph");
 assert(claudeMarketplace.owner?.name === "Mujadarah", "Claude marketplace must identify its owner");
@@ -266,6 +306,8 @@ assert(distReview.includes("resourceLinks"), "built review helpers must include 
 assert(distReview.includes("markdownFallback"), "built review helpers must include Markdown diagram fallbacks");
 
 await assertFile(distEntryPath, "built MCP entry");
+await assertFile(distHooksPath, "built lifecycle hook entry");
+await assertFile(hooksManifestPath, "lifecycle hook manifest");
 await assertFile(distServerPath, "built MCP server");
 await assertFile(distReviewPath, "built review helpers");
 await assertFile(buildScriptPath, "bundled build script");
@@ -287,6 +329,13 @@ for (const file of ["codex.md", "claude-code.md", "generic-mcp.md", "cursor-wind
 await assertFile(releaseManifestPath, "release plugin manifest");
 await assertFile(releaseMcpPath, "release MCP config");
 await assertFile(releaseDistEntryPath, "release built MCP entry");
+const releaseHasHooksEntry = await pathExists(releaseDistHooksPath);
+const releaseHasHooksManifest = await pathExists(releaseHooksManifestPath);
+assert(releaseHasHooksEntry === releaseHasHooksManifest, "release transition must contain both lifecycle hook files or neither");
+if (releaseHasHooksEntry) {
+  await assertFile(releaseDistHooksPath, "release built lifecycle hook entry");
+  await assertFile(releaseHooksManifestPath, "release lifecycle hook manifest");
+}
 await assertMissing(releaseDistCorePath, "release dist/core directory");
 await assertMissing(resolve(releaseRoot, "dist", "server.js"), "release built MCP server");
 await assertFile(releaseReadmePath, "release README");
@@ -314,10 +363,31 @@ const sourceReadme = await readFile(sourceReadmePath, "utf8").catch((error) => f
 const codexHostGuide = await readFile(resolve(hostDocsPath, "codex.md"), "utf8").catch((error) => fail(`cannot read Codex host guide: ${error.message}`));
 const claudeHostGuide = await readFile(resolve(hostDocsPath, "claude-code.md"), "utf8").catch((error) => fail(`cannot read Claude Code host guide: ${error.message}`));
 const securityGuide = await readFile(resolve(trustDocsPath, "security.md"), "utf8").catch((error) => fail(`cannot read security guide: ${error.message}`));
+const limitationsGuide = await readFile(resolve(trustDocsPath, "limitations.md"), "utf8").catch((error) => fail(`cannot read limitations guide: ${error.message}`));
+const releaseDeclaresHooks = releaseReadme.includes("dist/hooks.js");
+if (releaseHasHooksManifest) {
+  assert(releaseDeclaresHooks, "generated releases with lifecycle hooks must document dist/hooks.js");
+  const releaseHooksManifest = await readJson(releaseHooksManifestPath);
+  assert(JSON.stringify(releaseHooksManifest) === JSON.stringify(hooksManifest), "release lifecycle hook manifest must match source");
+} else {
+  const staleSnapshot = {
+    entry: await sha256(releaseDistEntryPath),
+    readme: await sha256(releaseReadmePath),
+    manifest: await sha256(releaseManifestPath)
+  };
+  assert(
+    JSON.stringify(staleSnapshot) === JSON.stringify(STALE_RELEASE_HOOK_TRANSITION_SHA256),
+    "only the exact documented stale committed release snapshot may omit dist/hooks.js and hooks/hooks.json"
+  );
+}
 assert(Array.isArray(mcp.mcpServers.tokengraph.env_vars) && mcp.mcpServers.tokengraph.env_vars.includes("TOKENGRAPH_WORKSPACE_ROOT"), "tokengraph MCP config must forward TOKENGRAPH_WORKSPACE_ROOT");
 assert(sourceReadme.includes("TOKENGRAPH_WORKSPACE_ROOT"), "plugin README must document trusted workspace configuration");
 assert(codexHostGuide.includes("TOKENGRAPH_WORKSPACE_ROOT"), "Codex host guide must document trusted workspace configuration");
 assert(claudeHostGuide.includes("CLAUDE_PROJECT_DIR"), "Claude Code host guide must document its trusted project root");
+assert(/review and trust/i.test(codexHostGuide) && /hooks\s*=\s*false/.test(codexHostGuide), "Codex host guide must document hook trust and disablement");
+assert(claudeHostGuide.includes("disableAllHooks") && /interrupt|API failure/i.test(claudeHostGuide), "Claude host guide must document hook disablement and abnormal-stop limits");
+assert(/Phase 5.*remove this transition allowance/i.test(limitationsGuide), "limitations must document the stale committed-release hook transition");
+assert(sourceReadme.includes("dist/hooks.js") && /session hash/i.test(sourceReadme), "plugin README must document hook packaging and pointer privacy");
 assert(/trusted workspace|workspace trust boundary/i.test(securityGuide), "security guide must document the trusted workspace boundary");
 const registeredToolNames = Array.from(distServer.matchAll(/registerTool\(\s*["'](tokengraph_[a-z0-9_]+)["']/g), (match) => match[1]);
 const documentedToolNames = new Set(Array.from(sourceReadme.matchAll(/`(tokengraph_[a-z0-9_]+)`/g), (match) => match[1]));

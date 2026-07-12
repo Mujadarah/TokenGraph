@@ -22,7 +22,7 @@ Use this skill as the router for TokenGraph work. Specialized bundled skills fol
 
 Setup blocked before task creation means recovery without an invented taskId. Setup blocked after task creation means pause the captured task. If core tools are unavailable, state “TokenGraph was not used,” use narrow local `rg`, targeted file reads, and relevant local commands, and never claim savings or graph-backed evidence.
 
-Codex or Claude plugin refresh may require a fresh task or `/reload-plugins`. Hook enforcement is Phase 3, so call `tokengraph_task_report` explicitly and include its returned status manually in the user report for now.
+Codex or Claude plugin refresh may require a fresh task or `/reload-plugins`. The lifecycle hook tracks core tool calls and checks reports and exact footers at normal Stop. If hooks are disabled, untrusted, unavailable, or the turn ends by interrupt or API failure, call `tokengraph_task_report` explicitly and include its returned status manually.
 
 ## Completion discipline
 

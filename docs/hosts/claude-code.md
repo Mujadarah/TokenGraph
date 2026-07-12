@@ -7,6 +7,7 @@ Official references:
 - https://code.claude.com/docs/en/discover-plugins
 - https://code.claude.com/docs/en/plugin-marketplaces
 - https://code.claude.com/docs/en/mcp
+- https://code.claude.com/docs/en/hooks
 
 ## Install from GitHub
 
@@ -43,9 +44,17 @@ Claude Code launches `${CLAUDE_PLUGIN_ROOT}/dist/index.js` and forwards `${CLAUD
 
 After installation:
 
-1. Call `tokengraph_setup_status`; expect `ready` with source `CLAUDE_PROJECT_DIR`.
-2. Call `tokengraph_index_status`.
-3. Index or refresh the project when necessary.
-4. Use `tokengraph_plan_context` before broad raw reads.
+1. Call `tokengraph_setup`; expect a ready trusted workspace from `CLAUDE_PROJECT_DIR`.
+2. Call `tokengraph_prepare_context` once and retain its returned task id and root.
+3. Use task-aware core tools with that exact pair.
+4. Call `tokengraph_task_report` with pause or complete before stopping.
 
 If plugin changes are not visible, run `/reload-plugins`. If setup is blocked, follow the diagnostic response rather than retrying arbitrary roots.
+
+## Lifecycle hook inspection and control
+
+Claude Code auto-discovers `hooks/hooks.json`. Use `/hooks` to confirm TokenGraph's PostToolUse and Stop commands and their plugin source. The shared Node adapter uses `${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_PLUGIN_DATA}` and has no shell, jq, or Python dependency.
+
+The hook stores only a session hash, task id, trusted root, turn id, schema/version, and timestamp in plugin data for up to 30 days. It never reads the transcript or stores prompts and tool payloads. Normal Stop may request one exact report call or the exact canonical footer; when `stop_hook_active` is already true it warns and allows the stop to avoid a loop.
+
+To temporarily disable all Claude Code hooks, set `"disableAllHooks": true` in the applicable settings file. Claude Code does not support disabling just one configured hook; disable the TokenGraph plugin if only its bundled hook must be removed. When hooks are disabled or unavailable, call `tokengraph_task_report` explicitly. User interrupts, StopFailure, and API failures are outside completion enforcement and must not be reported as completed work.

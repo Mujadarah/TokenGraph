@@ -36,4 +36,15 @@ await build({
   logLevel: "silent"
 });
 
+await build({
+  entryPoints: [resolve(pluginRoot, "src", "hooks.ts")],
+  outfile: resolve(pluginRoot, "dist", "hooks.js"),
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node22",
+  logLevel: "silent"
+});
+
 await chmod(resolve(pluginRoot, "dist", "index.js"), 0o755);
+await chmod(resolve(pluginRoot, "dist", "hooks.js"), 0o755);
