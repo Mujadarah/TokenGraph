@@ -6,23 +6,28 @@ import { fileURLToPath } from "node:url";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultServerEntry = resolve(pluginRoot, "dist", "index.js");
-const requiredTools = [
-  "tokengraph_setup",
-  "tokengraph_prepare_context",
-  "tokengraph_query_context",
-  "tokengraph_compress",
-  "tokengraph_recall",
-  "tokengraph_analyze",
-  "tokengraph_propose_knowledge",
-  "tokengraph_task_report"
+const coreToolNames = [
+  "tokengraph_analyze", "tokengraph_compress", "tokengraph_prepare_context", "tokengraph_propose_knowledge",
+  "tokengraph_query_context", "tokengraph_recall", "tokengraph_setup", "tokengraph_task_report"
+];
+const legacyToolNames = [
+  "tokengraph_add_rule", "tokengraph_assess_change_risk", "tokengraph_check_architecture", "tokengraph_compress_context",
+  "tokengraph_compress_output", "tokengraph_confirm_memory", "tokengraph_delete_memory", "tokengraph_delete_rule",
+  "tokengraph_deprecate_memory", "tokengraph_explain_symbol", "tokengraph_export_project_map", "tokengraph_find_memory_conflicts",
+  "tokengraph_generate_wiki", "tokengraph_get_config", "tokengraph_index_project", "tokengraph_index_status",
+  "tokengraph_link_memory", "tokengraph_list_rules", "tokengraph_plan_context", "tokengraph_project_map",
+  "tokengraph_recall_memory", "tokengraph_remember_decision", "tokengraph_reset_project", "tokengraph_review_memories",
+  "tokengraph_search_graph", "tokengraph_set_profile", "tokengraph_setup_status", "tokengraph_show_token_savings",
+  "tokengraph_show_wiki_page", "tokengraph_summarize_sql", "tokengraph_trace_failure", "tokengraph_update_config",
+  "tokengraph_update_memory", "tokengraph_update_rule"
 ];
 
 function usage() {
   return [
     "Usage: node scripts/smoke.mjs [--root <project-root>] [--server <dist/index.js>] [--surface <core|full>] [--json] [--timeout <ms>]",
     "",
-    "Validates the built TokenGraph stdio MCP server outside Codex by listing tools",
-    "and calling read-only project context tools against a local project root."
+    "Validates the built TokenGraph stdio MCP server outside Codex by listing tools and running a task workflow.",
+    "prepare_context and task_report may write .tokengraph index, wiki, and task-ledger state under the project root."
   ].join("\n");
 }
 
@@ -190,13 +195,13 @@ async function runSmoke() {
 
     const listed = await client.request("tools/list");
     const tools = ((listed?.tools ?? []).map((tool) => tool.name)).sort();
-    const missingTools = requiredTools.filter((tool) => !tools.includes(tool));
-    if (missingTools.length) {
-      throw new Error(`Missing required tools: ${missingTools.join(", ")}`);
-    }
-    const expectedToolCount = args.surface === "core" ? 8 : 42;
-    if (tools.length !== expectedToolCount || new Set(tools).size !== expectedToolCount) {
-      throw new Error(`Expected ${expectedToolCount} unique ${args.surface} tools, received ${tools.length}.`);
+    const expectedTools = (args.surface === "core" ? coreToolNames : [...coreToolNames, ...legacyToolNames]).sort();
+    const missingTools = expectedTools.filter((tool) => !tools.includes(tool));
+    const unexpectedTools = tools.filter((tool) => !expectedTools.includes(tool));
+    if (tools.length !== expectedTools.length || new Set(tools).size !== expectedTools.length || missingTools.length || unexpectedTools.length) {
+      throw new Error(
+        `Tool surface mismatch for ${args.surface}: missing [${missingTools.join(", ")}], unexpected [${unexpectedTools.join(", ")}].`
+      );
     }
 
     const setup = assertToolResult(

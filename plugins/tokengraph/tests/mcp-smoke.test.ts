@@ -376,6 +376,45 @@ describe("TokenGraph MCP stdio server", () => {
     expect(report.report.eventCount).toBe(13);
   });
 
+  it("honestly reports a refresh when prepare_context replaces an unsafe index with a current scan signature", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
+    const current = await indexProject(root);
+    await writeFile(
+      join(root, ".tokengraph", "index.json"),
+      JSON.stringify({
+        ...current,
+        symbols: [{ name: "InjectedOutsideSymbol", kind: "function", filePath: "../../outside-secret.ts", exported: true, startLine: 1, endLine: 1 }]
+      })
+    );
+    await stopServer();
+    startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
+    await request(9060, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-unsafe-prepare-test", version: "0.20.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const preparedCall = await request(9061, "tools/call", {
+      name: "tokengraph_prepare_context",
+      arguments: { task: "Inspect the real symbol" }
+    });
+    expect(preparedCall.structuredContent).toMatchObject({
+      index: {
+        previousStatus: "fresh",
+        status: "refreshed",
+        indexingMode: "full",
+        changes: { parsedFiles: expect.arrayContaining(["src/real.ts"]) }
+      }
+    });
+    const persisted = JSON.parse(await readFile(join(root, ".tokengraph", "index.json"), "utf8")) as { symbols: Array<{ name: string }> };
+    expect(persisted.symbols.map((symbol) => symbol.name)).toContain("RealSymbol");
+    expect(persisted.symbols.map((symbol) => symbol.name)).not.toContain("InjectedOutsideSymbol");
+  });
+
   it("lists tools, reports index status, indexes, and resets over JSON-RPC stdio", async () => {
     const root = await makeRoot();
     await stopServer();

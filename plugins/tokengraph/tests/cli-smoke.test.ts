@@ -8,6 +8,21 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 const tempRoots: string[] = [];
+const coreToolNames = [
+  "tokengraph_analyze", "tokengraph_compress", "tokengraph_prepare_context", "tokengraph_propose_knowledge",
+  "tokengraph_query_context", "tokengraph_recall", "tokengraph_setup", "tokengraph_task_report"
+];
+const legacyToolNames = [
+  "tokengraph_add_rule", "tokengraph_assess_change_risk", "tokengraph_check_architecture", "tokengraph_compress_context",
+  "tokengraph_compress_output", "tokengraph_confirm_memory", "tokengraph_delete_memory", "tokengraph_delete_rule",
+  "tokengraph_deprecate_memory", "tokengraph_explain_symbol", "tokengraph_export_project_map", "tokengraph_find_memory_conflicts",
+  "tokengraph_generate_wiki", "tokengraph_get_config", "tokengraph_index_project", "tokengraph_index_status",
+  "tokengraph_link_memory", "tokengraph_list_rules", "tokengraph_plan_context", "tokengraph_project_map",
+  "tokengraph_recall_memory", "tokengraph_remember_decision", "tokengraph_reset_project", "tokengraph_review_memories",
+  "tokengraph_search_graph", "tokengraph_set_profile", "tokengraph_setup_status", "tokengraph_show_token_savings",
+  "tokengraph_show_wiki_page", "tokengraph_summarize_sql", "tokengraph_trace_failure", "tokengraph_update_config",
+  "tokengraph_update_memory", "tokengraph_update_rule"
+];
 const requiredFocusedSkillDirs = [
   "graph-context-retrieval",
   "root-cause-debugger",
@@ -59,16 +74,7 @@ describe("tokengraph CLI smoke command", () => {
       wikiStatus: "missing"
     });
     expect(report.wikiPageSlugs).toEqual([]);
-    expect(report.tools).toEqual([
-      "tokengraph_analyze",
-      "tokengraph_compress",
-      "tokengraph_prepare_context",
-      "tokengraph_propose_knowledge",
-      "tokengraph_query_context",
-      "tokengraph_recall",
-      "tokengraph_setup",
-      "tokengraph_task_report"
-    ]);
+    expect(report.tools).toEqual(coreToolNames);
     expect(report).toMatchObject({ toolSurface: "core", taskId: expect.any(String) });
   });
 
@@ -84,9 +90,30 @@ describe("tokengraph CLI smoke command", () => {
     );
     const report = JSON.parse(stdout) as { status: string; toolSurface: string; tools: string[] };
     expect(report).toMatchObject({ status: "ok", toolSurface: "full" });
-    expect(report.tools).toHaveLength(42);
-    expect(new Set(report.tools).size).toBe(42);
-    expect(report.tools).toEqual(expect.arrayContaining(["tokengraph_setup", "tokengraph_index_project", "tokengraph_recall_memory"]));
+    expect(report.tools).toEqual([...coreToolNames, ...legacyToolNames].sort());
+  });
+
+  it("rejects a full surface with one legacy name replaced despite retaining 42 unique tools", async () => {
+    const root = await makeRoot();
+    const serverRoot = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
+    const built = await readFile(resolve("dist", "index.js"), "utf8");
+    expect(built).toContain("tokengraph_update_rule");
+    const mutatedServer = join(serverRoot, "mutated-server.js");
+    await writeFile(mutatedServer, built.replaceAll("tokengraph_update_rule", "tokengraph_fake_rule"));
+
+    await expect(execFileAsync(
+      process.execPath,
+      [resolve("scripts", "smoke.mjs"), "--root", root, "--server", mutatedServer, "--surface", "full", "--json"],
+      { cwd: process.cwd() }
+    )).rejects.toMatchObject({ stderr: expect.stringMatching(/tool surface|missing|unexpected/i) });
+  });
+
+  it("discloses smoke writes in help text", async () => {
+    const { stdout } = await execFileAsync(process.execPath, [resolve("scripts", "smoke.mjs"), "--help"], { cwd: process.cwd() });
+    expect(stdout).toMatch(/may write[\s\S]*\.tokengraph[\s\S]*(index|wiki)[\s\S]*task-ledger/i);
+    expect(stdout).not.toMatch(/calling read-only project context tools/i);
   });
 
   it("checks README tool coverage for every previously omitted MCP tool", async () => {

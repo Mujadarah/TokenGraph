@@ -679,9 +679,16 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         originalTokens: project.files.reduce((total, file) => total + file.estimatedTokens, 0),
         compactTokens: plan.estimatedTokens.compressed
       });
+      const statusAfter = await getIndexStatus(resolvedRoot);
       return ok({
         taskId: ledger.taskId,
-        index: { status: statusBefore.state === "fresh" ? "fresh" : "refreshed", previousStatus: statusBefore.state, indexingMode, changes },
+        index: {
+          status: indexingMode === "existing" ? statusAfter.state : "refreshed",
+          previousStatus: statusBefore.state,
+          postStatus: statusAfter.state,
+          indexingMode,
+          changes
+        },
         plan,
         wikiStatus: await getWikiStatus(resolvedRoot)
       });
