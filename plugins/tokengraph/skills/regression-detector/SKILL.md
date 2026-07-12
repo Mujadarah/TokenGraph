@@ -1,29 +1,25 @@
 ---
 name: regression-detector
-description: Use TokenGraph graph, SQL, memory, and planner context to assess change risk and select regression tests.
-when_to_use: Use when a coding agent reviews a diff, prepares tests, or estimates affected graph, SQL, memory, or route behavior.
+description: Use when a diff or proposed change needs evidence-based impact analysis and regression-test selection.
 ---
 
 # Regression Detector
 
-Use this skill when reviewing a diff, preparing tests, or estimating which files, routes, SQL objects, memories, or rules may be affected by a change.
+## When not to use
 
-## MCP tools to call
+Do not use when no change set can be identified or as a substitute for running the relevant tests.
 
-Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and do not claim graph-backed regression analysis ran.
+## Workflow
 
-1. Call `tokengraph_assess_change_risk` with the changed files, task, diff summary, root, and profile when available.
-2. Call `tokengraph_index_status` and refresh with `tokengraph_index_project` when needed.
-3. Call `tokengraph_project_map` to inspect import counts, route exposure, and SQL involvement.
-4. Call `tokengraph_plan_context` with the task and changed files.
-5. Call `tokengraph_explain_symbol` for changed exports and high-fan-in modules.
-6. Call `tokengraph_summarize_sql` for policy, migration, auth, tenant, audit, or data-model changes.
-7. Call `tokengraph_review_memories` for known bug, fragile-module, or release-decision memories.
+Follow the common lifecycle in the general `tokengraph` skill:
 
-## Operating rules
+1. Call `tokengraph_setup({})`; if blocked, follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root?, task })` once and capture its taskId and trusted root.
+3. Call `tokengraph_analyze({ taskId, root?, mode: "risk", changedFiles, diffSummary?, task? })` with the actual change set.
+4. Reuse the exact taskId and trusted root with `tokengraph_query_context({ taskId, root?, mode: "symbol", target })` for changed exports and dependents, and `tokengraph_query_context({ taskId, root?, mode: "sql", query })` for schema, policy, auth, or migration impact. Search or overview queries may narrow additional targets.
+5. Recommend tests from direct coverage, inbound dependents, routes, SQL involvement, and risk evidence. Run and verify tests; distinguish verified results from estimated risk.
+6. Call `tokengraph_task_report({ taskId, root?, disposition: "complete" })` only after requested analysis and test verification are complete. Use `tokengraph_task_report({ taskId, root?, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
 
-- Avoid raw reads until the graph identifies affected files or tests.
-- Mark hypotheses clearly when identifying possible regressions from graph proximity.
-- Do not pretend `tokengraph_assess_change_risk` or other unavailable MCP tools were used. State the missing tool and use the available fallback tools above.
-- Recommend tests based on evidence: direct tests, inbound dependents, route exposure, SQL policy involvement, and memories.
-- Treat risk scores as estimates, not guarantees of correctness.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use narrow local diff/search/test inspection, and claim no savings or graph-backed evidence.
+
+A host refresh may require a fresh task or `/reload-plugins`. Until Phase 3 hook enforcement exists, call the report explicitly and manually include its returned status in the final report.

@@ -1,30 +1,25 @@
 ---
 name: root-cause-debugger
-description: Use TokenGraph compression, graph traversal, and targeted context planning to debug failures without broad log or file dumps.
-when_to_use: Use when a coding agent investigates a test, build, runtime, install, or log failure.
+description: Use when a test, build, runtime, install, or log failure needs evidence-led root-cause analysis.
 ---
 
 # Root Cause Debugger
 
-Use this skill when investigating test, build, runtime, install, or log failures and a coding agent needs a compact path from symptom to likely cause.
+## When not to use
 
-## MCP tools to call
+Do not use for feature planning without a failure, or to implement a speculative fix before reproducing the problem.
 
-Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and do not retry project-aware diagnostics against arbitrary roots.
+## Workflow
 
-1. Call `tokengraph_trace_failure` with the exact failure text, failure kind, root, task, and profile when available.
-2. If `tokengraph_trace_failure` is unavailable, call `tokengraph_compress_output` on long failure output before using it as context.
-3. Call `tokengraph_index_status` and refresh with `tokengraph_index_project` when the index is missing or stale.
-4. Call `tokengraph_plan_context` with the exact failure and task.
-5. Call `tokengraph_explain_symbol` for failing symbols, stack frames, or imported modules.
-6. Call `tokengraph_search_graph` for exact failing test names, error paths, or public API names.
-7. Call `tokengraph_summarize_sql` for SQL, RLS, migration, tenant, or auth failures.
-8. Call `tokengraph_review_memories` for relevant known bug or fragile-module memories.
+Follow the common lifecycle in the general `tokengraph` skill:
 
-## Operating rules
+1. Call `tokengraph_setup({})`; on blocked setup follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root?, task })` once and capture its taskId and trusted root.
+3. For oversized failure text, first call `tokengraph_compress({ taskId, root?, mode: "output", kind, text })`, preserving exact errors, tests, stack paths, and line numbers.
+4. Call `tokengraph_analyze({ taskId, root?, mode: "failure", kind, text, task? })`. Then use `tokengraph_query_context` in overview, search, symbol, SQL, or wiki mode only for targeted context that can confirm or disprove the analysis.
+5. Separate verified facts from hypotheses. For each hypothesis, identify supporting evidence and the smallest disconfirming read or command. Add or identify regression evidence and run the relevant regression test before completion.
+6. Call `tokengraph_task_report({ taskId, root?, disposition: "complete" })` only after the cause, requested fix, and regression verification are complete. Use `tokengraph_task_report({ taskId, root?, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
 
-- Avoid raw logs and broad raw reads. Preserve exact error messages, test names, stack paths, and line numbers.
-- Separate proven facts from hypotheses. Label each hypothesis and attach the evidence that supports it.
-- Recommend the smallest first read or command that could disprove the leading hypothesis.
-- Do not pretend `tokengraph_trace_failure` or any other MCP tool was used when it is unavailable. State the missing tool and use the available tools above.
-- Do not fix a bug without adding or identifying a regression test first.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use the existing narrow local debugging fallback, and claim no savings or graph-backed evidence.
+
+A host refresh may require a fresh task or `/reload-plugins`. Until Phase 3 hook enforcement exists, call the report explicitly and manually include its returned status in the final report.

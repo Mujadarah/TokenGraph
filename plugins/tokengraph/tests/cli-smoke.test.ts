@@ -269,16 +269,18 @@ describe("tokengraph benchmark harness and trust docs", () => {
 });
 
 describe("tokengraph focused skills", () => {
-  it("ships specialized skills with required TokenGraph operating guidance", async () => {
+  it("ships specialized skills with the core task lifecycle and fallback guidance", async () => {
     for (const skillDir of requiredFocusedSkillDirs) {
       const skill = await readFile(resolve("skills", skillDir, "SKILL.md"), "utf8");
 
-      expect(skill).toMatch(/^---[\s\S]*\nname:\s*\S+[\s\S]*\ndescription:\s*\S+[\s\S]*\n---/);
-      expect(skill).toMatch(/Use this skill when/i);
-      expect(skill).toMatch(/MCP tools to call/i);
-      expect(skill).toMatch(/avoid raw/i);
-      expect(skill).toMatch(/hypoth/i);
-      expect(skill).toMatch(/Do not pretend/i);
+      expect(skill).toMatch(/^---[\s\S]*\nname:\s*\S+[\s\S]*\ndescription:\s*Use when\b[^\n]+\n---/);
+      expect(skill).toMatch(/When not to use/i);
+      expect(skill).toMatch(/tokengraph_setup\(\{\}\)/);
+      expect(skill).toMatch(/tokengraph_prepare_context/);
+      expect(skill).toMatch(/tokengraph_task_report/);
+      expect(skill).toMatch(/disposition: "pause"/);
+      expect(skill).toMatch(/disposition: "complete"/);
+      expect(skill).toMatch(/TokenGraph was not used/);
       expect(skill).toMatch(/unavailable/i);
     }
   });

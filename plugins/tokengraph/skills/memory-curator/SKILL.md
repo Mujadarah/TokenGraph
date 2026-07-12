@@ -1,27 +1,25 @@
 ---
 name: memory-curator
-description: Use TokenGraph memory review and decision capture to retrieve, qualify, and store durable project memory without injecting stale assumptions.
-when_to_use: Use when a coding agent must recall, compare, qualify, or record durable project decisions.
+description: Use when durable project decisions must be recalled, audited, compared with current evidence, or proposed for review.
 ---
 
 # Memory Curator
 
-Use this skill when a coding agent needs to recall project decisions, compare current work with known memories, or decide whether a new durable memory should be stored.
+## When not to use
 
-## MCP tools to call
+Do not use for transient notes, unrelated personal memory, or automatic mutation without explicit review.
 
-Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and do not attempt to read project memory from an untrusted root.
+## Workflow
 
-1. Call `tokengraph_review_memories` with a narrow query before relying on memory.
-2. Call `tokengraph_plan_context` when memories should be ranked alongside files, tests, and SQL objects.
-3. Call `tokengraph_remember_decision` only for deliberate, durable project decisions that are useful later.
-4. Call `tokengraph_project_map` or `tokengraph_explain_symbol` when a memory refers to files or symbols that need current graph confirmation.
-5. Use `tokengraph_recall_memory`, `tokengraph_update_memory`, `tokengraph_delete_memory`, `tokengraph_deprecate_memory`, `tokengraph_confirm_memory`, `tokengraph_find_memory_conflicts`, and `tokengraph_link_memory` for lifecycle-aware memory work.
+Follow the common lifecycle in the general `tokengraph` skill:
 
-## Operating rules
+1. Call `tokengraph_setup({})`; if blocked, follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root?, task })` once and capture its taskId and trusted root.
+3. Reuse the exact taskId and trusted root. Call `tokengraph_recall({ taskId, root?, mode: "review", query, audit: true })` for conflict, stale-state, or lifecycle review; use recall mode for a narrow current lookup.
+4. Verify drift-prone claims with current evidence from `tokengraph_query_context` and targeted local checks.
+5. When durable knowledge is warranted, call `tokengraph_propose_knowledge({ taskId, root?, action: "propose", ... })`. List, approve, or reject only as explicitly requested. Approval is review state, not content application: never claim approved content was applied while `applicationStatus` is pending. Pause for approval or application and verify applied content separately.
+6. Call `tokengraph_task_report({ taskId, root?, disposition: "complete" })` only after the requested recall or fully applied and verified curation outcome is complete. Use `tokengraph_task_report({ taskId, root?, disposition: "pause" })` for approval, application, missing evidence, blocked setup after creation, or unfinished work.
 
-- Avoid raw memory dumps. Retrieve only relevant memories and verify drift-prone facts against current files or commands.
-- Mark hypotheses clearly when memory suggests but does not prove a current-state fact.
-- Do not pretend memory lifecycle MCP tools were used when they are unavailable. State the missing tool and fall back to review and current-state verification.
-- Do not store important durable memories without explicit user instruction or clear approval.
-- Treat deprecated, stale, or weakly evidenced memories as context to verify, not as truth.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use the existing narrow local memory/current-state fallback, and claim no savings or graph-backed evidence.
+
+A host refresh may require a fresh task or `/reload-plugins`. Until Phase 3 hook enforcement exists, call the report explicitly and manually include its returned status in the final report.

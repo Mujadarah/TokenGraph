@@ -1,30 +1,25 @@
 ---
 name: architecture-consistency-checker
-description: Use TokenGraph graph and SQL context to check dependency direction, rule fit, and architecture-sensitive changes.
-when_to_use: Use when a coding agent changes module boundaries, imports, security rules, SQL, or release packaging.
+description: Use when import direction, SQL, security, release, or module-boundary changes need consistency checks.
 ---
 
 # Architecture Consistency Checker
 
-Use this skill when reviewing or implementing changes that may affect module boundaries, import direction, security rules, RLS, tenant isolation, audit logging, release packaging, or required tests.
+## When not to use
 
-## MCP tools to call
+Do not use for changes with no plausible architecture boundary impact or to treat an undocumented convention as binding.
 
-Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and do not retry project tools with untrusted roots.
+## Workflow
 
-1. Call `tokengraph_index_status` and refresh with `tokengraph_index_project` when needed.
-2. Call `tokengraph_project_map` to inspect module groups, routes, imports, and SQL object counts.
-3. Call `tokengraph_plan_context` with the architecture concern as the task.
-4. Call `tokengraph_explain_symbol` for boundary symbols or suspicious imports.
-5. Call `tokengraph_summarize_sql` for RLS, grants, auth, tenant, audit, or migration concerns.
-6. Call `tokengraph_review_memories` for recorded architecture decisions.
-7. Call `tokengraph_list_rules` and `tokengraph_check_architecture` before manual checks.
-8. Call `tokengraph_add_rule`, `tokengraph_update_rule`, or `tokengraph_delete_rule` only when the user asks to change local architecture rules.
+Follow the common lifecycle in the general `tokengraph` skill:
 
-## Operating rules
+1. Call `tokengraph_setup({})`; if blocked, follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root?, task })` once and capture its taskId and trusted root.
+3. Call `tokengraph_analyze({ taskId, root?, mode: "architecture", files? })` for applicable stored rules and boundary violations.
+4. Also call `tokengraph_analyze({ taskId, root?, mode: "risk", changedFiles, diffSummary?, task? })` for import, SQL, security, or release boundary changes. Reuse the exact taskId and trusted root; query symbols or SQL with `tokengraph_query_context` when targeted evidence is needed.
+5. Confirm warnings against current source, SQL, tests, and documented rules. Missing rules are proposals, not enforced facts; label inferred intent and never silently enforce it.
+6. Call `tokengraph_task_report({ taskId, root?, disposition: "complete" })` only after the requested check and verification are complete. Use `tokengraph_task_report({ taskId, root?, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
 
-- Avoid raw reads until graph output identifies the relevant boundary files.
-- Mark hypotheses clearly, especially inferred dependency direction or security intent.
-- Do not pretend architecture-rule MCP tools were used when they are unavailable.
-- Treat compact warnings as routing evidence, not proof. Confirm with targeted source or SQL reads before changing code.
-- If a rule is missing, propose it explicitly instead of silently enforcing an unstated convention.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use narrow local import, SQL, security, and release checks, and claim no savings or graph-backed evidence.
+
+A host refresh may require a fresh task or `/reload-plugins`. Until Phase 3 hook enforcement exists, call the report explicitly and manually include its returned status in the final report.

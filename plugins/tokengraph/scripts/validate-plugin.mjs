@@ -77,7 +77,7 @@ async function collectSkillFiles(skillsRoot) {
   return skillFiles;
 }
 
-async function assertSkillFrontmatter(skillsRoot, label) {
+async function assertSkillFrontmatter(skillsRoot, label, coreLifecycle = false) {
   const skillFiles = await collectSkillFiles(skillsRoot);
   assert(skillFiles.length > 0, `${label} must include at least one skill`);
   for (const skillFile of skillFiles) {
@@ -85,24 +85,38 @@ async function assertSkillFrontmatter(skillsRoot, label) {
     assert(/^---\s*\n[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} must include frontmatter`);
     assert(/^---[\s\S]*\nname:\s*\S+[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} frontmatter must include name`);
     assert(/^---[\s\S]*\ndescription:\s*\S+[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} frontmatter must include description`);
-    assert(/^---[\s\S]*\nwhen_to_use:\s*\S+[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} frontmatter must include when_to_use`);
+    if (coreLifecycle) {
+      assert(/^---[\s\S]*\ndescription:\s*Use when\b[^\n]+\n---\s*\n/.test(skill), `${label} skill ${skillFile} description must begin Use when`);
+      assert(!/^---[\s\S]*\nwhen_to_use:/m.test(skill), `${label} skill ${skillFile} must keep its trigger only in description`);
+    } else {
+      assert(/^---[\s\S]*\nwhen_to_use:\s*\S+[\s\S]*\n---\s*\n/.test(skill), `${label} skill ${skillFile} frontmatter must include when_to_use`);
+    }
   }
   return skillFiles;
 }
 
-async function assertRequiredFocusedSkills(skillsRoot, label) {
+async function assertRequiredFocusedSkills(skillsRoot, label, coreLifecycle = false) {
   for (const skillDir of requiredFocusedSkillDirs) {
     const skillFile = resolve(skillsRoot, skillDir, "SKILL.md");
     const skill = await readFile(skillFile, "utf8").catch((error) =>
       fail(`${label} required skill ${skillDir} is missing or unreadable: ${error.message}`)
     );
     assert(/^---[\s\S]*\nname:\s*\S+[\s\S]*\ndescription:\s*\S+[\s\S]*\n---/.test(skill), `${label} skill ${skillDir} must include name and description frontmatter`);
-    assert(/Use this skill when/i.test(skill), `${label} skill ${skillDir} must tell Codex when to use it`);
-    assert(/MCP tools to call/i.test(skill), `${label} skill ${skillDir} must list TokenGraph MCP tools to call`);
-    assert(/avoid raw/i.test(skill), `${label} skill ${skillDir} must explain when to avoid raw reads`);
-    assert(/hypoth/i.test(skill), `${label} skill ${skillDir} must require hypotheses to be marked clearly`);
-    assert(/Do not pretend/i.test(skill), `${label} skill ${skillDir} must forbid pretending unavailable MCP tools were used`);
-    assert(/unavailable/i.test(skill), `${label} skill ${skillDir} must state how to handle unavailable MCP tools`);
+    if (coreLifecycle) {
+      assert(/When not to use/i.test(skill), `${label} skill ${skillDir} must define a negative trigger boundary`);
+      assert(/tokengraph_setup\(\{\}\)/.test(skill), `${label} skill ${skillDir} must begin with core setup`);
+      assert(/tokengraph_prepare_context/.test(skill), `${label} skill ${skillDir} must create a task`);
+      assert(/tokengraph_task_report/.test(skill), `${label} skill ${skillDir} must report its disposition`);
+      assert(/disposition: "pause"/.test(skill) && /disposition: "complete"/.test(skill), `${label} skill ${skillDir} must define pause and complete behavior`);
+      assert(/TokenGraph was not used/.test(skill) && /unavailable/i.test(skill), `${label} skill ${skillDir} must define honest unavailable fallback`);
+    } else {
+      assert(/Use this skill when/i.test(skill), `${label} skill ${skillDir} must tell Codex when to use it`);
+      assert(/MCP tools to call/i.test(skill), `${label} skill ${skillDir} must list TokenGraph MCP tools to call`);
+      assert(/avoid raw/i.test(skill), `${label} skill ${skillDir} must explain when to avoid raw reads`);
+      assert(/hypoth/i.test(skill), `${label} skill ${skillDir} must require hypotheses to be marked clearly`);
+      assert(/Do not pretend/i.test(skill), `${label} skill ${skillDir} must forbid pretending unavailable MCP tools were used`);
+      assert(/unavailable/i.test(skill), `${label} skill ${skillDir} must state how to handle unavailable MCP tools`);
+    }
   }
 }
 
@@ -191,8 +205,8 @@ assert(mcp.mcpServers.tokengraph.cwd === ".", "tokengraph MCP cwd must be plugin
 assert(claudeMcp.mcpServers?.tokengraph?.command === "node", "Claude tokengraph MCP command must be node");
 assert(claudeMcp.mcpServers.tokengraph.args?.includes("${CLAUDE_PLUGIN_ROOT}/dist/index.js"), "Claude MCP args must use CLAUDE_PLUGIN_ROOT");
 assert(claudeMcp.mcpServers.tokengraph.env?.TOKENGRAPH_WORKSPACE_ROOT === "${CLAUDE_PROJECT_DIR}", "Claude MCP config must forward CLAUDE_PROJECT_DIR");
-await assertSkillFrontmatter(skillsPath, "source plugin");
-await assertRequiredFocusedSkills(skillsPath, "source plugin");
+await assertSkillFrontmatter(skillsPath, "source plugin", true);
+await assertRequiredFocusedSkills(skillsPath, "source plugin", true);
 assert(distServer.includes("tokengraph_index_status"), "built MCP server must register tokengraph_index_status");
 assert(distServer.includes("tokengraph_reset_project"), "built MCP server must register tokengraph_reset_project");
 assert(distServer.includes(`version: "${packageJson.version}"`), `built MCP server must advertise version ${packageJson.version}`);

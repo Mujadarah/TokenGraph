@@ -1,28 +1,24 @@
 ---
 name: token-budget-optimizer
-description: Use TokenGraph profiles, planner budgets, token estimates, and compression tools to keep context compact without lowering implementation quality.
-when_to_use: Use when a coding agent risks excessive context use or needs a tighter retrieval profile.
+description: Use when a task needs an explicit retrieval profile or context budget to control excessive input size.
 ---
 
 # Token Budget Optimizer
 
-Use this skill when a task risks excessive context use or when a coding agent needs a tighter retrieval profile without hiding important implementation detail.
+## When not to use
 
-## MCP tools to call
+Do not use merely to minimize tokens when doing so could hide required implementation or verification evidence.
 
-Call `tokengraph_setup_status` first when project-aware planning is needed. If it reports `blocked`, follow its recovery steps before using project tools.
+## Workflow
 
-1. Call `tokengraph_get_config` to inspect the active token-saving profile and limits.
-2. Call `tokengraph_set_profile` only when the user asks for a different profile or the task clearly needs a temporary conservative, balanced, or aggressive mode.
-3. Call `tokengraph_update_config` for explicit local limits when requested.
-4. Call `tokengraph_plan_context` with `maxEstimatedTokens`, `maxFiles`, and the chosen profile.
-5. Call `tokengraph_compress_output` for long logs, diffs, tests, builds, and installs.
-6. Call `tokengraph_show_token_savings` to report estimates after meaningful TokenGraph use.
+Follow the common lifecycle in the general `tokengraph` skill:
 
-## Operating rules
+1. Call `tokengraph_setup({})`; if blocked, follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root?, task, profile, budgets })` once. Set appropriate file, SQL, memory, and estimated-token budgets; capture the returned taskId and trusted root.
+3. Reuse that exact taskId and trusted root. Use `tokengraph_query_context` for only the overview, search, symbol, SQL, or wiki evidence the plan requires. Use `tokengraph_compress` with `mode: "output"` or `mode: "context"` for oversized material.
+4. Compare the returned original, compact, and overhead estimates. Describe estimated savings including overhead and uncertainty; make no exact claims. Never trade away constraints, correctness, or verification for a lower estimate.
+5. Call `tokengraph_task_report({ taskId, root?, disposition: "complete" })` only after the requested outcome and verification are complete. Use `tokengraph_task_report({ taskId, root?, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
 
-- Avoid raw reads when planner, wiki, map, SQL summaries, or compression can provide safe first context.
-- Do not chase lower token counts at the expense of implementation quality.
-- Mark hypotheses clearly when estimating savings or likely patch scope.
-- Do not claim exact token savings; TokenGraph savings are estimates.
-- Do not pretend MCP tools were used when unavailable. Fall back to narrow searches and say the estimate cannot be produced from TokenGraph.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use narrow local searches and reads, and provide no TokenGraph savings or graph-backed evidence.
+
+A host refresh may require a fresh task or `/reload-plugins`. Until Phase 3 hook enforcement exists, call the report explicitly and manually include its returned status in the final report.
