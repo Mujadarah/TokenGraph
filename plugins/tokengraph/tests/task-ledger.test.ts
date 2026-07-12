@@ -37,6 +37,10 @@ function event(overrides: Partial<TaskEvent> = {}): TaskEvent {
   };
 }
 
+function ledgerPath(root: string, taskId: string): string {
+  return join(root, ".tokengraph", "tasks", `${taskId}.json`);
+}
+
 afterEach(async () => {
   vi.useRealTimers();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -102,6 +106,95 @@ describe("task ledger persistence", () => {
     expect(serialized).not.toContain("C:\\\\Users");
   });
 
+  it("reconstructs persisted ledgers from strict allowlists and strips raw fields on the next write", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const storedEvent = event();
+    const unsafe = {
+      ...ledger,
+      prompt: "top-level prompt",
+      absolutePath: "C:\\private\\task.json",
+      events: [
+        {
+          ...storedEvent,
+          rawToolInput: { secret: true },
+          rawToolOutput: "private output",
+          qualityChecks: [{ name: "tests", passed: true, rawSource: "private source" }]
+        }
+      ]
+    };
+    await writeFile(ledgerPath(root, ledger.taskId), JSON.stringify(unsafe));
+
+    const reconstructed = await loadTaskLedger(root, ledger.taskId);
+    expect(reconstructed).toBeDefined();
+    expect(reconstructed).not.toHaveProperty("prompt");
+    expect(reconstructed?.events[0]).not.toHaveProperty("rawToolInput");
+    expect(reconstructed?.events[0]?.qualityChecks[0]).toEqual({ name: "tests", passed: true });
+
+    await recordTaskEvent(root, ledger.taskId, event({ fingerprint: "second" }));
+    const rewritten = await readFile(ledgerPath(root, ledger.taskId), "utf8");
+    expect(rewritten).not.toContain("top-level prompt");
+    expect(rewritten).not.toContain("rawToolInput");
+    expect(rewritten).not.toContain("rawToolOutput");
+    expect(rewritten).not.toContain("rawSource");
+    expect(rewritten).not.toContain("C:\\\\private");
+  });
+
+  it("quarantines deeply malformed events, timestamps, quality checks, and completion reports", async () => {
+    const mutations: Array<(value: Record<string, unknown>) => void> = [
+      (value) => {
+        (value.events as Array<Record<string, unknown>>)[0]!.originalTokens = "100";
+      },
+      (value) => {
+        (value.events as Array<Record<string, unknown>>)[0]!.timestamp = "not-a-timestamp";
+      },
+      (value) => {
+        (value.events as Array<Record<string, unknown>>)[0]!.qualityChecks = [{ name: "tests", passed: "yes" }];
+      },
+      (value) => {
+        const report = value.completedReport as Record<string, unknown>;
+        (report.estimate as Record<string, unknown>).range = { low: 90, likely: 50, high: 60, unit: "estimated_tokens" };
+      }
+    ];
+
+    for (const mutate of mutations) {
+      const root = await makeRoot();
+      const ledger = await createTaskLedger(root, { host: "codex" });
+      await recordTaskEvent(root, ledger.taskId, event());
+      const completed = await setTaskDisposition(root, ledger.taskId, "complete");
+      const persisted = structuredClone(completed.ledger) as unknown as Record<string, unknown>;
+      mutate(persisted);
+      await writeFile(ledgerPath(root, ledger.taskId), JSON.stringify(persisted));
+
+      expect(await loadTaskLedger(root, ledger.taskId)).toBeUndefined();
+      const files = await readdir(join(root, ".tokengraph", "tasks"));
+      expect(files.some((name) => name.startsWith(`${ledger.taskId}.json.quarantine-`))).toBe(true);
+    }
+  });
+
+  it("strictly reconstructs a valid canonical report without retaining extra raw fields", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    await recordTaskEvent(root, ledger.taskId, event());
+    const completed = await setTaskDisposition(root, ledger.taskId, "complete");
+    const unsafe = {
+      ...completed.ledger,
+      completedReport: {
+        ...completed.report,
+        rawPrompt: "private",
+        estimate: { ...completed.report!.estimate, rawToolOutput: "private" },
+        quality: { ...completed.report!.quality, absolutePath: "C:\\private\\report" }
+      }
+    };
+    await writeFile(ledgerPath(root, ledger.taskId), JSON.stringify(unsafe));
+
+    const reconstructed = await loadTaskLedger(root, ledger.taskId);
+    expect(reconstructed?.completedReport).toEqual(completed.report);
+    expect(reconstructed?.completedReport).not.toHaveProperty("rawPrompt");
+    expect(reconstructed?.completedReport?.estimate).not.toHaveProperty("rawToolOutput");
+    expect(reconstructed?.completedReport?.quality).not.toHaveProperty("absolutePath");
+  });
+
   it("deduplicates by fingerprint and retains the largest non-negative net estimate", async () => {
     const root = await makeRoot();
     const ledger = await createTaskLedger(root, { host: "unknown" });
@@ -162,6 +255,30 @@ describe("task savings estimator", () => {
     ).toMatchObject({ estimate: { range: { low: 50, likely: 50, high: 60 } } });
   });
 
+  it("changes from uncalibrated to calibrated exactly at the 10-observation boundary", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const stored = await recordTaskEvent(
+      root,
+      ledger.taskId,
+      event({ originalTokens: 100, compactTokens: 40, overheadTokens: 10, confidence: "high" })
+    );
+
+    const nine = buildTaskReport(stored, { context: { observations: 9, lowResidual: -20, highResidual: 30 } });
+    const ten = buildTaskReport(stored, { context: { observations: 10, lowResidual: -20, highResidual: 30 } });
+
+    expect(nine.estimate).toMatchObject({
+      range: { low: 0, likely: 50, high: 60 },
+      confidence: "low",
+      basis: ["context:uncalibrated"]
+    });
+    expect(ten.estimate).toMatchObject({
+      range: { low: 30, likely: 50, high: 80 },
+      confidence: "high",
+      basis: ["context:calibrated:10"]
+    });
+  });
+
   it("aggregates quality checks as warning, passed, or not_evaluated", async () => {
     const root = await makeRoot();
     const ledger = await createTaskLedger(root, { host: "codex" });
@@ -189,6 +306,20 @@ describe("task lifecycle and retention", () => {
     await expect(recordTaskEvent(root, ledger.taskId, event())).rejects.toThrow(/completed/i);
   });
 
+  it("serializes concurrent event updates without losing unique events", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const events = Array.from({ length: 25 }, (_, index) =>
+      event({ id: crypto.randomUUID(), fingerprint: `concurrent-${index}`, originalTokens: 100 + index })
+    );
+
+    await Promise.all(events.map((item) => recordTaskEvent(root, ledger.taskId, item)));
+
+    const stored = await loadTaskLedger(root, ledger.taskId);
+    expect(stored?.events).toHaveLength(events.length);
+    expect(new Set(stored?.events.map((item) => item.fingerprint))).toEqual(new Set(events.map((item) => item.fingerprint)));
+  });
+
   it("prunes only paused and completed ledgers older than 30 days while preserving open ledgers", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
@@ -207,17 +338,22 @@ describe("task lifecycle and retention", () => {
     expect(await loadTaskLedger(root, completed.taskId)).toBeUndefined();
   });
 
-  it("quarantines corrupt ledgers without preventing other ledgers from loading or pruning", async () => {
+  it("quarantines a corrupt ledger during pruning and continues pruning another eligible ledger", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
     const root = await makeRoot();
-    const valid = await createTaskLedger(root, { host: "codex" });
+    const eligible = await createTaskLedger(root, { host: "codex" });
+    await setTaskDisposition(root, eligible.taskId, "pause");
     const corruptId = crypto.randomUUID();
     const corruptPath = join(root, ".tokengraph", "tasks", `${corruptId}.json`);
     await writeFile(corruptPath, "{ not json");
 
-    expect(await loadTaskLedger(root, corruptId)).toBeUndefined();
-    expect(await loadTaskLedger(root, valid.taskId)).toBeDefined();
+    const result = await pruneTaskLedgers(root, new Date("2026-06-01T00:00:00.001Z"));
+
+    expect(result.quarantined).toContain(corruptId);
+    expect(result.pruned).toContain(eligible.taskId);
+    expect(await loadTaskLedger(root, eligible.taskId)).toBeUndefined();
     const files = await readdir(join(root, ".tokengraph", "tasks"));
     expect(files.some((name) => name.startsWith(`${corruptId}.json.quarantine-`))).toBe(true);
-    await expect(pruneTaskLedgers(root)).resolves.toBeDefined();
   });
 });

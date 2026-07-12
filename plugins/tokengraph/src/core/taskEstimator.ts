@@ -34,6 +34,68 @@ export interface TaskReport {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isConfidence(value: unknown): value is EstimateConfidence {
+  return value === "low" || value === "medium" || value === "high";
+}
+
+function isQualityStatus(value: unknown): value is QualityStatus {
+  return value === "passed" || value === "warning" || value === "not_evaluated";
+}
+
+export function reconstructTaskReport(
+  value: unknown,
+  expectedTaskId: string,
+  expectedEventCount: number
+): TaskReport | undefined {
+  if (!isRecord(value) || !isRecord(value.estimate) || !isRecord(value.estimate.range) || !isRecord(value.quality)) {
+    return undefined;
+  }
+  const range = value.estimate.range;
+  const basis = value.estimate.basis;
+  const checks = value.quality.checks;
+  if (
+    value.taskId !== expectedTaskId ||
+    value.eventCount !== expectedEventCount ||
+    !Number.isInteger(value.eventCount) ||
+    !isNonNegativeFiniteNumber(range.low) ||
+    !isNonNegativeFiniteNumber(range.likely) ||
+    !isNonNegativeFiniteNumber(range.high) ||
+    range.low > range.likely ||
+    range.likely > range.high ||
+    range.unit !== "estimated_tokens" ||
+    !isConfidence(value.estimate.confidence) ||
+    !Array.isArray(basis) ||
+    !basis.every((item) => typeof item === "string") ||
+    !isNonNegativeFiniteNumber(value.estimate.overhead) ||
+    value.estimate.estimatorVersion !== TASK_ESTIMATOR_VERSION ||
+    !isQualityStatus(value.quality.status) ||
+    !Array.isArray(checks) ||
+    !checks.every((item) => typeof item === "string")
+  ) {
+    return undefined;
+  }
+  return {
+    taskId: value.taskId,
+    eventCount: value.eventCount,
+    estimate: {
+      range: { low: range.low, likely: range.likely, high: range.high, unit: "estimated_tokens" },
+      confidence: value.estimate.confidence,
+      basis: [...basis],
+      overhead: value.estimate.overhead,
+      estimatorVersion: TASK_ESTIMATOR_VERSION
+    },
+    quality: { status: value.quality.status, checks: [...checks] }
+  };
+}
+
 const confidenceRank: Record<EstimateConfidence, number> = { low: 0, medium: 1, high: 2 };
 
 function finite(value: number): number {

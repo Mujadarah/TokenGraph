@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import {
   TASK_ESTIMATOR_VERSION,
   buildTaskReport,
+  reconstructTaskReport,
   type EstimateConfidence,
   type TaskCalibration,
   type TaskReport
@@ -72,6 +73,7 @@ export interface PruneTaskLedgersResult {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const taskLedgerWriteChains = new Map<string, Promise<void>>();
 
 function assertTaskId(taskId: string): void {
   if (!UUID_PATTERN.test(taskId)) {
@@ -92,19 +94,103 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function isTaskLedger(value: unknown, expectedTaskId: string): value is TaskLedger {
-  if (!isRecord(value)) return false;
-  return (
-    value.schemaId === TASK_LEDGER_SCHEMA_ID &&
-    value.schemaVersion === TASK_LEDGER_SCHEMA_VERSION &&
-    value.taskId === expectedTaskId &&
-    ["codex", "claude", "unknown"].includes(String(value.host)) &&
-    ["open", "paused", "completed", "quarantined"].includes(String(value.status)) &&
-    typeof value.createdAt === "string" &&
-    typeof value.updatedAt === "string" &&
-    value.estimatorVersion === TASK_ESTIMATOR_VERSION &&
-    Array.isArray(value.events)
-  );
+function isTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function reconstructQualityCheck(value: unknown): TaskQualityCheck | undefined {
+  if (!isRecord(value) || typeof value.name !== "string" || typeof value.passed !== "boolean") return undefined;
+  return { name: value.name, passed: value.passed };
+}
+
+function reconstructEvent(value: unknown): TaskEvent | undefined {
+  if (!isRecord(value) || !Array.isArray(value.qualityChecks)) return undefined;
+  const qualityChecks = value.qualityChecks.map(reconstructQualityCheck);
+  if (
+    typeof value.id !== "string" ||
+    typeof value.fingerprint !== "string" ||
+    typeof value.category !== "string" ||
+    typeof value.toolName !== "string" ||
+    typeof value.originalTokens !== "number" ||
+    !Number.isFinite(value.originalTokens) ||
+    value.originalTokens < 0 ||
+    typeof value.compactTokens !== "number" ||
+    !Number.isFinite(value.compactTokens) ||
+    value.compactTokens < 0 ||
+    typeof value.overheadTokens !== "number" ||
+    !Number.isFinite(value.overheadTokens) ||
+    value.overheadTokens < 0 ||
+    (value.confidence !== "low" && value.confidence !== "medium" && value.confidence !== "high") ||
+    !isTimestamp(value.timestamp) ||
+    qualityChecks.some((check) => check === undefined)
+  ) {
+    return undefined;
+  }
+  return {
+    id: value.id,
+    fingerprint: value.fingerprint,
+    category: value.category,
+    toolName: value.toolName,
+    originalTokens: value.originalTokens,
+    compactTokens: value.compactTokens,
+    overheadTokens: value.overheadTokens,
+    confidence: value.confidence,
+    timestamp: value.timestamp,
+    qualityChecks: qualityChecks as TaskQualityCheck[]
+  };
+}
+
+function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedger | undefined {
+  if (!isRecord(value) || !Array.isArray(value.events)) return undefined;
+  const events = value.events.map(reconstructEvent);
+  if (
+    value.schemaId !== TASK_LEDGER_SCHEMA_ID ||
+    value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION ||
+    value.taskId !== expectedTaskId ||
+    !["codex", "claude", "unknown"].includes(String(value.host)) ||
+    !["open", "paused", "completed", "quarantined"].includes(String(value.status)) ||
+    !isOptionalString(value.sessionId) ||
+    !isOptionalString(value.turnId) ||
+    !isTimestamp(value.createdAt) ||
+    !isTimestamp(value.updatedAt) ||
+    (value.pausedAt !== undefined && !isTimestamp(value.pausedAt)) ||
+    (value.completedAt !== undefined && !isTimestamp(value.completedAt)) ||
+    value.estimatorVersion !== TASK_ESTIMATOR_VERSION ||
+    events.some((event) => event === undefined) ||
+    (value.lastDisposition !== undefined && value.lastDisposition !== "pause" && value.lastDisposition !== "complete")
+  ) {
+    return undefined;
+  }
+  const completedReport =
+    value.completedReport === undefined
+      ? undefined
+      : reconstructTaskReport(value.completedReport, expectedTaskId, events.length);
+  if (value.completedReport !== undefined && completedReport === undefined) return undefined;
+  if (value.status === "paused" && value.pausedAt === undefined) return undefined;
+  if (value.status === "completed" && (value.completedAt === undefined || completedReport === undefined)) return undefined;
+  return {
+    schemaId: TASK_LEDGER_SCHEMA_ID,
+    schemaVersion: TASK_LEDGER_SCHEMA_VERSION,
+    taskId: expectedTaskId,
+    host: value.host as TaskHost,
+    ...(value.sessionId === undefined ? {} : { sessionId: value.sessionId }),
+    ...(value.turnId === undefined ? {} : { turnId: value.turnId }),
+    status: value.status as TaskStatus,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    ...(value.pausedAt === undefined ? {} : { pausedAt: value.pausedAt }),
+    ...(value.completedAt === undefined ? {} : { completedAt: value.completedAt }),
+    estimatorVersion: TASK_ESTIMATOR_VERSION,
+    events: events as TaskEvent[],
+    ...(value.lastDisposition === undefined ? {} : { lastDisposition: value.lastDisposition }),
+    ...(completedReport === undefined ? {} : { completedReport })
+  };
 }
 
 async function quarantine(path: string, now = new Date()): Promise<void> {
@@ -141,6 +227,20 @@ function netEstimate(event: TaskEvent): number {
   return Math.max(0, event.originalTokens - event.compactTokens - event.overheadTokens);
 }
 
+function enqueueLedgerOperation<T>(root: string, taskId: string, operation: () => Promise<T>): Promise<T> {
+  const key = taskLedgerPath(root, taskId);
+  const previous = taskLedgerWriteChains.get(key) ?? Promise.resolve();
+  const current = previous.then(operation, operation);
+  taskLedgerWriteChains.set(
+    key,
+    current.then(
+      () => undefined,
+      () => undefined
+    )
+  );
+  return current;
+}
+
 export async function createTaskLedger(root: string, options: CreateTaskLedgerOptions): Promise<TaskLedger> {
   const taskId = randomUUID();
   const now = new Date().toISOString();
@@ -165,11 +265,12 @@ export async function loadTaskLedger(root: string, taskId: string): Promise<Task
   const path = taskLedgerPath(root, taskId);
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
-    if (!isTaskLedger(parsed, taskId)) {
+    const ledger = reconstructTaskLedger(parsed, taskId);
+    if (!ledger) {
       await quarantine(path);
       return undefined;
     }
-    return parsed;
+    return ledger;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     if (error instanceof SyntaxError) {
@@ -187,21 +288,23 @@ async function requireTaskLedger(root: string, taskId: string): Promise<TaskLedg
 }
 
 export async function recordTaskEvent(root: string, taskId: string, event: TaskEvent): Promise<TaskLedger> {
-  const ledger = await requireTaskLedger(root, taskId);
-  if (ledger.status === "completed") {
-    throw new Error("A completed task ledger cannot accept new events.");
-  }
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId);
+    if (ledger.status === "completed") {
+      throw new Error("A completed task ledger cannot accept new events.");
+    }
 
-  const candidate = sanitizeEvent(event);
-  const existingIndex = ledger.events.findIndex((stored) => stored.fingerprint === candidate.fingerprint);
-  if (existingIndex < 0) {
-    ledger.events.push(candidate);
-  } else if (netEstimate(candidate) > netEstimate(ledger.events[existingIndex]!)) {
-    ledger.events[existingIndex] = candidate;
-  }
-  ledger.updatedAt = new Date().toISOString();
-  await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
-  return ledger;
+    const candidate = sanitizeEvent(event);
+    const existingIndex = ledger.events.findIndex((stored) => stored.fingerprint === candidate.fingerprint);
+    if (existingIndex < 0) {
+      ledger.events.push(candidate);
+    } else if (netEstimate(candidate) > netEstimate(ledger.events[existingIndex]!)) {
+      ledger.events[existingIndex] = candidate;
+    }
+    ledger.updatedAt = new Date().toISOString();
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    return ledger;
+  });
 }
 
 export async function setTaskDisposition(
@@ -211,28 +314,30 @@ export async function setTaskDisposition(
   turnId?: string,
   calibration?: TaskCalibration
 ): Promise<SetTaskDispositionResult> {
-  const ledger = await requireTaskLedger(root, taskId);
-  if (ledger.status === "completed" && ledger.completedReport) {
-    return { ledger, report: ledger.completedReport };
-  }
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId);
+    if (ledger.status === "completed" && ledger.completedReport) {
+      return { ledger, report: ledger.completedReport };
+    }
 
-  const now = new Date().toISOString();
-  if (turnId !== undefined) ledger.turnId = turnId;
-  ledger.lastDisposition = disposition;
-  ledger.updatedAt = now;
+    const now = new Date().toISOString();
+    if (turnId !== undefined) ledger.turnId = turnId;
+    ledger.lastDisposition = disposition;
+    ledger.updatedAt = now;
 
-  if (disposition === "pause") {
-    ledger.status = "paused";
-    ledger.pausedAt = now;
+    if (disposition === "pause") {
+      ledger.status = "paused";
+      ledger.pausedAt = now;
+      await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+      return { ledger };
+    }
+
+    ledger.status = "completed";
+    ledger.completedAt = now;
+    ledger.completedReport = buildTaskReport(ledger, calibration);
     await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
-    return { ledger };
-  }
-
-  ledger.status = "completed";
-  ledger.completedAt = now;
-  ledger.completedReport = buildTaskReport(ledger, calibration);
-  await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
-  return { ledger, report: ledger.completedReport };
+    return { ledger, report: ledger.completedReport };
+  });
 }
 
 export async function pruneTaskLedgers(root: string, now = new Date()): Promise<PruneTaskLedgersResult> {
