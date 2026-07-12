@@ -18,9 +18,14 @@ import type { TaskLedger } from "../src/core/taskLedger.js";
 import { estimateTokens } from "../src/core/token.js";
 
 const corpusPath = resolve("scripts", "benchmark-corpus-v1.json");
+const evidencePath = resolve("scripts", "benchmark-evidence-v1.json");
 
 async function corpus() {
   return JSON.parse(await readFile(corpusPath, "utf8"));
+}
+
+async function evidence() {
+  return JSON.parse(await readFile(evidencePath, "utf8"));
 }
 
 describe("evidence benchmark", () => {
@@ -163,10 +168,29 @@ describe("evidence benchmark", () => {
     });
   });
 
-  it("emits direct TaskCalibration from independent expected-net observations and changes Task 1A ranges", async () => {
+  it("derives one calibration observation per task from reproducible compact references", async () => {
+    const checkedEvidence = await evidence();
     const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "evidence-project"));
-    const calibration = report.taskCalibration;
-    const category = Object.keys(calibration).find((key) => calibration[key]!.observations >= 10)!;
+    for (const task of report.tasks) {
+      const source = checkedEvidence.tasks[task.id];
+      const accounting = task.accounting as unknown as { expectedNetSavings: number; expectedReferenceTokens: number };
+      const metrics = task.metrics as unknown as { netEstimatedSavings: number; calibrationResidual: number; rawTokens: number; toolOverheadTokens: number };
+      expect(source.expectedCompactReference).toEqual(expect.any(String));
+      expect(source).not.toHaveProperty("expectedNetSavings");
+      expect(accounting.expectedReferenceTokens).toBe(estimateTokens(source.expectedCompactReference));
+      expect(accounting.expectedNetSavings).toBe(metrics.rawTokens - accounting.expectedReferenceTokens - metrics.toolOverheadTokens);
+      expect(Math.max(0, metrics.netEstimatedSavings) + metrics.calibrationResidual).toBe(accounting.expectedNetSavings);
+    }
+    for (const category of BENCHMARK_CATEGORIES) {
+      expect(report.taskCalibration[category]?.observations).toBe(report.aggregate.categoryCounts[category]);
+      expect(report.taskCalibration[category]?.observations).toBeLessThan(10);
+      expect(report.calibration.categories[category]?.confidence).toBe("low");
+    }
+  });
+
+  it("passes low-observation corpus calibration to Task 1A without falsely changing its range or confidence", async () => {
+    const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "evidence-project"));
+    const category = "code-routing";
     const event = {
       id: "event-1",
       fingerprint: "fingerprint-1",
@@ -191,8 +215,22 @@ describe("evidence benchmark", () => {
       events: [event]
     } satisfies TaskLedger;
 
-    expect(report.tasks.every((task) => task.accounting.expectedNetSavings.length > 0)).toBe(true);
-    expect(buildTaskReport(ledger, calibration).estimate.range).not.toEqual(buildTaskReport(ledger).estimate.range);
+    const uncalibrated = buildTaskReport(ledger);
+    const accepted = buildTaskReport(ledger, report.taskCalibration);
+    expect(accepted.estimate.range).toEqual(uncalibrated.estimate.range);
+    expect(accepted.estimate.confidence).toBe("low");
+    expect(accepted.estimate.basis).toEqual([`${category}:uncalibrated`]);
+  });
+
+  it("uses polarity-safe exact constraint predicates", () => {
+    const predicate = (benchmarkLibrary as Record<string, unknown>).constraintPreserved;
+    expect(predicate).toBeTypeOf("function");
+    const preserved = predicate as (constraint: string, output: string) => boolean;
+
+    expect(preserved("Must not remove the audit call.", "Result: MUST NOT remove the audit call!" )).toBe(true);
+    expect(preserved("Must not remove the audit call.", "Result: remove the audit call." )).toBe(false);
+    expect(preserved("Must not remove the audit call.", "Result: the audit call must be removed." )).toBe(false);
+    expect(preserved("Must not remove the audit call.", "Result: must not remove." )).toBe(false);
   });
 
   it("evaluates independently twice with only generatedAt allowed to differ", async () => {

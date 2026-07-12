@@ -8,7 +8,7 @@ import { indexProject } from "../src/core/projectIndexer.js";
 import { assessChangeRisk } from "../src/core/regressionRisk.js";
 import { reviewMemories } from "../src/core/review.js";
 import { TASK_ESTIMATOR_VERSION, type TaskCalibration } from "../src/core/taskEstimator.js";
-import { estimateTokens, tokenize } from "../src/core/token.js";
+import { estimateTokens } from "../src/core/token.js";
 import { buildProjectWiki } from "../src/core/wiki.js";
 import type { MemoryEntry, ProjectIndex } from "../src/core/types.js";
 
@@ -56,7 +56,7 @@ interface EvidenceMemory {
 
 interface TaskEvidence {
   rawFiles: string[];
-  expectedNetSavings: number[];
+  expectedCompactReference: string;
 }
 
 interface BenchmarkEvidence {
@@ -77,7 +77,7 @@ export interface TaskMetrics {
   compactTokens: number;
   toolOverheadTokens: number;
   netEstimatedSavings: number;
-  calibrationResiduals: number[];
+  calibrationResidual: number;
   qualityResult: "passed" | "failed";
   failureReasons: string[];
 }
@@ -112,7 +112,6 @@ const SCHEMA_BY_FLOW: Record<BenchmarkFlow, unknown> = {
 
 const FOOTER = "Token estimates are deterministic fixture estimates; inspect failure reasons and use targeted raw reads when allowed.";
 const EVIDENCE_PATH = resolve("scripts", "benchmark-evidence-v1.json");
-const STOP_WORDS = new Set(["a", "an", "and", "as", "at", "be", "by", "for", "from", "in", "is", "it", "must", "not", "of", "on", "or", "the", "to", "with"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -323,11 +322,14 @@ async function runFlow(input: {
   };
 }
 
-function constraintPreserved(constraint: string, serializedOutput: string): boolean {
-  const terms = tokenize(constraint).filter((term) => term.length > 2 && !STOP_WORDS.has(term));
-  if (!terms.length) return true;
-  const outputTerms = new Set(tokenize(serializedOutput));
-  return terms.filter((term) => [...outputTerms].some((part) => part.includes(term) || term.includes(part))).length / terms.length >= 0.6;
+function normalizePredicate(text: string): string {
+  return text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
+}
+
+export function constraintPreserved(constraint: string, serializedOutput: string): boolean {
+  const predicate = normalizePredicate(constraint);
+  if (!predicate) return true;
+  return ` ${normalizePredicate(serializedOutput)} `.includes(` ${predicate} `);
 }
 
 async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: string, project: ProjectIndex, memories: MemoryEntry[]) {
@@ -350,8 +352,10 @@ async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: s
   const footerOverheadTokens = estimateTokens(FOOTER);
   const toolOverheadTokens = schemaOverheadTokens + footerOverheadTokens;
   const netEstimatedSavings = baseline.tokens - compactTokens - toolOverheadTokens;
+  const expectedReferenceTokens = estimateTokens(evidence.expectedCompactReference);
+  const expectedNetSavings = baseline.tokens - expectedReferenceTokens - toolOverheadTokens;
   const missingExpectedTests = task.expectedTests.filter((path) => !recommendedTests.includes(path));
-  const calibrationResiduals = evidence.expectedNetSavings.map((expected) => expected - netEstimatedSavings);
+  const calibrationResidual = expectedNetSavings - Math.max(0, netEstimatedSavings);
   const failureReasons = [
     ...(falseNegatives.length ? [`Required files not recalled: ${falseNegatives.join(", ")}.`] : []),
     ...(falsePositives.length ? [`Forbidden false-positive files selected: ${falsePositives.join(", ")}.`] : []),
@@ -373,7 +377,9 @@ async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: s
       rawBaselineTokens: baseline.tokens,
       schemaOverheadTokens,
       footerOverheadTokens,
-      expectedNetSavings: [...evidence.expectedNetSavings]
+      expectedCompactReference: evidence.expectedCompactReference,
+      expectedReferenceTokens,
+      expectedNetSavings
     },
     metrics: {
       requiredFileRecall,
@@ -385,7 +391,7 @@ async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: s
       compactTokens,
       toolOverheadTokens,
       netEstimatedSavings,
-      calibrationResiduals,
+      calibrationResidual,
       qualityResult: failureReasons.length ? "failed" : "passed",
       failureReasons
     } satisfies TaskMetrics
@@ -421,7 +427,7 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     taskFailures: tasks.filter((task) => task.metrics.qualityResult === "failed").map((task) => task.id)
   };
   const releaseGate = evaluateReleaseGate({ ...aggregate, baselineRequiredFileRecall: corpus.baselineRequiredFileRecall });
-  const observations = tasks.flatMap((task) => task.metrics.calibrationResiduals.map((residual) => ({ category: task.category, residual })));
+  const observations = tasks.map((task) => ({ category: task.category, residual: task.metrics.calibrationResidual }));
   const calibration = buildCalibration(observations);
   const taskCalibration: TaskCalibration = Object.fromEntries(
     Object.entries(calibration.categories).map(([category, entry]) => [category, { observations: entry.observations, lowResidual: entry.lowResidual, highResidual: entry.highResidual }])

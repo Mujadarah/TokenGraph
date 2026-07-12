@@ -185,7 +185,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
         failureReasons: expect.any(Array)
       });
     }
-    expect(Object.values(report.calibration.categories).every((entry) => entry.observations >= 10 && entry.confidence === "calibrated")).toBe(true);
+    expect(Object.values(report.calibration.categories).every((entry) => entry.observations < 10 && entry.confidence === "low")).toBe(true);
   });
 
   it("ships benchmark and trust documentation with required cautionary statements", async () => {
