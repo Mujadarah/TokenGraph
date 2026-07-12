@@ -3,6 +3,7 @@ import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { unzipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
@@ -336,11 +337,13 @@ describe("tokengraph release package command", () => {
       plugins: [{ name: "tokengraph", source: "./tokengraph" }]
     });
 
-    const { stdout: archiveListing } = await execFileAsync("tar", ["-tf", report.archivePath], { cwd: process.cwd() });
-    expect(archiveListing).toMatch(/\.agents\/plugins\/marketplace\.json/);
-    expect(archiveListing).toMatch(/\.claude-plugin\/marketplace\.json/);
-    expect(archiveListing).toMatch(/tokengraph\/dist\/index\.js/);
-    expect(archiveListing).not.toMatch(/tokengraph\/(src|tests|node_modules)\//);
+    const archiveListing = Object.keys(unzipSync(await readFile(report.archivePath)));
+    expect(archiveListing).toEqual(expect.arrayContaining([
+      ".agents/plugins/marketplace.json",
+      ".claude-plugin/marketplace.json",
+      "tokengraph/dist/index.js"
+    ]));
+    expect(archiveListing.join("\n")).not.toMatch(/tokengraph\/(src|tests|node_modules)\//);
   });
 
   it("writes a direct release plugin layout when requested", async () => {
