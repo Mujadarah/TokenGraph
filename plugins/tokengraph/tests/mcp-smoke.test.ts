@@ -423,6 +423,42 @@ describe("TokenGraph MCP stdio server", () => {
     });
   });
 
+  it("rejects pause after canonical completion and preserves the repeated completion response", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
+    await request(9054, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-completed-pause-test", version: "0.20.0" }
+    });
+    send({ method: "notifications/initialized" });
+    const preparedCall = await request(9055, "tools/call", {
+      name: "tokengraph_prepare_context",
+      arguments: { task: "Complete, then reject pause" }
+    });
+    const prepared = preparedCall.structuredContent as { taskId: string };
+    const completedCall = await request(9056, "tools/call", {
+      name: "tokengraph_task_report",
+      arguments: { taskId: prepared.taskId, disposition: "complete" }
+    });
+
+    const pauseCall = await request(9057, "tools/call", {
+      name: "tokengraph_task_report",
+      arguments: { taskId: prepared.taskId, disposition: "pause" }
+    });
+    expect(pauseCall).toMatchObject({
+      isError: true,
+      content: [{ text: expect.stringMatching(/completed.*cannot.*pause/i) }]
+    });
+
+    const repeatedCall = await request(9058, "tools/call", {
+      name: "tokengraph_task_report",
+      arguments: { taskId: prepared.taskId, disposition: "complete" }
+    });
+    expect(repeatedCall.structuredContent).toEqual(completedCall.structuredContent);
+  });
+
   it("honestly reports a refresh when prepare_context replaces an unsafe index with a current scan signature", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });

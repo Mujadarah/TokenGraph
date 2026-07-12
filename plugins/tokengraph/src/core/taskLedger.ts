@@ -310,9 +310,11 @@ export async function attachTaskHostContext(
 ): Promise<TaskLedger> {
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await requireTaskLedger(root, taskId);
+    if (context.host !== "codex" && context.host !== "claude") {
+      throw new Error("Host context must identify codex or claude.");
+    }
     if (!isIdentifier(context.sessionId)) throw new Error("Session id must be non-empty.");
     if (!isIdentifier(context.turnId)) throw new Error("Turn id must be non-empty.");
-    if (context.host === "unknown") throw new Error("Attached host context must identify codex or claude.");
     if (ledger.host !== "unknown" && ledger.host !== context.host) {
       throw new Error(`Host context conflict: task is already associated with ${ledger.host}.`);
     }
@@ -386,6 +388,9 @@ export async function setTaskDisposition(
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await requireTaskLedger(root, taskId);
     if (ledger.status === "completed" && ledger.completedReport) {
+      if (disposition === "pause") {
+        throw new Error("A completed task ledger cannot accept a pause disposition.");
+      }
       return { ledger, report: ledger.completedReport };
     }
 

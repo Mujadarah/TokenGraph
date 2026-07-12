@@ -463,6 +463,20 @@ describe("task lifecycle and retention", () => {
     })).rejects.toThrow(/session.*conflict/i);
   });
 
+  it("rejects an unsupported runtime host without mutating or quarantining the ledger", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "unknown" });
+    const invalidContext = {
+      host: "vscode",
+      sessionId: "session-1",
+      turnId: "turn-1"
+    } as unknown as Parameters<typeof attachTaskHostContext>[2];
+
+    await expect(attachTaskHostContext(root, ledger.taskId, invalidContext)).rejects.toThrow(/host.*codex.*claude/i);
+    expect(await loadTaskLedger(root, ledger.taskId)).toEqual(ledger);
+    expect(await readdir(join(root, ".tokengraph", "tasks"))).toEqual([`${ledger.taskId}.json`]);
+  });
+
   it("serializes concurrent host-context updates without losing association invariants", async () => {
     const root = await makeRoot();
     const ledger = await createTaskLedger(root, { host: "unknown" });
@@ -492,6 +506,16 @@ describe("task lifecycle and retention", () => {
     const second = await setTaskDisposition(root, completedLedger.taskId, "complete", "ignored", undefined, 999);
     expect(first.report?.estimate).toMatchObject({ range: { low: 0, likely: 38, high: 48 }, overhead: 22 });
     expect(second).toEqual(first);
+  });
+
+  it("rejects pausing a completed ledger without changing its canonical completion", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const completed = await setTaskDisposition(root, ledger.taskId, "complete");
+
+    await expect(setTaskDisposition(root, ledger.taskId, "pause")).rejects.toThrow(/completed.*cannot.*pause/i);
+    expect(await loadTaskLedger(root, ledger.taskId)).toEqual(completed.ledger);
+    await expect(setTaskDisposition(root, ledger.taskId, "complete")).resolves.toEqual(completed);
   });
 
   it("stores an idempotent canonical completion report and rejects later events", async () => {
