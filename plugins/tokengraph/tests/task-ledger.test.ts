@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildTaskReport } from "../src/core/taskEstimator.js";
 import {
+  __getTaskLedgerWriteQueueSizeForTests,
   createTaskLedger,
   loadTaskLedger,
   pruneTaskLedgers,
@@ -195,6 +196,56 @@ describe("task ledger persistence", () => {
     expect(reconstructed?.completedReport?.quality).not.toHaveProperty("absolutePath");
   });
 
+  it("quarantines ledgers whose lifecycle fields contradict their status", async () => {
+    const mutations: Array<(value: Record<string, unknown>, report: unknown) => void> = [
+      (value) => {
+        value.lastDisposition = "complete";
+      },
+      (value, report) => {
+        value.completedAt = "2026-07-12T12:00:00.000Z";
+        value.completedReport = report;
+      },
+      (value) => {
+        value.status = "paused";
+        value.pausedAt = "2026-07-12T12:00:00.000Z";
+      },
+      (value, report) => {
+        value.status = "paused";
+        value.pausedAt = "2026-07-12T12:00:00.000Z";
+        value.lastDisposition = "pause";
+        value.completedAt = "2026-07-12T12:00:00.000Z";
+        value.completedReport = report;
+      },
+      (value, report) => {
+        value.status = "completed";
+        value.completedAt = "2026-07-12T12:00:00.000Z";
+        value.completedReport = report;
+        value.lastDisposition = "pause";
+      }
+    ];
+
+    for (const mutate of mutations) {
+      const root = await makeRoot();
+      const ledger = await createTaskLedger(root, { host: "codex" });
+      const report = buildTaskReport(ledger);
+      const inconsistent = structuredClone(ledger) as unknown as Record<string, unknown>;
+      mutate(inconsistent, report);
+      await writeFile(ledgerPath(root, ledger.taskId), JSON.stringify(inconsistent));
+
+      expect(await loadTaskLedger(root, ledger.taskId)).toBeUndefined();
+      const files = await readdir(join(root, ".tokengraph", "tasks"));
+      expect(files.some((name) => name.startsWith(`${ledger.taskId}.json.quarantine-`))).toBe(true);
+    }
+
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const completed = await setTaskDisposition(root, ledger.taskId, "complete");
+    const missingDisposition = structuredClone(completed.ledger) as unknown as Record<string, unknown>;
+    delete missingDisposition.lastDisposition;
+    await writeFile(ledgerPath(root, ledger.taskId), JSON.stringify(missingDisposition));
+    expect(await loadTaskLedger(root, ledger.taskId)).toBeUndefined();
+  });
+
   it("deduplicates by fingerprint and retains the largest non-negative net estimate", async () => {
     const root = await makeRoot();
     const ledger = await createTaskLedger(root, { host: "unknown" });
@@ -318,6 +369,33 @@ describe("task lifecycle and retention", () => {
     const stored = await loadTaskLedger(root, ledger.taskId);
     expect(stored?.events).toHaveLength(events.length);
     expect(new Set(stored?.events.map((item) => item.fingerprint))).toEqual(new Set(events.map((item) => item.fingerprint)));
+  });
+
+  it("keeps a newer queued chain registered when an older operation settles, then cleans up after success", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const initial = Array.from({ length: 40 }, (_, index) =>
+      recordTaskEvent(root, ledger.taskId, event({ fingerprint: `queued-${index}` }))
+    );
+
+    await initial[0];
+    const late = recordTaskEvent(root, ledger.taskId, event({ fingerprint: "late" }));
+    await Promise.all([...initial.slice(1), late]);
+
+    expect((await loadTaskLedger(root, ledger.taskId))?.events).toHaveLength(41);
+    expect(__getTaskLedgerWriteQueueSizeForTests()).toBe(0);
+  });
+
+  it("cleans up a rejected ledger operation without blocking the next operation", async () => {
+    const root = await makeRoot();
+    const completed = await createTaskLedger(root, { host: "codex" });
+    await setTaskDisposition(root, completed.taskId, "complete");
+
+    await expect(recordTaskEvent(root, completed.taskId, event())).rejects.toThrow(/completed/i);
+    expect(__getTaskLedgerWriteQueueSizeForTests()).toBe(0);
+
+    const open = await createTaskLedger(root, { host: "codex" });
+    await expect(recordTaskEvent(root, open.taskId, event())).resolves.toBeDefined();
   });
 
   it("prunes only paused and completed ledgers older than 30 days while preserving open ledgers", async () => {

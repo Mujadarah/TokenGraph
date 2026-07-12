@@ -172,8 +172,27 @@ function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedg
       ? undefined
       : reconstructTaskReport(value.completedReport, expectedTaskId, events.length);
   if (value.completedReport !== undefined && completedReport === undefined) return undefined;
-  if (value.status === "paused" && value.pausedAt === undefined) return undefined;
-  if (value.status === "completed" && (value.completedAt === undefined || completedReport === undefined)) return undefined;
+  if (
+    value.status === "open" &&
+    (value.completedAt !== undefined || completedReport !== undefined || value.lastDisposition === "complete")
+  ) {
+    return undefined;
+  }
+  if (
+    value.status === "paused" &&
+    (value.pausedAt === undefined ||
+      value.completedAt !== undefined ||
+      completedReport !== undefined ||
+      value.lastDisposition !== "pause")
+  ) {
+    return undefined;
+  }
+  if (
+    value.status === "completed" &&
+    (value.completedAt === undefined || completedReport === undefined || value.lastDisposition !== "complete")
+  ) {
+    return undefined;
+  }
   return {
     schemaId: TASK_LEDGER_SCHEMA_ID,
     schemaVersion: TASK_LEDGER_SCHEMA_VERSION,
@@ -231,14 +250,20 @@ function enqueueLedgerOperation<T>(root: string, taskId: string, operation: () =
   const key = taskLedgerPath(root, taskId);
   const previous = taskLedgerWriteChains.get(key) ?? Promise.resolve();
   const current = previous.then(operation, operation);
-  taskLedgerWriteChains.set(
-    key,
-    current.then(
-      () => undefined,
-      () => undefined
-    )
-  );
+  let settled: Promise<void>;
+  const cleanUp = (): void => {
+    if (taskLedgerWriteChains.get(key) === settled) {
+      taskLedgerWriteChains.delete(key);
+    }
+  };
+  settled = current.then(cleanUp, cleanUp);
+  taskLedgerWriteChains.set(key, settled);
   return current;
+}
+
+/** @internal Test-only diagnostic; not part of the public task-ledger contract. */
+export function __getTaskLedgerWriteQueueSizeForTests(): number {
+  return taskLedgerWriteChains.size;
 }
 
 export async function createTaskLedger(root: string, options: CreateTaskLedgerOptions): Promise<TaskLedger> {
