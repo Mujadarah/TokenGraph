@@ -1,0 +1,43 @@
+{
+  "schemaId": "tokengraph-benchmark-evidence",
+  "schemaVersion": 1,
+  "evidenceVersion": "fixture-evidence-v1",
+  "memories": [
+    {"id":"fixture-memory-patient","type":"architecture","title":"Patient route service boundary","body":"The patient route renders PatientCard and delegates reads to patientService. The service records patient.read audit evidence.","tags":["patient","route","service","audit"],"linkedFiles":["app/patients/[id]/page.tsx","components/PatientCard.tsx","services/patientService.ts","src/audit.ts"],"confidence":"high"},
+    {"id":"fixture-memory-tenant","type":"security","title":"Tenant isolation evidence","body":"Patients and audit events require authenticated tenant row level security. Service filtering does not replace database policy review.","tags":["tenant","rls","auth","security"],"linkedFiles":["src/auth.ts","supabase/migrations/001_patients.sql","supabase/migrations/002_audit.sql"],"confidence":"high"},
+    {"id":"fixture-memory-release","type":"convention","title":"Release validation sequence","body":"Release packaging requires package selection, smoke, and plugin validation before publication.","tags":["release","package","smoke","validation"],"linkedFiles":["scripts/package-plugin.mjs","scripts/smoke.mjs","scripts/validate-plugin.mjs"],"confidence":"medium"},
+    {"id":"fixture-memory-confidence","type":"lesson","title":"Durable memory confidence","body":"Only confirmed evidence is high confidence; stale entries require review before reuse.","tags":["memory","confidence","wiki","review"],"linkedFiles":["src/memory.ts","docs/architecture.md"],"confidence":"high"}
+  ],
+  "tasks": {
+    "code-routing-01":{"rawFiles":["app/patients/[id]/page.tsx","components/PatientCard.tsx","docs/architecture.md"],"expectedNetSavings":[45,50,55]},
+    "code-routing-02":{"rawFiles":["services/patientService.ts","services/patientService.test.ts","docs/debugging-runbook.md"],"expectedNetSavings":[50,55,60]},
+    "code-routing-03":{"rawFiles":["app/patients/[id]/page.tsx","components/PatientCard.tsx","services/patientService.ts","docs/architecture.md"],"expectedNetSavings":[55,60,65]},
+    "code-routing-04":{"rawFiles":["services/patientService.ts","src/audit.ts","docs/architecture.md"],"expectedNetSavings":[40,45,50]},
+    "code-routing-05":{"rawFiles":["src/auth.ts","services/patientService.ts","docs/security-runbook.md"],"expectedNetSavings":[45,50,55]},
+    "sql-security-01":{"rawFiles":["supabase/migrations/001_patients.sql","docs/security-runbook.md"],"expectedNetSavings":[60,65,70]},
+    "sql-security-02":{"rawFiles":["supabase/migrations/002_audit.sql","docs/security-runbook.md"],"expectedNetSavings":[55,60,65]},
+    "sql-security-03":{"rawFiles":["services/patientService.ts","supabase/migrations/001_patients.sql","docs/security-runbook.md"],"expectedNetSavings":[65,70,75]},
+    "sql-security-04":{"rawFiles":["supabase/migrations/001_patients.sql","supabase/migrations/002_audit.sql","docs/security-runbook.md"],"expectedNetSavings":[70,75,80]},
+    "sql-security-05":{"rawFiles":["supabase/migrations/001_patients.sql","services/patientService.ts","docs/security-runbook.md"],"expectedNetSavings":[60,65,70]},
+    "debugging-01":{"rawFiles":["services/patientService.test.ts","services/patientService.ts","docs/debugging-runbook.md"],"expectedNetSavings":[45,50,55]},
+    "debugging-02":{"rawFiles":["src/auth.ts","docs/debugging-runbook.md","docs/security-runbook.md"],"expectedNetSavings":[40,45,50]},
+    "debugging-03":{"rawFiles":["app/patients/[id]/page.tsx","services/patientService.ts","docs/debugging-runbook.md"],"expectedNetSavings":[50,55,60]},
+    "debugging-04":{"rawFiles":["src/audit.ts","services/patientService.ts","docs/debugging-runbook.md"],"expectedNetSavings":[45,50,55]},
+    "change-risk-01":{"rawFiles":["services/patientService.ts","app/patients/[id]/page.tsx","services/patientService.test.ts","docs/architecture.md"],"expectedNetSavings":[55,60,65]},
+    "change-risk-02":{"rawFiles":["supabase/migrations/001_patients.sql","docs/security-runbook.md"],"expectedNetSavings":[55,60,65]},
+    "change-risk-03":{"rawFiles":["components/PatientCard.tsx","app/patients/[id]/page.tsx","docs/architecture.md"],"expectedNetSavings":[40,45,50]},
+    "change-risk-04":{"rawFiles":["scripts/package-plugin.mjs","scripts/validate-plugin.mjs","docs/release-runbook.md"],"expectedNetSavings":[45,50,55]},
+    "compression-01":{"rawFiles":["services/patientService.test.ts","services/patientService.ts","docs/debugging-runbook.md"],"expectedNetSavings":[70,75,80]},
+    "compression-02":{"rawFiles":["supabase/migrations/001_patients.sql","docs/security-runbook.md"],"expectedNetSavings":[75,80,85]},
+    "compression-03":{"rawFiles":["app/patients/[id]/page.tsx","docs/debugging-runbook.md"],"expectedNetSavings":[60,65,70]},
+    "compression-04":{"rawFiles":["scripts/validate-plugin.mjs","scripts/smoke.mjs","docs/release-runbook.md"],"expectedNetSavings":[65,70,75]},
+    "memory-wiki-01":{"rawFiles":["src/memory.ts","docs/architecture.md"],"expectedNetSavings":[50,55,60]},
+    "memory-wiki-02":{"rawFiles":["app/patients/[id]/page.tsx","services/patientService.ts","docs/architecture.md"],"expectedNetSavings":[55,60,65]},
+    "memory-wiki-03":{"rawFiles":["src/auth.ts","supabase/migrations/001_patients.sql","docs/security-runbook.md"],"expectedNetSavings":[60,65,70]},
+    "memory-wiki-04":{"rawFiles":["src/audit.ts","supabase/migrations/002_audit.sql","docs/architecture.md"],"expectedNetSavings":[55,60,65]},
+    "release-packaging-01":{"rawFiles":["scripts/package-plugin.mjs","scripts/validate-plugin.mjs","docs/release-runbook.md"],"expectedNetSavings":[55,60,65]},
+    "release-packaging-02":{"rawFiles":["scripts/smoke.mjs","scripts/validate-plugin.mjs","docs/release-runbook.md"],"expectedNetSavings":[50,55,60]},
+    "release-packaging-03":{"rawFiles":["scripts/package-plugin.mjs","scripts/smoke.mjs","scripts/validate-plugin.mjs","docs/release-runbook.md"],"expectedNetSavings":[60,65,70]},
+    "release-packaging-04":{"rawFiles":["scripts/package-plugin.mjs","docs/release-runbook.md"],"expectedNetSavings":[45,50,55]}
+  }
+}

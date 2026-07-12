@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -12,6 +12,10 @@ import {
   stableBenchmarkJson,
   validateCorpus
 } from "../scripts/benchmark-lib.js";
+import * as benchmarkLibrary from "../scripts/benchmark-lib.js";
+import { buildTaskReport, TASK_ESTIMATOR_VERSION } from "../src/core/taskEstimator.js";
+import type { TaskLedger } from "../src/core/taskLedger.js";
+import { estimateTokens } from "../src/core/token.js";
 
 const corpusPath = resolve("scripts", "benchmark-corpus-v1.json");
 
@@ -27,13 +31,18 @@ describe("evidence benchmark", () => {
     expect(result.errors).toEqual([]);
     expect(result.tasks).toHaveLength(30);
     expect(new Set(result.tasks.map((task) => task.query)).size).toBe(30);
+    for (const task of result.tasks) {
+      for (const path of task.requiredFiles) {
+        await expect(access(resolve("tests", "fixtures", "evidence-project", path))).resolves.toBeUndefined();
+      }
+    }
     for (const category of BENCHMARK_CATEGORIES) {
       expect(result.tasks.filter((task) => task.category === category).length).toBeGreaterThanOrEqual(4);
     }
   });
 
   it("evaluates distinct scenarios through real core routing functions", async () => {
-    const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "next-supabase"));
+    const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "evidence-project"));
 
     expect(report.tasks).toHaveLength(30);
     expect(new Set(report.tasks.map((task) => JSON.stringify(task.metrics))).size).toBeGreaterThan(10);
@@ -50,6 +59,60 @@ describe("evidence benchmark", () => {
       qualityResult: expect.stringMatching(/^(passed|failed)$/),
       failureReasons: expect.any(Array)
     });
+  });
+
+  it("keeps core evidence and accounting independent from mutated gold labels", async () => {
+    const loaded = await corpus();
+    const baseline = await evaluateBenchmark(loaded, resolve("tests", "fixtures", "evidence-project"));
+    const mutated = structuredClone(loaded);
+    mutated.tasks[0].requiredFiles = ["absent/gold-label.ts"];
+    mutated.tasks[0].criticalConstraints = ["Poison gold constraint that is not fixture input."];
+    mutated.tasks[0].expectedTests = ["absent/gold-label.test.ts"];
+    mutated.tasks[0].forbiddenFalsePositiveFiles = ["absent/forbidden.ts"];
+    mutated.tasks[0].targetedRawReadsAllowed = !mutated.tasks[0].targetedRawReadsAllowed;
+    const changed = await evaluateBenchmark(mutated, resolve("tests", "fixtures", "evidence-project"));
+
+    expect(changed.tasks[0]).toMatchObject({
+      flow: baseline.tasks[0]?.flow,
+      coreOutput: baseline.tasks[0]?.coreOutput,
+      accounting: baseline.tasks[0]?.accounting
+    });
+    expect(changed.tasks[0]?.metrics.recommendedTests).toEqual(baseline.tasks[0]?.metrics.recommendedTests);
+  });
+
+  it("reports an absent required file as a false negative and fails the release gate", async () => {
+    const loaded = await corpus();
+    loaded.tasks[0].requiredFiles = ["absent/required-file.ts"];
+
+    const report = await evaluateBenchmark(loaded, resolve("tests", "fixtures", "evidence-project"));
+
+    expect(report.tasks[0]?.metrics.falseNegatives).toEqual(["absent/required-file.ts"]);
+    expect(report.aggregate.criticalFalseNegativeCount).toBeGreaterThan(0);
+    expect(report.releaseGate).toMatchObject({ passed: false, failureReasons: expect.arrayContaining([expect.stringMatching(/false negatives/i)]) });
+  });
+
+  it("uses one category flow and accounts its actual serialized output and independent raw baseline", async () => {
+    const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "evidence-project"));
+    const expectedFlows: Record<string, string> = {
+      "code-routing": "planner",
+      "sql-security": "planner",
+      debugging: "tracer",
+      "change-risk": "risk",
+      compression: "compressor",
+      "memory-wiki": "wiki-memory",
+      "release-packaging": "planner"
+    };
+
+    for (const task of report.tasks) {
+      expect(task.flow).toBe(expectedFlows[task.category]);
+      expect(task.accounting.coreOutputCount).toBe(task.flow === "wiki-memory" ? 2 : 1);
+      expect(task.accounting.coreOutputTokens).toHaveLength(task.accounting.coreOutputCount);
+      expect(task.accounting.rawBaselineFiles.length).toBeGreaterThan(0);
+      expect(task.accounting.rawBaselineFiles.length).toBeLessThan(report.fixtureFileCount);
+      expect(task.metrics.compactTokens).toBe(task.accounting.coreOutputTokens.reduce((total, tokens) => total + tokens, 0));
+      expect(task.metrics.toolOverheadTokens).toBe(task.accounting.schemaOverheadTokens + task.accounting.footerOverheadTokens);
+      expect(task.metrics.rawTokens).toBe(task.accounting.rawBaselineTokens);
+    }
   });
 
   it("fails and passes release gates for the documented deterministic conditions", () => {
@@ -100,13 +163,64 @@ describe("evidence benchmark", () => {
     });
   });
 
-  it("serializes stable JSON when only the generated timestamp changes", async () => {
-    const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "next-supabase"));
-    const first = stableBenchmarkJson({ ...report, generatedAt: "2026-01-01T00:00:00.000Z" });
-    const second = stableBenchmarkJson({ ...report, generatedAt: "2026-02-01T00:00:00.000Z" });
+  it("emits direct TaskCalibration from independent expected-net observations and changes Task 1A ranges", async () => {
+    const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "evidence-project"));
+    const calibration = report.taskCalibration;
+    const category = Object.keys(calibration).find((key) => calibration[key]!.observations >= 10)!;
+    const event = {
+      id: "event-1",
+      fingerprint: "fingerprint-1",
+      category,
+      toolName: "benchmark-tool",
+      originalTokens: 200,
+      compactTokens: 80,
+      overheadTokens: 20,
+      confidence: "high" as const,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      qualityChecks: [{ name: "fixture", passed: true }]
+    };
+    const ledger = {
+      schemaId: "tokengraph-task-ledger",
+      schemaVersion: 1,
+      taskId: "00000000-0000-4000-8000-000000000001",
+      host: "unknown",
+      status: "open",
+      createdAt: event.timestamp,
+      updatedAt: event.timestamp,
+      estimatorVersion: TASK_ESTIMATOR_VERSION,
+      events: [event]
+    } satisfies TaskLedger;
 
-    expect(first.replace("2026-01-01T00:00:00.000Z", "TIMESTAMP")).toBe(
-      second.replace("2026-02-01T00:00:00.000Z", "TIMESTAMP")
-    );
+    expect(report.tasks.every((task) => task.accounting.expectedNetSavings.length > 0)).toBe(true);
+    expect(buildTaskReport(ledger, calibration).estimate.range).not.toEqual(buildTaskReport(ledger).estimate.range);
+  });
+
+  it("evaluates independently twice with only generatedAt allowed to differ", async () => {
+    const loaded = await corpus();
+    const first = await evaluateBenchmark(loaded, resolve("tests", "fixtures", "evidence-project"));
+    const second = await evaluateBenchmark(loaded, resolve("tests", "fixtures", "evidence-project"));
+    const firstTimestamp = first.generatedAt;
+    const secondTimestamp = second.generatedAt;
+    delete (first as { generatedAt?: string }).generatedAt;
+    delete (second as { generatedAt?: string }).generatedAt;
+
+    expect(firstTimestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(secondTimestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(stableBenchmarkJson(first)).toBe(stableBenchmarkJson(second));
+  });
+
+  it("rejects the legacy nine-task placeholder report", () => {
+    const validateBenchmarkReport = (benchmarkLibrary as Record<string, unknown>).validateBenchmarkReport;
+    expect(validateBenchmarkReport).toBeTypeOf("function");
+    const legacy = {
+      status: "ok",
+      claimsPolicy: ["placeholder"],
+      tasks: Array.from({ length: 9 }, (_, index) => ({ taskType: `legacy-${index}`, metrics: {} }))
+    };
+
+    expect((validateBenchmarkReport as (value: unknown) => { valid: boolean; errors: string[] })(legacy)).toMatchObject({
+      valid: false,
+      errors: expect.arrayContaining([expect.stringMatching(/legacy|schema|30/i)])
+    });
   });
 });

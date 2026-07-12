@@ -162,8 +162,15 @@ describe("tokengraph benchmark harness and trust docs", () => {
       "release-packaging",
       "sql-security"
     ]);
-    expect(report.aggregate.medianNetSavings).toBeGreaterThan(0);
-    expect(report.releaseGate).toEqual({ passed: true, failureReasons: [] });
+    expect(report.aggregate.medianNetSavings).toBeLessThan(0);
+    expect(report.releaseGate).toEqual({
+      passed: false,
+      failureReasons: expect.arrayContaining([
+        expect.stringMatching(/constraint preservation/i),
+        expect.stringMatching(/false negatives/i),
+        expect.stringMatching(/median net savings/i)
+      ])
+    });
     for (const task of report.tasks) {
       expect(task.metrics).toMatchObject({
         requiredFileRecall: expect.any(Number),
@@ -178,7 +185,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
         failureReasons: expect.any(Array)
       });
     }
-    expect(Object.values(report.calibration.categories).every((entry) => entry.observations < 10 && entry.confidence === "low")).toBe(true);
+    expect(Object.values(report.calibration.categories).every((entry) => entry.observations >= 10 && entry.confidence === "calibrated")).toBe(true);
   });
 
   it("ships benchmark and trust documentation with required cautionary statements", async () => {
