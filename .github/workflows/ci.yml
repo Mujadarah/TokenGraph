@@ -44,6 +44,9 @@ jobs:
       - name: Validate plugin
         run: pnpm validate:plugin
 
+      - name: Build standalone marketplace archive
+        run: pnpm package:plugin -- --json
+
       - name: Scan tracked source and documentation for non-ASCII characters
         working-directory: .
         shell: bash
@@ -70,7 +73,8 @@ jobs:
         shell: bash
         run: |
           if command -v claude >/dev/null 2>&1; then
-            claude plugin validate ./release/tokengraph --strict
+            claude plugin validate .
+            claude plugin validate ./release/tokengraph
           else
             echo "Claude CLI not installed on this runner; manifest checks remain covered by pnpm validate:plugin."
           fi

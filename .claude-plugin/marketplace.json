@@ -3,10 +3,17 @@
   "owner": {
     "name": "Mujadarah"
   },
+  "metadata": {
+    "description": "Local-first project context routing for Codex and Claude Code."
+  },
   "plugins": [
     {
       "name": "tokengraph",
-      "source": "./release/tokengraph"
+      "source": "./release/tokengraph",
+      "version": "0.19.0",
+      "description": "Route coding agents through compact local code, SQL, memory, wiki, and log context.",
+      "category": "Developer Tools",
+      "tags": ["mcp", "code-intelligence", "local-first", "context"]
     }
   ]
 }

@@ -10,6 +10,8 @@ Use this skill when reviewing a diff, preparing tests, or estimating which files
 
 ## MCP tools to call
 
+Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and do not claim graph-backed regression analysis ran.
+
 1. Call `tokengraph_assess_change_risk` with the changed files, task, diff summary, root, and profile when available.
 2. Call `tokengraph_index_status` and refresh with `tokengraph_index_project` when needed.
 3. Call `tokengraph_project_map` to inspect import counts, route exposure, and SQL involvement.

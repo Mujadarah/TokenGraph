@@ -10,6 +10,8 @@ Use this skill when changing plugin manifests, marketplace metadata, MCP config,
 
 ## MCP tools to call
 
+Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and use honest local validation fallback without claiming TokenGraph project routing ran.
+
 1. Call `tokengraph_index_status` and refresh with `tokengraph_index_project` when needed.
 2. Call `tokengraph_plan_context` with the release or install-readiness task.
 3. Call `tokengraph_compress_output` for long build, package, smoke, validation, or diff output.

@@ -230,12 +230,14 @@ describe("tokengraph release package command", () => {
   it("keeps the root marketplace pointed at a committed installable release plugin", async () => {
     const repoRoot = resolve("..", "..");
     const marketplace = JSON.parse(await readFile(resolve(repoRoot, ".agents", "plugins", "marketplace.json"), "utf8")) as {
+      name?: string;
       plugins?: Array<{
         name?: string;
         source?: { source?: string; path?: string };
         policy?: { installation?: string; authentication?: string };
       }>;
     };
+    expect(marketplace.name).toBe("tokengraph");
     const plugin = marketplace.plugins?.find((entry) => entry.name === "tokengraph");
 
     expect(plugin).toMatchObject({
@@ -268,7 +270,7 @@ describe("tokengraph release package command", () => {
     await expect(access(resolve(releaseRoot, ".tokengraph"))).rejects.toThrow();
   });
 
-  it("creates a distributable plugin folder without source or test files", async () => {
+  it("creates a standalone Codex and Claude marketplace archive without source or test files", async () => {
     const outRoot = await makeRoot();
 
     const { stdout } = await execFileAsync(
@@ -279,17 +281,23 @@ describe("tokengraph release package command", () => {
     const report = JSON.parse(stdout) as {
       status: string;
       version: string;
+      bundleDir: string;
       packageDir: string;
-      marketplacePath: string;
+      archivePath: string;
+      codexMarketplacePath: string;
+      claudeMarketplacePath: string;
       files: string[];
     };
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.18.0"
+      version: "0.19.0"
     });
-    expect(report.packageDir).toBe(resolve(outRoot, "tokengraph-0.18.0"));
-    expect(report.marketplacePath).toBe(resolve(outRoot, ".agents", "plugins", "marketplace.json"));
+    expect(report.bundleDir).toBe(resolve(outRoot, "tokengraph-0.19.0"));
+    expect(report.packageDir).toBe(resolve(report.bundleDir, "tokengraph"));
+    expect(report.archivePath).toBe(resolve(outRoot, "tokengraph-0.19.0.zip"));
+    expect(report.codexMarketplacePath).toBe(resolve(report.bundleDir, ".agents", "plugins", "marketplace.json"));
+    expect(report.claudeMarketplacePath).toBe(resolve(report.bundleDir, ".claude-plugin", "marketplace.json"));
     expect(report.files).toEqual(
       expect.arrayContaining([
         ".codex-plugin/plugin.json",
@@ -307,13 +315,32 @@ describe("tokengraph release package command", () => {
     await expect(access(resolve(report.packageDir, "tests"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "node_modules"))).rejects.toThrow();
 
-    const marketplace = JSON.parse(await readFile(report.marketplacePath, "utf8")) as {
+    const marketplace = JSON.parse(await readFile(report.codexMarketplacePath, "utf8")) as {
+      name?: string;
       plugins?: Array<{ name?: string; source?: { path?: string } }>;
     };
+    expect(marketplace.name).toBe("tokengraph");
     expect(marketplace.plugins?.[0]).toMatchObject({
       name: "tokengraph",
-      source: { path: "./tokengraph-0.18.0" }
+      source: { path: "./tokengraph" }
     });
+
+    const claudeMarketplace = JSON.parse(await readFile(report.claudeMarketplacePath, "utf8")) as {
+      name?: string;
+      metadata?: { description?: string };
+      plugins?: Array<{ name?: string; source?: string }>;
+    };
+    expect(claudeMarketplace).toMatchObject({
+      name: "tokengraph",
+      metadata: { description: expect.stringMatching(/local-first/i) },
+      plugins: [{ name: "tokengraph", source: "./tokengraph" }]
+    });
+
+    const { stdout: archiveListing } = await execFileAsync("tar", ["-tf", report.archivePath], { cwd: process.cwd() });
+    expect(archiveListing).toMatch(/\.agents\/plugins\/marketplace\.json/);
+    expect(archiveListing).toMatch(/\.claude-plugin\/marketplace\.json/);
+    expect(archiveListing).toMatch(/tokengraph\/dist\/index\.js/);
+    expect(archiveListing).not.toMatch(/tokengraph\/(src|tests|node_modules)\//);
   });
 
   it("writes a direct release plugin layout when requested", async () => {
@@ -333,7 +360,7 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.18.0",
+      version: "0.19.0",
       releaseDir: releaseRoot
     });
     expect(report.files).toEqual(

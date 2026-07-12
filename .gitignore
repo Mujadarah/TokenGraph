@@ -3,6 +3,7 @@ dist/
 .tokengraph/
 artifacts/
 .worktrees/
+/tokengraph-*.zip
 
 # Committed one-click Codex release plugin runtime.
 !release/

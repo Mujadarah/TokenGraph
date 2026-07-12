@@ -189,6 +189,16 @@ Status: complete
 - The release ships only the self-contained `dist/index.js` runtime plus Claude Code marketplace, plugin, and MCP manifests with trusted project-root forwarding.
 - CI validates frozen installs, typecheck, tests, build, smoke, plugin validation, non-ASCII scans, and byte-reproducible committed releases.
 
+## v0.19 - Repository Hygiene And Installability
+
+Status: complete
+
+- Rootless setup diagnostics explain missing, unsafe, or unreadable host workspace trust without granting access.
+- Public Codex and Claude Code marketplaces share the `tokengraph` identity and richer discovery metadata.
+- GitHub and extracted-release installation guides include exact host commands, verification, migration, and workspace-trust steps.
+- Release artifacts are deterministic standalone marketplace ZIPs for both hosts.
+- Completed implementation plans and superseded design specs are removed from the current tree while Git history preserves them.
+
 ## Later
 
 Ideas under consideration:

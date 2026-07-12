@@ -152,6 +152,7 @@ assert(/LICENSE/i.test(packageJson.license ?? ""), "package metadata must point 
 assert(/^\d+\.\d+\.\d+$/.test(packageJson.version), "package version must be semver");
 assert(packageJson.scripts?.build === "node scripts/build.mjs", "package scripts must use the bundled MCP build command");
 assert(packageJson.devDependencies?.esbuild, "package devDependencies must include esbuild for self-contained MCP bundles");
+assert(packageJson.devDependencies?.fflate === "0.8.3", "package devDependencies must pin fflate 0.8.3 for deterministic ZIP archives");
 assert(packageJson.scripts?.smoke === "node scripts/smoke.mjs", "package scripts must include smoke command");
 assert(packageJson.scripts?.benchmark === "node scripts/benchmark.mjs", "package scripts must include benchmark command");
 assert(packageJson.scripts?.["package:plugin"] === "node scripts/package-plugin.mjs", "package scripts must include package:plugin command");
@@ -165,8 +166,13 @@ assert(claudeManifest.mcpServers === "./.mcp.claude.json", "Claude plugin manife
 const claudeMarketplacePlugin = claudeMarketplace.plugins?.find((plugin) => plugin.name === "tokengraph");
 assert(claudeMarketplace.name === "tokengraph", "Claude marketplace must be named tokengraph");
 assert(claudeMarketplace.owner?.name === "Mujadarah", "Claude marketplace must identify its owner");
+assert(/local-first/i.test(claudeMarketplace.metadata?.description ?? ""), "Claude marketplace must include a useful metadata description");
+assert(claudeMarketplacePlugin?.version === packageJson.version, "Claude marketplace plugin version must match package version");
+assert(/context/i.test(claudeMarketplacePlugin?.description ?? ""), "Claude marketplace plugin must include discovery copy");
 assert(claudeMarketplacePlugin?.source === "./release/tokengraph", "Claude marketplace source must point at ./release/tokengraph");
 const marketplacePlugin = marketplace.plugins?.find((plugin) => plugin.name === "tokengraph");
+assert(marketplace.name === "tokengraph", "Codex marketplace must be named tokengraph");
+assert(marketplace.interface?.displayName === "TokenGraph", "Codex marketplace must display as TokenGraph");
 assert(marketplacePlugin, "root marketplace must include tokengraph");
 assert(marketplacePlugin.source?.source === "local", "marketplace tokengraph source must be local");
 assert(
@@ -203,7 +209,8 @@ assert(distServer.includes("tokengraph_update_config"), "built MCP server must r
 assert(distServer.includes("fullReindex"), "built MCP server must expose v0.8 full reindex option");
 assert(distServer.includes("indexingMode"), "built MCP server must report v0.8 indexing mode");
 assert(distServer.includes("maxEstimatedTokens"), "built MCP server must expose v0.8 planner token budget input");
-assert(packageJson.version === "0.18.0", "package version must be 0.18.0 for this release");
+assert(packageJson.version === "0.19.0", "package version must be 0.19.0 for this release");
+assert(distServer.includes("tokengraph_setup_status"), "built MCP server must register setup diagnostics");
 assert(distServer.includes("tokengraph_generate_wiki"), "built MCP server must register v0.9 wiki generator");
 assert(distServer.includes("tokengraph_show_wiki_page"), "built MCP server must register v0.9 wiki page reader");
 assert(distServer.includes("wikiRefreshed"), "built MCP server must report v0.9 wiki auto-refresh state");

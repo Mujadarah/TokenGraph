@@ -1,6 +1,6 @@
 {
   "name": "tokengraph",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "Local-first coding-agent MCP plugin for compact project context routing.",
   "type": "module",
   "private": true,

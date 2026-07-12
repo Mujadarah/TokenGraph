@@ -1,26 +1,51 @@
 # TokenGraph on Claude Code
 
-Claude Code can install TokenGraph from the repository marketplace and launch its local stdio MCP server without a hand-written project config. The Claude-specific manifest keeps host transport details separate from the shared TokenGraph server.
+TokenGraph ships a Claude Code marketplace, plugin manifest, focused skills, and the same local stdio MCP server used by Codex. The release is self-contained and requires Node.js 22 or newer.
 
 Official references:
 
-- Claude Code MCP guide: https://code.claude.com/docs/en/mcp
-- MCP tool result content types: https://modelcontextprotocol.io/specification/2025-06-18/server/tools
+- https://code.claude.com/docs/en/discover-plugins
+- https://code.claude.com/docs/en/plugin-marketplaces
+- https://code.claude.com/docs/en/mcp
 
-## Marketplace installation
+## Install from GitHub
 
-From Claude Code, add the repository's `.claude-plugin/marketplace.json` as a marketplace source and install the `tokengraph` plugin. The marketplace entry points to the committed `release/tokengraph/` folder, which contains the self-contained `dist/index.js` runtime and does not require an npm install in the plugin cache.
+Run inside Claude Code:
 
-The plugin manifest points to `.mcp.claude.json`. That config launches `${CLAUDE_PLUGIN_ROOT}/dist/index.js` and forwards `${CLAUDE_PROJECT_DIR}` as `TOKENGRAPH_WORKSPACE_ROOT`.
+```text
+/plugin marketplace add Mujadarah/TokenGraph
+/plugin install tokengraph@tokengraph
+/reload-plugins
+```
 
-## Usage Notes
+Or use the non-interactive CLI:
 
-- Approve the marketplace-installed server when Claude Code prompts for plugin or MCP trust.
-- Claude Code supplies `CLAUDE_PROJECT_DIR` to plugin-provided MCP servers; TokenGraph uses it as the trusted project root.
-- A TokenGraph `root` argument may select only a path inside `CLAUDE_PROJECT_DIR`.
-- Use `tokengraph_index_status`, `tokengraph_index_project`, `tokengraph_plan_context`, and `tokengraph_compress_context` before broad raw file reads.
-- Map exports return structured JSON or Mermaid text plus Markdown fallbacks. Image output is not required.
+```bash
+claude plugin marketplace add Mujadarah/TokenGraph
+claude plugin install tokengraph@tokengraph
+```
 
-## Compatibility Boundary
+## Install an extracted release bundle
 
-Claude-specific files should only configure transport and host policy. Do not add Claude-only parsing, indexing, memory, compression, or map-export logic.
+Extract `tokengraph-0.19.0.zip`, add the extracted bundle root, and install:
+
+```text
+/plugin marketplace add /path/to/tokengraph-0.19.0
+/plugin install tokengraph@tokengraph
+/reload-plugins
+```
+
+The bundle marketplace points at its nested `tokengraph/` plugin directory.
+
+## Workspace trust and verification
+
+Claude Code launches `${CLAUDE_PLUGIN_ROOT}/dist/index.js` and forwards `${CLAUDE_PROJECT_DIR}` as `TOKENGRAPH_WORKSPACE_ROOT`. TokenGraph accepts only the project directory and its descendants.
+
+After installation:
+
+1. Call `tokengraph_setup_status`; expect `ready` with source `CLAUDE_PROJECT_DIR`.
+2. Call `tokengraph_index_status`.
+3. Index or refresh the project when necessary.
+4. Use `tokengraph_plan_context` before broad raw reads.
+
+If plugin changes are not visible, run `/reload-plugins`. If setup is blocked, follow the diagnostic response rather than retrying arbitrary roots.
