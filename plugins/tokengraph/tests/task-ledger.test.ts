@@ -3,9 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildTaskReport } from "../src/core/taskEstimator.js";
+import { buildTaskReport, formatTaskReportFooter } from "../src/core/taskEstimator.js";
 import {
   __getTaskLedgerWriteQueueSizeForTests,
+  attachTaskHostContext,
   createTaskLedger,
   loadTaskLedger,
   pruneTaskLedgers,
@@ -107,6 +108,28 @@ describe("task ledger persistence", () => {
     expect(serialized).not.toContain("C:\\\\Users");
   });
 
+  it("serializes only host association identifiers and derived ledger metadata", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "unknown" });
+    const unsafeContext = {
+      host: "codex",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      transcript: "private transcript",
+      message: "private message",
+      toolPayload: { secret: true }
+    } as Parameters<typeof attachTaskHostContext>[2];
+
+    await attachTaskHostContext(root, ledger.taskId, unsafeContext);
+    const serialized = await readFile(ledgerPath(root, ledger.taskId), "utf8");
+    const stored = JSON.parse(serialized) as Record<string, unknown>;
+
+    expect(stored).toMatchObject({ host: "codex", sessionId: "session-1", turnId: "turn-1" });
+    expect(serialized).not.toContain("private transcript");
+    expect(serialized).not.toContain("private message");
+    expect(serialized).not.toContain("toolPayload");
+  });
+
   it("reconstructs persisted ledgers from strict allowlists and strips raw fields on the next write", async () => {
     const root = await makeRoot();
     const ledger = await createTaskLedger(root, { host: "codex" });
@@ -171,6 +194,37 @@ describe("task ledger persistence", () => {
       const files = await readdir(join(root, ".tokengraph", "tasks"));
       expect(files.some((name) => name.startsWith(`${ledger.taskId}.json.quarantine-`))).toBe(true);
     }
+  });
+
+  it("quarantines invalid host identifiers and impossible lifecycle timestamps", async () => {
+    const mutations: Array<(value: Record<string, unknown>) => void> = [
+      (value) => { value.host = "vscode"; },
+      (value) => { value.sessionId = ""; },
+      (value) => { value.turnId = 42; },
+      (value) => { value.updatedAt = "2020-01-01T00:00:00.000Z"; },
+      (value) => { value.pausedAt = value.createdAt; }
+    ];
+
+    for (const mutate of mutations) {
+      const root = await makeRoot();
+      const ledger = await createTaskLedger(root, { host: "codex", sessionId: "session-1", turnId: "turn-1" });
+      const persisted = structuredClone(ledger) as unknown as Record<string, unknown>;
+      mutate(persisted);
+      await writeFile(ledgerPath(root, ledger.taskId), JSON.stringify(persisted));
+
+      expect(await loadTaskLedger(root, ledger.taskId)).toBeUndefined();
+    }
+  });
+
+  it("quarantines lifecycle timestamps that occur after the last ledger update", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const completed = await setTaskDisposition(root, ledger.taskId, "complete");
+    const persisted = structuredClone(completed.ledger) as unknown as Record<string, unknown>;
+    persisted.completedAt = "2099-01-01T00:00:00.000Z";
+    await writeFile(ledgerPath(root, ledger.taskId), JSON.stringify(persisted));
+
+    expect(await loadTaskLedger(root, ledger.taskId)).toBeUndefined();
   });
 
   it("strictly reconstructs a valid canonical report without retaining extra raw fields", async () => {
@@ -260,6 +314,50 @@ describe("task ledger persistence", () => {
 });
 
 describe("task savings estimator", () => {
+  it("formats exact honest footer strings for unmeasured, singular, range, and quality states", async () => {
+    const root = await makeRoot();
+    const empty = await createTaskLedger(root, { host: "codex" });
+    expect(formatTaskReportFooter(buildTaskReport(empty))).toBe(
+      "TokenGraph: savings not measured (no qualifying task events)."
+    );
+
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const singular = await recordTaskEvent(root, ledger.taskId, event({ compactTokens: 50, overheadTokens: 0, qualityChecks: [{ name: "tests", passed: true }] }));
+    expect(formatTaskReportFooter(buildTaskReport(singular, { context: { observations: 10, lowResidual: 0, highResidual: -10 } }))).toBe(
+      "TokenGraph: ~50 tokens saved (estimated, medium confidence); quality passed."
+    );
+
+    const warning = await recordTaskEvent(root, ledger.taskId, event({ fingerprint: "warning", qualityChecks: [{ name: "tests", passed: false }] }));
+    expect(formatTaskReportFooter(buildTaskReport(warning))).toBe(
+      "TokenGraph: ~0-110 tokens saved (estimated, low confidence); quality warning."
+    );
+
+    const noChecks = await createTaskLedger(root, { host: "codex" });
+    const measured = await recordTaskEvent(root, noChecks.taskId, event());
+    expect(formatTaskReportFooter(buildTaskReport(measured))).toBe(
+      "TokenGraph: ~0-60 tokens saved (estimated, low confidence); quality not evaluated."
+    );
+  });
+
+  it("charges fixed report overhead once after aggregation and clamps an ordered range", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const stored = await recordTaskEvent(
+      root,
+      ledger.taskId,
+      event({ originalTokens: 100, compactTokens: 40, overheadTokens: 10 })
+    );
+
+    expect(buildTaskReport(stored, {}, 20).estimate).toMatchObject({
+      range: { low: 0, likely: 30, high: 40 },
+      overhead: 30
+    });
+    expect(buildTaskReport(stored, {}, 80).estimate).toMatchObject({
+      range: { low: 0, likely: 0, high: 0 },
+      overhead: 90
+    });
+  });
+
   it("builds conservative uncalibrated ranges from unique events", async () => {
     const root = await makeRoot();
     const ledger = await createTaskLedger(root, { host: "codex" });
@@ -341,6 +439,61 @@ describe("task savings estimator", () => {
 });
 
 describe("task lifecycle and retention", () => {
+  it("attaches and updates serialized host context while rejecting known conflicts", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T12:00:00.000Z"));
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "unknown" });
+    vi.setSystemTime(new Date("2026-07-12T12:01:00.000Z"));
+
+    const attached = await attachTaskHostContext(root, ledger.taskId, {
+      host: "codex", sessionId: "session-1", turnId: "turn-1"
+    });
+    expect(attached).toMatchObject({ host: "codex", sessionId: "session-1", turnId: "turn-1", updatedAt: "2026-07-12T12:01:00.000Z" });
+
+    const updated = await attachTaskHostContext(root, ledger.taskId, {
+      host: "codex", sessionId: "session-1", turnId: "turn-2"
+    });
+    expect(updated.turnId).toBe("turn-2");
+    await expect(attachTaskHostContext(root, ledger.taskId, {
+      host: "claude", sessionId: "session-1", turnId: "turn-3"
+    })).rejects.toThrow(/host.*conflict/i);
+    await expect(attachTaskHostContext(root, ledger.taskId, {
+      host: "codex", sessionId: "session-2", turnId: "turn-3"
+    })).rejects.toThrow(/session.*conflict/i);
+  });
+
+  it("serializes concurrent host-context updates without losing association invariants", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "unknown" });
+    const settled = await Promise.allSettled([
+      attachTaskHostContext(root, ledger.taskId, { host: "codex", sessionId: "session-1", turnId: "turn-1" }),
+      attachTaskHostContext(root, ledger.taskId, { host: "codex", sessionId: "session-1", turnId: "turn-2" })
+    ]);
+
+    expect(settled.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(await loadTaskLedger(root, ledger.taskId)).toMatchObject({
+      host: "codex",
+      sessionId: "session-1",
+      turnId: expect.stringMatching(/^turn-[12]$/)
+    });
+    expect(__getTaskLedgerWriteQueueSizeForTests()).toBe(0);
+  });
+
+  it("pauses without a report and completes with a charged canonical report", async () => {
+    const root = await makeRoot();
+    const pausedLedger = await createTaskLedger(root, { host: "codex" });
+    const paused = await setTaskDisposition(root, pausedLedger.taskId, "pause");
+    expect(paused).toEqual({ ledger: expect.objectContaining({ status: "paused" }) });
+
+    const completedLedger = await createTaskLedger(root, { host: "codex" });
+    await recordTaskEvent(root, completedLedger.taskId, event());
+    const first = await setTaskDisposition(root, completedLedger.taskId, "complete", undefined, undefined, 12);
+    const second = await setTaskDisposition(root, completedLedger.taskId, "complete", "ignored", undefined, 999);
+    expect(first.report?.estimate).toMatchObject({ range: { low: 0, likely: 38, high: 48 }, overhead: 22 });
+    expect(second).toEqual(first);
+  });
+
   it("stores an idempotent canonical completion report and rejects later events", async () => {
     const root = await makeRoot();
     const ledger = await createTaskLedger(root, { host: "codex" });

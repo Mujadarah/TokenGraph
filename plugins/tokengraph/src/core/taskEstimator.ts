@@ -102,7 +102,11 @@ function finite(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-export function buildTaskReport(ledger: TaskLedger, calibration: TaskCalibration = {}): TaskReport {
+export function buildTaskReport(
+  ledger: TaskLedger,
+  calibration: TaskCalibration = {},
+  reportOverheadTokens = 0
+): TaskReport {
   let low = 0;
   let likely = 0;
   let high = 0;
@@ -144,8 +148,13 @@ export function buildTaskReport(ledger: TaskLedger, calibration: TaskCalibration
     }
   }
 
+  const reportOverhead = Math.max(0, finite(reportOverheadTokens));
   low = Math.min(Math.max(0, low), likely);
   high = Math.max(likely, high);
+  low = Math.max(0, low - reportOverhead);
+  likely = Math.max(low, likely - reportOverhead);
+  high = Math.max(likely, high - reportOverhead);
+  overhead += reportOverhead;
 
   return {
     taskId: ledger.taskId,
@@ -162,4 +171,15 @@ export function buildTaskReport(ledger: TaskLedger, calibration: TaskCalibration
       checks
     }
   };
+}
+
+export function formatTaskReportFooter(report: TaskReport): string {
+  if (report.eventCount === 0) {
+    return "TokenGraph: savings not measured (no qualifying task events).";
+  }
+
+  const { low, high } = report.estimate.range;
+  const savings = low === high ? `${low}` : `${low}-${high}`;
+  const quality = report.quality.status === "not_evaluated" ? "not evaluated" : report.quality.status;
+  return `TokenGraph: ~${savings} tokens saved (estimated, ${report.estimate.confidence} confidence); quality ${quality}.`;
 }

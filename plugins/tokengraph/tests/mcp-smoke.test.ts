@@ -372,9 +372,55 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_task_report",
       arguments: { root: "first", taskId: prepared.taskId, disposition: "complete" }
     });
-    const report = reportCall.structuredContent as { disposition: string; report: { taskId: string; eventCount: number } };
-    expect(report).toMatchObject({ disposition: "complete", report: { taskId: prepared.taskId, eventCount: expect.any(Number) } });
+    const report = reportCall.structuredContent as {
+      status: string;
+      taskId: string;
+      report: { taskId: string; eventCount: number; estimate: { overhead: number } };
+      footer: string;
+      reportingStatus: string;
+    };
+    expect(report).toEqual({
+      status: "completed",
+      taskId: prepared.taskId,
+      report: expect.objectContaining({ taskId: prepared.taskId, eventCount: expect.any(Number) }),
+      footer: expect.stringMatching(/^TokenGraph: ~\d+(?:-\d+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated)\.$/),
+      reportingStatus: "ready"
+    });
     expect(report.report.eventCount).toBe(13);
+    expect(report.report.estimate.overhead).toBeGreaterThan(0);
+
+    const repeatedReportCall = await request(9046, "tools/call", {
+      name: "tokengraph_task_report",
+      arguments: { root: "first", taskId: prepared.taskId, disposition: "complete" }
+    });
+    expect(repeatedReportCall.structuredContent).toEqual(reportCall.structuredContent);
+  });
+
+  it("returns the pause reporting status without a footer", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
+    await request(9051, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-pause-test", version: "0.20.0" }
+    });
+    send({ method: "notifications/initialized" });
+    const preparedCall = await request(9052, "tools/call", {
+      name: "tokengraph_prepare_context",
+      arguments: { task: "Pause this task" }
+    });
+    const prepared = preparedCall.structuredContent as { taskId: string };
+
+    const pauseCall = await request(9053, "tools/call", {
+      name: "tokengraph_task_report",
+      arguments: { taskId: prepared.taskId, disposition: "pause" }
+    });
+    expect(pauseCall.structuredContent).toEqual({
+      status: "paused",
+      taskId: prepared.taskId,
+      reportingStatus: "paused"
+    });
   });
 
   it("honestly reports a refresh when prepare_context replaces an unsafe index with a current scan signature", async () => {

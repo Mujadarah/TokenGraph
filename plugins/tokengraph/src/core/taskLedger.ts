@@ -62,6 +62,12 @@ export interface CreateTaskLedgerOptions {
   turnId?: string;
 }
 
+export interface TaskHostContext {
+  host: TaskHost;
+  sessionId: string;
+  turnId: string;
+}
+
 export interface SetTaskDispositionResult {
   ledger: TaskLedger;
   report?: TaskReport;
@@ -100,8 +106,12 @@ function isTimestamp(value: unknown): value is string {
   return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
 }
 
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === "string";
+function isIdentifier(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isOptionalIdentifier(value: unknown): value is string | undefined {
+  return value === undefined || isIdentifier(value);
 }
 
 function reconstructQualityCheck(value: unknown): TaskQualityCheck | undefined {
@@ -155,15 +165,20 @@ function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedg
     value.taskId !== expectedTaskId ||
     !["codex", "claude", "unknown"].includes(String(value.host)) ||
     !["open", "paused", "completed", "quarantined"].includes(String(value.status)) ||
-    !isOptionalString(value.sessionId) ||
-    !isOptionalString(value.turnId) ||
+    !isOptionalIdentifier(value.sessionId) ||
+    !isOptionalIdentifier(value.turnId) ||
     !isTimestamp(value.createdAt) ||
     !isTimestamp(value.updatedAt) ||
     (value.pausedAt !== undefined && !isTimestamp(value.pausedAt)) ||
     (value.completedAt !== undefined && !isTimestamp(value.completedAt)) ||
     value.estimatorVersion !== TASK_ESTIMATOR_VERSION ||
     events.some((event) => event === undefined) ||
-    (value.lastDisposition !== undefined && value.lastDisposition !== "pause" && value.lastDisposition !== "complete")
+    (value.lastDisposition !== undefined && value.lastDisposition !== "pause" && value.lastDisposition !== "complete") ||
+    Date.parse(value.updatedAt as string) < Date.parse(value.createdAt as string) ||
+    (value.pausedAt !== undefined && Date.parse(value.pausedAt as string) < Date.parse(value.createdAt as string)) ||
+    (value.pausedAt !== undefined && Date.parse(value.pausedAt as string) > Date.parse(value.updatedAt as string)) ||
+    (value.completedAt !== undefined && Date.parse(value.completedAt as string) < Date.parse(value.createdAt as string)) ||
+    (value.completedAt !== undefined && Date.parse(value.completedAt as string) > Date.parse(value.updatedAt as string))
   ) {
     return undefined;
   }
@@ -174,7 +189,7 @@ function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedg
   if (value.completedReport !== undefined && completedReport === undefined) return undefined;
   if (
     value.status === "open" &&
-    (value.completedAt !== undefined || completedReport !== undefined || value.lastDisposition === "complete")
+    (value.pausedAt !== undefined || value.completedAt !== undefined || completedReport !== undefined || value.lastDisposition !== undefined)
   ) {
     return undefined;
   }
@@ -267,6 +282,8 @@ export function __getTaskLedgerWriteQueueSizeForTests(): number {
 }
 
 export async function createTaskLedger(root: string, options: CreateTaskLedgerOptions): Promise<TaskLedger> {
+  if (options.sessionId !== undefined && !isIdentifier(options.sessionId)) throw new Error("Session id must be non-empty.");
+  if (options.turnId !== undefined && !isIdentifier(options.turnId)) throw new Error("Turn id must be non-empty.");
   const taskId = randomUUID();
   const now = new Date().toISOString();
   const ledger: TaskLedger = {
@@ -284,6 +301,32 @@ export async function createTaskLedger(root: string, options: CreateTaskLedgerOp
   };
   await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
   return ledger;
+}
+
+export async function attachTaskHostContext(
+  root: string,
+  taskId: string,
+  context: TaskHostContext
+): Promise<TaskLedger> {
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId);
+    if (!isIdentifier(context.sessionId)) throw new Error("Session id must be non-empty.");
+    if (!isIdentifier(context.turnId)) throw new Error("Turn id must be non-empty.");
+    if (context.host === "unknown") throw new Error("Attached host context must identify codex or claude.");
+    if (ledger.host !== "unknown" && ledger.host !== context.host) {
+      throw new Error(`Host context conflict: task is already associated with ${ledger.host}.`);
+    }
+    if (ledger.sessionId !== undefined && ledger.sessionId !== context.sessionId) {
+      throw new Error("Session context conflict: task is already associated with another session id.");
+    }
+
+    ledger.host = context.host;
+    ledger.sessionId = context.sessionId;
+    ledger.turnId = context.turnId;
+    ledger.updatedAt = new Date().toISOString();
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    return ledger;
+  });
 }
 
 export async function loadTaskLedger(root: string, taskId: string): Promise<TaskLedger | undefined> {
@@ -337,7 +380,8 @@ export async function setTaskDisposition(
   taskId: string,
   disposition: TaskDisposition,
   turnId?: string,
-  calibration?: TaskCalibration
+  calibration?: TaskCalibration,
+  reportOverheadTokens = 0
 ): Promise<SetTaskDispositionResult> {
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await requireTaskLedger(root, taskId);
@@ -359,7 +403,7 @@ export async function setTaskDisposition(
 
     ledger.status = "completed";
     ledger.completedAt = now;
-    ledger.completedReport = buildTaskReport(ledger, calibration);
+    ledger.completedReport = buildTaskReport(ledger, calibration, reportOverheadTokens);
     await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
     return { ledger, report: ledger.completedReport };
   });

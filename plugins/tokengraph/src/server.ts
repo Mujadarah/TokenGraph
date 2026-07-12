@@ -32,6 +32,7 @@ import {
 } from "./core/persistence.js";
 import { exportProjectMap, reviewMemories } from "./core/review.js";
 import { estimateTokens, tokenize } from "./core/token.js";
+import { buildTaskReport, formatTaskReportFooter } from "./core/taskEstimator.js";
 import type { ProjectIndex, RankedSqlObject } from "./core/types.js";
 import { buildProjectWiki } from "./core/wiki.js";
 import { createTaskLedger, loadTaskLedger, recordTaskEvent, setTaskDisposition, type TaskHost } from "./core/taskLedger.js";
@@ -924,8 +925,25 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ taskId, root, disposition }) => {
       const resolvedRoot = await requireTaskRoot(root, taskId);
-      const result = await setTaskDisposition(resolvedRoot, taskId, disposition);
-      return ok({ taskId, disposition, status: result.ledger.status, ...(disposition === "complete" ? { report: result.report } : {}) });
+      if (disposition === "pause") {
+        await setTaskDisposition(resolvedRoot, taskId, disposition);
+        return ok({ status: "paused", taskId, reportingStatus: "paused" });
+      }
+
+      const ledger = await loadTaskLedger(resolvedRoot, taskId);
+      if (!ledger) throw new Error(`Task ledger ${taskId} was not found or was corrupt.`);
+      const previewFooter = formatTaskReportFooter(buildTaskReport(ledger));
+      const result = await setTaskDisposition(
+        resolvedRoot,
+        taskId,
+        disposition,
+        undefined,
+        undefined,
+        estimateTokens(previewFooter)
+      );
+      if (!result.report) throw new Error(`Task ledger ${taskId} did not produce a completion report.`);
+      const footer = formatTaskReportFooter(result.report);
+      return ok({ status: "completed", taskId, report: result.report, footer, reportingStatus: "ready" });
     }
   );
 
