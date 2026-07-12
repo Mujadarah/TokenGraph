@@ -50,6 +50,8 @@ function expectCommonContract(name: string): void {
   expect([...new Set(references)].filter((tool) => !coreTools.has(tool)), `${name} references non-core tools`).toEqual([]);
   expect(body).toContain("tokengraph_setup({})");
   expect(body).toContain("tokengraph_prepare_context");
+  expect(body).toMatch(/tokengraph_setup\(\{\}\)[^\n]*capture[^\n]*trustedWorkspace\.root[^\n]*trusted root/i);
+  expect(body).toMatch(/tokengraph_prepare_context[^.]*capture[^.]*taskId/i);
   expect(body).toContain("taskId");
   expect(body).toContain("trusted root");
   expect(body).toContain("tokengraph_task_report");
@@ -72,6 +74,11 @@ describe("bundled skill contracts", () => {
     expect(actual).toEqual(expectedNames);
   });
 
+  test("normalized trigger descriptions are unique across all nine skills", () => {
+    const descriptions = expectedNames.map((name) => loadSkill(name).frontmatter.description.toLowerCase().replace(/\s+/g, " ").trim());
+    expect(new Set(descriptions).size).toBe(9);
+  });
+
   test("tokengraph", () => {
     expectCommonContract("tokengraph");
     const { body } = loadSkill("tokengraph");
@@ -84,9 +91,9 @@ describe("bundled skill contracts", () => {
 
   const specialized: Record<string, RegExp[]> = {
     "graph-context-retrieval": [/When not to use/i, /mode: "overview"/, /mode: "search"/, /mode: "symbol"/, /mode: "sql"/, /mode: "wiki"/, /targeted raw reads/i, /confidence/i],
-    "context-compression": [/When not to use/i, /mode: "output"/, /mode: "context"/, /omissions/i, /constraints/i, /targeted raw reads/i, /low confidence/i],
-    "token-budget-optimizer": [/When not to use/i, /profile/i, /budgets/i, /tokengraph_query_context/, /tokengraph_compress/, /overhead/i, /estimated savings/i, /exact claims/i],
-    "root-cause-debugger": [/When not to use/i, /mode: "output"/, /mode: "failure"/, /tokengraph_query_context/, /facts/i, /hypotheses/i, /regression evidence/i],
+    "context-compression": [/When not to use/i, /mode: "output"/, /mode: "context"/, /omissions/i, /constraints/i, /targeted raw reads/i, /omittedLineCount/i, /token estimate/i, /context mode.*confidence/is],
+    "token-budget-optimizer": [/When not to use/i, /profile/i, /budgets/i, /task policy/i, /no fixed.*defaults/i, /tokengraph_query_context/, /tokengraph_compress/, /overhead/i, /estimated savings/i, /exact claims/i],
+    "root-cause-debugger": [/When not to use/i, /mode: "output"/, /mode: "failure"/, /original failure text/i, /exactly once/i, /returned compressed evidence/i, /not the consumer/i, /tokengraph_query_context/, /facts/i, /hypotheses/i, /regression evidence/i],
     "regression-detector": [/When not to use/i, /mode: "risk"/, /mode: "symbol"/, /mode: "sql"/, /recommend/i, /verif(?:y|ied).*tests/i],
     "architecture-consistency-checker": [/When not to use/i, /mode: "architecture"/, /mode: "risk"/, /import/i, /SQL/i, /security/i, /release/i, /proposals/i, /enforced facts/i],
     "memory-curator": [/When not to use/i, /mode: "review"/, /audit: true/, /tokengraph_query_context/, /action: "propose"/, /applicationStatus/, /pending/, /approval/i, /application/i],

@@ -13,10 +13,10 @@ Do not use for feature planning without a failure, or to implement a speculative
 
 Follow the common lifecycle in the general `tokengraph` skill:
 
-1. Call `tokengraph_setup({})`; on blocked setup follow recovery and do not invent a taskId.
-2. Call `tokengraph_prepare_context({ root?, task })` once and capture its taskId and trusted root.
-3. For oversized failure text, first call `tokengraph_compress({ taskId, root?, mode: "output", kind, text })`, preserving exact errors, tests, stack paths, and line numbers.
-4. Call `tokengraph_analyze({ taskId, root?, mode: "failure", kind, text, task? })`. Then use `tokengraph_query_context` in overview, search, symbol, SQL, or wiki mode only for targeted context that can confirm or disprove the analysis.
+1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root; on blocked setup follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root: trusted root, task })` once and capture its taskId.
+3. Call `tokengraph_analyze({ taskId, root?, mode: "failure", kind, text, task? })` with the original failure text exactly once. Its returned compressed evidence drives follow-up `tokengraph_query_context` calls that confirm or disprove the analysis; never substitute a possibly incomplete pre-compression for the original text.
+4. Use standalone `tokengraph_compress({ taskId, root?, mode: "output", kind, text })` for oversized output only when failure analysis is not the consumer. Preserve exact errors, tests, stack paths, and line numbers; key fallback reads off `omittedLineCount` and the returned token estimate.
 5. Separate verified facts from hypotheses. For each hypothesis, identify supporting evidence and the smallest disconfirming read or command. Add or identify regression evidence and run the relevant regression test before completion.
 6. Call `tokengraph_task_report({ taskId, root?, disposition: "complete" })` only after the cause, requested fix, and regression verification are complete. Use `tokengraph_task_report({ taskId, root?, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
 

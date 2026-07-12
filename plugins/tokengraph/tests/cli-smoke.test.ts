@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { unzipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
@@ -287,6 +288,28 @@ describe("tokengraph focused skills", () => {
 });
 
 describe("tokengraph release package command", () => {
+  it("classifies transitional skill sets from content and rejects legacy names in a core set", async () => {
+    const helperUrl = pathToFileURL(resolve("scripts", "skill-contract.mjs")).href;
+    const helper = await import(helperUrl) as {
+      classifySkillContract(skills: string[]): { contract: "core" | "legacy"; forbiddenCoreTools: string[] };
+    };
+
+    expect(helper.classifySkillContract(["Call `tokengraph_setup_status` then `tokengraph_plan_context`."])).toEqual({
+      contract: "legacy",
+      forbiddenCoreTools: []
+    });
+    expect(helper.classifySkillContract(["Call `tokengraph_setup({})` then `tokengraph_prepare_context`."])).toEqual({
+      contract: "core",
+      forbiddenCoreTools: []
+    });
+    expect(helper.classifySkillContract([
+      "Call `tokengraph_setup({})`, `tokengraph_prepare_context`, and `tokengraph_plan_context`."
+    ])).toEqual({ contract: "core", forbiddenCoreTools: ["tokengraph_plan_context"] });
+
+    const helperSource = await readFile(resolve("scripts", "skill-contract.mjs"), "utf8");
+    expect(helperSource).toMatch(/Phase 5[\s\S]*remove[\s\S]*legacy/i);
+  });
+
   it("scans every packaged text file for personal paths", async () => {
     const validator = await readFile(resolve("scripts", "validate-plugin.mjs"), "utf8");
     expect(validator).toMatch(/releaseSkillsPath/);
@@ -409,6 +432,25 @@ describe("tokengraph release package command", () => {
       "tokengraph/dist/index.js"
     ]));
     expect(archiveListing.join("\n")).not.toMatch(/tokengraph\/(src|tests|node_modules)\//);
+  });
+
+  it("validates a freshly generated release with core skill contracts", async () => {
+    const sandbox = await makeRoot();
+    const repoRoot = resolve("..", "..");
+    const repoCopy = join(sandbox, "repo");
+    await cp(repoRoot, repoCopy, {
+      recursive: true,
+      filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph"].includes(source.split(/[\\/]/).at(-1) ?? "")
+    });
+    const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+    const generatedRelease = join(repoCopy, "release", "tokengraph");
+    await execFileAsync(process.execPath, [resolve("scripts", "package-plugin.mjs"), "--release", "--out-release", generatedRelease, "--json"], {
+      cwd: process.cwd()
+    });
+
+    await expect(execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "validate-plugin.mjs")], {
+      cwd: copiedPlugin
+    })).resolves.toMatchObject({ stdout: expect.stringMatching(/validation passed/i) });
   });
 
   it("writes a direct release plugin layout when requested", async () => {

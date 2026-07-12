@@ -2,6 +2,7 @@
 import { access, readFile, readdir } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { classifySkillContract } from "./skill-contract.mjs";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(pluginRoot, "..", "..");
@@ -93,6 +94,16 @@ async function assertSkillFrontmatter(skillsRoot, label, coreLifecycle = false) 
     }
   }
   return skillFiles;
+}
+
+async function inspectSkillContract(skillsRoot, label) {
+  const skillFiles = await collectSkillFiles(skillsRoot);
+  const skills = await Promise.all(skillFiles.map((skillFile) => readFile(skillFile, "utf8")));
+  try {
+    return classifySkillContract(skills);
+  } catch (error) {
+    fail(`${label} ${error.message}`);
+  }
 }
 
 async function assertRequiredFocusedSkills(skillsRoot, label, coreLifecycle = false) {
@@ -205,6 +216,9 @@ assert(mcp.mcpServers.tokengraph.cwd === ".", "tokengraph MCP cwd must be plugin
 assert(claudeMcp.mcpServers?.tokengraph?.command === "node", "Claude tokengraph MCP command must be node");
 assert(claudeMcp.mcpServers.tokengraph.args?.includes("${CLAUDE_PLUGIN_ROOT}/dist/index.js"), "Claude MCP args must use CLAUDE_PLUGIN_ROOT");
 assert(claudeMcp.mcpServers.tokengraph.env?.TOKENGRAPH_WORKSPACE_ROOT === "${CLAUDE_PROJECT_DIR}", "Claude MCP config must forward CLAUDE_PROJECT_DIR");
+const sourceSkillContract = await inspectSkillContract(skillsPath, "source plugin skills");
+assert(sourceSkillContract.contract === "core", "source plugin skills must use the core contract");
+assert(sourceSkillContract.forbiddenCoreTools.length === 0, `source plugin core skills reference non-core tools: ${sourceSkillContract.forbiddenCoreTools.join(", ")}`);
 await assertSkillFrontmatter(skillsPath, "source plugin", true);
 await assertRequiredFocusedSkills(skillsPath, "source plugin", true);
 assert(distServer.includes("tokengraph_index_status"), "built MCP server must register tokengraph_index_status");
@@ -278,8 +292,11 @@ await assertMissing(resolve(releaseRoot, "dist", "server.js"), "release built MC
 await assertFile(releaseReadmePath, "release README");
 await assertFile(releasePackageJsonPath, "release package metadata");
 await assertFile(resolve(releaseRoot, "LICENSE"), "release license");
-await assertSkillFrontmatter(releaseSkillsPath, "release plugin");
-await assertRequiredFocusedSkills(releaseSkillsPath, "release plugin");
+const releaseSkillContract = await inspectSkillContract(releaseSkillsPath, "release plugin skills");
+assert(releaseSkillContract.forbiddenCoreTools.length === 0, `release plugin core skills reference non-core tools: ${releaseSkillContract.forbiddenCoreTools.join(", ")}`);
+const releaseUsesCoreLifecycle = releaseSkillContract.contract === "core";
+await assertSkillFrontmatter(releaseSkillsPath, "release plugin", releaseUsesCoreLifecycle);
+await assertRequiredFocusedSkills(releaseSkillsPath, "release plugin", releaseUsesCoreLifecycle);
 await assertMissing(resolve(releaseRoot, "src"), "release source directory");
 await assertMissing(resolve(releaseRoot, "tests"), "release tests directory");
 await assertMissing(resolve(releaseRoot, "scripts"), "release scripts directory");

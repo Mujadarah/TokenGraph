@@ -565,7 +565,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       instructions:
         "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. " +
-        "Start each task with tokengraph_prepare_context, reuse only its returned taskId for that trusted root, then complete or pause with tokengraph_task_report. " +
+        "Start each task with tokengraph_setup, capture its trusted workspace root, then call tokengraph_prepare_context and reuse only its returned taskId for that trusted root. Complete or pause with tokengraph_task_report. " +
         "TokenGraph tools are task-scoped: never reuse a taskId across workspaces or merge unrelated tasks."
     }
   );
@@ -681,6 +681,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       });
       const statusAfter = await getIndexStatus(resolvedRoot);
       return ok({
+        root: resolvedRoot,
         taskId: ledger.taskId,
         index: {
           status: indexingMode === "existing" ? statusAfter.state : "refreshed",

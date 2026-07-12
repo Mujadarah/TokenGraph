@@ -13,8 +13,8 @@ Do not use for source-only changes that cannot affect packaging, installation, v
 
 Follow the common lifecycle in the general `tokengraph` skill:
 
-1. Call `tokengraph_setup({})`; if blocked, follow recovery and do not invent a taskId.
-2. Call `tokengraph_prepare_context({ root?, task })` once and capture its taskId and trusted root. Use `tokengraph_query_context` to locate manifests, scripts, validators, source/release boundaries, and install docs.
+1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root; if blocked, follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root: trusted root, task })` once and capture its taskId. Use `tokengraph_query_context` to locate manifests, scripts, validators, source/release boundaries, and install docs.
 3. Call `tokengraph_analyze({ taskId, root?, mode: "risk", changedFiles, diffSummary?, task? })`. Reuse the exact taskId and trusted root. Compress oversized gate failures with `tokengraph_compress({ taskId, root?, mode: "output", kind, text })`.
 4. Run exact source gates: `pnpm typecheck`, full tests (`pnpm test`), `pnpm build`, core smoke, full smoke, and `pnpm validate:plugin`. Run the package command required by the repository.
 5. Preserve generated-release discipline: edit source only, regenerate the release through `pnpm package:plugin -- --release`, and inspect the diff. Verify direct release startup/smoke, then install and verify an independently extracted ZIP. Confirm actual host registration, exposed surface, trusted workspace behavior, and readiness rather than relying on file presence.

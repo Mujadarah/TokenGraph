@@ -13,8 +13,8 @@ Do not use for a known one-file lookup or when the user explicitly wants raw sou
 
 Follow the common lifecycle in the general `tokengraph` skill:
 
-1. Call `tokengraph_setup({})`. If blocked, follow recovery and do not invent a taskId.
-2. Call `tokengraph_prepare_context({ root?, task })` once; capture its taskId and trusted root.
+1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root. If blocked, follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root: trusted root, task })` once and capture its taskId.
 3. Reuse that exact taskId and trusted root for queries:
    - `tokengraph_query_context({ taskId, root?, mode: "overview" })` for project shape.
    - `tokengraph_query_context({ taskId, root?, mode: "search", query })` for paths or identifiers.

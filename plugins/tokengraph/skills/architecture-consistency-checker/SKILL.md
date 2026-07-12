@@ -13,8 +13,8 @@ Do not use for changes with no plausible architecture boundary impact or to trea
 
 Follow the common lifecycle in the general `tokengraph` skill:
 
-1. Call `tokengraph_setup({})`; if blocked, follow recovery and do not invent a taskId.
-2. Call `tokengraph_prepare_context({ root?, task })` once and capture its taskId and trusted root.
+1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root; if blocked, follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root: trusted root, task })` once and capture its taskId.
 3. Call `tokengraph_analyze({ taskId, root?, mode: "architecture", files? })` for applicable stored rules and boundary violations.
 4. Also call `tokengraph_analyze({ taskId, root?, mode: "risk", changedFiles, diffSummary?, task? })` for import, SQL, security, or release boundary changes. Reuse the exact taskId and trusted root; query symbols or SQL with `tokengraph_query_context` when targeted evidence is needed.
 5. Confirm warnings against current source, SQL, tests, and documented rules. Missing rules are proposals, not enforced facts; label inferred intent and never silently enforce it.

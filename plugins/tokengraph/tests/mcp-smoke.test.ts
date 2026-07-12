@@ -199,6 +199,7 @@ describe("TokenGraph MCP stdio server", () => {
     expect(new Set(tools.map((tool) => tool.name)).size).toBe(8);
     expect(JSON.stringify(initialized.instructions).slice(0, 2048)).toMatch(/debug|risk|architecture|memory|compress|context/i);
     expect(JSON.stringify(initialized.instructions)).toMatch(/task-scoped/i);
+    expect(JSON.stringify(initialized.instructions)).toMatch(/tokengraph_setup[\s\S]*tokengraph_prepare_context/);
     expect(tools.every((tool) => tool.annotations?.destructiveHint === false)).toBe(true);
     expect(tools.find((tool) => tool.name === "tokengraph_setup")?.annotations?.readOnlyHint).toBe(true);
     expect(tools.find((tool) => tool.name === "tokengraph_recall")?.annotations?.readOnlyHint).toBe(false);
@@ -267,8 +268,8 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_prepare_context",
       arguments: { root: "first", task: "Debug patient summary", profile: "balanced", budgets: { maxFiles: 4 }, host: "codex" }
     });
-    const prepared = preparedCall.structuredContent as { taskId: string; index: { status: string }; plan: unknown; wikiStatus: unknown };
-    expect(prepared).toMatchObject({ taskId: expect.any(String), index: { status: expect.any(String) }, plan: expect.any(Object), wikiStatus: expect.any(Object) });
+    const prepared = preparedCall.structuredContent as { root: string; taskId: string; index: { status: string }; plan: unknown; wikiStatus: unknown };
+    expect(prepared).toMatchObject({ root: firstRoot, taskId: expect.any(String), index: { status: expect.any(String) }, plan: expect.any(Object), wikiStatus: expect.any(Object) });
     const rememberedCall = await request(9046, "tools/call", {
       name: "tokengraph_remember_decision",
       arguments: { root: "first", type: "lesson", title: "Audit-only memory", body: "audit-only patient history", tags: ["audit-only"] }
@@ -403,6 +404,7 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { task: "Inspect the real symbol" }
     });
     expect(preparedCall.structuredContent).toMatchObject({
+      root,
       index: {
         previousStatus: "fresh",
         status: "refreshed",

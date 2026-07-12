@@ -13,8 +13,8 @@ Do not use when no change set can be identified or as a substitute for running t
 
 Follow the common lifecycle in the general `tokengraph` skill:
 
-1. Call `tokengraph_setup({})`; if blocked, follow recovery and do not invent a taskId.
-2. Call `tokengraph_prepare_context({ root?, task })` once and capture its taskId and trusted root.
+1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root; if blocked, follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root: trusted root, task })` once and capture its taskId.
 3. Call `tokengraph_analyze({ taskId, root?, mode: "risk", changedFiles, diffSummary?, task? })` with the actual change set.
 4. Reuse the exact taskId and trusted root with `tokengraph_query_context({ taskId, root?, mode: "symbol", target })` for changed exports and dependents, and `tokengraph_query_context({ taskId, root?, mode: "sql", query })` for schema, policy, auth, or migration impact. Search or overview queries may narrow additional targets.
 5. Recommend tests from direct coverage, inbound dependents, routes, SQL involvement, and risk evidence. Run and verify tests; distinguish verified results from estimated risk.

@@ -13,8 +13,8 @@ Do not use for transient notes, unrelated personal memory, or automatic mutation
 
 Follow the common lifecycle in the general `tokengraph` skill:
 
-1. Call `tokengraph_setup({})`; if blocked, follow recovery and do not invent a taskId.
-2. Call `tokengraph_prepare_context({ root?, task })` once and capture its taskId and trusted root.
+1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root; if blocked, follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root: trusted root, task })` once and capture its taskId.
 3. Reuse the exact taskId and trusted root. Call `tokengraph_recall({ taskId, root?, mode: "review", query, audit: true })` for conflict, stale-state, or lifecycle review; use recall mode for a narrow current lookup.
 4. Verify drift-prone claims with current evidence from `tokengraph_query_context` and targeted local checks.
 5. When durable knowledge is warranted, call `tokengraph_propose_knowledge({ taskId, root?, action: "propose", ... })`. List, approve, or reject only as explicitly requested. Approval is review state, not content application: never claim approved content was applied while `applicationStatus` is pending. Pause for approval or application and verify applied content separately.
