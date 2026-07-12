@@ -386,6 +386,25 @@ describe("task lifecycle and retention", () => {
     expect(__getTaskLedgerWriteQueueSizeForTests()).toBe(0);
   });
 
+  it.runIf(process.platform === "win32")("serializes concurrent event updates across Windows case-alias roots", async () => {
+    const root = await makeRoot();
+    const aliasRoot = root.toUpperCase();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const settled = await Promise.allSettled(
+      Array.from({ length: 32 }, (_, index) =>
+        recordTaskEvent(
+          index % 2 === 0 ? root : aliasRoot,
+          ledger.taskId,
+          event({ id: crypto.randomUUID(), fingerprint: `alias-${index}` })
+        )
+      )
+    );
+
+    expect(settled.filter((result) => result.status === "rejected")).toEqual([]);
+    expect((await loadTaskLedger(root, ledger.taskId))?.events).toHaveLength(32);
+    expect(__getTaskLedgerWriteQueueSizeForTests()).toBe(0);
+  });
+
   it("cleans up a rejected ledger operation without blocking the next operation", async () => {
     const root = await makeRoot();
     const completed = await createTaskLedger(root, { host: "codex" });

@@ -1,10 +1,23 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 export interface JsonTokenGraphStoreOptions {
   schemaVersion: number;
   dataKey: string;
+}
+
+export async function canonicalPersistenceLockKey(root: string, ...segments: string[]): Promise<string> {
+  const resolvedRoot = resolve(root);
+  let canonicalRoot: string;
+  try {
+    canonicalRoot = await realpath(resolvedRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    canonicalRoot = resolvedRoot;
+  }
+  const key = join(canonicalRoot, ...segments);
+  return process.platform === "win32" ? key.toLowerCase() : key;
 }
 
 export async function writeJsonAtomic(path: string, value: unknown): Promise<void> {

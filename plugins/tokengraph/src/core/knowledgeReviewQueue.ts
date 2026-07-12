@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { quarantineCorruptJson, writeJsonAtomic } from "./storage.js";
+import { canonicalPersistenceLockKey, quarantineCorruptJson, writeJsonAtomic } from "./storage.js";
 
 export type KnowledgeSuggestionType = "wiki" | "memory" | "skill";
 export type KnowledgeSuggestionStatus = "proposed" | "approved" | "rejected" | "expired";
@@ -203,8 +203,8 @@ async function writeQueue(root: string, suggestions: KnowledgeSuggestion[]): Pro
   await writeJsonAtomic(queuePath(root), { schemaVersion: REVIEW_QUEUE_SCHEMA_VERSION, suggestions });
 }
 
-function enqueueQueueOperation<T>(root: string, operation: () => Promise<T>): Promise<T> {
-  const key = queuePath(root);
+async function enqueueQueueOperation<T>(root: string, operation: () => Promise<T>): Promise<T> {
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "review-queue.json");
   const previous = queueWriteChains.get(key) ?? Promise.resolve();
   const current = previous.then(operation, operation);
   let settled: Promise<void>;

@@ -167,6 +167,23 @@ describe("knowledge review queue", () => {
     expect(__getKnowledgeReviewQueueSizeForTests()).toBe(0);
   });
 
+  it.runIf(process.platform === "win32")("serializes concurrent proposals across Windows case-alias roots", async () => {
+    const root = await makeRoot();
+    const aliasRoot = root.toUpperCase();
+    const settled = await Promise.allSettled(
+      Array.from({ length: 32 }, (_, index) =>
+        proposeKnowledgeChange(
+          index % 2 === 0 ? root : aliasRoot,
+          proposal({ title: `Alias suggestion ${index}`, proposedContent: `Alias content ${index}`, sourceFingerprints: [`alias:${index}`] })
+        )
+      )
+    );
+
+    expect(settled.filter((result) => result.status === "rejected")).toEqual([]);
+    expect(await listKnowledgeSuggestions(root)).toHaveLength(32);
+    expect(__getKnowledgeReviewQueueSizeForTests()).toBe(0);
+  });
+
   it("cleans the keyed write chain after a failed operation", async () => {
     const root = await makeRoot();
     await expect(reviewKnowledgeSuggestion(root, crypto.randomUUID(), "approve")).rejects.toThrow(/not found/i);

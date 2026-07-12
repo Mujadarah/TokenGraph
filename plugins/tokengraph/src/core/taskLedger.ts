@@ -10,7 +10,7 @@ import {
   type TaskCalibration,
   type TaskReport
 } from "./taskEstimator.js";
-import { writeJsonAtomic } from "./storage.js";
+import { canonicalPersistenceLockKey, writeJsonAtomic } from "./storage.js";
 
 export const TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger" as const;
 export const TASK_LEDGER_SCHEMA_VERSION = 1 as const;
@@ -246,8 +246,8 @@ function netEstimate(event: TaskEvent): number {
   return Math.max(0, event.originalTokens - event.compactTokens - event.overheadTokens);
 }
 
-function enqueueLedgerOperation<T>(root: string, taskId: string, operation: () => Promise<T>): Promise<T> {
-  const key = taskLedgerPath(root, taskId);
+async function enqueueLedgerOperation<T>(root: string, taskId: string, operation: () => Promise<T>): Promise<T> {
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "tasks", `${taskId}.json`);
   const previous = taskLedgerWriteChains.get(key) ?? Promise.resolve();
   const current = previous.then(operation, operation);
   let settled: Promise<void>;
