@@ -22,7 +22,7 @@ The raw routing baseline uses only each task's independent listed files. Each fi
 
 This release gate deliberately measures whether TokenGraph can replace broad initial acquisition with focused routing. It excludes downstream source reads recommended by `firstReads`, so it is not a total-execution savings claim.
 
-The report therefore publishes a second execution-inclusive net. It subtracts the actual built-in request/result pairs for recommended `firstReads` when the task allows raw reads. This is still a fixture estimate—not provider billing—but it makes product overhead and negative tails visible.
+The report therefore publishes a second execution-inclusive net. It subtracts the actual built-in request/result pairs for recommended `firstReads` when the task allows raw reads. This is still a fixture estimate, not provider billing, but it makes product overhead and negative tails visible.
 
 For every task the harness also reports required-file recall, false positives, false negatives, exact critical-constraint preservation, recommended tests, estimated tokens, quality result, and explicit failure reasons. Constraint predicates normalize case, Unicode, whitespace, and punctuation without discarding words or polarity, so negation cannot pass through partial overlap.
 

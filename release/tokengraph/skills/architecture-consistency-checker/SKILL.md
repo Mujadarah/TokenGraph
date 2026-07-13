@@ -20,7 +20,7 @@ Follow the common lifecycle in the general `tokengraph` skill:
 5. Confirm warnings against current source, SQL, tests, and documented rules. Missing rules are proposals, not enforced facts; label inferred intent and never silently enforce it.
 6. Only after the requested check and verification are complete, call `tokengraph_task_report({ taskId })`; compact reporting is the default. Use `tokengraph_task_report({ taskId, responseMode: "verbose" })` only for report diagnostics, and `tokengraph_task_report({ taskId, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
 
-Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use narrow local import, SQL, security, and release checks, and claim no savings or graph-backed evidence.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state "TokenGraph was not used," use narrow local import, SQL, security, and release checks, and claim no savings or graph-backed evidence.
 
 A paused task id is terminal. Start a new task with `tokengraph_prepare_context` or a direct intent call that omits `taskId`; never reuse the paused id.
 

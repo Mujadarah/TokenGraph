@@ -23749,7 +23749,7 @@ async function setTaskDisposition(root, taskId, disposition, turnId, calibration
 // src/core/knowledgeReviewQueue.ts
 import { createHash as createHash4, randomUUID as randomUUID5 } from "node:crypto";
 import { readFile as readFile8, realpath as realpath2 } from "node:fs/promises";
-import { isAbsolute as isAbsolute3, join as join7, relative as relative4, resolve as resolve6 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join7, relative as relative4, resolve as resolve6, win32 } from "node:path";
 var REVIEW_QUEUE_SCHEMA_VERSION = 3;
 var APPLICATION_SCHEMA_VERSION = 2;
 var DEFAULT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1e3;
@@ -23804,7 +23804,7 @@ function validateTimestamp(value, label) {
 }
 function normalizeSourceId(value) {
   const sourceId = nonEmptyString(value, "Source id").replaceAll("\\", "/");
-  if (isAbsolute3(sourceId) || sourceId.startsWith("../") || sourceId.includes("/../") || !SOURCE_ID_PATTERN.test(sourceId)) {
+  if (isAbsolute3(sourceId) || win32.isAbsolute(sourceId) || sourceId.startsWith("../") || sourceId.includes("/../") || !SOURCE_ID_PATTERN.test(sourceId)) {
     throw new Error("Source ids must be privacy-safe relative paths or stable logical ids.");
   }
   return sourceId;
