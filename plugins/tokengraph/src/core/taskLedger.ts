@@ -300,7 +300,9 @@ export async function createTaskLedger(root: string, options: CreateTaskLedgerOp
     estimatorVersion: TASK_ESTIMATOR_VERSION,
     events: []
   };
-  await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+  await enqueueLedgerOperation(root, taskId, async () => {
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+  });
   return ledger;
 }
 
@@ -311,6 +313,7 @@ export async function attachTaskHostContext(
 ): Promise<TaskLedger> {
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
     if (context.host !== "codex" && context.host !== "claude" && context.host !== "unknown") {
       throw new Error("Host context must identify codex, claude, or unknown.");
     }
@@ -352,15 +355,31 @@ export async function loadTaskLedger(root: string, taskId: string): Promise<Task
   }
 }
 
+export async function discardEmptyTaskLedger(root: string, taskId: string): Promise<boolean> {
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await loadTaskLedger(root, taskId);
+    if (!ledger || ledger.status !== "open" || ledger.events.length !== 0) return false;
+    await rm(taskLedgerPath(root, taskId), { force: true });
+    return true;
+  });
+}
+
 async function requireTaskLedger(root: string, taskId: string): Promise<TaskLedger> {
   const ledger = await loadTaskLedger(root, taskId);
   if (!ledger) throw new Error(`Task ledger ${taskId} was not found or was corrupt.`);
   return ledger;
 }
 
+function assertPausedTaskIsTerminal(ledger: TaskLedger): void {
+  if (ledger.status === "paused") {
+    throw new Error(`Paused task ${ledger.taskId} is terminal and cannot accept task-aware calls or events. Start a new task with tokengraph_prepare_context or omit taskId on a direct intent call.`);
+  }
+}
+
 export async function recordTaskEvent(root: string, taskId: string, event: TaskEvent): Promise<TaskLedger> {
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
     if (ledger.status === "completed") {
       throw new Error("A completed task ledger cannot accept new events.");
     }
@@ -388,6 +407,7 @@ export async function setTaskDisposition(
 ): Promise<SetTaskDispositionResult> {
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
     if (ledger.status === "completed" && ledger.completedReport) {
       if (disposition === "pause") {
         throw new Error("A completed task ledger cannot accept a pause disposition.");
@@ -435,7 +455,13 @@ export async function pruneTaskLedgers(root: string, now = new Date()): Promise<
       result.quarantined.push(taskId);
       continue;
     }
-    if (ledger.status === "open") continue;
+    if (ledger.status === "open") {
+      if (ledger.events.length === 0 && Date.parse(ledger.updatedAt) < cutoff) {
+        await rm(taskLedgerPath(root, taskId), { force: true });
+        result.pruned.push(taskId);
+      }
+      continue;
+    }
     if (ledger.status !== "paused" && ledger.status !== "completed") continue;
     const relevantTimestamp = ledger.status === "completed" ? ledger.completedAt : ledger.pausedAt;
     if (relevantTimestamp && Date.parse(relevantTimestamp) < cutoff) {

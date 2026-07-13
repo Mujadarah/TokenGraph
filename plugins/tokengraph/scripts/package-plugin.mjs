@@ -123,7 +123,9 @@ TokenGraph stores project state under \`.tokengraph/\` inside the trusted worksp
 
 The default surface exposes eight compact tools; the opt-in full surface exposes 42. JSON-only successes return one serialized JSON text item, with project-map resource links as the documented exception. Wiki and memory changes use source-linked review-before-apply proposals.
 
-The checked-in benchmark passes its strict gate with median estimated net savings of 30.5 tokens, p25 -166, 100% constraint preservation and recall, and zero critical false negatives. Eleven tasks remain individually non-positive and every category remains low-confidence. These estimates are not provider billing counts.
+Use \`tokengraph_prepare_context\` when planning is needed. Direct query, compress, recall, and analyze calls may omit \`taskId\`; they start a ledger and return the new id. Reuse that id, then end verified work with compact \`tokengraph_task_report({ taskId })\`. Explicit pause is for unfinished work, and verbose reporting is diagnostic only.
+
+The checked-in routing-lifecycle benchmark passes its strict gate with median net estimated savings of 31.7 tokens, p25 -270.3, 100% constraint preservation and recall, and zero critical false negatives. Fifteen of 30 tasks are non-positive. The execution-inclusive median is -133.8 tokens with 20 of 30 tasks non-positive. Every category remains low-confidence, and these fixture estimates are not provider billing counts.
 
 The PostToolUse/Stop hook stores only a schema-versioned session hash, task id, trusted root, turn id, and timestamp in the host-provided plugin data directory. It never stores prompts, transcripts, or tool payloads. Normal Stop can request one pause-or-complete report or the exact canonical footer; interrupts and API failures are not completion events. Review and trust the hook definition before enabling it, or disable host hooks and call \`tokengraph_task_report\` explicitly.
 

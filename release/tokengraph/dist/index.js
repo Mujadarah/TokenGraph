@@ -20785,12 +20785,14 @@ function compactFiles(files) {
   const selected = /* @__PURE__ */ new Map();
   for (const file of files) {
     const path = "path" in file ? file.path : file.filePath;
-    if (!selected.has(path)) selected.set(path, { path, reason: compactReason(file.reason) });
+    const reason = compactReason(file.reason);
+    if (!selected.has(path)) selected.set(path, { path, ...reason ? { reason } : {} });
   }
   return [...selected.values()];
 }
 function compactReason(reason) {
-  if (/matches task terms/i.test(reason)) return "Task match.";
+  if (!reason) return void 0;
+  if (/matches task terms/i.test(reason)) return void 0;
   if (/linked evidence/i.test(reason)) return "Memory evidence.";
   if (/imported by focused test/i.test(reason)) return "Test dependency.";
   if (/\b(table columns|policy on|index on|sql)\b/i.test(reason)) return "SQL evidence.";
@@ -20839,7 +20841,7 @@ function focusedSql(files, task) {
 }
 function guidance(allowRawReads = true, lowConfidence = false) {
   if (!allowRawReads) return NO_RAW_READ_GUIDANCE;
-  return lowConfidence ? "Low confidence: verify the named file or failure segment." : "Use targeted reads only when confidence or warnings require verification.";
+  return lowConfidence ? "Low confidence: verify named evidence." : void 0;
 }
 function testsExplicitlyLinkedToFiles(project, sourceFiles) {
   const sources = new Set(sourceFiles);
@@ -20848,6 +20850,7 @@ function testsExplicitlyLinkedToFiles(project, sourceFiles) {
 }
 function base(options, input) {
   const confidence = input.confidence ?? "medium";
+  const rawReadGuidance = input.rawReadGuidance ?? guidance(options.allowRawReads, confidence === "low");
   const response = {
     constraints: uniqueVerbatim(options.constraints ?? []),
     files: input.files ?? [],
@@ -20855,7 +20858,7 @@ function base(options, input) {
     tests: unique2(input.tests ?? []),
     commands: unique2(input.commands ?? []),
     confidence,
-    rawReadGuidance: input.rawReadGuidance ?? guidance(options.allowRawReads, confidence === "low")
+    ...rawReadGuidance ? { rawReadGuidance } : {}
   };
   const warnings = compactWarnings(input.warnings ?? []);
   const conflicts = unique2(input.conflicts ?? []);
@@ -20870,7 +20873,7 @@ function compactCompressionEnvelope(mode, result, estimates) {
   return estimates ? { mode, result, estimates } : result;
 }
 function compactPrepareEnvelope(input) {
-  return input;
+  return { taskId: input.taskId, plan: input.plan };
 }
 function compactPlanResponse(plan, options = {}) {
   const sql = hasSqlIntent(plan.task) ? focusedSql(plan.relevantSql, plan.task) : [];
@@ -21008,6 +21011,7 @@ function compactToolResultEnvelope(structuredContent) {
 }
 var tokenSavingProfileSchema = _enum(["conservative", "balanced", "aggressive"]);
 var contextCompressionKindSchema = _enum(["prompt", "memory", "diff", "sql", "wiki", "mixed"]);
+var taskIdSchema = string2().min(1);
 var compactResponseFields = {
   constraints: array(string2().min(1)).optional(),
   responseMode: _enum(["compact", "verbose"]).optional()
@@ -21023,7 +21027,7 @@ var prepareContextInputSchema = object({
   host: _enum(["codex", "claude", "unknown"]).optional()
 });
 var queryContextInputSchema = object({
-  taskId: string2().uuid(),
+  taskId: taskIdSchema.optional(),
   root: string2().optional(),
   mode: _enum(["overview", "search", "symbol", "sql", "wiki"]),
   query: string2().min(1).optional(),
@@ -21036,7 +21040,7 @@ var queryContextInputSchema = object({
   if (input.mode === "symbol" && !input.target) context.addIssue({ code: "custom", message: "symbol mode requires target." });
 });
 var compressInputSchema = object({
-  taskId: string2().uuid(),
+  taskId: taskIdSchema.optional(),
   root: string2().optional(),
   mode: _enum(["output", "context"]),
   kind: _enum(["test", "build", "install", "diff", "log"]).optional(),
@@ -21051,7 +21055,7 @@ var compressInputSchema = object({
   if (input.mode === "context" && (!input.task || !input.contentKind)) context.addIssue({ code: "custom", message: "context mode requires task and contentKind." });
 });
 var recallInputSchema = object({
-  taskId: string2().uuid(),
+  taskId: taskIdSchema.optional(),
   root: string2().optional(),
   mode: _enum(["recall", "review"]),
   query: string2().optional(),
@@ -21060,7 +21064,7 @@ var recallInputSchema = object({
   ...compactResponseFields
 });
 var analyzeInputSchema = object({
-  taskId: string2().uuid(),
+  taskId: taskIdSchema.optional(),
   root: string2().optional(),
   mode: _enum(["failure", "risk", "architecture"]),
   kind: _enum(["test", "build", "runtime", "install", "log"]).optional(),
@@ -21074,6 +21078,52 @@ var analyzeInputSchema = object({
   if (input.mode === "failure" && (!input.kind || !input.text)) context.addIssue({ code: "custom", message: "failure mode requires kind and text." });
   if (input.mode === "risk" && !input.changedFiles) context.addIssue({ code: "custom", message: "risk mode requires changedFiles." });
 });
+var setupInputSchema = object({});
+var proposeKnowledgeInputSchema = object({
+  taskId: taskIdSchema,
+  root: string2().optional(),
+  action: _enum(["propose", "list", "approve", "reject"]),
+  type: _enum(["wiki", "memory", "skill"]).optional(),
+  title: string2().min(1).optional(),
+  rationale: string2().min(1).optional(),
+  proposedContent: string2().min(1).optional(),
+  sourceFingerprints: array(string2()).min(1).optional(),
+  affectedIdentifiers: array(string2()).min(1).optional(),
+  sources: array(object({ kind: _enum(["path", "id"]), sourceId: string2().min(1), fingerprint: string2().min(1) })).min(1).optional(),
+  affectedTargets: object({ wikiPages: array(string2()).optional(), memories: array(string2()).optional(), skills: array(string2()).optional() }).optional(),
+  conflictNotes: array(string2()).optional(),
+  expiresAt: string2().optional(),
+  status: _enum(["proposed", "approved", "rejected", "expired"]).optional(),
+  id: string2().min(1).optional(),
+  reason: string2().optional()
+}).superRefine((input, context) => {
+  if (input.action === "propose") {
+    for (const field of ["type", "title", "rationale", "proposedContent", "sourceFingerprints", "affectedIdentifiers"]) {
+      if (input[field] === void 0) context.addIssue({ code: "custom", path: [field], message: `propose requires ${field}.` });
+    }
+  }
+  if ((input.action === "approve" || input.action === "reject") && input.id === void 0) {
+    context.addIssue({ code: "custom", path: ["id"], message: `${input.action} requires id.` });
+  }
+});
+var taskReportInputSchema = object({
+  taskId: taskIdSchema,
+  root: string2().optional(),
+  disposition: _enum(["pause", "complete"]).default("complete"),
+  responseMode: _enum(["compact", "verbose"]).optional()
+});
+var readOnlyAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+var taskReadAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+var CORE_TOOL_METADATA = {
+  tokengraph_setup: { title: "Set Up TokenGraph", description: "Check workspace trust and the selected surface.", annotations: readOnlyAnnotations, schema: setupInputSchema },
+  tokengraph_prepare_context: { title: "Prepare Task Context", description: "Plan compact context and start a task; verbose adds diagnostics.", annotations: { ...taskReadAnnotations, idempotentHint: false }, schema: prepareContextInputSchema },
+  tokengraph_query_context: { title: "Query Task Context", description: "Query graph, SQL, or wiki context; omit taskId to start a task.", annotations: taskReadAnnotations, schema: queryContextInputSchema },
+  tokengraph_compress: { title: "Compress Task Material", description: "Compress output or context; omit taskId to start a task.", annotations: taskReadAnnotations, schema: compressInputSchema },
+  tokengraph_recall: { title: "Recall Task Knowledge", description: "Recall or review memory; omit taskId to start a task.", annotations: taskReadAnnotations, schema: recallInputSchema },
+  tokengraph_analyze: { title: "Analyze Task Evidence", description: "Trace failures, assess risk, or check architecture; omit taskId to start a task.", annotations: taskReadAnnotations, schema: analyzeInputSchema },
+  tokengraph_propose_knowledge: { title: "Propose Task Knowledge", description: "Review local knowledge. propose requires type, title, rationale, proposedContent, sourceFingerprints, and affectedIdentifiers; approve/reject require id.", annotations: { ...taskReadAnnotations, idempotentHint: false }, schema: proposeKnowledgeInputSchema },
+  tokengraph_task_report: { title: "Set Task Disposition", description: "Complete by default with the canonical footer, or pause; verbose adds the report.", annotations: taskReadAnnotations, schema: taskReportInputSchema }
+};
 
 // src/core/fileScanner.ts
 var ignorePackage = __toESM(require_ignore(), 1);
@@ -23607,7 +23657,9 @@ async function createTaskLedger(root, options) {
     estimatorVersion: TASK_ESTIMATOR_VERSION,
     events: []
   };
-  await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+  await enqueueLedgerOperation(root, taskId, async () => {
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+  });
   return ledger;
 }
 async function loadTaskLedger(root, taskId) {
@@ -23629,14 +23681,28 @@ async function loadTaskLedger(root, taskId) {
     throw error2;
   }
 }
+async function discardEmptyTaskLedger(root, taskId) {
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await loadTaskLedger(root, taskId);
+    if (!ledger || ledger.status !== "open" || ledger.events.length !== 0) return false;
+    await rm5(taskLedgerPath(root, taskId), { force: true });
+    return true;
+  });
+}
 async function requireTaskLedger(root, taskId) {
   const ledger = await loadTaskLedger(root, taskId);
   if (!ledger) throw new Error(`Task ledger ${taskId} was not found or was corrupt.`);
   return ledger;
 }
+function assertPausedTaskIsTerminal(ledger) {
+  if (ledger.status === "paused") {
+    throw new Error(`Paused task ${ledger.taskId} is terminal and cannot accept task-aware calls or events. Start a new task with tokengraph_prepare_context or omit taskId on a direct intent call.`);
+  }
+}
 async function recordTaskEvent(root, taskId, event) {
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
     if (ledger.status === "completed") {
       throw new Error("A completed task ledger cannot accept new events.");
     }
@@ -23655,6 +23721,7 @@ async function recordTaskEvent(root, taskId, event) {
 async function setTaskDisposition(root, taskId, disposition, turnId, calibration, reportOverheadTokens = 0) {
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
     if (ledger.status === "completed" && ledger.completedReport) {
       if (disposition === "pause") {
         throw new Error("A completed task ledger cannot accept a pause disposition.");
@@ -23683,8 +23750,8 @@ async function setTaskDisposition(root, taskId, disposition, turnId, calibration
 import { createHash as createHash4, randomUUID as randomUUID5 } from "node:crypto";
 import { readFile as readFile8, realpath as realpath2 } from "node:fs/promises";
 import { isAbsolute as isAbsolute3, join as join7, relative as relative4, resolve as resolve6 } from "node:path";
-var REVIEW_QUEUE_SCHEMA_VERSION = 2;
-var APPLICATION_SCHEMA_VERSION = 1;
+var REVIEW_QUEUE_SCHEMA_VERSION = 3;
+var APPLICATION_SCHEMA_VERSION = 2;
 var DEFAULT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1e3;
 var SUGGESTION_TYPES = /* @__PURE__ */ new Set(["wiki", "memory", "skill"]);
 var SUGGESTION_STATUSES = /* @__PURE__ */ new Set(["proposed", "approved", "rejected", "expired"]);
@@ -23742,19 +23809,30 @@ function normalizeSourceId(value) {
   }
   return sourceId;
 }
-function normalizeSources(value, legacyFingerprints) {
-  const raw = value === void 0 ? legacyFingerprints.map((fingerprint) => ({ kind: "id", sourceId: `source:${fingerprint}`, fingerprint })) : value;
+function normalizeSources(value, legacyFingerprints, persisted = false) {
+  const legacyOnly = value === void 0;
+  const raw = value === void 0 ? legacyFingerprints.map((fingerprint) => ({
+    kind: "id",
+    sourceId: `source:${fingerprint}`,
+    fingerprint,
+    provenance: "legacy-unverifiable"
+  })) : value;
   if (!Array.isArray(raw) || raw.length === 0) throw new Error("Sources must contain at least one provenance reference.");
   const byKey = /* @__PURE__ */ new Map();
   for (const item of raw) {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Source references must be objects.");
     const source = item;
-    if (!hasExactKeys(source, ["kind", "sourceId", "fingerprint"])) throw new Error("Source references contain unknown fields.");
+    const expectedKeys = persisted || legacyOnly ? ["kind", "sourceId", "fingerprint", "provenance"] : ["kind", "sourceId", "fingerprint"];
+    if (!hasExactKeys(source, expectedKeys)) throw new Error("Source references contain unknown fields.");
     if (source.kind !== "path" && source.kind !== "id") throw new Error("Source kind must be path or id.");
+    const provenance = persisted || legacyOnly ? source.provenance : source.kind === "path" ? "pending-path-revalidation" : "attested-unverifiable";
+    const validProvenance = source.kind === "path" ? provenance === "pending-path-revalidation" || provenance === "revalidated-current" : provenance === "attested-unverifiable" || provenance === "legacy-unverifiable";
+    if (!validProvenance) throw new Error("Source provenance does not match its source kind.");
     const normalized = {
       kind: source.kind,
       sourceId: normalizeSourceId(source.sourceId),
-      fingerprint: nonEmptyString(source.fingerprint, "Source fingerprint")
+      fingerprint: nonEmptyString(source.fingerprint, "Source fingerprint"),
+      provenance
     };
     byKey.set(`${normalized.sourceId}\0${normalized.fingerprint}`, normalized);
   }
@@ -23787,7 +23865,7 @@ function suggestionFingerprint(input) {
     proposedContent: input.proposedContent,
     sourceFingerprints: input.sourceFingerprints,
     affectedIdentifiers: input.affectedIdentifiers,
-    sources: input.sources,
+    sources: input.sources.map(({ kind, sourceId, fingerprint }) => ({ kind, sourceId, fingerprint })),
     affectedTargets: input.affectedTargets,
     conflictNotes: input.conflictNotes
   })).digest("hex");
@@ -23821,7 +23899,7 @@ function reconstructSuggestion(value, schemaVersion) {
   const versionTwoKeys = ["sources", "affectedTargets", "conflictNotes", "expiresAt"];
   const expectedKeys = [
     ...baseKeys,
-    ...schemaVersion === 2 ? versionTwoKeys : [],
+    ...schemaVersion >= 2 ? versionTwoKeys : [],
     ...candidate.reviewedAt === void 0 ? [] : ["reviewedAt"],
     ...candidate.reviewReason === void 0 ? [] : ["reviewReason"]
   ];
@@ -23829,6 +23907,7 @@ function reconstructSuggestion(value, schemaVersion) {
   if (typeof candidate.id !== "string" || !UUID_PATTERN2.test(candidate.id)) throw new Error("Suggestion id must be a UUID.");
   const type = validateType(candidate.type);
   const createdAt = validateTimestamp(candidate.createdAt, "Created timestamp");
+  const persistedSources = schemaVersion >= 2 ? normalizeSources(candidate.sources, [], schemaVersion >= 3) : void 0;
   const proposal = sanitizeProposal({
     type,
     title: candidate.title,
@@ -23836,13 +23915,14 @@ function reconstructSuggestion(value, schemaVersion) {
     proposedContent: candidate.proposedContent,
     sourceFingerprints: candidate.sourceFingerprints,
     affectedIdentifiers: candidate.affectedIdentifiers,
-    ...schemaVersion === 2 ? {
-      sources: candidate.sources,
+    ...schemaVersion >= 2 ? {
+      sources: persistedSources?.map(({ kind, sourceId, fingerprint }) => ({ kind, sourceId, fingerprint })),
       affectedTargets: candidate.affectedTargets,
       conflictNotes: candidate.conflictNotes,
       expiresAt: candidate.expiresAt
     } : {}
   });
+  if (persistedSources) proposal.sources = persistedSources;
   const expectedFingerprint = schemaVersion === 1 ? createHash4("sha256").update(JSON.stringify({
     type: proposal.type,
     title: proposal.title,
@@ -23871,7 +23951,7 @@ async function readQueue(root) {
     const parsed = JSON.parse(await readFile8(path, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Queue must be an object.");
     const queue = parsed;
-    if (!hasExactKeys(queue, ["schemaVersion", "suggestions"]) || ![1, 2].includes(queue.schemaVersion) || !Array.isArray(queue.suggestions)) {
+    if (!hasExactKeys(queue, ["schemaVersion", "suggestions"]) || ![1, 2, 3].includes(queue.schemaVersion) || !Array.isArray(queue.suggestions)) {
       throw new Error("Queue schema is invalid.");
     }
     return queue.suggestions.map((suggestion) => reconstructSuggestion(suggestion, queue.schemaVersion));
@@ -23884,12 +23964,38 @@ async function readQueue(root) {
 async function writeQueue(root, suggestions) {
   await writeJsonAtomic(queuePath(root), { schemaVersion: REVIEW_QUEUE_SCHEMA_VERSION, suggestions });
 }
-function reconstructApplication(value) {
+function applicationProvenanceStatus(sources) {
+  const hasPath = sources.some((source) => source.kind === "path");
+  if (!hasPath) return "attested-unverifiable";
+  return sources.some((source) => source.kind === "id") ? "revalidated-with-attested-snapshots" : "revalidated-current";
+}
+function revalidatedApplicationSources(sources) {
+  return sources.map((source) => source.kind === "path" ? { ...source, provenance: "revalidated-current" } : source);
+}
+function reconstructApplication(value, schemaVersion) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Applied knowledge must be an object.");
   const candidate = value;
-  const keys = ["affectedTargets", "appliedAt", "conflictNotes", "fingerprint", "proposedContent", "rationale", "sources", "suggestionId", "title", "type"];
+  const keys = [
+    "affectedTargets",
+    "appliedAt",
+    "conflictNotes",
+    "fingerprint",
+    "proposedContent",
+    "rationale",
+    "sources",
+    "suggestionId",
+    "title",
+    "type",
+    ...schemaVersion >= 2 ? ["provenanceStatus"] : []
+  ];
   if (!hasExactKeys(candidate, keys) || typeof candidate.suggestionId !== "string" || !UUID_PATTERN2.test(candidate.suggestionId)) {
     throw new Error("Applied knowledge schema is invalid.");
+  }
+  const sourceItemsHaveProvenance = Array.isArray(candidate.sources) && candidate.sources.every((source) => Boolean(source && typeof source === "object" && !Array.isArray(source) && "provenance" in source));
+  const sources = schemaVersion >= 2 ? normalizeSources(candidate.sources, [], true) : revalidatedApplicationSources(normalizeSources(candidate.sources, [], sourceItemsHaveProvenance));
+  const provenanceStatus = applicationProvenanceStatus(sources);
+  if (schemaVersion >= 2 && candidate.provenanceStatus !== provenanceStatus) {
+    throw new Error("Applied knowledge provenance status does not match its sources.");
   }
   return {
     suggestionId: candidate.suggestionId,
@@ -23898,7 +24004,8 @@ function reconstructApplication(value) {
     title: nonEmptyString(candidate.title, "Application title"),
     rationale: nonEmptyString(candidate.rationale, "Application rationale"),
     proposedContent: nonEmptyString(candidate.proposedContent, "Applied content"),
-    sources: normalizeSources(candidate.sources, []),
+    sources,
+    provenanceStatus,
     affectedTargets: normalizeAffectedTargets(candidate.affectedTargets, validateType(candidate.type), []),
     conflictNotes: normalizeUnique(candidate.conflictNotes, "Conflict notes", true),
     appliedAt: validateTimestamp(candidate.appliedAt, "Applied timestamp")
@@ -23910,10 +24017,10 @@ async function readApplications(root) {
     const parsed = JSON.parse(await readFile8(path, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Application store must be an object.");
     const store = parsed;
-    if (!hasExactKeys(store, ["schemaVersion", "applications"]) || store.schemaVersion !== APPLICATION_SCHEMA_VERSION || !Array.isArray(store.applications)) {
+    if (!hasExactKeys(store, ["schemaVersion", "applications"]) || ![1, 2].includes(store.schemaVersion) || !Array.isArray(store.applications)) {
       throw new Error("Application store schema is invalid.");
     }
-    const applications = store.applications.map(reconstructApplication);
+    const applications = store.applications.map((application) => reconstructApplication(application, store.schemaVersion));
     if (new Set(applications.map((application) => application.suggestionId)).size !== applications.length) {
       throw new Error("Application ids must be unique.");
     }
@@ -23963,9 +24070,12 @@ async function ensureApplicationTargets(root, application) {
   }
 }
 function applicationMatchesSuggestion(application, suggestion) {
-  return application.suggestionId === suggestion.id && application.fingerprint === suggestion.fingerprint && application.type === suggestion.type && application.title === suggestion.title && application.rationale === suggestion.rationale && application.proposedContent === suggestion.proposedContent && JSON.stringify(application.sources) === JSON.stringify(suggestion.sources) && JSON.stringify(application.affectedTargets) === JSON.stringify(suggestion.affectedTargets) && JSON.stringify(application.conflictNotes) === JSON.stringify(suggestion.conflictNotes);
+  return application.suggestionId === suggestion.id && application.fingerprint === suggestion.fingerprint && application.type === suggestion.type && application.title === suggestion.title && application.rationale === suggestion.rationale && application.proposedContent === suggestion.proposedContent && JSON.stringify(application.sources) === JSON.stringify(revalidatedApplicationSources(suggestion.sources)) && application.provenanceStatus === applicationProvenanceStatus(application.sources) && JSON.stringify(application.affectedTargets) === JSON.stringify(suggestion.affectedTargets) && JSON.stringify(application.conflictNotes) === JSON.stringify(suggestion.conflictNotes);
 }
 async function assertFreshForApproval(root, suggestion) {
+  if (!suggestion.sources.some((source) => source.kind === "path")) {
+    throw new Error("ID-only or legacy unverifiable knowledge cannot be approved without at least one canonical path source.");
+  }
   for (const source of suggestion.sources) {
     if (source.kind !== "path") continue;
     let content;
@@ -24054,7 +24164,12 @@ async function reviewKnowledgeSuggestion(root, id, decision, reason) {
     if (current.status === "expired") throw new Error("Expired knowledge suggestions cannot be reviewed.");
     if (current.status === nextStatus) {
       if (decision === "approve") {
-        if (existingApplication) return { suggestion: current, applicationStatus: "applied", application: existingApplication };
+        if (existingApplication) return {
+          suggestion: current,
+          applicationStatus: "applied",
+          application: existingApplication,
+          provenanceStatus: existingApplication.provenanceStatus
+        };
         if (Date.parse(current.expiresAt) <= Date.now()) {
           suggestions[index] = { ...current, status: "expired", updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
           await writeQueue(root, suggestions);
@@ -24064,7 +24179,12 @@ async function reviewKnowledgeSuggestion(root, id, decision, reason) {
         const migratedApplication = applicationForSuggestion(current, current.reviewedAt ?? current.updatedAt);
         await writeApplication(root, applications, migratedApplication);
         await writeQueue(root, suggestions);
-        return { suggestion: current, applicationStatus: "applied", application: migratedApplication };
+        return {
+          suggestion: current,
+          applicationStatus: "applied",
+          application: migratedApplication,
+          provenanceStatus: migratedApplication.provenanceStatus
+        };
       }
       return { suggestion: current, applicationStatus: "not-applied" };
     }
@@ -24095,10 +24215,16 @@ async function reviewKnowledgeSuggestion(root, id, decision, reason) {
     if (existingApplication) await ensureApplicationTargets(root, existingApplication);
     else await writeApplication(root, applications, application);
     await writeQueue(root, suggestions);
-    return { suggestion: next, applicationStatus: "applied", application };
+    return {
+      suggestion: next,
+      applicationStatus: "applied",
+      application,
+      provenanceStatus: application.provenanceStatus
+    };
   });
 }
 function applicationForSuggestion(suggestion, appliedAt) {
+  const sources = revalidatedApplicationSources(suggestion.sources);
   return {
     suggestionId: suggestion.id,
     fingerprint: suggestion.fingerprint,
@@ -24106,7 +24232,8 @@ function applicationForSuggestion(suggestion, appliedAt) {
     title: suggestion.title,
     rationale: suggestion.rationale,
     proposedContent: suggestion.proposedContent,
-    sources: suggestion.sources,
+    sources,
+    provenanceStatus: applicationProvenanceStatus(sources),
     affectedTargets: suggestion.affectedTargets,
     conflictNotes: suggestion.conflictNotes,
     appliedAt
@@ -24564,21 +24691,46 @@ function createTokenGraphServer(options = {}) {
   const server = new McpServer(
     { name: "tokengraph", version: "0.20.0" },
     {
-      instructions: "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. Start each task with tokengraph_setup, capture its trusted workspace root, then call tokengraph_prepare_context and reuse only its returned taskId for that trusted root. Complete or pause with tokengraph_task_report. TokenGraph tools are task-scoped: never reuse a taskId across workspaces or merge unrelated tasks."
+      instructions: "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. Call tokengraph_setup once and capture its trusted workspace root. Use tokengraph_prepare_context only when planning is needed; otherwise omit taskId from the first query, compress, recall, or analyze call and capture the returned taskId. Complete or pause with tokengraph_task_report. TokenGraph tools are task-scoped: never reuse a taskId across workspaces or merge unrelated tasks."
     }
   );
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
-  async function requireTaskRoot(root, taskId) {
+  async function requireTaskRoot(root, taskId, allowTerminal = false) {
     const resolvedRoot = await workspaceRoot(root);
     const ledger = await loadTaskLedger(resolvedRoot, taskId);
     if (!ledger) throw new Error(`Task ledger ${taskId} was not found under the requested trusted root.`);
+    if (!allowTerminal && ledger.status !== "open") {
+      throw new Error(`${ledger.status === "paused" ? "Paused" : "Completed"} task ${taskId} is terminal and cannot accept task-aware calls. Start a new task with tokengraph_prepare_context or omit taskId on a direct intent call.`);
+    }
     return resolvedRoot;
+  }
+  async function beginOrRequireTask(root, taskId) {
+    const resolvedRoot = await workspaceRoot(root);
+    if (taskId) {
+      const ledger2 = await loadTaskLedger(resolvedRoot, taskId);
+      if (!ledger2) throw new Error(`Task ledger ${taskId} was not found under the requested trusted root.`);
+      if (ledger2.status !== "open") {
+        throw new Error(`${ledger2.status === "paused" ? "Paused" : "Completed"} task ${taskId} is terminal and cannot accept task-aware calls. Start a new task by omitting taskId or with tokengraph_prepare_context.`);
+      }
+      return { root: resolvedRoot, taskId, autoStarted: false };
+    }
+    const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(detectedHost()) });
+    return { root: resolvedRoot, taskId: ledger.taskId, autoStarted: true };
+  }
+  async function withTaskIntent(root, taskId, operation) {
+    const task = await beginOrRequireTask(root, taskId);
+    try {
+      return await operation(task);
+    } catch (error2) {
+      if (task.autoStarted) await discardEmptyTaskLedger(task.root, task.taskId);
+      throw error2;
+    }
   }
   server.registerTool(
     "tokengraph_setup",
     {
       title: "Set Up TokenGraph",
-      description: "Diagnose rootless workspace trust and summarize the selected TokenGraph capability surface.",
+      description: "Check workspace trust and the selected surface.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({})
     },
@@ -24596,7 +24748,7 @@ function createTokenGraphServer(options = {}) {
     "tokengraph_prepare_context",
     {
       title: "Prepare Task Context",
-      description: "Resolve workspace trust, refresh the local index when needed, create a task ledger, and return a compact task plan. Set responseMode to verbose only for explicit diagnostics.",
+      description: "Plan compact context and start a task; verbose adds diagnostics.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: prepareContextInputSchema
     },
@@ -24677,243 +24829,215 @@ function createTokenGraphServer(options = {}) {
     "tokengraph_query_context",
     {
       title: "Query Task Context",
-      description: "Query compact overview, graph search, symbol, SQL, or wiki context for one prepared task.",
+      description: "Query graph, SQL, or wiki context; omit taskId to start a task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: queryContextInputSchema
     },
     async (input) => {
       const { taskId, root, mode, responseMode } = input;
-      const resolvedRoot = await requireTaskRoot(root, taskId);
-      const project = mode === "wiki" ? void 0 : await ensureProject(resolvedRoot);
-      let result;
-      if (mode === "overview") {
-        result = projectMap(project);
-      } else if (mode === "search") {
-        const { query, limit } = input;
-        result = { query, results: searchProject(project, query, limit ?? 10) };
-      } else if (mode === "symbol") {
-        const { target } = input;
-        result = explain(project, target);
-      } else if (mode === "sql") {
-        const { query, limit } = input;
-        result = { query, sql: sqlSummary(project, query, limit ?? 10) };
-      } else {
-        const { slug, constraints, responseMode: responseMode2 } = input;
-        const wiki = await loadProjectWiki(resolvedRoot);
-        if (!wiki) throw new Error("No generated TokenGraph wiki was found.");
-        if (!slug && responseMode2 === "verbose") throw new Error("A wiki slug is required for verbose wiki responses.");
-        if (responseMode2 !== "verbose") {
-          const selectedWiki = slug ? { ...wiki, pages: wiki.pages.filter((candidate) => candidate.slug === slug) } : wiki;
-          if (slug && selectedWiki.pages.length === 0) throw new Error(`Unknown wiki page slug "${slug}".`);
-          result = compactWikiResponse(selectedWiki, { constraints });
+      return withTaskIntent(root, taskId, async (task) => {
+        const resolvedRoot = task.root;
+        const project = mode === "wiki" ? void 0 : await ensureProject(resolvedRoot);
+        let result;
+        if (mode === "overview") {
+          result = projectMap(project);
+        } else if (mode === "search") {
+          const { query, limit } = input;
+          result = { query, results: searchProject(project, query, limit ?? 10) };
+        } else if (mode === "symbol") {
+          const { target } = input;
+          result = explain(project, target);
+        } else if (mode === "sql") {
+          const { query, limit } = input;
+          result = { query, sql: sqlSummary(project, query, limit ?? 10) };
         } else {
-          const page2 = wiki.pages.find((candidate) => candidate.slug === slug);
-          if (!page2) throw new Error(`Unknown wiki page slug "${slug}".`);
-          result = { slug: page2.slug, title: page2.title, body: page2.body, estimatedTokens: page2.estimatedTokens, wikiStatus: await getWikiStatus(resolvedRoot) };
+          const { slug, constraints, responseMode: responseMode2 } = input;
+          const wiki = await loadProjectWiki(resolvedRoot);
+          if (!wiki) throw new Error("No generated TokenGraph wiki was found.");
+          if (!slug && responseMode2 === "verbose") throw new Error("A wiki slug is required for verbose wiki responses.");
+          if (responseMode2 !== "verbose") {
+            const selectedWiki = slug ? { ...wiki, pages: wiki.pages.filter((candidate) => candidate.slug === slug) } : wiki;
+            if (slug && selectedWiki.pages.length === 0) throw new Error(`Unknown wiki page slug "${slug}".`);
+            result = compactWikiResponse(selectedWiki, { constraints });
+          } else {
+            const page2 = wiki.pages.find((candidate) => candidate.slug === slug);
+            if (!page2) throw new Error(`Unknown wiki page slug "${slug}".`);
+            result = { slug: page2.slug, title: page2.title, body: page2.body, estimatedTokens: page2.estimatedTokens, wikiStatus: await getWikiStatus(resolvedRoot) };
+          }
         }
-      }
-      const response = responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
-      const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
-      const originalTokens = project ? project.files.reduce((total, file) => total + file.estimatedTokens, 0) : compactTokens;
-      await recordCoreEvent({
-        root: resolvedRoot,
-        taskId,
-        toolName: "tokengraph_query_context",
-        category: `query-${mode}`,
-        operation: { mode, queryHash: createHash5("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
-        originalTokens,
-        compactTokens
+        const response = responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
+        const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
+        const originalTokens = project ? project.files.reduce((total, file) => total + file.estimatedTokens, 0) : compactTokens;
+        await recordCoreEvent({
+          root: resolvedRoot,
+          taskId: task.taskId,
+          toolName: "tokengraph_query_context",
+          category: `query-${mode}`,
+          operation: { mode, queryHash: createHash5("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
+          originalTokens,
+          compactTokens
+        });
+        return ok(task.autoStarted ? { ...response, taskId: task.taskId } : response);
       });
-      return ok(response);
     }
   );
   server.registerTool(
     "tokengraph_compress",
     {
       title: "Compress Task Material",
-      description: "Compress command output or mixed task context while recording real token estimates in the task ledger.",
+      description: "Compress output or context; omit taskId to start a task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: compressInputSchema
     },
     async (input) => {
       const { taskId, root, mode } = input;
-      const resolvedRoot = await requireTaskRoot(root, taskId);
-      let result;
-      let estimates;
-      if (mode === "output") {
-        const { kind, text, maxLines } = input;
-        const compressed = compressOutput({ kind, text, maxLines });
-        result = compressed;
-        estimates = compressed.estimatedTokens;
-      } else {
-        const { task, contentKind, text, preserveRawReferences, constraints, responseMode } = input;
-        const [project, config2, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
-        const memories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(`${task}
+      return withTaskIntent(root, taskId, async (task) => {
+        const resolvedRoot = task.root;
+        let result;
+        let estimates;
+        if (mode === "output") {
+          const { kind, text, maxLines } = input;
+          const compressed = compressOutput({ kind, text, maxLines });
+          result = compressed;
+          estimates = compressed.estimatedTokens;
+        } else {
+          const { task: task2, contentKind, text, preserveRawReferences, constraints, responseMode } = input;
+          const [project, config2, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
+          const memories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(`${task2}
 ${text ?? ""}`, config2.maxMemories) : [];
-        const compressed = await compressContext({
-          root: resolvedRoot,
-          task,
-          contentKind,
-          text,
-          profile: config2.tokenSavingProfile,
-          preserveRawReferences,
-          project,
-          memories,
-          wiki
-        });
-        result = responseMode === "verbose" ? compressed : compactCompressionResponse(compressed, { constraints });
-        estimates = compressed.estimatedTokens;
-      }
-      const compactResponse = compactCompressionEnvelope(mode, result);
-      const category = `compression-${mode}`;
-      const overheadTokens = coreEventOverheadTokens(taskId, "tokengraph_compress", category);
-      const includeEstimates = mode !== "context" || input.responseMode === "verbose";
-      let returnedResponse = compactResponse;
-      let compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
-      if (includeEstimates) {
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.original, compact: compactTokens, overhead: overheadTokens });
-          const measured = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
-          if (measured === compactTokens) break;
-          compactTokens = measured;
+          const compressed = await compressContext({
+            root: resolvedRoot,
+            task: task2,
+            contentKind,
+            text,
+            profile: config2.tokenSavingProfile,
+            preserveRawReferences,
+            project,
+            memories,
+            wiki
+          });
+          result = responseMode === "verbose" ? compressed : compactCompressionResponse(compressed, { constraints });
+          estimates = compressed.estimatedTokens;
         }
-      }
-      await recordCoreEvent({
-        root: resolvedRoot,
-        taskId,
-        toolName: "tokengraph_compress",
-        category,
-        operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash5("sha256").update(`${"task" in input ? input.task : ""}
+        const compactResponse = compactCompressionEnvelope(mode, result);
+        const category = `compression-${mode}`;
+        const overheadTokens = coreEventOverheadTokens(task.taskId, "tokengraph_compress", category);
+        const includeEstimates = mode !== "context" || input.responseMode === "verbose";
+        let returnedResponse = compactResponse;
+        let compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
+        if (includeEstimates) {
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.original, compact: compactTokens, overhead: overheadTokens });
+            const measured = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
+            if (measured === compactTokens) break;
+            compactTokens = measured;
+          }
+        }
+        await recordCoreEvent({
+          root: resolvedRoot,
+          taskId: task.taskId,
+          toolName: "tokengraph_compress",
+          category,
+          operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash5("sha256").update(`${"task" in input ? input.task : ""}
 ${input.text ?? ""}`).digest("hex") },
-        originalTokens: estimates.original,
-        compactTokens,
-        overheadTokens
+          originalTokens: estimates.original,
+          compactTokens,
+          overheadTokens
+        });
+        return ok(task.autoStarted ? { ...returnedResponse, taskId: task.taskId } : returnedResponse);
       });
-      return ok(returnedResponse);
     }
   );
   server.registerTool(
     "tokengraph_recall",
     {
       title: "Recall Task Knowledge",
-      description: "Read active memories or a compact memory review for one prepared task.",
+      description: "Recall or review memory; omit taskId to start a task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: recallInputSchema
     },
     async ({ taskId, root, mode, query, limit, audit, constraints, responseMode }) => {
-      const resolvedRoot = await requireTaskRoot(root, taskId);
-      const store = new MemoryStore(memoryPath(resolvedRoot));
-      const project = await ensureProject(resolvedRoot);
-      const memories = await store.list({ includeDeprecated: audit === true, includeDeleted: audit === true });
-      const terms = tokenize(query ?? "");
-      const recalled = memories.filter((memory) => terms.length === 0 || terms.some((term) => tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`).some((part) => part.includes(term) || term.includes(part)))).slice(0, limit ?? 10);
-      const verboseResult = mode === "review" ? await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 }) : { query: query ?? "", auditMode: audit === true, memories: recalled };
-      const result = responseMode === "verbose" ? verboseResult : mode === "review" ? compactRecallResponse(verboseResult, { constraints }, memories, project) : compactMemoryRecallResponse(recalled, { constraints });
-      const response = responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
-      const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
-      await recordCoreEvent({
-        root: resolvedRoot,
-        taskId,
-        toolName: "tokengraph_recall",
-        category: `memory-${mode}`,
-        operation: { mode, queryHash: createHash5("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
-        originalTokens: estimateTokens(compactJson(memories)),
-        compactTokens
+      return withTaskIntent(root, taskId, async (task) => {
+        const resolvedRoot = task.root;
+        const store = new MemoryStore(memoryPath(resolvedRoot));
+        const project = await ensureProject(resolvedRoot);
+        const memories = await store.list({ includeDeprecated: audit === true, includeDeleted: audit === true });
+        const terms = tokenize(query ?? "");
+        const recalled = memories.filter((memory) => terms.length === 0 || terms.some((term) => tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`).some((part) => part.includes(term) || term.includes(part)))).slice(0, limit ?? 10);
+        const verboseResult = mode === "review" ? await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 }) : { query: query ?? "", auditMode: audit === true, memories: recalled };
+        const result = responseMode === "verbose" ? verboseResult : mode === "review" ? compactRecallResponse(verboseResult, { constraints }, memories, project) : compactMemoryRecallResponse(recalled, { constraints });
+        const response = responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
+        const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
+        await recordCoreEvent({
+          root: resolvedRoot,
+          taskId: task.taskId,
+          toolName: "tokengraph_recall",
+          category: `memory-${mode}`,
+          operation: { mode, queryHash: createHash5("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
+          originalTokens: estimateTokens(compactJson(memories)),
+          compactTokens
+        });
+        return ok(task.autoStarted ? { ...response, taskId: task.taskId } : response);
       });
-      return ok(response);
     }
   );
   server.registerTool(
     "tokengraph_analyze",
     {
       title: "Analyze Task Evidence",
-      description: "Run failure tracing, regression-risk analysis, or architecture checks for one prepared task.",
+      description: "Trace failures, assess risk, or check architecture; omit taskId to start a task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: analyzeInputSchema
     },
     async (input) => {
       const { taskId, root, mode } = input;
-      const resolvedRoot = await requireTaskRoot(root, taskId);
-      const project = await ensureProject(resolvedRoot);
-      const store = new MemoryStore(memoryPath(resolvedRoot));
-      let result;
-      if (mode === "failure") {
-        const { kind, text, task } = input;
-        const memories = await store.search(`${task ?? ""}
+      return withTaskIntent(root, taskId, async (task) => {
+        const resolvedRoot = task.root;
+        const project = await ensureProject(resolvedRoot);
+        const store = new MemoryStore(memoryPath(resolvedRoot));
+        let result;
+        if (mode === "failure") {
+          const { kind, text, task: task2 } = input;
+          const memories = await store.search(`${task2 ?? ""}
 ${text}`, 8);
-        const verbose = await traceFailure({ root: resolvedRoot, kind, text, task, project, memories });
-        result = input.responseMode === "verbose" ? verbose : compactFailureResponse(verbose, { constraints: input.constraints, includeSql: hasSqlIntent(`${task ?? ""}
+          const verbose = await traceFailure({ root: resolvedRoot, kind, text, task: task2, project, memories });
+          result = input.responseMode === "verbose" ? verbose : compactFailureResponse(verbose, { constraints: input.constraints, includeSql: hasSqlIntent(`${task2 ?? ""}
 ${text}`) });
-      } else if (mode === "risk") {
-        const { changedFiles, diffSummary, task } = input;
-        const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
-        const memories = await store.search(`${task ?? ""}
+        } else if (mode === "risk") {
+          const { changedFiles, diffSummary, task: task2 } = input;
+          const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+          const memories = await store.search(`${task2 ?? ""}
 ${diffSummary ?? ""}
 ${changedFiles.join("\n")}`, 8);
-        const verbose = await assessChangeRisk({ root: resolvedRoot, changedFiles, diffSummary, task, project, rules, memories });
-        result = input.responseMode === "verbose" ? verbose : compactRiskResponse(verbose, { constraints: input.constraints });
-      } else {
-        const { files } = input;
-        const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
-        result = await checkArchitecture({ root: resolvedRoot, project, rules, files });
-      }
-      const response = input.responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
-      const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
-      await recordCoreEvent({
-        root: resolvedRoot,
-        taskId,
-        toolName: "tokengraph_analyze",
-        category: `analysis-${mode}`,
-        operation: { mode, inputHash: createHash5("sha256").update(JSON.stringify(input)).digest("hex") },
-        originalTokens: Math.max(compactTokens, project.files.reduce((total, file) => total + file.estimatedTokens, 0)),
-        compactTokens
+          const verbose = await assessChangeRisk({ root: resolvedRoot, changedFiles, diffSummary, task: task2, project, rules, memories });
+          result = input.responseMode === "verbose" ? verbose : compactRiskResponse(verbose, { constraints: input.constraints });
+        } else {
+          const { files } = input;
+          const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+          result = await checkArchitecture({ root: resolvedRoot, project, rules, files });
+        }
+        const response = input.responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
+        const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
+        await recordCoreEvent({
+          root: resolvedRoot,
+          taskId: task.taskId,
+          toolName: "tokengraph_analyze",
+          category: `analysis-${mode}`,
+          operation: { mode, inputHash: createHash5("sha256").update(JSON.stringify(input)).digest("hex") },
+          originalTokens: Math.max(compactTokens, project.files.reduce((total, file) => total + file.estimatedTokens, 0)),
+          compactTokens
+        });
+        return ok(task.autoStarted ? { ...response, taskId: task.taskId } : response);
       });
-      return ok(response);
     }
   );
   server.registerTool(
     "tokengraph_propose_knowledge",
     {
       title: "Propose Task Knowledge",
-      description: "Propose or list local knowledge, or explicitly approve/reject reviewed payloads. Approval applies only fresh reviewed content; rejection never applies it.",
+      description: "Review local knowledge. propose requires type, title, rationale, proposedContent, sourceFingerprints, and affectedIdentifiers; approve/reject require id.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-      inputSchema: object({
-        taskId: string2().uuid(),
-        root: string2().optional(),
-        action: literal("propose"),
-        type: _enum(["wiki", "memory", "skill"]),
-        title: string2().min(1),
-        rationale: string2().min(1),
-        proposedContent: string2().min(1),
-        sourceFingerprints: array(string2()).min(1),
-        affectedIdentifiers: array(string2()).min(1),
-        sources: array(object({ kind: _enum(["path", "id"]), sourceId: string2().min(1), fingerprint: string2().min(1) })).min(1).optional(),
-        affectedTargets: object({
-          wikiPages: array(string2()).optional(),
-          memories: array(string2()).optional(),
-          skills: array(string2()).optional()
-        }).optional(),
-        conflictNotes: array(string2()).optional(),
-        expiresAt: string2().datetime().optional()
-      }).or(object({
-        taskId: string2().uuid(),
-        root: string2().optional(),
-        action: literal("list"),
-        type: _enum(["wiki", "memory", "skill"]).optional(),
-        status: _enum(["proposed", "approved", "rejected", "expired"]).optional()
-      })).or(object({
-        taskId: string2().uuid(),
-        root: string2().optional(),
-        action: literal("approve"),
-        id: string2().uuid(),
-        reason: string2().optional()
-      })).or(object({
-        taskId: string2().uuid(),
-        root: string2().optional(),
-        action: literal("reject"),
-        id: string2().uuid(),
-        reason: string2().optional()
-      }))
+      inputSchema: proposeKnowledgeInputSchema
     },
     async (input) => {
       const { taskId, root, action } = input;
@@ -24965,12 +25089,12 @@ ${changedFiles.join("\n")}`, 8);
     "tokengraph_task_report",
     {
       title: "Set Task Disposition",
-      description: "Pause a task ledger or complete it and return the nested TaskReport.",
+      description: "Complete by default with the canonical footer, or pause; verbose adds the report.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({ taskId: string2().uuid(), root: string2().optional(), disposition: _enum(["pause", "complete"]) })
+      inputSchema: taskReportInputSchema
     },
-    async ({ taskId, root, disposition }) => {
-      const resolvedRoot = await requireTaskRoot(root, taskId);
+    async ({ taskId, root, disposition, responseMode }) => {
+      const resolvedRoot = await requireTaskRoot(root, taskId, true);
       if (disposition === "pause") {
         await setTaskDisposition(resolvedRoot, taskId, disposition);
         return ok({ status: "paused", taskId, reportingStatus: "paused" });
@@ -24988,7 +25112,8 @@ ${changedFiles.join("\n")}`, 8);
       );
       if (!result.report) throw new Error(`Task ledger ${taskId} did not produce a completion report.`);
       const footer = formatTaskReportFooter(result.report);
-      return ok({ status: "completed", taskId, report: result.report, footer, reportingStatus: "ready" });
+      const compact = { status: "completed", taskId, footer, reportingStatus: "ready" };
+      return ok(responseMode === "verbose" ? { ...compact, report: result.report } : compact);
     }
   );
   if (toolSurface === "full") {

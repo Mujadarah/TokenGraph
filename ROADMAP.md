@@ -197,7 +197,7 @@ Status: complete
 - The default MCP surface is eight intent-level tools, with 42 tools on the opt-in full compatibility surface.
 - JSON-only success results use one serialized JSON text item, while project-map resource links keep their documented structured exception.
 - Source-linked wiki and memory proposals require review and explicit approval before application, rechecking provenance and expiry.
-- The evidence benchmark passes its strict gate with 100% constraint preservation, zero critical false negatives, 100% recall, and median estimated net savings of 30.5 tokens. The p25 remains -166 tokens, 11 tasks remain non-positive, and per-category confidence is low.
+- The routing-lifecycle evidence benchmark passes its strict gate with 100% constraint preservation, zero critical false negatives, 100% recall, and median net estimated savings of 31.7 tokens. Its p25 is -270.3 and 15/30 tasks are non-positive; the execution-inclusive median is -133.8 with 20/30 non-positive. Per-category confidence is low.
 - Deterministic v0.20 release packaging includes nine skills, the MCP and hook bundles, both host manifests, and a standalone marketplace archive.
 
 ## v0.19 - Repository Hygiene And Installability

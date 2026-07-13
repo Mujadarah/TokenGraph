@@ -219,7 +219,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
       criticalConstraintPreservationRate: 1,
       criticalFalseNegativeCount: 0,
       requiredFileRecall: 1,
-      medianNetSavings: 30.5,
+      medianNetSavings: 31.700000000000003,
       taskFailures: expect.arrayContaining(["memory-wiki-01"])
     });
     expect(report.releaseGate).toEqual({ passed: true, failureReasons: [] });
@@ -247,7 +247,8 @@ describe("tokengraph benchmark harness and trust docs", () => {
       await expect(access(resolve(repoRoot, "docs", "benchmarks", file))).resolves.toBeUndefined();
     }
     const benchmarkResults = await readFile(resolve(repoRoot, "docs", "benchmarks", "results-current.md"), "utf8");
-    expect(benchmarkResults).toMatch(/11 individual tasks.*non-positive/i);
+    expect(benchmarkResults).toMatch(/15 of 30 tasks are non-positive/i);
+    expect(benchmarkResults).toMatch(/execution-inclusive median.*-133\.8/i);
     expect(benchmarkResults).toMatch(/low-confidence/i);
 
     const trustFiles = ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"];
@@ -282,7 +283,8 @@ describe("tokengraph focused skills", () => {
       expect(skill).toMatch(/tokengraph_prepare_context/);
       expect(skill).toMatch(/tokengraph_task_report/);
       expect(skill).toMatch(/disposition: "pause"/);
-      expect(skill).toMatch(/disposition: "complete"/);
+      expect(skill).toMatch(/tokengraph_task_report\(\{ taskId \}\)/);
+      expect(skill).toMatch(/compact reporting is the default/i);
       expect(skill).toMatch(/TokenGraph was not used/);
       expect(skill).toMatch(/unavailable/i);
     }
@@ -434,7 +436,7 @@ describe("tokengraph release package command", () => {
     );
     const generatedReadme = await readFile(resolve(report.packageDir, "README.md"), "utf8");
     expect(generatedReadme.match(/The default surface exposes eight compact tools/g)).toHaveLength(1);
-    expect(generatedReadme.match(/The checked-in benchmark passes its strict gate/g)).toHaveLength(1);
+    expect(generatedReadme.match(/The checked-in routing-lifecycle benchmark passes its strict gate/g)).toHaveLength(1);
     await expect(access(resolve(report.packageDir, "src"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "tests"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "node_modules"))).rejects.toThrow();

@@ -8,10 +8,20 @@ export type KnowledgeSuggestionType = "wiki" | "memory" | "skill";
 export type KnowledgeSuggestionStatus = "proposed" | "approved" | "rejected" | "expired";
 export type KnowledgeReviewDecision = "approve" | "reject";
 
-export interface KnowledgeSourceReference {
+export interface KnowledgeSourceInput {
   kind: "path" | "id";
   sourceId: string;
   fingerprint: string;
+}
+
+export type KnowledgeSourceProvenance =
+  | "pending-path-revalidation"
+  | "revalidated-current"
+  | "attested-unverifiable"
+  | "legacy-unverifiable";
+
+export interface KnowledgeSourceReference extends KnowledgeSourceInput {
+  provenance: KnowledgeSourceProvenance;
 }
 
 export interface KnowledgeAffectedTargets {
@@ -27,7 +37,7 @@ export interface KnowledgeProposalInput {
   proposedContent: string;
   sourceFingerprints: string[];
   affectedIdentifiers: string[];
-  sources?: KnowledgeSourceReference[];
+  sources?: KnowledgeSourceInput[];
   affectedTargets?: Partial<KnowledgeAffectedTargets>;
   conflictNotes?: string[];
   expiresAt?: string;
@@ -58,6 +68,7 @@ export interface AppliedKnowledge {
   rationale: string;
   proposedContent: string;
   sources: KnowledgeSourceReference[];
+  provenanceStatus: "revalidated-current" | "revalidated-with-attested-snapshots" | "attested-unverifiable";
   affectedTargets: KnowledgeAffectedTargets;
   conflictNotes: string[];
   appliedAt: string;
@@ -72,10 +83,11 @@ export interface KnowledgeReviewResult {
   suggestion: KnowledgeSuggestion;
   applicationStatus: "applied" | "not-applied";
   application?: AppliedKnowledge;
+  provenanceStatus?: "revalidated-current" | "revalidated-with-attested-snapshots" | "attested-unverifiable";
 }
 
-const REVIEW_QUEUE_SCHEMA_VERSION = 2;
-const APPLICATION_SCHEMA_VERSION = 1;
+const REVIEW_QUEUE_SCHEMA_VERSION = 3;
+const APPLICATION_SCHEMA_VERSION = 2;
 const DEFAULT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1_000;
 const SUGGESTION_TYPES = new Set<KnowledgeSuggestionType>(["wiki", "memory", "skill"]);
 const SUGGESTION_STATUSES = new Set<KnowledgeSuggestionStatus>(["proposed", "approved", "rejected", "expired"]);
@@ -143,21 +155,36 @@ function normalizeSourceId(value: unknown): string {
   return sourceId;
 }
 
-function normalizeSources(value: unknown, legacyFingerprints: string[]): KnowledgeSourceReference[] {
+function normalizeSources(value: unknown, legacyFingerprints: string[], persisted = false): KnowledgeSourceReference[] {
+  const legacyOnly = value === undefined;
   const raw = value === undefined
-    ? legacyFingerprints.map((fingerprint) => ({ kind: "id" as const, sourceId: `source:${fingerprint}`, fingerprint }))
+    ? legacyFingerprints.map((fingerprint) => ({
+      kind: "id" as const,
+      sourceId: `source:${fingerprint}`,
+      fingerprint,
+      provenance: "legacy-unverifiable" as const
+    }))
     : value;
   if (!Array.isArray(raw) || raw.length === 0) throw new Error("Sources must contain at least one provenance reference.");
   const byKey = new Map<string, KnowledgeSourceReference>();
   for (const item of raw) {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Source references must be objects.");
     const source = item as Record<string, unknown>;
-    if (!hasExactKeys(source, ["kind", "sourceId", "fingerprint"])) throw new Error("Source references contain unknown fields.");
+    const expectedKeys = persisted || legacyOnly ? ["kind", "sourceId", "fingerprint", "provenance"] : ["kind", "sourceId", "fingerprint"];
+    if (!hasExactKeys(source, expectedKeys)) throw new Error("Source references contain unknown fields.");
     if (source.kind !== "path" && source.kind !== "id") throw new Error("Source kind must be path or id.");
+    const provenance = persisted || legacyOnly
+      ? source.provenance
+      : source.kind === "path" ? "pending-path-revalidation" : "attested-unverifiable";
+    const validProvenance = source.kind === "path"
+      ? provenance === "pending-path-revalidation" || provenance === "revalidated-current"
+      : provenance === "attested-unverifiable" || provenance === "legacy-unverifiable";
+    if (!validProvenance) throw new Error("Source provenance does not match its source kind.");
     const normalized: KnowledgeSourceReference = {
       kind: source.kind,
       sourceId: normalizeSourceId(source.sourceId),
-      fingerprint: nonEmptyString(source.fingerprint, "Source fingerprint")
+      fingerprint: nonEmptyString(source.fingerprint, "Source fingerprint"),
+      provenance: provenance as KnowledgeSourceProvenance
     };
     byKey.set(`${normalized.sourceId}\0${normalized.fingerprint}`, normalized);
   }
@@ -197,7 +224,7 @@ function suggestionFingerprint(input: SanitizedKnowledgeProposal): string {
       proposedContent: input.proposedContent,
       sourceFingerprints: input.sourceFingerprints,
       affectedIdentifiers: input.affectedIdentifiers,
-      sources: input.sources,
+      sources: input.sources.map(({ kind, sourceId, fingerprint }) => ({ kind, sourceId, fingerprint })),
       affectedTargets: input.affectedTargets,
       conflictNotes: input.conflictNotes
     }))
@@ -235,7 +262,7 @@ function reconstructSuggestion(value: unknown, schemaVersion: number): Knowledge
   const versionTwoKeys = ["sources", "affectedTargets", "conflictNotes", "expiresAt"];
   const expectedKeys = [
     ...baseKeys,
-    ...(schemaVersion === 2 ? versionTwoKeys : []),
+    ...(schemaVersion >= 2 ? versionTwoKeys : []),
     ...(candidate.reviewedAt === undefined ? [] : ["reviewedAt"]),
     ...(candidate.reviewReason === undefined ? [] : ["reviewReason"])
   ];
@@ -243,6 +270,9 @@ function reconstructSuggestion(value: unknown, schemaVersion: number): Knowledge
   if (typeof candidate.id !== "string" || !UUID_PATTERN.test(candidate.id)) throw new Error("Suggestion id must be a UUID.");
   const type = validateType(candidate.type);
   const createdAt = validateTimestamp(candidate.createdAt, "Created timestamp");
+  const persistedSources = schemaVersion >= 2
+    ? normalizeSources(candidate.sources, [], schemaVersion >= 3)
+    : undefined;
   const proposal = sanitizeProposal({
     type,
     title: candidate.title as string,
@@ -250,13 +280,14 @@ function reconstructSuggestion(value: unknown, schemaVersion: number): Knowledge
     proposedContent: candidate.proposedContent as string,
     sourceFingerprints: candidate.sourceFingerprints as string[],
     affectedIdentifiers: candidate.affectedIdentifiers as string[],
-    ...(schemaVersion === 2 ? {
-      sources: candidate.sources as KnowledgeSourceReference[],
+    ...(schemaVersion >= 2 ? {
+      sources: persistedSources?.map(({ kind, sourceId, fingerprint }) => ({ kind, sourceId, fingerprint })),
       affectedTargets: candidate.affectedTargets as KnowledgeAffectedTargets,
       conflictNotes: candidate.conflictNotes as string[],
       expiresAt: candidate.expiresAt as string
     } : {})
   });
+  if (persistedSources) proposal.sources = persistedSources;
   const expectedFingerprint = schemaVersion === 1
     ? createHash("sha256").update(JSON.stringify({
       type: proposal.type,
@@ -290,7 +321,7 @@ async function readQueue(root: string): Promise<KnowledgeSuggestion[]> {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Queue must be an object.");
     const queue = parsed as Record<string, unknown>;
-    if (!hasExactKeys(queue, ["schemaVersion", "suggestions"]) || ![1, 2].includes(queue.schemaVersion as number) || !Array.isArray(queue.suggestions)) {
+    if (!hasExactKeys(queue, ["schemaVersion", "suggestions"]) || ![1, 2, 3].includes(queue.schemaVersion as number) || !Array.isArray(queue.suggestions)) {
       throw new Error("Queue schema is invalid.");
     }
     return queue.suggestions.map((suggestion) => reconstructSuggestion(suggestion, queue.schemaVersion as number));
@@ -305,12 +336,38 @@ async function writeQueue(root: string, suggestions: KnowledgeSuggestion[]): Pro
   await writeJsonAtomic(queuePath(root), { schemaVersion: REVIEW_QUEUE_SCHEMA_VERSION, suggestions });
 }
 
-function reconstructApplication(value: unknown): AppliedKnowledge {
+function applicationProvenanceStatus(sources: KnowledgeSourceReference[]): AppliedKnowledge["provenanceStatus"] {
+  const hasPath = sources.some((source) => source.kind === "path");
+  if (!hasPath) return "attested-unverifiable";
+  return sources.some((source) => source.kind === "id")
+    ? "revalidated-with-attested-snapshots"
+    : "revalidated-current";
+}
+
+function revalidatedApplicationSources(sources: KnowledgeSourceReference[]): KnowledgeSourceReference[] {
+  return sources.map((source) => source.kind === "path"
+    ? { ...source, provenance: "revalidated-current" }
+    : source);
+}
+
+function reconstructApplication(value: unknown, schemaVersion: number): AppliedKnowledge {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Applied knowledge must be an object.");
   const candidate = value as Record<string, unknown>;
-  const keys = ["affectedTargets", "appliedAt", "conflictNotes", "fingerprint", "proposedContent", "rationale", "sources", "suggestionId", "title", "type"];
+  const keys = [
+    "affectedTargets", "appliedAt", "conflictNotes", "fingerprint", "proposedContent", "rationale", "sources", "suggestionId", "title", "type",
+    ...(schemaVersion >= 2 ? ["provenanceStatus"] : [])
+  ];
   if (!hasExactKeys(candidate, keys) || typeof candidate.suggestionId !== "string" || !UUID_PATTERN.test(candidate.suggestionId)) {
     throw new Error("Applied knowledge schema is invalid.");
+  }
+  const sourceItemsHaveProvenance = Array.isArray(candidate.sources) && candidate.sources.every((source) =>
+    Boolean(source && typeof source === "object" && !Array.isArray(source) && "provenance" in source));
+  const sources = schemaVersion >= 2
+    ? normalizeSources(candidate.sources, [], true)
+    : revalidatedApplicationSources(normalizeSources(candidate.sources, [], sourceItemsHaveProvenance));
+  const provenanceStatus = applicationProvenanceStatus(sources);
+  if (schemaVersion >= 2 && candidate.provenanceStatus !== provenanceStatus) {
+    throw new Error("Applied knowledge provenance status does not match its sources.");
   }
   return {
     suggestionId: candidate.suggestionId,
@@ -319,7 +376,8 @@ function reconstructApplication(value: unknown): AppliedKnowledge {
     title: nonEmptyString(candidate.title, "Application title"),
     rationale: nonEmptyString(candidate.rationale, "Application rationale"),
     proposedContent: nonEmptyString(candidate.proposedContent, "Applied content"),
-    sources: normalizeSources(candidate.sources, []),
+    sources,
+    provenanceStatus,
     affectedTargets: normalizeAffectedTargets(candidate.affectedTargets, validateType(candidate.type), []),
     conflictNotes: normalizeUnique(candidate.conflictNotes, "Conflict notes", true),
     appliedAt: validateTimestamp(candidate.appliedAt, "Applied timestamp")
@@ -332,10 +390,10 @@ async function readApplications(root: string): Promise<AppliedKnowledge[]> {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Application store must be an object.");
     const store = parsed as Record<string, unknown>;
-    if (!hasExactKeys(store, ["schemaVersion", "applications"]) || store.schemaVersion !== APPLICATION_SCHEMA_VERSION || !Array.isArray(store.applications)) {
+    if (!hasExactKeys(store, ["schemaVersion", "applications"]) || ![1, 2].includes(store.schemaVersion as number) || !Array.isArray(store.applications)) {
       throw new Error("Application store schema is invalid.");
     }
-    const applications = store.applications.map(reconstructApplication);
+    const applications = store.applications.map((application) => reconstructApplication(application, store.schemaVersion as number));
     if (new Set(applications.map((application) => application.suggestionId)).size !== applications.length) {
       throw new Error("Application ids must be unique.");
     }
@@ -396,12 +454,16 @@ function applicationMatchesSuggestion(application: AppliedKnowledge, suggestion:
     application.title === suggestion.title &&
     application.rationale === suggestion.rationale &&
     application.proposedContent === suggestion.proposedContent &&
-    JSON.stringify(application.sources) === JSON.stringify(suggestion.sources) &&
+    JSON.stringify(application.sources) === JSON.stringify(revalidatedApplicationSources(suggestion.sources)) &&
+    application.provenanceStatus === applicationProvenanceStatus(application.sources) &&
     JSON.stringify(application.affectedTargets) === JSON.stringify(suggestion.affectedTargets) &&
     JSON.stringify(application.conflictNotes) === JSON.stringify(suggestion.conflictNotes);
 }
 
 async function assertFreshForApproval(root: string, suggestion: KnowledgeSuggestion): Promise<void> {
+  if (!suggestion.sources.some((source) => source.kind === "path")) {
+    throw new Error("ID-only or legacy unverifiable knowledge cannot be approved without at least one canonical path source.");
+  }
   for (const source of suggestion.sources) {
     if (source.kind !== "path") continue;
     let content: Buffer;
@@ -501,7 +563,12 @@ export async function reviewKnowledgeSuggestion(
     if (current.status === "expired") throw new Error("Expired knowledge suggestions cannot be reviewed.");
     if (current.status === nextStatus) {
       if (decision === "approve") {
-        if (existingApplication) return { suggestion: current, applicationStatus: "applied", application: existingApplication };
+        if (existingApplication) return {
+          suggestion: current,
+          applicationStatus: "applied",
+          application: existingApplication,
+          provenanceStatus: existingApplication.provenanceStatus
+        };
         if (Date.parse(current.expiresAt) <= Date.now()) {
           suggestions[index] = { ...current, status: "expired", updatedAt: new Date().toISOString() };
           await writeQueue(root, suggestions);
@@ -511,7 +578,12 @@ export async function reviewKnowledgeSuggestion(
         const migratedApplication = applicationForSuggestion(current, current.reviewedAt ?? current.updatedAt);
         await writeApplication(root, applications, migratedApplication);
         await writeQueue(root, suggestions);
-        return { suggestion: current, applicationStatus: "applied", application: migratedApplication };
+        return {
+          suggestion: current,
+          applicationStatus: "applied",
+          application: migratedApplication,
+          provenanceStatus: migratedApplication.provenanceStatus
+        };
       }
       return { suggestion: current, applicationStatus: "not-applied" };
     }
@@ -545,11 +617,17 @@ export async function reviewKnowledgeSuggestion(
     if (existingApplication) await ensureApplicationTargets(root, existingApplication);
     else await writeApplication(root, applications, application);
     await writeQueue(root, suggestions);
-    return { suggestion: next, applicationStatus: "applied", application };
+    return {
+      suggestion: next,
+      applicationStatus: "applied",
+      application,
+      provenanceStatus: application.provenanceStatus
+    };
   });
 }
 
 function applicationForSuggestion(suggestion: KnowledgeSuggestion, appliedAt: string): AppliedKnowledge {
+  const sources = revalidatedApplicationSources(suggestion.sources);
   return {
     suggestionId: suggestion.id,
     fingerprint: suggestion.fingerprint,
@@ -557,7 +635,8 @@ function applicationForSuggestion(suggestion: KnowledgeSuggestion, appliedAt: st
     title: suggestion.title,
     rationale: suggestion.rationale,
     proposedContent: suggestion.proposedContent,
-    sources: suggestion.sources,
+    sources,
+    provenanceStatus: applicationProvenanceStatus(sources),
     affectedTargets: suggestion.affectedTargets,
     conflictNotes: suggestion.conflictNotes,
     appliedAt

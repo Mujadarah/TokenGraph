@@ -22,7 +22,7 @@ export const NO_RAW_READ_GUIDANCE = "Do not perform raw file reads; rely only on
 
 interface CompactFile {
   path: string;
-  reason: string;
+  reason?: string;
 }
 
 export interface CompactCoreResponse {
@@ -34,7 +34,7 @@ export interface CompactCoreResponse {
   confidence: "low" | "medium" | "high";
   warnings?: string[];
   conflicts?: string[];
-  rawReadGuidance: string;
+  rawReadGuidance?: string;
 }
 
 function unique(values: string[]): string[] {
@@ -49,13 +49,15 @@ function compactFiles(files: Array<RankedFile | RankedSqlObject | CompactFile>):
   const selected = new Map<string, CompactFile>();
   for (const file of files) {
     const path = "path" in file ? file.path : file.filePath;
-    if (!selected.has(path)) selected.set(path, { path, reason: compactReason(file.reason) });
+    const reason = compactReason(file.reason);
+    if (!selected.has(path)) selected.set(path, { path, ...(reason ? { reason } : {}) });
   }
   return [...selected.values()];
 }
 
-function compactReason(reason: string): string {
-  if (/matches task terms/i.test(reason)) return "Task match.";
+function compactReason(reason?: string): string | undefined {
+  if (!reason) return undefined;
+  if (/matches task terms/i.test(reason)) return undefined;
   if (/linked evidence/i.test(reason)) return "Memory evidence.";
   if (/imported by focused test/i.test(reason)) return "Test dependency.";
   if (/\b(table columns|policy on|index on|sql)\b/i.test(reason)) return "SQL evidence.";
@@ -107,11 +109,11 @@ function focusedSql(files: RankedSqlObject[], task: string): RankedSqlObject[] {
   return scored.filter((entry) => entry.file.score === maximum).map((entry) => entry.file);
 }
 
-function guidance(allowRawReads = true, lowConfidence = false): string {
+function guidance(allowRawReads = true, lowConfidence = false): string | undefined {
   if (!allowRawReads) return NO_RAW_READ_GUIDANCE;
   return lowConfidence
-    ? "Low confidence: verify the named file or failure segment."
-    : "Use targeted reads only when confidence or warnings require verification.";
+    ? "Low confidence: verify named evidence."
+    : undefined;
 }
 
 export function testsExplicitlyLinkedToFiles(project: ProjectIndex, sourceFiles: string[]): string[] {
@@ -124,6 +126,7 @@ export function testsExplicitlyLinkedToFiles(project: ProjectIndex, sourceFiles:
 
 function base(options: CompactResponseOptions, input: Partial<CompactCoreResponse>): CompactCoreResponse {
   const confidence = input.confidence ?? "medium";
+  const rawReadGuidance = input.rawReadGuidance ?? guidance(options.allowRawReads, confidence === "low");
   const response: CompactCoreResponse = {
     constraints: uniqueVerbatim(options.constraints ?? []),
     files: input.files ?? [],
@@ -131,7 +134,7 @@ function base(options: CompactResponseOptions, input: Partial<CompactCoreRespons
     tests: unique(input.tests ?? []),
     commands: unique(input.commands ?? []),
     confidence,
-    rawReadGuidance: input.rawReadGuidance ?? guidance(options.allowRawReads, confidence === "low")
+    ...(rawReadGuidance ? { rawReadGuidance } : {})
   };
   const warnings = compactWarnings(input.warnings ?? []);
   const conflicts = unique(input.conflicts ?? []);
@@ -153,7 +156,7 @@ export function compactPrepareEnvelope<T>(input: {
   taskId: string;
   plan: T;
 }) {
-  return input;
+  return { taskId: input.taskId, plan: input.plan };
 }
 
 export function compactPlanResponse(plan: ContextPlan, options: CompactResponseOptions = {}): CompactCoreResponse {

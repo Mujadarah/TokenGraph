@@ -45,9 +45,11 @@ Claude Code launches `${CLAUDE_PLUGIN_ROOT}/dist/index.js` and forwards `${CLAUD
 After installation:
 
 1. Call `tokengraph_setup`; expect a ready trusted workspace from `CLAUDE_PROJECT_DIR`.
-2. Call `tokengraph_prepare_context` once and retain its returned task id and root.
-3. Use task-aware core tools with that exact pair.
-4. Call `tokengraph_task_report` with pause or complete before stopping.
+2. For planning, call `tokengraph_prepare_context` and retain its compact task id and plan. For direct query, compression, recall, or analysis, omit `taskId` on the first intent; it starts the task and returns the id.
+3. Reuse the exact task id. After ready setup, omit `root` when host resolution is stable or pass only setup's trusted root.
+4. End completed and verified work with compact `tokengraph_task_report({ taskId })`. Use verbose mode only for diagnostics and `pause` for unfinished work.
+
+A paused task id is terminal. Start a new task with `tokengraph_prepare_context` or a direct intent that omits `taskId`; Stop remains allowed for the paused task.
 
 If plugin changes are not visible, run `/reload-plugins`. If setup is blocked, follow the diagnostic response rather than retrying arbitrary roots.
 

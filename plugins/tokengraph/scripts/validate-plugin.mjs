@@ -117,7 +117,7 @@ async function assertRequiredFocusedSkills(skillsRoot, label, coreLifecycle = fa
       assert(/tokengraph_setup\(\{\}\)/.test(skill), `${label} skill ${skillDir} must begin with core setup`);
       assert(/tokengraph_prepare_context/.test(skill), `${label} skill ${skillDir} must create a task`);
       assert(/tokengraph_task_report/.test(skill), `${label} skill ${skillDir} must report its disposition`);
-      assert(/disposition: "pause"/.test(skill) && /disposition: "complete"/.test(skill), `${label} skill ${skillDir} must define pause and complete behavior`);
+      assert(/disposition: "pause"/.test(skill) && /tokengraph_task_report\(\{ taskId \}\)/.test(skill) && /compact reporting is the default/i.test(skill), `${label} skill ${skillDir} must define pause and default compact completion behavior`);
       assert(/TokenGraph was not used/.test(skill) && /unavailable/i.test(skill), `${label} skill ${skillDir} must define honest unavailable fallback`);
     } else {
       assert(/Use this skill when/i.test(skill), `${label} skill ${skillDir} must tell Codex when to use it`);

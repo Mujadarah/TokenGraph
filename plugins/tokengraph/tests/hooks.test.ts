@@ -144,7 +144,7 @@ afterEach(async () => {
 });
 
 describe("built lifecycle hook process", () => {
-  it("extracts prepare context only from structured response fields and writes a private minimal pointer", async () => {
+  it("extracts compact prepare from the real single-TextContent response and host cwd without persisting response text", async () => {
     const root = await makeRoot("tokengraph-hook-root-");
     const dataRoot = await makeRoot("tokengraph-hook-data-");
     const ledger = await createTaskLedger(root, { host: "unknown" });
@@ -154,9 +154,9 @@ describe("built lifecycle hook process", () => {
       tool_name: "mcp__any_namespace__tokengraph_prepare_context",
       tool_input: { task: "prepare", nested: { taskId: randomUUID(), root: "C:/wrong" } },
       tool_response: {
-        structuredContent: { taskId: ledger.taskId, root },
-        content: [{ type: "text", text: JSON.stringify({ taskId: randomUUID(), root: secret }) }]
+        content: [{ type: "text", text: JSON.stringify({ taskId: ledger.taskId, plan: { confidence: "high" } }) }]
       },
+      cwd: root,
       raw_payload: secret
     }), {
       PLUGIN_ROOT: process.cwd(),
@@ -186,6 +186,44 @@ describe("built lifecycle hook process", () => {
     expect(await loadTaskLedger(root, ledger.taskId)).toMatchObject({
       host: "codex", sessionId: "session-private-value", turnId: "turn-1"
     });
+  });
+
+  it.each([
+    "tokengraph_query_context",
+    "tokengraph_compress",
+    "tokengraph_recall",
+    "tokengraph_analyze"
+  ])("tracks a direct auto-start %s response and makes Stop require reporting", async (toolName) => {
+    const root = await makeRoot("tokengraph-hook-direct-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-direct-data-");
+    const ledger = await createTaskLedger(root, { host: "unknown" });
+    await recordTaskEvent(root, ledger.taskId, taskEvent());
+    const run = await runHook("post-tool-use", postInput({
+      tool_name: `mcp__tokengraph__${toolName}`,
+      tool_input: { mode: "overview" },
+      tool_response: { content: [{ type: "text", text: JSON.stringify({ taskId: ledger.taskId, confidence: "high" }) }] },
+      cwd: root
+    }), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot });
+
+    expect(run.code).toBe(0);
+    expect(JSON.parse(await readFile(pointerPath(dataRoot, "session-private-value"), "utf8"))).toMatchObject({
+      taskId: ledger.taskId, root
+    });
+    const stopped = await runHook("stop", stopInput(), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot });
+    expect(stopped.output).toMatchObject({ decision: "block", reason: expect.stringContaining("tokengraph_task_report") });
+  });
+
+  it("prefers an explicit absolute tool root for a direct auto-start response", async () => {
+    const root = await makeRoot("tokengraph-hook-explicit-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-explicit-data-");
+    const ledger = await createTaskLedger(root, { host: "unknown" });
+    const run = await runHook("post-tool-use", postInput({
+      tool_name: "mcp__tokengraph__tokengraph_query_context",
+      tool_input: { root, mode: "overview" },
+      tool_response: { content: [{ type: "text", text: JSON.stringify({ taskId: ledger.taskId, confidence: "high" }) }] }
+    }), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot });
+    expect(run.code).toBe(0);
+    expect(JSON.parse(await readFile(pointerPath(dataRoot, "session-private-value"), "utf8"))).toMatchObject({ taskId: ledger.taskId, root });
   });
 
   it.each([
@@ -392,9 +430,12 @@ describe("built lifecycle hook process", () => {
     const root = await makeRoot("tokengraph-hook-allow-root-");
     const dataRoot = await makeRoot("tokengraph-hook-allow-data-");
     const paused = await createTaskLedger(root, { host: "unknown" });
-    await setTaskDisposition(root, paused.taskId, "pause");
     await attachPointer(root, dataRoot, paused.taskId);
+    await setTaskDisposition(root, paused.taskId, "pause");
     expect((await runHook("stop", stopInput(), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot })).output).toEqual({});
+    expect((await attachPointer(root, dataRoot, paused.taskId)).output).toMatchObject({
+      systemMessage: expect.stringMatching(/paused task.*terminal.*new task.*tokengraph_prepare_context/i)
+    });
 
     const completed = await createTaskLedger(root, { host: "unknown" });
     await recordTaskEvent(root, completed.taskId, taskEvent());

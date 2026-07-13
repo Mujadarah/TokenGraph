@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import { indexProject } from "../src/core/projectIndexer.js";
 import { estimateTokens } from "../src/core/token.js";
 import { benchmarkMcpInputSchemas } from "../src/core/toolContracts.js";
 import { loadTaskLedger } from "../src/core/taskLedger.js";
+import { listKnowledgeSuggestions } from "../src/core/knowledgeReviewQueue.js";
 import { createTokenGraphServer } from "../src/server.js";
 
 interface JsonRpcResponse {
@@ -284,8 +286,9 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_prepare_context",
       arguments: { root: "first", task: "Debug patient summary", constraints: ["  Must preserve patient privacy.  "], profile: "balanced", maxTokens: 4000, host: "codex" }
     });
-    const prepared = preparedCall.structuredContent as { root: string; taskId: string; plan: unknown };
-    expect(prepared).toMatchObject({ root: firstRoot, taskId: expect.any(String), plan: expect.any(Object) });
+    const prepared = preparedCall.structuredContent as { taskId: string; plan: unknown };
+    expect(prepared).toMatchObject({ taskId: expect.any(String), plan: expect.any(Object) });
+    expect(prepared).not.toHaveProperty("root");
     expect(prepared).not.toHaveProperty("index");
     expect(prepared).not.toHaveProperty("wikiStatus");
     expect(prepared.plan).toMatchObject({ constraints: ["  Must preserve patient privacy.  "], files: expect.any(Array), firstReads: expect.any(Array) });
@@ -295,6 +298,7 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { root: "first", task: "Debug patient summary", responseMode: "verbose", refreshIndex: false }
     });
     expect(verbosePreparedCall.structuredContent).toHaveProperty("plan.relevantFiles");
+    expect(verbosePreparedCall.structuredContent).toHaveProperty("root", firstRoot);
     await request(9052, "tools/call", { name: "tokengraph_generate_wiki", arguments: { root: "first" } });
     const compactWikiCall = await request(9053, "tools/call", {
       name: "tokengraph_query_context", arguments: { root: "first", taskId: prepared.taskId, mode: "wiki", slug: "overview", responseMode: "compact" }
@@ -381,12 +385,29 @@ describe("TokenGraph MCP stdio server", () => {
     expect(analyzeCall.structuredContent).toEqual(expect.any(Object));
     expect(analyzeCall.structuredContent).not.toHaveProperty("mode");
 
+    const invalidProposal = await request(9056, "tools/call", {
+      name: "tokengraph_propose_knowledge",
+      arguments: { root: "first", taskId: prepared.taskId, action: "propose", type: "wiki", title: "Incomplete" }
+    });
+    expect(invalidProposal).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/propose requires (rationale|proposedContent|sourceFingerprints|affectedIdentifiers)/i) }] });
+
+    const invalidTaskId = await request(9057, "tools/call", {
+      name: "tokengraph_query_context",
+      arguments: { root: "first", taskId: "../escape", mode: "overview" }
+    });
+    expect(invalidTaskId).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/uuid/i) }] });
+
     const proposedCall = await request(9041, "tools/call", {
       name: "tokengraph_propose_knowledge",
       arguments: {
         root: "first", taskId: prepared.taskId, action: "propose", type: "wiki", title: "Patient summary",
         rationale: "Document the patient summary entry point", proposedContent: "Patient summaries begin at the indexed function.",
-        sourceFingerprints: ["source-1"], affectedIdentifiers: ["patient-summary"]
+        sourceFingerprints: ["source-1"], affectedIdentifiers: ["patient-summary"],
+        sources: [{
+          kind: "path",
+          sourceId: "src/patientSummary.ts",
+          fingerprint: createHash("sha256").update("export function loadPatientSummary() { return null; }").digest("hex")
+        }]
       }
     });
     const proposed = proposedCall.structuredContent as { suggestion: { id: string } };
@@ -404,7 +425,11 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_propose_knowledge",
       arguments: { root: "first", taskId: prepared.taskId, action: "approve", id: proposed.suggestion.id }
     });
-    expect(approvedCall.structuredContent).toMatchObject({ applicationStatus: "applied" });
+    expect(approvedCall.structuredContent).toMatchObject({
+      applicationStatus: "applied",
+      provenanceStatus: "revalidated-current",
+      application: { sources: [{ provenance: "revalidated-current" }] }
+    });
     const listedCall = await request(9043, "tools/call", {
       name: "tokengraph_propose_knowledge",
       arguments: { root: "first", taskId: prepared.taskId, action: "list" }
@@ -419,7 +444,7 @@ describe("TokenGraph MCP stdio server", () => {
 
     const reportCall = await request(9045, "tools/call", {
       name: "tokengraph_task_report",
-      arguments: { root: "first", taskId: prepared.taskId, disposition: "complete" }
+      arguments: { root: "first", taskId: prepared.taskId, disposition: "complete", responseMode: "verbose" }
     });
     const report = reportCall.structuredContent as {
       status: string;
@@ -435,14 +460,93 @@ describe("TokenGraph MCP stdio server", () => {
       footer: expect.stringMatching(/^TokenGraph: ~\d+(?:-\d+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated)\.$/),
       reportingStatus: "ready"
     });
+    const suggestionsBeforeTerminalRetry = await listKnowledgeSuggestions(firstRoot);
+    const completedMutation = await request(9058, "tools/call", {
+      name: "tokengraph_propose_knowledge",
+      arguments: {
+        root: "first", taskId: prepared.taskId, action: "propose", type: "wiki", title: "Must not persist",
+        rationale: "Completed tasks are terminal", proposedContent: "This payload must be rejected before mutation.",
+        sourceFingerprints: ["terminal-source"], affectedIdentifiers: ["terminal-target"]
+      }
+    });
+    expect(completedMutation).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/completed.*terminal/i) }] });
+    expect(await listKnowledgeSuggestions(firstRoot)).toEqual(suggestionsBeforeTerminalRetry);
     expect(report.report.eventCount).toBe(15);
     expect(report.report.estimate.overhead).toBeGreaterThan(0);
 
     const repeatedReportCall = await request(9046, "tools/call", {
       name: "tokengraph_task_report",
-      arguments: { root: "first", taskId: prepared.taskId, disposition: "complete" }
+      arguments: { root: "first", taskId: prepared.taskId, disposition: "complete", responseMode: "verbose" }
     });
     expect(repeatedReportCall.structuredContent).toEqual(reportCall.structuredContent);
+  });
+
+  it("atomically starts each direct intent tool and ends it with one compact canonical report", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "entry.ts"), "export const entry = true;\n");
+    await stopServer();
+    startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
+    await request(90590, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-direct-lifecycle-test", version: "0.20.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const intents = [
+      { name: "tokengraph_query_context", arguments: { mode: "overview" } },
+      { name: "tokengraph_compress", arguments: { mode: "context", task: "Inspect entry", contentKind: "mixed" } },
+      { name: "tokengraph_recall", arguments: { mode: "recall", query: "entry" } },
+      { name: "tokengraph_analyze", arguments: { mode: "architecture", files: ["src/entry.ts"] } }
+    ];
+    const taskIds = new Set<string>();
+
+    for (const [index, intent] of intents.entries()) {
+      const called = await request(90591 + index * 2, "tools/call", intent);
+      const result = called.structuredContent as { taskId?: string };
+      expect(called.content).toEqual([{ type: "text", text: JSON.stringify(result) }]);
+      expect(result.taskId).toEqual(expect.any(String));
+      taskIds.add(result.taskId!);
+      expect((await loadTaskLedger(root, result.taskId!))?.events).toHaveLength(1);
+
+      const completed = await request(90592 + index * 2, "tools/call", {
+        name: "tokengraph_task_report",
+        arguments: { taskId: result.taskId }
+      });
+      expect(completed.structuredContent).toEqual({
+        status: "completed",
+        taskId: result.taskId,
+        footer: expect.stringMatching(/^TokenGraph: ~\d+(?:-\d+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated)\.$/),
+        reportingStatus: "ready"
+      });
+      expect(completed.structuredContent).not.toHaveProperty("report");
+      expect(completed.content).toEqual([{ type: "text", text: JSON.stringify(completed.structuredContent) }]);
+    }
+
+    expect(taskIds.size).toBe(intents.length);
+  });
+
+  it("removes a pristine ledger when a direct auto-start intent fails and permits a clean retry", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
+    await request(90620, "initialize", {
+      protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "tokengraph-auto-start-failure", version: "0.20.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const failed = await request(90621, "tools/call", {
+      name: "tokengraph_query_context", arguments: { mode: "wiki", slug: "missing-page" }
+    });
+    expect(failed).toMatchObject({ isError: true });
+    const taskFilesAfterFailure = await readdir(join(root, ".tokengraph", "tasks"));
+    expect(taskFilesAfterFailure.filter((file) => file.endsWith(".json"))).toEqual([]);
+
+    const retried = await request(90622, "tools/call", {
+      name: "tokengraph_query_context", arguments: { mode: "overview" }
+    });
+    expect(retried.structuredContent).toMatchObject({ taskId: expect.any(String) });
   });
 
   it("returns the pause reporting status without a footer", async () => {
@@ -470,6 +574,18 @@ describe("TokenGraph MCP stdio server", () => {
       taskId: prepared.taskId,
       reportingStatus: "paused"
     });
+
+    for (const call of [
+      { id: 90531, name: "tokengraph_query_context", arguments: { taskId: prepared.taskId, mode: "overview" } },
+      { id: 90532, name: "tokengraph_task_report", arguments: { taskId: prepared.taskId, disposition: "pause" } },
+      { id: 90533, name: "tokengraph_task_report", arguments: { taskId: prepared.taskId, disposition: "complete" } }
+    ]) {
+      const rejected = await request(call.id, "tools/call", { name: call.name, arguments: call.arguments });
+      expect(rejected).toMatchObject({
+        isError: true,
+        content: [{ text: expect.stringMatching(/paused task.*terminal.*new task.*tokengraph_prepare_context/i) }]
+      });
+    }
   });
 
   it("rejects pause after canonical completion and preserves the repeated completion response", async () => {

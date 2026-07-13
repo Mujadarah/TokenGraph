@@ -8,6 +8,7 @@ import {
   __getTaskLedgerWriteQueueSizeForTests,
   attachTaskHostContext,
   createTaskLedger,
+  discardEmptyTaskLedger,
   loadTaskLedger,
   pruneTaskLedgers,
   recordTaskEvent,
@@ -311,6 +312,20 @@ describe("task ledger persistence", () => {
     expect(stored?.events).toHaveLength(1);
     expect(stored?.events[0]?.originalTokens).toBe(150);
   });
+
+  it("treats a paused task id as terminal for events, host attachment, and dispositions", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "unknown" });
+    await setTaskDisposition(root, ledger.taskId, "pause");
+    const terminal = /paused task.*terminal.*new task.*tokengraph_prepare_context/i;
+
+    await expect(recordTaskEvent(root, ledger.taskId, event())).rejects.toThrow(terminal);
+    await expect(attachTaskHostContext(root, ledger.taskId, {
+      host: "codex", sessionId: "new-session", turnId: "new-turn"
+    })).rejects.toThrow(terminal);
+    await expect(setTaskDisposition(root, ledger.taskId, "pause")).rejects.toThrow(terminal);
+    await expect(setTaskDisposition(root, ledger.taskId, "complete")).rejects.toThrow(terminal);
+  });
 });
 
 describe("task savings estimator", () => {
@@ -548,6 +563,30 @@ describe("task lifecycle and retention", () => {
     expect(new Set(stored?.events.map((item) => item.fingerprint))).toEqual(new Set(events.map((item) => item.fingerprint)));
   });
 
+  it("atomically persists every concurrently auto-started task as a distinct open ledger", async () => {
+    const root = await makeRoot();
+
+    const created = await Promise.all(Array.from({ length: 25 }, () =>
+      createTaskLedger(root, { host: "unknown" })
+    ));
+
+    expect(new Set(created.map((ledger) => ledger.taskId)).size).toBe(created.length);
+    await expect(Promise.all(created.map((ledger) => loadTaskLedger(root, ledger.taskId)))).resolves.toEqual(created);
+    expect(created.every((ledger) => ledger.status === "open")).toBe(true);
+  });
+
+  it("discards only a pristine auto-started ledger under the shared ledger lock", async () => {
+    const root = await makeRoot();
+    const pristine = await createTaskLedger(root, { host: "codex" });
+    await expect(discardEmptyTaskLedger(root, pristine.taskId)).resolves.toBe(true);
+    expect(await loadTaskLedger(root, pristine.taskId)).toBeUndefined();
+
+    const active = await createTaskLedger(root, { host: "codex" });
+    await recordTaskEvent(root, active.taskId, event());
+    await expect(discardEmptyTaskLedger(root, active.taskId)).resolves.toBe(false);
+    expect(await loadTaskLedger(root, active.taskId)).toBeDefined();
+  });
+
   it("keeps a newer queued chain registered when an older operation settles, then cleans up after success", async () => {
     const root = await makeRoot();
     const ledger = await createTaskLedger(root, { host: "codex" });
@@ -594,11 +633,13 @@ describe("task lifecycle and retention", () => {
     await expect(recordTaskEvent(root, open.taskId, event())).resolves.toBeDefined();
   });
 
-  it("prunes only paused and completed ledgers older than 30 days while preserving open ledgers", async () => {
+  it("prunes terminal and unreachable empty ledgers older than 30 days while preserving active open ledgers", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
     const root = await makeRoot();
     const open = await createTaskLedger(root, { host: "codex" });
+    await recordTaskEvent(root, open.taskId, event());
+    const abandoned = await createTaskLedger(root, { host: "codex" });
     const paused = await createTaskLedger(root, { host: "codex" });
     const completed = await createTaskLedger(root, { host: "codex" });
     await setTaskDisposition(root, paused.taskId, "pause");
@@ -606,8 +647,9 @@ describe("task lifecycle and retention", () => {
 
     const result = await pruneTaskLedgers(root, new Date("2026-06-01T00:00:00.001Z"));
 
-    expect(result.pruned.sort()).toEqual([completed.taskId, paused.taskId].sort());
+    expect(result.pruned.sort()).toEqual([abandoned.taskId, completed.taskId, paused.taskId].sort());
     expect(await loadTaskLedger(root, open.taskId)).toBeDefined();
+    expect(await loadTaskLedger(root, abandoned.taskId)).toBeUndefined();
     expect(await loadTaskLedger(root, paused.taskId)).toBeUndefined();
     expect(await loadTaskLedger(root, completed.taskId)).toBeUndefined();
   });

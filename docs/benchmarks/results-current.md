@@ -1,26 +1,35 @@
 # Current Benchmark Results
 
-Run the deterministic evidence benchmark from `plugins/tokengraph`:
+Run from `plugins/tokengraph`:
 
 ```powershell
 pnpm benchmark -- --json
 ```
 
-The current checked-in corpus and fixture produce:
+The current deterministic `evidence-v1` corpus produces:
 
-- Corpus: `evidence-v1`.
-- Tasks: 30.
-- Category counts: code routing 5, SQL/security 5, debugging 4, change risk 4, compression 4, memory/wiki 4, release packaging 4.
+- Tasks: 30 across seven categories; every category has four or five observations.
+- Exact core discovery plus setup: 1,929 estimated tokens total, or 64.3 amortized per task.
 - Critical-constraint preservation: 100% under polarity-safe exact normalized predicates.
 - Critical false negatives: 0.
 - Required-file recall: 100% against the checked-in 0.85 baseline.
-- Forbidden false positives: 0.
-- Missing expected-test recommendations: 0.
-- Median net estimated savings: 30.5 tokens after the full compact MCP response, actual registered schema, and canonical completion-footer overhead.
-- 25th-percentile net estimated savings: -166 tokens.
-- Deterministic release gate: pass.
-- Negative tail: 11 individual tasks still have non-positive net estimates. These are concentrated in small raw baselines and the memory/wiki flow and remain visible as task failures.
+- Forbidden false positives: 0; missing expected-test recommendations: 0.
+- Routing-lifecycle median: 31.7 tokens; nearest-rank 25th percentile: -270.3; minimum: -457.3; 15 of 30 tasks are non-positive.
+- Execution-inclusive median after recommended first-file reads: -133.8 tokens; nearest-rank 25th percentile: -457.3; minimum: -522.3; 20 of 30 tasks are non-positive.
+- Deterministic routing-lifecycle release gate: pass.
 
-Calibration entries contain one observation per corpus task: four for five categories and five for code routing and SQL/security. Every category remains low-confidence and does not activate Task 1A calibration. The direct `taskCalibration` projection is consumable by Task 1A, but these deterministic fixture observations are not statistical proof of host-agent quality.
+Routing-lifecycle category results:
 
-These results are deterministic fixture evidence, not universal agent-output proof. They do not demonstrate patch quality or exact billed-token savings. Paired Codex and Claude adapter/host evidence is recorded separately during release verification and does not increase this benchmark's statistical confidence.
+| Category | Median | Non-positive |
+|---|---:|---:|
+| Code routing | 79.7 | 2/5 |
+| SQL/security | 275.7 | 0/5 |
+| Debugging | -271.8 | 4/4 |
+| Change risk | 41.7 | 2/4 |
+| Compression | -303.8 | 4/4 |
+| Memory/wiki | -209.8 | 3/4 |
+| Release packaging | 217.7 | 0/4 |
+
+The routing gate excludes downstream recommended source reads and is not a total-execution savings claim. The execution-inclusive metric exposes that cost separately. The negative categories show that tiny, bounded raw inputs should bypass TokenGraph; use it where focused routing can avoid broader reads or preserve constraints.
+
+Every category remains low-confidence and does not activate calibration. These are repeatable fixture estimates, not exact billed tokens, autonomous-agent patch-quality evidence, or universal Codex/Claude results.

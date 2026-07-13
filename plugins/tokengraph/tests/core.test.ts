@@ -1002,7 +1002,13 @@ describe("project wiki", () => {
       title: "Reviewed flow",
       rationale: "The source defines the flow.",
       proposedContent: "The reviewed flow is active.",
-      sources: [{ kind: "path" as const, sourceId: "src/flow.ts", fingerprint: sourceFingerprint! }],
+      sources: [{
+        kind: "path" as const,
+        sourceId: "src/flow.ts",
+        fingerprint: sourceFingerprint!,
+        provenance: "revalidated-current" as const
+      }],
+      provenanceStatus: "revalidated-current" as const,
       affectedTargets: { wikiPages: ["overview"], memories: [], skills: [] },
       conflictNotes: ["Older notes say the flow is disabled."],
       appliedAt: "2026-07-13T10:00:00.000Z"

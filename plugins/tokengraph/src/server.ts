@@ -29,8 +29,10 @@ import {
   compactToolResultEnvelope,
   compressInputSchema,
   prepareContextInputSchema,
+  proposeKnowledgeInputSchema,
   queryContextInputSchema,
-  recallInputSchema
+  recallInputSchema,
+  taskReportInputSchema
 } from "./core/toolContracts.js";
 import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } from "./core/config.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
@@ -56,7 +58,7 @@ import { estimateTokens, tokenize } from "./core/token.js";
 import { buildTaskReport, formatTaskReportFooter } from "./core/taskEstimator.js";
 import type { ProjectIndex, RankedSqlObject } from "./core/types.js";
 import { buildProjectWiki } from "./core/wiki.js";
-import { createTaskLedger, loadTaskLedger, recordTaskEvent, setTaskDisposition, type TaskHost } from "./core/taskLedger.js";
+import { createTaskLedger, discardEmptyTaskLedger, loadTaskLedger, recordTaskEvent, setTaskDisposition, type TaskHost } from "./core/taskLedger.js";
 import { listAppliedKnowledge, listKnowledgeSuggestions, proposeKnowledgeChange, reviewKnowledgeSuggestion } from "./core/knowledgeReviewQueue.js";
 
 const architectureRuleTypeSchema = z.enum([
@@ -584,24 +586,55 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     {
       instructions:
         "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. " +
-        "Start each task with tokengraph_setup, capture its trusted workspace root, then call tokengraph_prepare_context and reuse only its returned taskId for that trusted root. Complete or pause with tokengraph_task_report. " +
+        "Call tokengraph_setup once and capture its trusted workspace root. Use tokengraph_prepare_context only when planning is needed; otherwise omit taskId from the first query, compress, recall, or analyze call and capture the returned taskId. Complete or pause with tokengraph_task_report. " +
         "TokenGraph tools are task-scoped: never reuse a taskId across workspaces or merge unrelated tasks."
     }
   );
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
 
-  async function requireTaskRoot(root: string | undefined, taskId: string): Promise<string> {
+  async function requireTaskRoot(root: string | undefined, taskId: string, allowTerminal = false): Promise<string> {
     const resolvedRoot = await workspaceRoot(root);
     const ledger = await loadTaskLedger(resolvedRoot, taskId);
     if (!ledger) throw new Error(`Task ledger ${taskId} was not found under the requested trusted root.`);
+    if (!allowTerminal && ledger.status !== "open") {
+      throw new Error(`${ledger.status === "paused" ? "Paused" : "Completed"} task ${taskId} is terminal and cannot accept task-aware calls. Start a new task with tokengraph_prepare_context or omit taskId on a direct intent call.`);
+    }
     return resolvedRoot;
+  }
+
+  async function beginOrRequireTask(root: string | undefined, taskId?: string): Promise<{ root: string; taskId: string; autoStarted: boolean }> {
+    const resolvedRoot = await workspaceRoot(root);
+    if (taskId) {
+      const ledger = await loadTaskLedger(resolvedRoot, taskId);
+      if (!ledger) throw new Error(`Task ledger ${taskId} was not found under the requested trusted root.`);
+      if (ledger.status !== "open") {
+        throw new Error(`${ledger.status === "paused" ? "Paused" : "Completed"} task ${taskId} is terminal and cannot accept task-aware calls. Start a new task by omitting taskId or with tokengraph_prepare_context.`);
+      }
+      return { root: resolvedRoot, taskId, autoStarted: false };
+    }
+    const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(detectedHost()) });
+    return { root: resolvedRoot, taskId: ledger.taskId, autoStarted: true };
+  }
+
+  async function withTaskIntent<T>(
+    root: string | undefined,
+    taskId: string | undefined,
+    operation: (task: { root: string; taskId: string; autoStarted: boolean }) => Promise<T>
+  ): Promise<T> {
+    const task = await beginOrRequireTask(root, taskId);
+    try {
+      return await operation(task);
+    } catch (error) {
+      if (task.autoStarted) await discardEmptyTaskLedger(task.root, task.taskId);
+      throw error;
+    }
   }
 
   server.registerTool(
     "tokengraph_setup",
     {
       title: "Set Up TokenGraph",
-      description: "Diagnose rootless workspace trust and summarize the selected TokenGraph capability surface.",
+      description: "Check workspace trust and the selected surface.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({})
     },
@@ -620,7 +653,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     "tokengraph_prepare_context",
     {
       title: "Prepare Task Context",
-      description: "Resolve workspace trust, refresh the local index when needed, create a task ledger, and return a compact task plan. Set responseMode to verbose only for explicit diagnostics.",
+      description: "Plan compact context and start a task; verbose adds diagnostics.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: prepareContextInputSchema
     },
@@ -702,13 +735,14 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     "tokengraph_query_context",
     {
       title: "Query Task Context",
-      description: "Query compact overview, graph search, symbol, SQL, or wiki context for one prepared task.",
+      description: "Query graph, SQL, or wiki context; omit taskId to start a task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: queryContextInputSchema
     },
     async (input) => {
       const { taskId, root, mode, responseMode } = input;
-      const resolvedRoot = await requireTaskRoot(root, taskId);
+      return withTaskIntent(root, taskId, async (task) => {
+      const resolvedRoot = task.root;
       const project = mode === "wiki" ? undefined : await ensureProject(resolvedRoot);
       let result: object;
       if (mode === "overview") {
@@ -741,11 +775,12 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
       const originalTokens = project ? project.files.reduce((total, file) => total + file.estimatedTokens, 0) : compactTokens;
       await recordCoreEvent({
-        root: resolvedRoot, taskId, toolName: "tokengraph_query_context", category: `query-${mode}`,
+        root: resolvedRoot, taskId: task.taskId, toolName: "tokengraph_query_context", category: `query-${mode}`,
         operation: { mode, queryHash: createHash("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
         originalTokens, compactTokens
       });
-      return ok(response);
+      return ok(task.autoStarted ? { ...response, taskId: task.taskId } : response);
+      });
     }
   );
 
@@ -753,13 +788,14 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     "tokengraph_compress",
     {
       title: "Compress Task Material",
-      description: "Compress command output or mixed task context while recording real token estimates in the task ledger.",
+      description: "Compress output or context; omit taskId to start a task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: compressInputSchema
     },
     async (input) => {
       const { taskId, root, mode } = input;
-      const resolvedRoot = await requireTaskRoot(root, taskId);
+      return withTaskIntent(root, taskId, async (task) => {
+      const resolvedRoot = task.root;
       let result: object;
       let estimates: { original: number; compressed: number; avoided: number };
       if (mode === "output") {
@@ -780,7 +816,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       }
       const compactResponse = compactCompressionEnvelope(mode, result);
       const category = `compression-${mode}`;
-      const overheadTokens = coreEventOverheadTokens(taskId, "tokengraph_compress", category);
+      const overheadTokens = coreEventOverheadTokens(task.taskId, "tokengraph_compress", category);
       const includeEstimates = mode !== "context" || input.responseMode === "verbose";
       let returnedResponse: object = compactResponse;
       let compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
@@ -793,11 +829,12 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         }
       }
       await recordCoreEvent({
-        root: resolvedRoot, taskId, toolName: "tokengraph_compress", category,
+        root: resolvedRoot, taskId: task.taskId, toolName: "tokengraph_compress", category,
         operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash("sha256").update(`${"task" in input ? input.task : ""}\n${input.text ?? ""}`).digest("hex") },
         originalTokens: estimates.original, compactTokens, overheadTokens
       });
-      return ok(returnedResponse);
+      return ok(task.autoStarted ? { ...returnedResponse, taskId: task.taskId } : returnedResponse);
+      });
     }
   );
 
@@ -805,12 +842,13 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     "tokengraph_recall",
     {
       title: "Recall Task Knowledge",
-      description: "Read active memories or a compact memory review for one prepared task.",
+      description: "Recall or review memory; omit taskId to start a task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: recallInputSchema
     },
     async ({ taskId, root, mode, query, limit, audit, constraints, responseMode }) => {
-      const resolvedRoot = await requireTaskRoot(root, taskId);
+      return withTaskIntent(root, taskId, async (task) => {
+      const resolvedRoot = task.root;
       const store = new MemoryStore(memoryPath(resolvedRoot));
       const project = await ensureProject(resolvedRoot);
       const memories = await store.list({ includeDeprecated: audit === true, includeDeleted: audit === true });
@@ -829,11 +867,12 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const response = responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
       const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
       await recordCoreEvent({
-        root: resolvedRoot, taskId, toolName: "tokengraph_recall", category: `memory-${mode}`,
+        root: resolvedRoot, taskId: task.taskId, toolName: "tokengraph_recall", category: `memory-${mode}`,
         operation: { mode, queryHash: createHash("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
         originalTokens: estimateTokens(compactJson(memories)), compactTokens
       });
-      return ok(response);
+      return ok(task.autoStarted ? { ...response, taskId: task.taskId } : response);
+      });
     }
   );
 
@@ -841,13 +880,14 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     "tokengraph_analyze",
     {
       title: "Analyze Task Evidence",
-      description: "Run failure tracing, regression-risk analysis, or architecture checks for one prepared task.",
+      description: "Trace failures, assess risk, or check architecture; omit taskId to start a task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: analyzeInputSchema
     },
     async (input) => {
       const { taskId, root, mode } = input;
-      const resolvedRoot = await requireTaskRoot(root, taskId);
+      return withTaskIntent(root, taskId, async (task) => {
+      const resolvedRoot = task.root;
       const project = await ensureProject(resolvedRoot);
       const store = new MemoryStore(memoryPath(resolvedRoot));
       let result: object;
@@ -870,11 +910,12 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const response = input.responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
       const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
       await recordCoreEvent({
-        root: resolvedRoot, taskId, toolName: "tokengraph_analyze", category: `analysis-${mode}`,
+        root: resolvedRoot, taskId: task.taskId, toolName: "tokengraph_analyze", category: `analysis-${mode}`,
         operation: { mode, inputHash: createHash("sha256").update(JSON.stringify(input)).digest("hex") },
         originalTokens: Math.max(compactTokens, project.files.reduce((total, file) => total + file.estimatedTokens, 0)), compactTokens
       });
-      return ok(response);
+      return ok(task.autoStarted ? { ...response, taskId: task.taskId } : response);
+      });
     }
   );
 
@@ -882,24 +923,9 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     "tokengraph_propose_knowledge",
     {
       title: "Propose Task Knowledge",
-      description: "Propose or list local knowledge, or explicitly approve/reject reviewed payloads. Approval applies only fresh reviewed content; rejection never applies it.",
+      description: "Review local knowledge. propose requires type, title, rationale, proposedContent, sourceFingerprints, and affectedIdentifiers; approve/reject require id.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-      inputSchema: z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), action: z.literal("propose"), type: z.enum(["wiki", "memory", "skill"]),
-        title: z.string().min(1), rationale: z.string().min(1), proposedContent: z.string().min(1), sourceFingerprints: z.array(z.string()).min(1), affectedIdentifiers: z.array(z.string()).min(1),
-        sources: z.array(z.object({ kind: z.enum(["path", "id"]), sourceId: z.string().min(1), fingerprint: z.string().min(1) })).min(1).optional(),
-        affectedTargets: z.object({
-          wikiPages: z.array(z.string()).optional(), memories: z.array(z.string()).optional(), skills: z.array(z.string()).optional()
-        }).optional(),
-        conflictNotes: z.array(z.string()).optional(), expiresAt: z.string().datetime().optional()
-      }).or(z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), action: z.literal("list"), type: z.enum(["wiki", "memory", "skill"]).optional(),
-        status: z.enum(["proposed", "approved", "rejected", "expired"]).optional()
-      })).or(z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), action: z.literal("approve"), id: z.string().uuid(), reason: z.string().optional()
-      })).or(z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), action: z.literal("reject"), id: z.string().uuid(), reason: z.string().optional()
-      }))
+      inputSchema: proposeKnowledgeInputSchema
     },
     async (input) => {
       const { taskId, root, action } = input;
@@ -908,7 +934,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       if (action === "propose") {
         const { type, title, rationale, proposedContent, sourceFingerprints, affectedIdentifiers, sources, affectedTargets, conflictNotes, expiresAt } = input;
         output = { suggestion: await proposeKnowledgeChange(resolvedRoot, {
-          type, title, rationale, proposedContent, sourceFingerprints, affectedIdentifiers,
+          type: type!, title: title!, rationale: rationale!, proposedContent: proposedContent!,
+          sourceFingerprints: sourceFingerprints!, affectedIdentifiers: affectedIdentifiers!,
           ...(sources ? { sources } : {}), ...(affectedTargets ? { affectedTargets } : {}),
           ...(conflictNotes ? { conflictNotes } : {}), ...(expiresAt ? { expiresAt } : {})
         }) };
@@ -916,7 +943,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         const { type, status } = input;
         output = { suggestions: await listKnowledgeSuggestions(resolvedRoot, { type, status }) };
       } else {
-        output = await reviewKnowledgeSuggestion(resolvedRoot, input.id, action, input.reason);
+        output = await reviewKnowledgeSuggestion(resolvedRoot, input.id!, action, input.reason);
         if (action === "approve") {
           const [project, existingWiki, memories, applications] = await Promise.all([
             loadProjectIndex(resolvedRoot), loadProjectWiki(resolvedRoot),
@@ -941,12 +968,12 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     "tokengraph_task_report",
     {
       title: "Set Task Disposition",
-      description: "Pause a task ledger or complete it and return the nested TaskReport.",
+      description: "Complete by default with the canonical footer, or pause; verbose adds the report.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: z.object({ taskId: z.string().uuid(), root: z.string().optional(), disposition: z.enum(["pause", "complete"]) })
+      inputSchema: taskReportInputSchema
     },
-    async ({ taskId, root, disposition }) => {
-      const resolvedRoot = await requireTaskRoot(root, taskId);
+    async ({ taskId, root, disposition, responseMode }) => {
+      const resolvedRoot = await requireTaskRoot(root, taskId, true);
       if (disposition === "pause") {
         await setTaskDisposition(resolvedRoot, taskId, disposition);
         return ok({ status: "paused", taskId, reportingStatus: "paused" });
@@ -965,7 +992,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       );
       if (!result.report) throw new Error(`Task ledger ${taskId} did not produce a completion report.`);
       const footer = formatTaskReportFooter(result.report);
-      return ok({ status: "completed", taskId, report: result.report, footer, reportingStatus: "ready" });
+      const compact = { status: "completed", taskId, footer, reportingStatus: "ready" } as const;
+      return ok(responseMode === "verbose" ? { ...compact, report: result.report } : compact);
     }
   );
 

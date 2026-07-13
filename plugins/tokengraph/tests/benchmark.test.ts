@@ -110,7 +110,7 @@ describe("evidence benchmark", () => {
     const loaded = await corpus();
     const taskIndex = loaded.tasks.findIndex((task: { targetedRawReadsAllowed: boolean }) => !task.targetedRawReadsAllowed);
     const baseline = await evaluateBenchmark(loaded, resolve("tests", "fixtures", "evidence-project"));
-    expect(JSON.stringify(baseline.tasks[taskIndex]?.coreOutput).match(/Do not perform raw file reads/g)).toHaveLength(2);
+    expect(JSON.stringify(baseline.tasks[taskIndex]?.coreOutput).match(/Do not perform raw file reads/g)).toHaveLength(1);
     expect(baseline.tasks[taskIndex]?.metrics.criticalConstraintPreservation).toBe(1);
 
     const unsafe = structuredClone(loaded);
@@ -137,6 +137,11 @@ describe("evidence benchmark", () => {
     const before = process.listenerCount("uncaughtException");
     const contracts = await import("../src/core/toolContracts.js");
     expect(contracts.benchmarkMcpInputSchemas().planner).toEqual(expect.any(Object));
+    const tools = contracts.coreToolsListDefinitions();
+    expect(tools).toHaveLength(8);
+    const knowledge = tools.find((tool) => tool.name === "tokengraph_propose_knowledge")!;
+    expect(JSON.stringify(knowledge.inputSchema)).not.toContain('"anyOf"');
+    expect(estimateTokens(JSON.stringify(knowledge.inputSchema))).toBeLessThan(500);
     expect(process.listenerCount("uncaughtException")).toBe(before);
   });
 
@@ -165,15 +170,58 @@ describe("evidence benchmark", () => {
 
     for (const task of report.tasks) {
       expect(task.flow).toBe(expectedFlows[task.category]);
-      expect(task.accounting.coreOutputCount).toBe(task.flow === "wiki-memory" ? 2 : 1);
+      const expectedIntent = task.flow === "planner"
+        ? "tokengraph_prepare_context"
+        : task.flow === "compressor"
+          ? "tokengraph_compress"
+          : task.flow === "wiki-memory"
+            ? "tokengraph_recall"
+            : "tokengraph_analyze";
+      expect(task.accounting.lifecycleCalls).toHaveLength(2);
+      expect(task.accounting.lifecycleCalls[0]?.tool).toBe(expectedIntent);
+      expect(task.accounting.lifecycleCalls.at(-1)?.tool).toBe("tokengraph_task_report");
+      expect(task.accounting.lifecycleCalls.filter((call) => call.tool === "tokengraph_prepare_context")).toHaveLength(task.flow === "planner" ? 1 : 0);
+      expect(task.accounting.lifecycleCalls.filter((call) => call.tool === "tokengraph_task_report")).toHaveLength(1);
+      expect(task.accounting.lifecycleCalls.every((call) => call.request.params.name === call.tool)).toBe(true);
+      expect(task.accounting.lifecycleCalls.every((call) => call.response.content.length === 1)).toBe(true);
+      expect(task.accounting.lifecycleCalls.every((call) => call.response.content[0]?.type === "text")).toBe(true);
+      const intentPayload = JSON.parse(task.accounting.lifecycleCalls[0]!.response.content[0]!.text);
+      const reportRequest = task.accounting.lifecycleCalls[1]!.request.params.arguments as Record<string, unknown>;
+      expect(intentPayload.taskId).toEqual(expect.any(String));
+      expect(reportRequest.taskId).toBe(intentPayload.taskId);
+      if (task.flow !== "planner") expect(task.accounting.lifecycleCalls[0]!.request.params.arguments).not.toHaveProperty("taskId");
+      expect(task.accounting.lifecycleCalls[0]!.request.params.arguments).not.toHaveProperty("root");
+      expect(Object.keys(reportRequest)).toEqual(["taskId"]);
+      expect(JSON.stringify(task.accounting.lifecycleCalls.at(-1)?.response).match(/TokenGraph: ~/g)).toHaveLength(1);
+      expect(JSON.parse(task.accounting.lifecycleCalls.at(-1)!.response.content[0]!.text)).not.toHaveProperty("report");
+      expect(task.accounting.coreOutputCount).toBe(task.accounting.lifecycleCalls.length);
       expect(task.accounting.coreOutputTokens).toHaveLength(task.accounting.coreOutputCount);
       expect(task.accounting.rawBaselineFiles.length).toBeGreaterThan(0);
       expect(task.accounting.rawBaselineFiles.length).toBeLessThan(report.fixtureFileCount);
-      expect(task.metrics.compactTokens).toBe(task.accounting.coreOutputTokens.reduce((total, tokens) => total + tokens, 0));
-      expect(task.metrics.toolOverheadTokens).toBe(task.accounting.schemaOverheadTokens + task.accounting.footerOverheadTokens);
+      expect(task.accounting.targetedReadsIncluded).toBe(false);
+      expect(task.accounting.rawBaselineCalls).toHaveLength(task.accounting.rawBaselineFiles.length);
+      expect(task.accounting.rawBaselineCalls.every((call) => call.tool === "read_file")).toBe(true);
+      expect(task.accounting.rawBaselineCalls.every((call) => call.request.params.name === call.tool)).toBe(true);
+      expect(task.accounting.rawBaselineCalls.every((call) => call.response.content.length === 1 && call.response.content[0]?.type === "text")).toBe(true);
+      expect(task.metrics.rawTokens).toBe(task.accounting.rawBaselineCalls.reduce((total, call) => total + call.requestTokens + call.responseTokens, 0));
+      expect(task.accounting.rawBaselineContentTokens).toBeGreaterThan(0);
+      expect(task.metrics.rawTokens).toBeGreaterThan(task.accounting.rawBaselineContentTokens);
+      expect(task.accounting.targetedReadCalls).toEqual(expect.any(Array));
+      expect(task.metrics.executionInclusiveNetSavings).toBe(
+        task.metrics.netEstimatedSavings - task.accounting.targetedReadCalls.reduce((total, call) => total + call.requestTokens + call.responseTokens, 0)
+      );
+      expect(task.metrics.executionInclusiveNetSavings).toBeLessThanOrEqual(task.metrics.netEstimatedSavings);
+      expect(task.metrics.compactTokens).toBe(task.accounting.lifecycleCalls.reduce((total, call) => total + call.requestTokens + call.responseTokens, 0));
+      expect(task.metrics.toolOverheadTokens).toBe(task.accounting.amortizedDiscoverySetupTokens);
       expect(task.metrics.rawTokens).toBe(task.accounting.rawBaselineTokens);
       expect(task.accounting.completionFooter).toMatch(/^TokenGraph: ~\d+(?:-\d+)? tokens saved \(estimated, .+ confidence\); quality .+\.$/);
     }
+    expect(report.sessionAccounting).toMatchObject({ taskCount: 30, toolDefinitionCount: 8 });
+    expect(report.sessionAccounting.discovery.tools).toHaveLength(8);
+    expect(report.sessionAccounting.amortizedDiscoverySetupTokens * report.sessionAccounting.taskCount)
+      .toBe(report.sessionAccounting.discoverySetupTokens);
+    expect(new Set(report.tasks.map((task) => task.accounting.completionFooter)).size).toBeGreaterThan(1);
+    expect(report.aggregate.medianExecutionInclusiveNetSavings).toBeLessThanOrEqual(report.aggregate.medianNetSavings);
   });
 
   it("keeps a serialization margin above the release threshold", async () => {

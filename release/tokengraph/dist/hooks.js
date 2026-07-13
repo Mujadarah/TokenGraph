@@ -248,6 +248,7 @@ async function enqueueLedgerOperation(root, taskId, operation) {
 async function attachTaskHostContext(root, taskId, context) {
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
     if (context.host !== "codex" && context.host !== "claude" && context.host !== "unknown") {
       throw new Error("Host context must identify codex, claude, or unknown.");
     }
@@ -290,6 +291,11 @@ async function requireTaskLedger(root, taskId) {
   const ledger = await loadTaskLedger(root, taskId);
   if (!ledger) throw new Error(`Task ledger ${taskId} was not found or was corrupt.`);
   return ledger;
+}
+function assertPausedTaskIsTerminal(ledger) {
+  if (ledger.status === "paused") {
+    throw new Error(`Paused task ${ledger.taskId} is terminal and cannot accept task-aware calls or events. Start a new task with tokengraph_prepare_context or omit taskId on a direct intent call.`);
+  }
 }
 
 // src/hooks.ts
@@ -439,16 +445,33 @@ function normalizeToolName(value) {
   if (!candidate || !/^tokengraph_[a-z0-9_]+$/.test(candidate) || !TASK_AWARE_TOOLS.has(candidate)) return void 0;
   return candidate;
 }
-function strictReference(value) {
-  if (!isRecord3(value)) return void 0;
-  if (typeof value.taskId !== "string" || !UUID_PATTERN2.test(value.taskId)) return void 0;
-  if (typeof value.root !== "string" || !isAbsolute2(value.root)) return void 0;
-  return { taskId: value.taskId, root: value.root };
-}
-function prepareReference(response) {
+function responsePayload(response) {
   if (!isRecord3(response)) return void 0;
-  const structured = isRecord3(response.structuredContent) ? response.structuredContent : isRecord3(response.structured_content) ? response.structured_content : response;
-  return strictReference(structured);
+  const structured = isRecord3(response.structuredContent) ? response.structuredContent : isRecord3(response.structured_content) ? response.structured_content : void 0;
+  if (structured) return structured;
+  if (!Array.isArray(response.content) || response.content.length !== 1) return void 0;
+  const item = response.content[0];
+  if (!isRecord3(item) || item.type !== "text" || typeof item.text !== "string") return void 0;
+  try {
+    const parsed = JSON.parse(item.text);
+    return isRecord3(parsed) ? parsed : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function responseReference(response, toolInput, hookInput, previous) {
+  const payload = responsePayload(response);
+  if (!payload || typeof payload.taskId !== "string" || !UUID_PATTERN2.test(payload.taskId)) return void 0;
+  const candidates = [
+    payload.root,
+    isRecord3(toolInput) ? toolInput.root : void 0,
+    previous.status === "valid" && previous.pointer.taskId === payload.taskId ? previous.pointer.root : void 0,
+    hookInput.cwd,
+    process.env.CLAUDE_PROJECT_DIR,
+    process.env.TOKENGRAPH_WORKSPACE_ROOT
+  ];
+  const root = candidates.find((candidate) => typeof candidate === "string" && isAbsolute2(candidate));
+  return root ? { taskId: payload.taskId, root } : void 0;
 }
 function taskInputReference(value, previous) {
   if (!isRecord3(value) || typeof value.taskId !== "string" || !UUID_PATTERN2.test(value.taskId)) return void 0;
@@ -475,7 +498,7 @@ async function postToolUse(input) {
   }
   const hash = sessionHash(currentSessionId);
   const previous = await loadPointer(pluginData, hash);
-  const reference = toolName === "tokengraph_prepare_context" ? prepareReference(input.tool_response) : taskInputReference(input.tool_input, previous);
+  const reference = taskInputReference(input.tool_input, previous) ?? responseReference(input.tool_response, input.tool_input, input, previous);
   const currentTurnId = turnId(input);
   if (!reference || !currentTurnId) return {};
   try {
@@ -503,6 +526,9 @@ async function postToolUse(input) {
   } catch (error) {
     if (error instanceof Error && error.message === "ledger-unavailable") {
       return { systemMessage: "TokenGraph task ledger is unavailable; task lifecycle tracking was skipped." };
+    }
+    if (error instanceof Error && /Paused task .* is terminal/.test(error.message)) {
+      return { systemMessage: `${error.message} Lifecycle tracking was skipped.` };
     }
     const code = error.code;
     return { systemMessage: `TokenGraph lifecycle state update failed${code ? ` (${code})` : ""}; tracking was skipped.` };

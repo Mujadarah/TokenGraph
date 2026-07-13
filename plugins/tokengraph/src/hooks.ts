@@ -195,21 +195,43 @@ function normalizeToolName(value: unknown): string | undefined {
   return candidate;
 }
 
-function strictReference(value: unknown): { taskId: string; root: string } | undefined {
-  if (!isRecord(value)) return undefined;
-  if (typeof value.taskId !== "string" || !UUID_PATTERN.test(value.taskId)) return undefined;
-  if (typeof value.root !== "string" || !isAbsolute(value.root)) return undefined;
-  return { taskId: value.taskId, root: value.root };
-}
-
-function prepareReference(response: unknown): { taskId: string; root: string } | undefined {
+function responsePayload(response: unknown): Record<string, unknown> | undefined {
   if (!isRecord(response)) return undefined;
   const structured = isRecord(response.structuredContent)
     ? response.structuredContent
     : isRecord(response.structured_content)
       ? response.structured_content
-      : response;
-  return strictReference(structured);
+      : undefined;
+  if (structured) return structured;
+  if (!Array.isArray(response.content) || response.content.length !== 1) return undefined;
+  const item = response.content[0];
+  if (!isRecord(item) || item.type !== "text" || typeof item.text !== "string") return undefined;
+  try {
+    const parsed = JSON.parse(item.text) as unknown;
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function responseReference(
+  response: unknown,
+  toolInput: unknown,
+  hookInput: Record<string, unknown>,
+  previous: PointerLoad
+): { taskId: string; root: string } | undefined {
+  const payload = responsePayload(response);
+  if (!payload || typeof payload.taskId !== "string" || !UUID_PATTERN.test(payload.taskId)) return undefined;
+  const candidates = [
+    payload.root,
+    isRecord(toolInput) ? toolInput.root : undefined,
+    previous.status === "valid" && previous.pointer.taskId === payload.taskId ? previous.pointer.root : undefined,
+    hookInput.cwd,
+    process.env.CLAUDE_PROJECT_DIR,
+    process.env.TOKENGRAPH_WORKSPACE_ROOT
+  ];
+  const root = candidates.find((candidate): candidate is string => typeof candidate === "string" && isAbsolute(candidate));
+  return root ? { taskId: payload.taskId, root } : undefined;
 }
 
 function taskInputReference(value: unknown, previous: PointerLoad): { taskId: string; root: string } | undefined {
@@ -239,9 +261,8 @@ async function postToolUse(input: unknown): Promise<HookOutput> {
   }
   const hash = sessionHash(currentSessionId);
   const previous = await loadPointer(pluginData, hash);
-  const reference = toolName === "tokengraph_prepare_context"
-    ? prepareReference(input.tool_response)
-    : taskInputReference(input.tool_input, previous);
+  const reference = taskInputReference(input.tool_input, previous)
+    ?? responseReference(input.tool_response, input.tool_input, input, previous);
   const currentTurnId = turnId(input);
   if (!reference || !currentTurnId) return {};
   try {
@@ -269,6 +290,9 @@ async function postToolUse(input: unknown): Promise<HookOutput> {
   } catch (error) {
     if (error instanceof Error && error.message === "ledger-unavailable") {
       return { systemMessage: "TokenGraph task ledger is unavailable; task lifecycle tracking was skipped." };
+    }
+    if (error instanceof Error && /Paused task .* is terminal/.test(error.message)) {
+      return { systemMessage: `${error.message} Lifecycle tracking was skipped.` };
     }
     const code = (error as NodeJS.ErrnoException).code;
     return { systemMessage: `TokenGraph lifecycle state update failed${code ? ` (${code})` : ""}; tracking was skipped.` };

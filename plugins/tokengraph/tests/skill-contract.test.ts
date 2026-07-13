@@ -50,24 +50,23 @@ function expectCommonContract(name: string): void {
   expect([...new Set(references)].filter((tool) => !coreTools.has(tool)), `${name} references non-core tools`).toEqual([]);
   expect(body).toContain("tokengraph_setup({})");
   expect(body).toContain("tokengraph_prepare_context");
-  expect(body.match(/tokengraph_prepare_context/g) ?? [], `${name} must prepare exactly once`).toHaveLength(1);
-  expect(body, `${name} must not make the trusted root optional`).not.toMatch(/\broot\s*\?/);
-  const taskAwareExamples = [...body.matchAll(/\btokengraph_(?:query_context|compress|recall|analyze|propose_knowledge|task_report)\(\{([^}]*)\}\)/g)];
-  for (const example of taskAwareExamples) {
-    expect(example[1], `${name} task-aware example must pass the captured root: ${example[0]}`).toMatch(/\broot:\s*trusted root\b/);
-  }
   expect(body).toMatch(/tokengraph_setup\(\{\}\)[^\n]*capture[^\n]*trustedWorkspace\.root[^\n]*trusted root/i);
-  expect(body).toMatch(/tokengraph_prepare_context[^.]*capture[^.]*taskId/i);
+  expect(body).toMatch(/prepare_context[^.]*only when[^.]*plan/i);
+  expect(body).toMatch(/omit[^.]*taskId[^.]*auto-start[^.]*return[^.]*taskId/i);
+  expect(body).toMatch(/capture[^.]*returned taskId/i);
   expect(body).toContain("taskId");
   expect(body).toContain("trusted root");
   expect(body).toContain("tokengraph_task_report");
+  expect(body).toContain("tokengraph_task_report({ taskId })");
+  expect(body).toMatch(/compact[^.]*default/i);
+  expect(body).toMatch(/responseMode: "verbose"[^.]*diagnostic/i);
   expect(body).toContain('disposition: "pause"');
-  expect(body).toContain('disposition: "complete"');
   expect(body).toMatch(/do not invent|never invent/i);
   expect(body).toMatch(/unavailable/i);
   expect(body).toMatch(/TokenGraph was not used/);
   expect(body).toMatch(/fresh task|\/reload-plugins/);
   expect(body).toMatch(/report.*status|status.*report/i);
+  expect(body).toMatch(/paused task id.*terminal.*new task.*prepare_context.*omit.*taskId/is);
   expect(text.trim().split(/\s+/).length).toBeLessThanOrEqual(500);
 }
 

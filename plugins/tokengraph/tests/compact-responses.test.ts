@@ -37,7 +37,7 @@ describe("compact MCP response projections", () => {
     expect(compact).toEqual({
       constraints,
       files: [
-        { path: "services/patientService.ts", reason: "Task match." },
+        { path: "services/patientService.ts" },
         { path: "services/patientService.test.ts", reason: "Matches focused test terms." },
         { path: "supabase/migrations/001_patients.sql", reason: "Matched tenant policy." }
       ],
@@ -45,8 +45,7 @@ describe("compact MCP response projections", () => {
       tests: ["services/patientService.test.ts"],
       commands: ["pnpm test services/patientService.test.ts"],
       confidence: "high",
-      warnings: ["One lower-ranked file was excluded."],
-      rawReadGuidance: "Use targeted reads only when confidence or warnings require verification."
+      warnings: ["One lower-ranked file was excluded."]
     });
     expect(estimateTokens(JSON.stringify(compact))).toBeLessThan(estimateTokens(JSON.stringify(verbose)) / 2);
     expect(JSON.stringify(compact)).not.toContain("bulky private body");

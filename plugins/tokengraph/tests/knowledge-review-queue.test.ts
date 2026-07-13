@@ -43,6 +43,17 @@ function proposal(overrides: Partial<KnowledgeProposalInput> = {}): KnowledgePro
   };
 }
 
+async function pathBackedProposal(root: string, overrides: Partial<KnowledgeProposalInput> = {}): Promise<KnowledgeProposalInput> {
+  const content = "export const reviewedSource = true;\n";
+  await mkdir(join(root, "src"), { recursive: true });
+  await writeFile(join(root, "src", "reviewed-source.ts"), content);
+  const fingerprint = await import("node:crypto").then(({ createHash }) => createHash("sha256").update(content).digest("hex"));
+  return proposal({
+    sources: [{ kind: "path", sourceId: "src/reviewed-source.ts", fingerprint }],
+    ...overrides
+  });
+}
+
 function queuePath(root: string): string {
   return join(root, ".tokengraph", "review-queue.json");
 }
@@ -64,8 +75,8 @@ describe("knowledge review queue", () => {
       affectedIdentifiers: ["architecture/request-flow"]
     });
     expect(suggestion.sources).toEqual([
-      { kind: "id", sourceId: "route-source", fingerprint: "route-source-v1" },
-      { kind: "id", sourceId: "service-contract", fingerprint: "service-source-v1" }
+      { kind: "id", sourceId: "route-source", fingerprint: "route-source-v1", provenance: "attested-unverifiable" },
+      { kind: "id", sourceId: "service-contract", fingerprint: "service-source-v1", provenance: "attested-unverifiable" }
     ]);
     expect(suggestion.affectedTargets).toEqual({
       wikiPages: ["architecture/request-flow"], memories: [], skills: []
@@ -73,7 +84,7 @@ describe("knowledge review queue", () => {
     expect(suggestion.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     expect(Date.parse(suggestion.createdAt)).not.toBeNaN();
     expect(suggestion.updatedAt).toBe(suggestion.createdAt);
-    expect(JSON.parse(await readFile(queuePath(root), "utf8"))).toEqual({ schemaVersion: 2, suggestions: [suggestion] });
+    expect(JSON.parse(await readFile(queuePath(root), "utf8"))).toEqual({ schemaVersion: 3, suggestions: [suggestion] });
   });
 
   it("normalizes provenance deterministically without persisting machine-local paths", async () => {
@@ -93,8 +104,8 @@ describe("knowledge review queue", () => {
 
     expect(duplicate.id).toBe(first.id);
     expect(first.sources).toEqual([
-      { kind: "id", sourceId: "service-contract", fingerprint: "service-source-v1" },
-      { kind: "path", sourceId: "src/request-flow.ts", fingerprint: "route-source-v1" }
+      { kind: "id", sourceId: "service-contract", fingerprint: "service-source-v1", provenance: "attested-unverifiable" },
+      { kind: "path", sourceId: "src/request-flow.ts", fingerprint: "route-source-v1", provenance: "pending-path-revalidation" }
     ]);
     expect(await readFile(queuePath(root), "utf8")).not.toContain("C:\\\\Users");
   });
@@ -125,6 +136,10 @@ describe("knowledge review queue", () => {
     const repeated = await reviewKnowledgeSuggestion(root, suggested.id, "approve", "Ignored repeat reason.");
 
     expect(first.applicationStatus).toBe("applied");
+    expect(first.provenanceStatus).toBe("revalidated-current");
+    expect(first.application?.sources).toEqual([
+      { kind: "path", sourceId: "src/request-flow.ts", fingerprint: sourceFingerprint, provenance: "revalidated-current" }
+    ]);
     expect(repeated).toEqual(first);
     expect(await readFile(join(root, ".tokengraph", "knowledge-applications.json"), "utf8")).toBe(firstSerialized);
     expect(await listAppliedKnowledge(root)).toHaveLength(1);
@@ -137,7 +152,7 @@ describe("knowledge review queue", () => {
 
   it("repairs a partial application record before marking its proposal approved", async () => {
     const root = await makeRoot();
-    const suggested = await proposeKnowledgeChange(root, proposal());
+    const suggested = await proposeKnowledgeChange(root, await pathBackedProposal(root));
     const application = {
       suggestionId: suggested.id,
       fingerprint: suggested.fingerprint,
@@ -164,7 +179,7 @@ describe("knowledge review queue", () => {
 
   it("cannot reject after an application record exists and keeps partial records inactive", async () => {
     const root = await makeRoot();
-    const suggested = await proposeKnowledgeChange(root, proposal());
+    const suggested = await proposeKnowledgeChange(root, await pathBackedProposal(root));
     const application = {
       suggestionId: suggested.id, fingerprint: suggested.fingerprint, type: suggested.type,
       title: suggested.title, rationale: suggested.rationale, proposedContent: suggested.proposedContent,
@@ -180,7 +195,7 @@ describe("knowledge review queue", () => {
 
   it("quarantines duplicate application ids instead of rendering them twice", async () => {
     const root = await makeRoot();
-    const suggested = await proposeKnowledgeChange(root, proposal());
+    const suggested = await proposeKnowledgeChange(root, await pathBackedProposal(root));
     const application = {
       suggestionId: suggested.id, fingerprint: suggested.fingerprint, type: suggested.type,
       title: suggested.title, rationale: suggested.rationale, proposedContent: suggested.proposedContent,
@@ -194,7 +209,7 @@ describe("knowledge review queue", () => {
 
   it("recovers target files written before the application store using a deterministic timestamp", async () => {
     const root = await makeRoot();
-    const suggested = await proposeKnowledgeChange(root, proposal());
+    const suggested = await proposeKnowledgeChange(root, await pathBackedProposal(root));
     const target = join(root, ".tokengraph", "knowledge", "wiki", "architecture", "request-flow", `${suggested.id}.md`);
     await mkdir(join(target, ".."), { recursive: true });
     await writeFile(target, [
@@ -208,7 +223,7 @@ describe("knowledge review queue", () => {
 
   it("rejects a forged partial application whose payload differs from the reviewed proposal", async () => {
     const root = await makeRoot();
-    const suggested = await proposeKnowledgeChange(root, proposal());
+    const suggested = await proposeKnowledgeChange(root, await pathBackedProposal(root));
     await writeFile(
       join(root, ".tokengraph", "knowledge-applications.json"),
       `${JSON.stringify({ schemaVersion: 1, applications: [{
@@ -236,13 +251,13 @@ describe("knowledge review queue", () => {
     await mkdir(join(root, ".tokengraph"), { recursive: true });
     await mkdir(join(root, ".tokengraph", "knowledge", "wiki"), { recursive: true });
     await symlink(outside, join(root, ".tokengraph", "knowledge", "wiki", "architecture"), "junction");
-    const suggested = await proposeKnowledgeChange(root, proposal());
+    const suggested = await proposeKnowledgeChange(root, await pathBackedProposal(root));
 
     await expect(reviewKnowledgeSuggestion(root, suggested.id, "approve")).rejects.toThrow(/workspace|outside|confined/i);
     expect(await readdir(outside)).toEqual([]);
   });
 
-  it("migrates an approved schema-v1 proposal into one durable application", async () => {
+  it("does not silently migrate an approved schema-v1 proposal with bare fingerprints", async () => {
     const root = await makeRoot();
     const legacyInput = proposal();
     const createdAt = "2026-07-01T10:00:00.000Z";
@@ -259,8 +274,8 @@ describe("knowledge review queue", () => {
       createdAt, updatedAt: createdAt, reviewedAt: createdAt
     }] }));
 
-    await expect(reviewKnowledgeSuggestion(root, id, "approve")).resolves.toMatchObject({ applicationStatus: "applied" });
-    expect(await listAppliedKnowledge(root)).toHaveLength(1);
+    await expect(reviewKnowledgeSuggestion(root, id, "approve")).rejects.toThrow(/legacy|canonical path|unverifiable/i);
+    expect(await listAppliedKnowledge(root)).toEqual([]);
   });
 
   it("does not recover approved schema-v1 or schema-v2 records after expiry", async () => {
@@ -282,19 +297,54 @@ describe("knowledge review queue", () => {
 
     const currentRoot = await makeRoot();
     const current = await proposeKnowledgeChange(currentRoot, proposal());
-    await writeFile(queuePath(currentRoot), `${JSON.stringify({ schemaVersion: 2, suggestions: [{
+    await writeFile(queuePath(currentRoot), `${JSON.stringify({ schemaVersion: 3, suggestions: [{
       ...current, status: "approved", expiresAt: old, reviewedAt: current.updatedAt
     }] }, null, 2)}\n`);
     await expect(reviewKnowledgeSuggestion(currentRoot, current.id, "approve")).rejects.toThrow(/expired/i);
     expect(await listAppliedKnowledge(currentRoot)).toEqual([]);
   });
 
-  it("does not mistake a stable source id containing path characters for a workspace file", async () => {
+  it("labels stable ids as unverifiable attestations and blocks ID-only approval", async () => {
     const root = await makeRoot();
     const suggested = await proposeKnowledgeChange(root, proposal({
       sources: [{ kind: "id", sourceId: "design/contracts/request-flow.v1", fingerprint: "stable-v1" }]
     }));
-    await expect(reviewKnowledgeSuggestion(root, suggested.id, "approve")).resolves.toMatchObject({ applicationStatus: "applied" });
+    expect(suggested.sources).toEqual([{
+      kind: "id",
+      sourceId: "design/contracts/request-flow.v1",
+      fingerprint: "stable-v1",
+      provenance: "attested-unverifiable"
+    }]);
+    await expect(reviewKnowledgeSuggestion(root, suggested.id, "approve")).rejects.toThrow(/ID-only|canonical path|unverifiable/i);
+    expect(await listAppliedKnowledge(root)).toEqual([]);
+  });
+
+  it("labels bare legacy fingerprints as unverifiable and never silently approves them", async () => {
+    const root = await makeRoot();
+    const suggested = await proposeKnowledgeChange(root, proposal({ sources: undefined }));
+    expect(suggested.sources.every((source) => source.provenance === "legacy-unverifiable")).toBe(true);
+    await expect(reviewKnowledgeSuggestion(root, suggested.id, "approve")).rejects.toThrow(/legacy|canonical path|unverifiable/i);
+    expect(await listAppliedKnowledge(root)).toEqual([]);
+  });
+
+  it("revalidates paths without upgrading mixed ID attestations to current provenance", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "request-flow.ts"), "export const flow = 'v1';\n");
+    const fingerprint = await import("node:crypto").then(({ createHash }) =>
+      createHash("sha256").update("export const flow = 'v1';\n").digest("hex")
+    );
+    const suggested = await proposeKnowledgeChange(root, proposal({ sources: [
+      { kind: "path", sourceId: "src/request-flow.ts", fingerprint },
+      { kind: "id", sourceId: "design-request-flow-v1", fingerprint: "stable-v1" }
+    ] }));
+
+    const result = await reviewKnowledgeSuggestion(root, suggested.id, "approve");
+    expect(result.provenanceStatus).toBe("revalidated-with-attested-snapshots");
+    expect(result.application?.sources).toEqual([
+      { kind: "id", sourceId: "design-request-flow-v1", fingerprint: "stable-v1", provenance: "attested-unverifiable" },
+      { kind: "path", sourceId: "src/request-flow.ts", fingerprint, provenance: "revalidated-current" }
+    ]);
   });
 
   it("rejects a relative source path whose symlink escapes the workspace", async () => {
@@ -411,7 +461,7 @@ describe("knowledge review queue", () => {
 
   it("reviews durably, is idempotent for the same decision, and rejects conflicts", async () => {
     const root = await makeRoot();
-    const proposed = await proposeKnowledgeChange(root, proposal());
+    const proposed = await proposeKnowledgeChange(root, await pathBackedProposal(root));
     const first = await reviewKnowledgeSuggestion(root, proposed.id, "approve", "Reviewed against the index.");
     const duplicate = await reviewKnowledgeSuggestion(root, proposed.id, "approve", "A different repeated reason is ignored.");
 
@@ -431,7 +481,7 @@ describe("knowledge review queue", () => {
     await expect(reviewKnowledgeSuggestion(root, suggestion.id, "later" as "approve")).rejects.toThrow(/decision/i);
 
     const expired: KnowledgeSuggestion = { ...suggestion, status: "expired", updatedAt: "2026-07-13T10:00:00.000Z" };
-    await writeFile(queuePath(root), `${JSON.stringify({ schemaVersion: 2, suggestions: [expired] }, null, 2)}\n`);
+    await writeFile(queuePath(root), `${JSON.stringify({ schemaVersion: 3, suggestions: [expired] }, null, 2)}\n`);
     await expect(reviewKnowledgeSuggestion(root, suggestion.id, "approve")).rejects.toThrow(/expired/i);
   });
 

@@ -51,6 +51,10 @@ hooks = false
 
 When the hook is disabled, untrusted, missing state, or the turn ends through an interrupt or API failure, call `tokengraph_task_report` explicitly. Those abnormal endings are not completion claims.
 
+For planning, call `tokengraph_prepare_context` and retain its compact task id and plan. A direct query, compression, recall, or analysis call may omit `taskId`; it auto-starts the ledger and returns the task id. Reuse that exact id. After ready setup, omit `root` when host resolution is stable or pass only setup's trusted root. End completed and verified work with compact `tokengraph_task_report({ taskId })`; use verbose mode only for diagnostics and `pause` for unfinished work.
+
+A paused task id is terminal. Start a new task with `tokengraph_prepare_context` or a direct intent that omits `taskId`; Stop remains allowed for the paused task.
+
 ## Install an extracted release bundle
 
 Extract `tokengraph-0.20.0.zip`, then add the extracted bundle root:

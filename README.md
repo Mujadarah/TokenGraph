@@ -80,9 +80,11 @@ Ask the agent:
 The expected sequence is:
 
 1. `tokengraph_setup` reports `ready` and identifies the host-provided trust source.
-2. `tokengraph_prepare_context` indexes or refreshes the workspace, plans focused context, and returns one task id plus the trusted root.
-3. Reuse that exact task id and root with `tokengraph_query_context`, `tokengraph_compress`, `tokengraph_recall`, or `tokengraph_analyze` only as the task requires.
-4. Call `tokengraph_task_report` with `pause` or `complete` before stopping.
+2. For planning, `tokengraph_prepare_context` indexes or refreshes the workspace and returns a compact task id plus plan. For direct query, compression, recall, or analysis, omit `taskId` on the first intent call; it starts the task and returns the task id.
+3. Reuse that exact task id. After ready setup, `root` can be omitted when host workspace resolution remains stable; otherwise use only the trusted root returned by setup.
+4. Call `tokengraph_task_report({ taskId })` after successful implementation and verification. Its compact default returns `status`, `taskId`, the canonical savings footer, and `reportingStatus`; request verbose mode only for diagnostics, or use `pause` for unfinished work.
+
+A paused task id is terminal. Resume with `tokengraph_prepare_context` or a direct intent call that omits `taskId`; never send later calls with the paused id.
 
 The setup diagnostic never grants filesystem trust. If it reports `blocked`, follow its recovery steps and restart or reload the host.
 
@@ -102,9 +104,9 @@ See the [source plugin guide](plugins/tokengraph/README.md) for the complete too
 
 ## v0.20 behavior and evidence
 
-Every measured task has one canonical completion footer backed by a task ledger. JSON-only MCP successes return one serialized JSON `TextContent` item; `tokengraph_export_project_map` remains the documented resource-link exception. Wiki and memory updates use source-linked review-before-apply proposals: listing and proposing do not mutate derived knowledge, approval rechecks current provenance, and stale or expired proposals fail.
+Every measured task has one canonical completion footer backed by a task ledger. JSON-only MCP successes return one serialized JSON `TextContent` item; `tokengraph_export_project_map` remains the documented resource-link exception. Wiki and memory updates use source-linked review-before-apply proposals: listing and proposing do not mutate derived knowledge. Approval requires at least one workspace-relative path whose canonical LF-normalized SHA-256 fingerprint is revalidated; stable logical ids remain expiring, attested/unverifiable snapshots and never become current or high-confidence. ID-only and legacy bare-fingerprint proposals cannot be approved, and stale or expired proposals fail.
 
-The checked-in 30-task benchmark preserves 100% of critical constraints, has zero critical false negatives, reaches 100% required-file recall, and reports median estimated net savings of 30.5 tokens after response, schema, and footer overhead. Its 25th percentile is -166 tokens and 11 tasks remain individually non-positive. Every category has fewer than 10 observations, so confidence remains low. These are deterministic estimates, not provider billing counts or universal quality proof.
+The checked-in 30-task benchmark preserves 100% of critical constraints, has zero critical false negatives, and reaches 100% required-file recall. Its routing-lifecycle gate reports median estimated net savings of 31.7 tokens after exact core-tool discovery plus setup are amortized across the session and after one intent call plus one compact report per task. The nearest-rank 25th percentile is -270.3 tokens and 15 of 30 tasks are non-positive. When the actual recommended first-file reads are also charged, the median is -133.8 tokens, the 25th percentile is -457.3, and 20 of 30 tasks are non-positive. SQL/security and release packaging are positive in every fixture task; debugging and compression are negative in every fixture task. Every category has fewer than 10 observations, so confidence remains low. These deterministic fixture estimates are not provider billing counts or universal quality proof; the skills advise skipping TokenGraph for tiny self-contained work with already-bounded raw context.
 
 Lifecycle hooks are cooperative automation. Users must review and trust them; they can be disabled, and interrupts, process termination, StopFailure, or API failure do not run normal completion enforcement. Missing or corrupt hook state fails open with a warning.
 

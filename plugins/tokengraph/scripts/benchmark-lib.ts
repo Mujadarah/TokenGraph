@@ -9,11 +9,10 @@ import { assessChangeRisk } from "../src/core/regressionRisk.js";
 import { reviewMemories } from "../src/core/review.js";
 import { TASK_ESTIMATOR_VERSION, type TaskCalibration } from "../src/core/taskEstimator.js";
 import { estimateTokens } from "../src/core/token.js";
-import { buildProjectWiki } from "../src/core/wiki.js";
 import { buildTaskReport, formatTaskReportFooter } from "../src/core/taskEstimator.js";
 import type { TaskLedger } from "../src/core/taskLedger.js";
 import {
-  benchmarkMcpInputSchemas,
+  coreToolsListDefinitions,
   compactCompressionEnvelope,
   compactModeEnvelope,
   compactPrepareEnvelope,
@@ -26,8 +25,7 @@ import {
   NO_RAW_READ_GUIDANCE,
   compactPlanResponse,
   compactRecallResponse,
-  compactRiskResponse,
-  compactWikiResponse
+  compactRiskResponse
 } from "../src/core/compactResponses.js";
 import type { MemoryEntry, ProjectIndex } from "../src/core/types.js";
 
@@ -98,6 +96,7 @@ export interface TaskMetrics {
   compactTokens: number;
   toolOverheadTokens: number;
   netEstimatedSavings: number;
+  executionInclusiveNetSavings: number;
   calibrationResidual: number;
   qualityResult: "passed" | "failed";
   failureReasons: string[];
@@ -123,16 +122,6 @@ const FLOW_BY_CATEGORY: Record<BenchmarkCategory, BenchmarkFlow> = {
   "release-packaging": "planner"
 };
 
-const REPRESENTATIVE_LEDGER: TaskLedger = {
-  schemaId: "tokengraph-task-ledger", schemaVersion: 1, taskId: "00000000-0000-4000-8000-000000000000", host: "unknown", status: "open",
-  createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", estimatorVersion: TASK_ESTIMATOR_VERSION,
-  events: [{
-    id: "00000000-0000-4000-8000-000000000001", fingerprint: "benchmark", category: "benchmark", toolName: "tokengraph_task_report",
-    originalTokens: 1000, compactTokens: 400, overheadTokens: 50, confidence: "low", timestamp: "2026-01-01T00:00:00.000Z",
-    qualityChecks: [{ name: "benchmark-quality", passed: true }]
-  }]
-};
-const FOOTER = formatTaskReportFooter(buildTaskReport(REPRESENTATIVE_LEDGER));
 const EVIDENCE_PATH = resolve("scripts", "benchmark-evidence-v1.json");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -260,11 +249,15 @@ async function loadEvidence(): Promise<BenchmarkEvidence> {
   return evidence;
 }
 
-async function rawBaseline(root: string, files: string[]): Promise<{ text: string; tokens: number }> {
-  const parts: string[] = [];
-  for (const path of files) parts.push(await readFile(resolve(root, path), "utf8"));
-  const text = parts.join("\n");
-  return { text, tokens: estimateTokens(text) };
+async function rawBaseline(root: string, files: string[]): Promise<{
+  text: string;
+  tokens: number;
+  files: Array<{ path: string; text: string }>;
+}> {
+  const parts: Array<{ path: string; text: string }> = [];
+  for (const path of files) parts.push({ path, text: await readFile(resolve(root, path), "utf8") });
+  const text = parts.map((part) => part.text).join("\n");
+  return { text, tokens: estimateTokens(text), files: parts };
 }
 
 function changedFiles(evidence: TaskEvidence, project: ProjectIndex): string[] {
@@ -281,7 +274,7 @@ async function runFlow(input: {
   root: string;
   project: ProjectIndex;
   memories: MemoryEntry[];
-}): Promise<{ coreOutput: unknown; serializedOutputs: unknown[]; selectedFiles: string[]; recommendedTests: string[]; rawReadGuidance: string[] }> {
+}): Promise<{ coreOutput: unknown; serializedOutputs: unknown[]; selectedFiles: string[]; recommendedTests: string[]; rawReadGuidance: Array<string | undefined> }> {
   const { flow, task, evidence, rawText, root, project, memories } = input;
   if (flow === "planner") {
     const verbose = await buildContextPlan({
@@ -347,21 +340,43 @@ async function runFlow(input: {
       recommendedTests: output.tests, rawReadGuidance: [output.rawReadGuidance]
     };
   }
-  const wiki = buildProjectWiki(project, memories);
   const memoryReview = await reviewMemories({ memories, query: task.query, limit: 4 });
-  const compactWiki = compactWikiResponse(wiki, { constraints: task.constraints, allowRawReads: task.allowRawReads ?? true });
   const compactReview = compactRecallResponse(memoryReview, { constraints: task.constraints, allowRawReads: task.allowRawReads ?? true }, memories, project);
-  const wikiResponse = compactModeEnvelope("wiki", compactWiki);
   const memoryResponse = compactModeEnvelope("review", compactReview);
-  const wikiWire = compactToolResultEnvelope(wikiResponse);
   const memoryWire = compactToolResultEnvelope(memoryResponse);
   return {
-    coreOutput: { wiki: wikiWire, memoryReview: memoryWire },
-    serializedOutputs: [wikiWire, memoryWire],
+    coreOutput: memoryWire,
+    serializedOutputs: [memoryWire],
     selectedFiles: compactReview.files.map((entry) => entry.path),
     recommendedTests: compactReview.tests,
-    rawReadGuidance: [compactWiki.rawReadGuidance, compactReview.rawReadGuidance]
+    rawReadGuidance: [compactReview.rawReadGuidance]
   };
+}
+
+function lifecycleWire(
+  wire: unknown,
+  taskId: string,
+  options: { logicalRoot?: string } = {}
+): { content: Array<{ type: "text"; text: string }> } {
+  if (!isRecord(wire) || !Array.isArray(wire.content) || wire.content.length !== 1 || !isRecord(wire.content[0]) || typeof wire.content[0].text !== "string") {
+    throw new Error("A benchmark intent must return exactly one serialized JSON TextContent item.");
+  }
+  const parsed = JSON.parse(wire.content[0].text) as unknown;
+  if (!isRecord(parsed)) throw new Error("A benchmark intent result must serialize a JSON object.");
+  const payload = { ...parsed, ...(options.logicalRoot ? { root: options.logicalRoot } : {}), taskId };
+  return compactToolResultEnvelope(payload);
+}
+
+function firstReadPaths(wire: { content: Array<{ type: "text"; text: string }> }): string[] {
+  const parsed = JSON.parse(wire.content[0]!.text) as unknown;
+  if (!isRecord(parsed)) return [];
+  const candidate = isRecord(parsed.plan) ? parsed.plan : parsed;
+  if (!Array.isArray(candidate.files) || !Array.isArray(candidate.firstReads)) return [];
+  const files = candidate.files.filter(isRecord);
+  return [...new Set(candidate.firstReads
+    .filter((index): index is number => Number.isInteger(index) && index >= 0)
+    .map((index) => files[index]?.path)
+    .filter((path): path is string => typeof path === "string"))];
 }
 
 function normalizePredicate(text: string): string {
@@ -386,7 +401,15 @@ export function measureSerializedOutput(input: {
   return { coreOutputTokens, compactTokens, toolOverheadTokens, netEstimatedSavings: input.rawTokens - compactTokens - toolOverheadTokens };
 }
 
-async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: string, project: ProjectIndex, memories: MemoryEntry[]) {
+async function evaluateTask(
+  task: BenchmarkTask,
+  evidence: TaskEvidence,
+  root: string,
+  project: ProjectIndex,
+  memories: MemoryEntry[],
+  taskOrdinal: number,
+  amortizedDiscoverySetupTokens: number
+) {
   const flow = FLOW_BY_CATEGORY[task.category];
   const baseline = await rawBaseline(root, evidence.rawFiles);
   const result = await runFlow({ flow, task, evidence, rawText: baseline.text, root, project, memories });
@@ -399,16 +422,99 @@ async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: s
   const rawReadPolicyPreserved = task.targetedRawReadsAllowed || result.rawReadGuidance.every((guidance) => guidance === NO_RAW_READ_GUIDANCE);
   const criticalConstraintPreservation = (task.criticalConstraints.length ? preservedCount / task.criticalConstraints.length : 1) * (rawReadPolicyPreserved ? 1 : 0);
   const requiredFileRecall = task.requiredFiles.length ? (task.requiredFiles.length - falseNegatives.length) / task.requiredFiles.length : 1;
-  const schemas = benchmarkMcpInputSchemas();
-  const schemaOverheadTokens: number = flow === "wiki-memory"
-    ? estimateTokens(JSON.stringify(schemas.wiki)) + estimateTokens(JSON.stringify(schemas.memory))
-    : estimateTokens(JSON.stringify(schemas[flow]));
-  const footerOverheadTokens = estimateTokens(FOOTER);
-  const { coreOutputTokens, compactTokens, toolOverheadTokens, netEstimatedSavings } = measureSerializedOutput({
-    rawTokens: baseline.tokens, serializedOutputs: result.serializedOutputs, schemaOverheadTokens, footerOverheadTokens
+  const taskId = `00000000-0000-4000-8000-${String(taskOrdinal + 1).padStart(12, "0")}`;
+  const logicalRoot = "tests/fixtures/evidence-project";
+  const request = (id: number, tool: string, arguments_: object) => ({ jsonrpc: "2.0", id, method: "tools/call", params: { name: tool, arguments: arguments_ } });
+  const rawBaselineCalls = baseline.files.map((file, index) => {
+    const rawRequest = request(taskOrdinal * 100 + index + 1, "read_file", { path: file.path });
+    const response = { content: [{ type: "text" as const, text: file.text }] };
+    return {
+      tool: "read_file",
+      request: rawRequest,
+      response,
+      requestTokens: estimateTokens(JSON.stringify(rawRequest)),
+      responseTokens: estimateTokens(JSON.stringify(response))
+    };
   });
+  const rawBaselineTokens = rawBaselineCalls.reduce((total, call) => total + call.requestTokens + call.responseTokens, 0);
+  const intentResponse = lifecycleWire(result.serializedOutputs[0], taskId);
+  const indexedPaths = new Set(project.files.map((file) => file.path));
+  const targetedReadCalls = task.allowRawReads === false ? [] : await Promise.all(firstReadPaths(intentResponse)
+    .filter((path) => indexedPaths.has(path))
+    .map(async (path, index) => {
+      const targetedRequest = request(taskOrdinal * 100 + 50 + index, "read_file", { path });
+      const response = { content: [{ type: "text" as const, text: await readFile(resolve(root, path), "utf8") }] };
+      return {
+        tool: "read_file",
+        request: targetedRequest,
+        response,
+        requestTokens: estimateTokens(JSON.stringify(targetedRequest)),
+        responseTokens: estimateTokens(JSON.stringify(response))
+      };
+    }));
+  let intentTool: "tokengraph_prepare_context" | "tokengraph_analyze" | "tokengraph_compress" | "tokengraph_recall";
+  let intentArguments: object;
+  if (flow === "planner") {
+    intentTool = "tokengraph_prepare_context";
+    intentArguments = {
+      task: task.query, constraints: task.constraints,
+      ...(task.allowRawReads === false ? { allowRawReads: false } : {})
+    };
+  } else if (flow === "tracer") {
+    intentTool = "tokengraph_analyze";
+    intentArguments = { mode: "failure", kind: "test", text: baseline.text, task: task.query, constraints: task.constraints };
+  } else if (flow === "risk") {
+    intentTool = "tokengraph_analyze";
+    intentArguments = { mode: "risk", changedFiles: changedFiles(evidence, project), task: task.query, constraints: task.constraints };
+  } else if (flow === "compressor") {
+    intentTool = "tokengraph_compress";
+    intentArguments = { mode: "context", task: task.query, contentKind: task.category === "sql-security" ? "sql" : "mixed", text: baseline.text, preserveRawReferences: true, constraints: task.constraints };
+  } else {
+    intentTool = "tokengraph_recall";
+    intentArguments = { mode: "review", query: task.query, limit: 4, constraints: task.constraints };
+  }
+  const intentRequest = request(taskOrdinal * 10 + 1, intentTool, intentArguments);
+  const intentRequestTokens = estimateTokens(JSON.stringify(intentRequest));
+  const intentResponseTokens = estimateTokens(JSON.stringify(intentResponse));
+  const measuredLedger: TaskLedger = {
+    schemaId: "tokengraph-task-ledger", schemaVersion: 1, taskId, host: "unknown", status: "completed",
+    createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", completedAt: "2026-01-01T00:00:00.000Z",
+    estimatorVersion: TASK_ESTIMATOR_VERSION,
+    events: [{
+      id: `10000000-0000-4000-8000-${String(taskOrdinal + 1).padStart(12, "0")}`,
+      fingerprint: `benchmark-${task.id}`, category: flow, toolName: intentTool,
+      originalTokens: rawBaselineTokens, compactTokens: intentResponseTokens,
+      overheadTokens: intentRequestTokens + amortizedDiscoverySetupTokens,
+      confidence: "low", timestamp: "2026-01-01T00:00:00.000Z",
+      qualityChecks: [{ name: "intent-executed", passed: true }]
+    }]
+  };
+  const footer = formatTaskReportFooter(buildTaskReport(measuredLedger));
+  const calls: Array<{ tool: string; request: ReturnType<typeof request>; response: { content: Array<{ type: "text"; text: string }> } }> = [{
+    tool: intentTool,
+    request: intentRequest,
+    response: intentResponse
+  }];
+  const reportResponse = compactToolResultEnvelope({
+    status: "completed", taskId, footer, reportingStatus: "ready"
+  });
+  calls.push({
+    tool: "tokengraph_task_report",
+    request: request(taskOrdinal * 10 + 9, "tokengraph_task_report", { taskId }),
+    response: reportResponse
+  });
+  const lifecycleCalls = calls.map((call) => ({
+    ...call,
+    requestTokens: estimateTokens(JSON.stringify(call.request)),
+    responseTokens: estimateTokens(JSON.stringify(call.response))
+  }));
+  const coreOutputTokens = lifecycleCalls.map((call) => call.responseTokens);
+  const compactTokens = lifecycleCalls.reduce((total, call) => total + call.requestTokens + call.responseTokens, 0);
+  const toolOverheadTokens = amortizedDiscoverySetupTokens;
+  const netEstimatedSavings = rawBaselineTokens - compactTokens - toolOverheadTokens;
+  const executionInclusiveNetSavings = netEstimatedSavings - targetedReadCalls.reduce((total, call) => total + call.requestTokens + call.responseTokens, 0);
   const expectedReferenceTokens = estimateTokens(evidence.expectedCompactReference);
-  const expectedNetSavings = baseline.tokens - expectedReferenceTokens - toolOverheadTokens;
+  const expectedNetSavings = rawBaselineTokens - expectedReferenceTokens - toolOverheadTokens;
   const missingExpectedTests = task.expectedTests.filter((path) => !recommendedTests.includes(path));
   const calibrationResidual = expectedNetSavings - Math.max(0, netEstimatedSavings);
   const failureReasons = [
@@ -427,13 +533,17 @@ async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: s
     flow,
     coreOutput: result.coreOutput,
     accounting: {
-      coreOutputCount: result.serializedOutputs.length,
+      coreOutputCount: lifecycleCalls.length,
       coreOutputTokens,
+      lifecycleCalls,
       rawBaselineFiles: [...evidence.rawFiles],
-      rawBaselineTokens: baseline.tokens,
-      schemaOverheadTokens,
-      footerOverheadTokens,
-      completionFooter: FOOTER,
+      rawBaselineCalls,
+      rawBaselineContentTokens: baseline.tokens,
+      rawBaselineTokens,
+      targetedReadsIncluded: false,
+      targetedReadCalls,
+      amortizedDiscoverySetupTokens,
+      completionFooter: footer,
       expectedCompactReference: evidence.expectedCompactReference,
       expectedReferenceTokens,
       expectedNetSavings
@@ -444,10 +554,11 @@ async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: s
       falseNegatives,
       criticalConstraintPreservation,
       recommendedTests,
-      rawTokens: baseline.tokens,
+      rawTokens: rawBaselineTokens,
       compactTokens,
       toolOverheadTokens,
       netEstimatedSavings,
+      executionInclusiveNetSavings,
       calibrationResidual,
       qualityResult: failureReasons.length ? "failed" : "passed",
       failureReasons
@@ -463,11 +574,31 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
   const root = resolve(fixtureRoot);
   const project = await indexProject(root, { scanSignature: `benchmark:${corpus.corpusVersion}:${evidence.evidenceVersion}` });
   const memories = evidence.memories.map(evidenceMemory);
+  const tools = coreToolsListDefinitions();
+  const discoveryRequest = { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} };
+  const discoveryResponse = { tools };
+  const setupRequest = { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "tokengraph_setup", arguments: {} } };
+  const setupResponse = compactToolResultEnvelope({
+    status: "ready", host: "unknown", trustedWorkspace: { source: "injected", root: "tests/fixtures/evidence-project" },
+    blockingReason: null, pluginRootLaunch: false, message: "TokenGraph has a safe host-provided workspace boundary.", nextSteps: [],
+    surface: "core", capabilities: { taskScoped: true, coreTools: tools.map((tool) => tool.name), legacyCompatibility: false }
+  });
+  const discoverySetupTokens = [discoveryRequest, discoveryResponse, setupRequest, setupResponse]
+    .reduce((total, item) => total + estimateTokens(JSON.stringify(item)), 0);
+  const amortizedDiscoverySetupTokens = discoverySetupTokens / validation.tasks.length;
+  const sessionAccounting = {
+    taskCount: validation.tasks.length,
+    toolDefinitionCount: tools.length,
+    discovery: discoveryResponse,
+    setup: { request: setupRequest, response: setupResponse },
+    discoverySetupTokens,
+    amortizedDiscoverySetupTokens
+  };
   const tasks: Awaited<ReturnType<typeof evaluateTask>>[] = [];
-  for (const task of validation.tasks) {
+  for (const [taskOrdinal, task] of validation.tasks.entries()) {
     const taskEvidence = evidence.tasks[task.id];
     if (!taskEvidence) throw new Error(`Independent benchmark evidence is missing for ${task.id}.`);
-    tasks.push(await evaluateTask(task, taskEvidence, root, project, memories));
+    tasks.push(await evaluateTask(task, taskEvidence, root, project, memories, taskOrdinal, amortizedDiscoverySetupTokens));
   }
   const categoryCounts = Object.fromEntries(BENCHMARK_CATEGORIES.map((category) => [category, tasks.filter((task) => task.category === category).length]));
   const requiredTotal = validation.tasks.reduce((total, task) => total + task.requiredFiles.length, 0);
@@ -478,6 +609,7 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     taskCount: tasks.length,
     categoryCounts,
     medianNetSavings: median(tasks.map((task) => task.metrics.netEstimatedSavings)),
+    medianExecutionInclusiveNetSavings: median(tasks.map((task) => task.metrics.executionInclusiveNetSavings)),
     criticalFalseNegativeCount: falseNegativeTotal,
     criticalConstraintPreservationRate: constraintTotal ? preservedTotal / constraintTotal : 1,
     requiredFileRecall: requiredTotal ? (requiredTotal - falseNegativeTotal) / requiredTotal : 1,
@@ -498,6 +630,7 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     fixture: "tests/fixtures/evidence-project",
     fixtureFileCount: project.files.length,
     baselineRequiredFileRecall: corpus.baselineRequiredFileRecall,
+    sessionAccounting,
     tasks,
     aggregate,
     releaseGate,
