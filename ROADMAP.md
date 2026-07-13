@@ -189,6 +189,17 @@ Status: complete
 - The release ships only the self-contained `dist/index.js` runtime plus Claude Code marketplace, plugin, and MCP manifests with trusted project-root forwarding.
 - CI validates frozen installs, typecheck, tests, build, smoke, plugin validation, non-ASCII scans, and byte-reproducible committed releases.
 
+## v0.20 - Measured Completion And Compact Quality
+
+Status: complete
+
+- Task ledgers produce one canonical, uncertainty-aware completion footer; cooperative PostToolUse/Stop hooks request missing reports or footers without looping.
+- The default MCP surface is eight intent-level tools, with 42 tools on the opt-in full compatibility surface.
+- JSON-only success results use one serialized JSON text item, while project-map resource links keep their documented structured exception.
+- Source-linked wiki and memory proposals require review and explicit approval before application, rechecking provenance and expiry.
+- The evidence benchmark passes its strict gate with 100% constraint preservation, zero critical false negatives, 100% recall, and median estimated net savings of 30.5 tokens. The p25 remains -166 tokens, 11 tasks remain non-positive, and per-category confidence is low.
+- Deterministic v0.20 release packaging includes nine skills, the MCP and hook bundles, both host manifests, and a standalone marketplace archive.
+
 ## v0.19 - Repository Hygiene And Installability
 
 Status: complete

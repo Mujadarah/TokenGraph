@@ -1,6 +1,6 @@
 # TokenGraph Source Plugin
 
-This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.19.0. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
+This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.20.0. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
 
 ## Development
 
@@ -43,11 +43,13 @@ The default `TOKENGRAPH_TOOL_SURFACE=core` surface exposes exactly eight intent-
 
 Set `TOKENGRAPH_TOOL_SURFACE=full` before starting the MCP host to add the 34 deprecated compatibility tools below. Their names, schemas, and behavior remain available during migration; prefer the core tools for new tasks.
 
+JSON-only successful tool calls return one serialized JSON `TextContent` item. `tokengraph_export_project_map` is the resource-link exception and also returns matching structured content. Compact mode is the default; explicit `responseMode: "verbose"` is for diagnostics.
+
 ### Reviewed local knowledge
 
 `tokengraph_propose_knowledge` records privacy-safe local proposals with normalized source ids and fingerprints, intended wiki/memory/skill targets, rationale, conflict notes, and expiry. Proposing and listing never mutate derived knowledge. Explicit approval rechecks expiry and current relative-file fingerprints while holding the persistence lock, then applies only the reviewed payload once under `.tokengraph/knowledge/`; repeated approval returns the original application. Stale or expired approval fails clearly, and rejection applies nothing.
 
-Generated wiki Markdown uses deterministic Obsidian-compatible YAML frontmatter and relative wiki links. It includes backlinks, reviewed conflict markers, and fresh/stale source status. Refresh rewrites only changed page files. All review, application, and wiki state stays workspace-confined and local; no cloud service or embeddings are used. These source changes are not present in the committed release directory until the release packaging phase regenerates it.
+Generated wiki Markdown uses deterministic Obsidian-compatible YAML frontmatter and relative wiki links. It includes backlinks, reviewed conflict markers, and fresh/stale source status. Refresh rewrites only changed page files. All review, application, and wiki state stays workspace-confined and local; no cloud service or embeddings are used. The committed v0.20 release is generated from these source contracts; do not edit it by hand.
 
 Legacy setup and indexing:
 

@@ -23,4 +23,4 @@ The current checked-in corpus and fixture produce:
 
 Calibration entries contain one observation per corpus task: four for five categories and five for code routing and SQL/security. Every category remains low-confidence and does not activate Task 1A calibration. The direct `taskCalibration` projection is consumable by Task 1A, but these deterministic fixture observations are not statistical proof of host-agent quality.
 
-These results are deterministic fixture evidence, not universal agent-output proof. They do not demonstrate patch quality or exact billed-token savings. Paired Codex and Claude evaluation remains a later release gate.
+These results are deterministic fixture evidence, not universal agent-output proof. They do not demonstrate patch quality or exact billed-token savings. Paired Codex and Claude adapter/host evidence is recorded separately during release verification and does not increase this benchmark's statistical confidence.

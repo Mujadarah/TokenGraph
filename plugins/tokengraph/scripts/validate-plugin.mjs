@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
 import { access, readFile, readdir } from "node:fs/promises";
-import { dirname, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifySkillContract } from "./skill-contract.mjs";
 
@@ -17,12 +16,6 @@ const requiredFocusedSkillDirs = [
   "memory-curator",
   "release-packaging-auditor"
 ];
-const STALE_RELEASE_HOOK_TRANSITION_SHA256 = {
-  entry: "4bf2d6eef68c8a625525573ec64c8d40d7a10d7735aa7bab5298fccc080772f1",
-  readme: "ee606e4bf0adf4ed93bc359b144085eed17d95d47b8f4bb18e5783262bf41451",
-  manifest: "a5b55b47e26ab685a31d9a3e88c2048fa9ca1d4de28b60a0f86b0f7d7b955baf"
-};
-
 function fail(message) {
   console.error(`TokenGraph plugin validation failed: ${message}`);
   process.exit(1);
@@ -100,19 +93,6 @@ async function assertSkillFrontmatter(skillsRoot, label, coreLifecycle = false) 
     }
   }
   return skillFiles;
-}
-
-async function pathExists(path) {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function sha256(path) {
-  return createHash("sha256").update(await readFile(path)).digest("hex");
 }
 
 async function inspectSkillContract(skillsRoot, label) {
@@ -277,7 +257,7 @@ assert(distServer.includes("tokengraph_update_config"), "built MCP server must r
 assert(distServer.includes("fullReindex"), "built MCP server must expose v0.8 full reindex option");
 assert(distServer.includes("indexingMode"), "built MCP server must report v0.8 indexing mode");
 assert(distServer.includes("maxEstimatedTokens"), "built MCP server must expose v0.8 planner token budget input");
-assert(packageJson.version === "0.19.0", "package version must be 0.19.0 for this release");
+assert(packageJson.version === "0.20.0", "package version must be 0.20.0 for this release");
 assert(distServer.includes("tokengraph_setup_status"), "built MCP server must register setup diagnostics");
 assert(distServer.includes("tokengraph_generate_wiki"), "built MCP server must register v0.9 wiki generator");
 assert(distServer.includes("tokengraph_show_wiki_page"), "built MCP server must register v0.9 wiki page reader");
@@ -329,13 +309,8 @@ for (const file of ["codex.md", "claude-code.md", "generic-mcp.md", "cursor-wind
 await assertFile(releaseManifestPath, "release plugin manifest");
 await assertFile(releaseMcpPath, "release MCP config");
 await assertFile(releaseDistEntryPath, "release built MCP entry");
-const releaseHasHooksEntry = await pathExists(releaseDistHooksPath);
-const releaseHasHooksManifest = await pathExists(releaseHooksManifestPath);
-assert(releaseHasHooksEntry === releaseHasHooksManifest, "release transition must contain both lifecycle hook files or neither");
-if (releaseHasHooksEntry) {
-  await assertFile(releaseDistHooksPath, "release built lifecycle hook entry");
-  await assertFile(releaseHooksManifestPath, "release lifecycle hook manifest");
-}
+await assertFile(releaseDistHooksPath, "release built lifecycle hook entry");
+await assertFile(releaseHooksManifestPath, "release lifecycle hook manifest");
 await assertMissing(releaseDistCorePath, "release dist/core directory");
 await assertMissing(resolve(releaseRoot, "dist", "server.js"), "release built MCP server");
 await assertFile(releaseReadmePath, "release README");
@@ -346,6 +321,17 @@ assert(releaseSkillContract.forbiddenCoreTools.length === 0, `release plugin cor
 const releaseUsesCoreLifecycle = releaseSkillContract.contract === "core";
 await assertSkillFrontmatter(releaseSkillsPath, "release plugin", releaseUsesCoreLifecycle);
 await assertRequiredFocusedSkills(releaseSkillsPath, "release plugin", releaseUsesCoreLifecycle);
+const sourceSkillFiles = await collectSkillFiles(skillsPath);
+const releaseSkillFiles = await collectSkillFiles(releaseSkillsPath);
+assert(sourceSkillFiles.length === 9, `source plugin must contain exactly 9 skills, found ${sourceSkillFiles.length}`);
+assert(releaseSkillFiles.length === sourceSkillFiles.length, `release plugin must contain exactly ${sourceSkillFiles.length} source-equivalent skills`);
+for (const sourceSkillFile of sourceSkillFiles) {
+  const skillRelativePath = relative(skillsPath, sourceSkillFile);
+  const releaseSkillFile = resolve(releaseSkillsPath, skillRelativePath);
+  const sourceSkill = await readFile(sourceSkillFile);
+  const releaseSkill = await readFile(releaseSkillFile).catch(() => undefined);
+  assert(releaseSkill !== undefined && sourceSkill.equals(releaseSkill), `release skill ${skillRelativePath} must match source byte-for-byte`);
+}
 await assertMissing(resolve(releaseRoot, "src"), "release source directory");
 await assertMissing(resolve(releaseRoot, "tests"), "release tests directory");
 await assertMissing(resolve(releaseRoot, "scripts"), "release scripts directory");
@@ -365,28 +351,16 @@ const claudeHostGuide = await readFile(resolve(hostDocsPath, "claude-code.md"), 
 const securityGuide = await readFile(resolve(trustDocsPath, "security.md"), "utf8").catch((error) => fail(`cannot read security guide: ${error.message}`));
 const limitationsGuide = await readFile(resolve(trustDocsPath, "limitations.md"), "utf8").catch((error) => fail(`cannot read limitations guide: ${error.message}`));
 const releaseDeclaresHooks = releaseReadme.includes("dist/hooks.js");
-if (releaseHasHooksManifest) {
-  assert(releaseDeclaresHooks, "generated releases with lifecycle hooks must document dist/hooks.js");
-  const releaseHooksManifest = await readJson(releaseHooksManifestPath);
-  assert(JSON.stringify(releaseHooksManifest) === JSON.stringify(hooksManifest), "release lifecycle hook manifest must match source");
-} else {
-  const staleSnapshot = {
-    entry: await sha256(releaseDistEntryPath),
-    readme: await sha256(releaseReadmePath),
-    manifest: await sha256(releaseManifestPath)
-  };
-  assert(
-    JSON.stringify(staleSnapshot) === JSON.stringify(STALE_RELEASE_HOOK_TRANSITION_SHA256),
-    "only the exact documented stale committed release snapshot may omit dist/hooks.js and hooks/hooks.json"
-  );
-}
+assert(releaseDeclaresHooks, "release with lifecycle hooks must document dist/hooks.js");
+const releaseHooksManifest = await readJson(releaseHooksManifestPath);
+assert(JSON.stringify(releaseHooksManifest) === JSON.stringify(hooksManifest), "release lifecycle hook manifest must match source");
 assert(Array.isArray(mcp.mcpServers.tokengraph.env_vars) && mcp.mcpServers.tokengraph.env_vars.includes("TOKENGRAPH_WORKSPACE_ROOT"), "tokengraph MCP config must forward TOKENGRAPH_WORKSPACE_ROOT");
 assert(sourceReadme.includes("TOKENGRAPH_WORKSPACE_ROOT"), "plugin README must document trusted workspace configuration");
 assert(codexHostGuide.includes("TOKENGRAPH_WORKSPACE_ROOT"), "Codex host guide must document trusted workspace configuration");
 assert(claudeHostGuide.includes("CLAUDE_PROJECT_DIR"), "Claude Code host guide must document its trusted project root");
 assert(/review and trust/i.test(codexHostGuide) && /hooks\s*=\s*false/.test(codexHostGuide), "Codex host guide must document hook trust and disablement");
 assert(claudeHostGuide.includes("disableAllHooks") && /interrupt|API failure/i.test(claudeHostGuide), "Claude host guide must document hook disablement and abnormal-stop limits");
-assert(/Phase 5.*remove this transition allowance/i.test(limitationsGuide), "limitations must document the stale committed-release hook transition");
+assert(/disabled|untrusted/i.test(limitationsGuide) && /interrupt|API failure/i.test(limitationsGuide), "limitations must document hook trust and abnormal-stop limits");
 assert(sourceReadme.includes("dist/hooks.js") && /session hash/i.test(sourceReadme), "plugin README must document hook packaging and pointer privacy");
 assert(/trusted workspace|workspace trust boundary/i.test(securityGuide), "security guide must document the trusted workspace boundary");
 const registeredToolNames = Array.from(distServer.matchAll(/registerTool\(\s*["'](tokengraph_[a-z0-9_]+)["']/g), (match) => match[1]);

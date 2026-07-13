@@ -1,28 +1,25 @@
 ---
 name: release-packaging-auditor
-description: Use TokenGraph routing plus local validation commands to audit coding-agent plugin release packaging and one-click install readiness.
-when_to_use: Use when a coding agent changes manifests, MCP config, release folders, skills, docs, or packaging gates.
+description: Use when plugin manifests, packaging scripts, generated release files, installability, or host readiness change.
 ---
 
 # Release Packaging Auditor
 
-Use this skill when changing plugin manifests, marketplace metadata, MCP config, release folders, package scripts, docs, or validation gates.
+## When not to use
 
-## MCP tools to call
+Do not use for source-only changes that cannot affect packaging, installation, validation, or host behavior.
 
-Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and use honest local validation fallback without claiming TokenGraph project routing ran.
+## Workflow
 
-1. Call `tokengraph_index_status` and refresh with `tokengraph_index_project` when needed.
-2. Call `tokengraph_plan_context` with the release or install-readiness task.
-3. Call `tokengraph_compress_output` for long build, package, smoke, validation, or diff output.
-4. Call `tokengraph_project_map` to confirm the repository shape and release/source separation.
-5. Call `tokengraph_show_wiki_page` when existing wiki pages can orient packaging or release decisions.
-6. Call `tokengraph_review_memories` for prior release, cache, or coding-agent install decisions.
+Follow the common lifecycle in the general `tokengraph` skill:
 
-## Operating rules
+1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root; if blocked, follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root: trusted root, task })` once and capture its taskId. Use `tokengraph_query_context` to locate manifests, scripts, validators, source/release boundaries, and install docs.
+3. Call `tokengraph_analyze({ taskId, root: trusted root, mode: "risk", changedFiles, diffSummary?, task? })`. Reuse the exact taskId and trusted root. Compress oversized gate failures with `tokengraph_compress({ taskId, root: trusted root, mode: "output", kind, text })`.
+4. Run exact source gates: `pnpm typecheck`, full tests (`pnpm test`), `pnpm build`, core smoke, full smoke, and `pnpm validate:plugin`. Run the package command required by the repository.
+5. Preserve generated-release discipline: edit source only, regenerate the release through `pnpm package:plugin -- --release`, and inspect the diff. Verify direct release startup/smoke, then install and verify an independently extracted ZIP. Confirm actual host registration, exposed surface, trusted workspace behavior, and readiness rather than relying on file presence.
+6. Call `tokengraph_task_report({ taskId, root: trusted root, disposition: "complete" })` only when every requested source, generated release, direct release, extracted ZIP, and host verification result is present and passing. Use `tokengraph_task_report({ taskId, root: trusted root, disposition: "pause" })` for approval, missing evidence, blocked setup after creation, or unfinished work.
 
-- Avoid raw reads until the marketplace, manifest, package script, validator, and release folder targets are identified.
-- Mark hypotheses clearly when diagnosing install failures or missing MCP tools.
-- Do not pretend MCP tools were used when they are unavailable. Fall back to targeted file reads and concrete commands.
-- Verify one-click install readiness with local evidence: marketplace path, required release files, validator, package command, smoke tests, and direct release MCP startup.
-- Normal user docs must not require `pnpm install`, `pnpm build`, TypeScript, cloud services, API keys, or telemetry.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use targeted local packaging checks, and claim no savings or graph-backed evidence.
+
+A host refresh may require a fresh task or `/reload-plugins`. The lifecycle hook checks reports and exact footers at normal Stop. If hooks are disabled, untrusted, unavailable, or the turn ends by interrupt or API failure, call the report explicitly and manually include its returned status.

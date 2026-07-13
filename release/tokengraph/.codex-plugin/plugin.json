@@ -1,6 +1,6 @@
 {
   "name": "tokengraph",
-  "version": "0.19.0+codex.20260712220000",
+  "version": "0.20.0",
   "description": "Reduce wasted coding-agent context with local code, SQL, memory, and log routing.",
   "author": {
     "name": "Mujadarah",
@@ -27,6 +27,7 @@
     "category": "Developer Tools",
     "capabilities": [
       "MCP",
+      "Lifecycle Hooks",
       "Setup Diagnostics",
       "Local Indexing",
       "Code Intelligence",

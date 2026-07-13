@@ -8650,7 +8650,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
     ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref);
     const schOrFunc = root.refs[ref];
     if (schOrFunc) return schOrFunc;
-    let _sch = resolve6.call(this, root, ref);
+    let _sch = resolve8.call(this, root, ref);
     if (_sch === void 0) {
       const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
       const { schemaId } = this.opts;
@@ -8676,7 +8676,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve6(root, ref) {
+  function resolve8(root, ref) {
     let sch;
     while (typeof (sch = this.refs[ref]) == "string") ref = sch;
     return sch || this.schemas[ref] || resolveSchema.call(this, root, ref);
@@ -9126,55 +9126,55 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     else if (typeof uri === "object") uri = parse4(serialize(uri, options), options);
     return uri;
   }
-  function resolve6(baseURI, relativeURI, options) {
+  function resolve8(baseURI, relativeURI, options) {
     const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
     const resolved = resolveComponent(parse4(baseURI, schemelessOptions), parse4(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
     return serialize(resolved, schemelessOptions);
   }
-  function resolveComponent(base, relative4, options, skipNormalization) {
+  function resolveComponent(base2, relative6, options, skipNormalization) {
     const target = {};
     if (!skipNormalization) {
-      base = parse4(serialize(base, options), options);
-      relative4 = parse4(serialize(relative4, options), options);
+      base2 = parse4(serialize(base2, options), options);
+      relative6 = parse4(serialize(relative6, options), options);
     }
     options = options || {};
-    if (!options.tolerant && relative4.scheme) {
-      target.scheme = relative4.scheme;
-      target.userinfo = relative4.userinfo;
-      target.host = relative4.host;
-      target.port = relative4.port;
-      target.path = removeDotSegments(relative4.path || "");
-      target.query = relative4.query;
+    if (!options.tolerant && relative6.scheme) {
+      target.scheme = relative6.scheme;
+      target.userinfo = relative6.userinfo;
+      target.host = relative6.host;
+      target.port = relative6.port;
+      target.path = removeDotSegments(relative6.path || "");
+      target.query = relative6.query;
     } else {
-      if (relative4.userinfo !== void 0 || relative4.host !== void 0 || relative4.port !== void 0) {
-        target.userinfo = relative4.userinfo;
-        target.host = relative4.host;
-        target.port = relative4.port;
-        target.path = removeDotSegments(relative4.path || "");
-        target.query = relative4.query;
+      if (relative6.userinfo !== void 0 || relative6.host !== void 0 || relative6.port !== void 0) {
+        target.userinfo = relative6.userinfo;
+        target.host = relative6.host;
+        target.port = relative6.port;
+        target.path = removeDotSegments(relative6.path || "");
+        target.query = relative6.query;
       } else {
-        if (!relative4.path) {
-          target.path = base.path;
-          if (relative4.query !== void 0) target.query = relative4.query;
-          else target.query = base.query;
+        if (!relative6.path) {
+          target.path = base2.path;
+          if (relative6.query !== void 0) target.query = relative6.query;
+          else target.query = base2.query;
         } else {
-          if (relative4.path[0] === "/") target.path = removeDotSegments(relative4.path);
+          if (relative6.path[0] === "/") target.path = removeDotSegments(relative6.path);
           else {
-            if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) target.path = "/" + relative4.path;
-            else if (!base.path) target.path = relative4.path;
-            else target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative4.path;
+            if ((base2.userinfo !== void 0 || base2.host !== void 0 || base2.port !== void 0) && !base2.path) target.path = "/" + relative6.path;
+            else if (!base2.path) target.path = relative6.path;
+            else target.path = base2.path.slice(0, base2.path.lastIndexOf("/") + 1) + relative6.path;
             target.path = removeDotSegments(target.path);
           }
-          target.query = relative4.query;
+          target.query = relative6.query;
         }
-        target.userinfo = base.userinfo;
-        target.host = base.host;
-        target.port = base.port;
+        target.userinfo = base2.userinfo;
+        target.host = base2.host;
+        target.port = base2.port;
       }
-      target.scheme = base.scheme;
+      target.scheme = base2.scheme;
     }
-    target.fragment = relative4.fragment;
+    target.fragment = relative6.fragment;
     return target;
   }
   function equal(uriA, uriB, options) {
@@ -9300,7 +9300,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
   const fastUri = {
     SCHEMES,
     normalize: normalize2,
-    resolve: resolve6,
+    resolve: resolve8,
     resolveComponent,
     equal,
     serialize,
@@ -16227,14 +16227,14 @@ function inputRequiredRoundsExceededMessage(method, maxRounds) {
   return `Multi-round-trip request '${method}' still required input after ${maxRounds} rounds (inputRequired.maxRounds)`;
 }
 function sleep(ms, signal) {
-  return new Promise((resolve6, reject) => {
+  return new Promise((resolve8, reject) => {
     if (signal?.aborted) {
       reject(signal.reason instanceof SdkError ? signal.reason : new SdkError(SdkErrorCode.RequestTimeout, String(signal.reason)));
       return;
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve6();
+      resolve8();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
@@ -17100,7 +17100,7 @@ var Protocol = class {
     const flowStartedAt = Date.now();
     let onAbort;
     let cleanupMessageId;
-    return new Promise((resolve6, reject) => {
+    return new Promise((resolve8, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -17168,7 +17168,7 @@ var Protocol = class {
         }
         if (decoded.kind === "invalid") return reject(decoded.error);
         if (decoded.kind === "input_required") {
-          if (options?.allowInputRequired === true) return resolve6(manualInputRequiredValue(decoded));
+          if (options?.allowInputRequired === true) return resolve8(manualInputRequiredValue(decoded));
           const flow = {
             codec,
             request,
@@ -17180,11 +17180,11 @@ var Protocol = class {
               params
             }, resultSchema, legOptions)
           };
-          return resolve6(this._resolveNonCompleteResult(decoded, flow));
+          return resolve8(this._resolveNonCompleteResult(decoded, flow));
         }
         const result = decoded.result;
         validateStandardSchema(resultSchema, result).then((parseResult) => {
-          if (parseResult.success) resolve6(parseResult.data);
+          if (parseResult.success) resolve8(parseResult.data);
           else reject(new SdkError(SdkErrorCode.InvalidResult, `Invalid result for ${request.method}: ${parseResult.error}`));
         }, reject);
       });
@@ -17321,8 +17321,8 @@ var Protocol = class {
 function isPlainObject$1(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-function mergeCapabilities(base, additional) {
-  const result = { ...base };
+function mergeCapabilities(base2, additional) {
+  const result = { ...base2 };
   for (const key in additional) {
     const k = key;
     const addValue = additional[k];
@@ -19008,7 +19008,7 @@ var StdioServerTransport = class {
   }
   send(message) {
     if (this._closed) return Promise.reject(/* @__PURE__ */ new Error("StdioServerTransport is closed"));
-    return new Promise((resolve6, reject) => {
+    return new Promise((resolve8, reject) => {
       const json = serializeMessage(message);
       let settled = false;
       const onError = (error2) => {
@@ -19023,14 +19023,14 @@ var StdioServerTransport = class {
         settled = true;
         this._stdout.off("error", onError);
         this._stdout.off("drain", onDrain);
-        resolve6();
+        resolve8();
       };
       this._stdout.once("error", onError);
       if (this._stdout.write(json)) {
         if (settled) return;
         settled = true;
         this._stdout.off("error", onError);
-        resolve6();
+        resolve8();
       } else if (!settled) this._stdout.once("drain", onDrain);
     });
   }
@@ -19084,14 +19084,14 @@ var StdioConnectionChannel = class {
   */
   async whenRequestsAnswered(timeoutMs) {
     if (this._closed || this._pendingRequests.size === 0) return true;
-    return await new Promise((resolve6) => {
+    return await new Promise((resolve8) => {
       const waiter = () => {
         clearTimeout(timer);
-        resolve6(true);
+        resolve8(true);
       };
       const timer = setTimeout(() => {
         this._drainWaiters = this._drainWaiters.filter((pending) => pending !== waiter);
-        resolve6(false);
+        resolve8(false);
       }, timeoutMs);
       this._drainWaiters.push(waiter);
     });
@@ -19432,9 +19432,10 @@ function toError(value) {
 
 // src/server.ts
 import process4 from "node:process";
-import { access, realpath } from "node:fs/promises";
+import { createHash as createHash5, randomUUID as randomUUID6 } from "node:crypto";
+import { access, realpath as realpath3 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname as dirname5, isAbsolute as isAbsolute2, join as join6, parse as parse3, relative as relative3, resolve as resolve5 } from "node:path";
+import { dirname as dirname5, isAbsolute as isAbsolute4, join as join8, parse as parse3, relative as relative5, resolve as resolve7 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/core/architectureRules.ts
@@ -19456,7 +19457,7 @@ var PATTERN_FIELDS = [
 var PROBE = `${"a".repeat(12e3)}!`;
 var TIMEOUT_MS = 250;
 function assertSafePattern(pattern) {
-  return new Promise((resolve6, reject) => {
+  return new Promise((resolve8, reject) => {
     const worker = new Worker(
       `const { parentPort, workerData } = require("node:worker_threads");
 try {
@@ -19474,7 +19475,7 @@ try {
       clearTimeout(timeout);
       void worker.terminate();
       if (error2) reject(error2);
-      else resolve6();
+      else resolve8();
     };
     const timeout = setTimeout(() => {
       finish(new Error("pattern evaluation exceeded the safety time limit"));
@@ -19831,13 +19832,70 @@ async function applyMarketplaceWarnings(root, report) {
 import { readFile as readFile4 } from "node:fs/promises";
 
 // src/core/persistence.ts
-import { mkdir as mkdir3, readFile as readFile3, rm as rm3 } from "node:fs/promises";
-import { isAbsolute, join as join3, relative, resolve as resolve3 } from "node:path";
+import { readFile as readFile3, rm as rm3 } from "node:fs/promises";
+import { isAbsolute as isAbsolute2, join as join3, relative as relative2, resolve as resolve3 } from "node:path";
 
 // src/core/storage.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { mkdir as mkdir2, readFile as readFile2, rename as rename2, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname2, join as join2, resolve as resolve2 } from "node:path";
+import { lstat, mkdir as mkdir2, open, readFile as readFile2, realpath, rename as rename2, rm as rm2, stat, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname2, isAbsolute, join as join2, relative, resolve as resolve2 } from "node:path";
+var FILE_LOCK_ATTEMPTS = 200;
+var FILE_LOCK_WAIT_MS = 10;
+var FILE_LOCK_STALE_MS = 3e4;
+async function wait(milliseconds) {
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+function isTransientWindowsFsError(error2) {
+  return process.platform === "win32" && ["EPERM", "EBUSY", "EACCES"].includes(String(error2.code));
+}
+async function retryTransientWindowsFs(operation) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error2) {
+      if (!isTransientWindowsFsError(error2) || attempt >= 19) throw error2;
+      await wait(FILE_LOCK_WAIT_MS);
+    }
+  }
+}
+async function withFileLock(lockPath, operation) {
+  await mkdir2(dirname2(lockPath), { recursive: true });
+  for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        return await operation();
+      } finally {
+        await handle.close();
+        await retryTransientWindowsFs(async () => rm2(lockPath, { force: true }));
+      }
+    } catch (error2) {
+      if (error2.code !== "EEXIST" && !isTransientWindowsFsError(error2)) throw error2;
+      try {
+        const lockStats = await stat(lockPath);
+        if (Date.now() - lockStats.mtimeMs > FILE_LOCK_STALE_MS) {
+          await retryTransientWindowsFs(async () => rm2(lockPath, { force: true }));
+        }
+      } catch (lockError) {
+        if (lockError.code !== "ENOENT" && !isTransientWindowsFsError(lockError)) throw lockError;
+      }
+      await wait(FILE_LOCK_WAIT_MS);
+    }
+  }
+  throw new Error("Timed out waiting for a persistence file lock.");
+}
+async function canonicalPersistenceLockKey(root, ...segments) {
+  const resolvedRoot = resolve2(root);
+  let canonicalRoot;
+  try {
+    canonicalRoot = await realpath(resolvedRoot);
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+    canonicalRoot = resolvedRoot;
+  }
+  const key = join2(canonicalRoot, ...segments);
+  return process.platform === "win32" ? key.toLowerCase() : key;
+}
 async function writeJsonAtomic(path, value) {
   await writeTextAtomic(path, `${JSON.stringify(value, null, 2)}
 `);
@@ -19852,6 +19910,37 @@ async function writeTextAtomic(path, content) {
   } finally {
     await rm2(tempPath, { force: true });
   }
+}
+async function resolveConfinedPath(root, relativeFile, createParents = false) {
+  if (!relativeFile || isAbsolute(relativeFile) || relativeFile.replaceAll("\\", "/").split("/").includes("..")) {
+    throw new Error("Confined path must be a safe relative file path.");
+  }
+  const canonicalRoot = await realpath(resolve2(root));
+  const segments = relativeFile.replaceAll("\\", "/").split("/").filter(Boolean);
+  const fileName = segments.pop();
+  if (!fileName) throw new Error("Confined path must name a file.");
+  let parent = canonicalRoot;
+  for (const segment of segments) {
+    const candidate = join2(parent, segment);
+    if (createParents) await mkdir2(candidate, { recursive: false }).catch((error2) => {
+      if (error2.code !== "EEXIST") throw error2;
+    });
+    parent = await realpath(candidate);
+    const confined = relative(canonicalRoot, parent);
+    if (!confined || confined.startsWith("..") || isAbsolute(confined)) {
+      throw new Error("Path resolves outside the trusted workspace.");
+    }
+  }
+  const filePath = join2(parent, fileName);
+  try {
+    if ((await lstat(filePath)).isSymbolicLink()) throw new Error("Confined file path cannot be a symbolic link.");
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+  }
+  return filePath;
+}
+async function writeTextAtomicConfined(root, relativeFile, content) {
+  await writeTextAtomic(await resolveConfinedPath(root, relativeFile, true), content);
 }
 async function quarantineCorruptJson(path) {
   const corruptPath = `${path}.corrupt-${Date.now()}-${randomUUID2().slice(0, 8)}`;
@@ -19911,46 +20000,68 @@ async function loadProjectIndex(root) {
     throw error2;
   }
 }
+var SAFE_WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
+function isStringArray(value) {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
 function isWikiManifest(value) {
   if (!value || typeof value !== "object") {
     return false;
   }
   const candidate = value;
   return candidate.schemaVersion === 1 && typeof candidate.fingerprint === "string" && typeof candidate.generatedAt === "string" && Array.isArray(candidate.pages) && candidate.pages.every(
-    (page2) => page2 && typeof page2 === "object" && typeof page2.slug === "string" && typeof page2.title === "string" && typeof page2.estimatedTokens === "number" && typeof page2.file === "string"
+    (page2) => page2 && typeof page2 === "object" && typeof page2.slug === "string" && SAFE_WIKI_SLUG_PATTERN.test(page2.slug) && typeof page2.title === "string" && typeof page2.estimatedTokens === "number" && typeof page2.file === "string" && (page2.sourceFingerprints === void 0 || isStringArray(page2.sourceFingerprints)) && (page2.backlinks === void 0 || isStringArray(page2.backlinks)) && (page2.contradictions === void 0 || isStringArray(page2.contradictions)) && (page2.freshness === void 0 || ["fresh", "stale"].includes(page2.freshness))
   );
 }
 function isSafeWikiPageFile(root, file) {
-  if (!file || isAbsolute(file) || file.startsWith("../") || file.startsWith("..\\")) {
+  if (!file || isAbsolute2(file) || file.startsWith("../") || file.startsWith("..\\")) {
     return false;
   }
   const directory = resolve3(wikiDir(root));
   const resolved = resolve3(directory, file);
-  const relativePath = relative(directory, resolved);
-  return Boolean(relativePath) && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+  const relativePath = relative2(directory, resolved);
+  return Boolean(relativePath) && !relativePath.startsWith("..") && !isAbsolute2(relativePath);
 }
 async function saveProjectWiki(root, wiki) {
-  await mkdir3(wikiDir(root), { recursive: true });
+  if (wiki.pages.some((page2) => !SAFE_WIKI_SLUG_PATTERN.test(page2.slug))) {
+    throw new Error("Wiki page slugs must be safe relative logical identifiers.");
+  }
+  const previous = await loadProjectWiki(root);
   const pages = wiki.pages.map((page2) => ({
     slug: page2.slug,
     title: page2.title,
     estimatedTokens: page2.estimatedTokens,
-    file: `${page2.slug}.md`
+    file: `${page2.slug}.md`,
+    ...page2.sourceFingerprints === void 0 ? {} : { sourceFingerprints: page2.sourceFingerprints },
+    ...page2.backlinks === void 0 ? {} : { backlinks: page2.backlinks },
+    ...page2.contradictions === void 0 ? {} : { contradictions: page2.contradictions },
+    ...page2.freshness === void 0 ? {} : { freshness: page2.freshness }
   }));
   for (const wikiPage of wiki.pages) {
-    await writeTextAtomic(join3(wikiDir(root), `${wikiPage.slug}.md`), wikiPage.body);
+    const relativeFile = join3(".tokengraph", "wiki", `${wikiPage.slug}.md`);
+    const path = await resolveConfinedPath(root, relativeFile, true);
+    let existing;
+    try {
+      existing = await readFile3(path, "utf8");
+    } catch (error2) {
+      if (error2.code !== "ENOENT") throw error2;
+    }
+    if (existing !== wikiPage.body) await writeTextAtomic(path, wikiPage.body);
   }
+  const retained = new Set(pages.map((page2) => page2.file));
+  await Promise.all((previous?.pages ?? []).filter((page2) => !retained.has(`${page2.slug}.md`)).map(async (page2) => rm3(await resolveConfinedPath(root, join3(".tokengraph", "wiki", `${page2.slug}.md`)), { force: true })));
   const manifest = {
     schemaVersion: wiki.schemaVersion,
     fingerprint: wiki.fingerprint,
     generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
     pages
   };
-  await writeJsonAtomic(wikiManifestPath(root), manifest);
+  await writeTextAtomicConfined(root, join3(".tokengraph", "wiki", "manifest.json"), `${JSON.stringify(manifest, null, 2)}
+`);
 }
 async function loadProjectWiki(root) {
   try {
-    const manifest = JSON.parse(await readFile3(wikiManifestPath(root), "utf8"));
+    const manifest = JSON.parse(await readFile3(await resolveConfinedPath(root, join3(".tokengraph", "wiki", "manifest.json")), "utf8"));
     if (!isWikiManifest(manifest) || !manifest.pages.every((page2) => isSafeWikiPageFile(root, page2.file))) {
       return void 0;
     }
@@ -19960,7 +20071,11 @@ async function loadProjectWiki(root) {
         slug: manifestPage.slug,
         title: manifestPage.title,
         estimatedTokens: manifestPage.estimatedTokens,
-        body: await readFile3(join3(wikiDir(root), manifestPage.file), "utf8")
+        body: await readFile3(await resolveConfinedPath(root, join3(".tokengraph", "wiki", manifestPage.file)), "utf8"),
+        ...manifestPage.sourceFingerprints === void 0 ? {} : { sourceFingerprints: manifestPage.sourceFingerprints },
+        ...manifestPage.backlinks === void 0 ? {} : { backlinks: manifestPage.backlinks },
+        ...manifestPage.contradictions === void 0 ? {} : { contradictions: manifestPage.contradictions },
+        ...manifestPage.freshness === void 0 ? {} : { freshness: manifestPage.freshness }
       });
     }
     return {
@@ -20140,7 +20255,10 @@ function estimateSavings(originalText, compressedText) {
 function tokenize(text) {
   return Array.from(
     new Set(
-      text.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9_/$.[\]-]+/i).map((part) => part.trim()).filter((part) => part.length > 1)
+      text.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9_/$.[\]-]+/i).flatMap((part) => {
+        const trimmed = part.trim();
+        return [trimmed, ...trimmed.split(/[_/.$\[\]-]+/)];
+      }).filter((part) => part.length > 1)
     )
   );
 }
@@ -20285,6 +20403,17 @@ function rankedSql(project, terms) {
   }
   return rows.filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 }
+function selectSqlAcrossFiles(rows, limit) {
+  const representatives = [];
+  const represented = /* @__PURE__ */ new Set();
+  for (const row of rows) {
+    if (represented.has(row.filePath)) continue;
+    represented.add(row.filePath);
+    representatives.push(row);
+  }
+  const selected = [...representatives, ...rows.filter((row) => !representatives.includes(row))];
+  return selected.slice(0, limit);
+}
 function planText(plan) {
   return JSON.stringify(plan);
 }
@@ -20312,8 +20441,35 @@ function trimPlanToBudget(plan) {
       next.filesToAvoid = next.filesToAvoid.slice(0, -1);
       budgetExclusions.add("Removed low-priority avoid-list entries to stay within the estimated context budget.");
     } else if (next.relevantSql.length) {
-      next.relevantSql = next.relevantSql.slice(0, -1);
-      budgetExclusions.add("Excluded lower-ranked SQL objects to stay within the estimated context budget.");
+      const pathCounts = /* @__PURE__ */ new Map();
+      for (const sql of next.relevantSql) pathCounts.set(sql.filePath, (pathCounts.get(sql.filePath) ?? 0) + 1);
+      let redundantIndex = -1;
+      for (let index = next.relevantSql.length - 1; index >= 0; index -= 1) {
+        if ((pathCounts.get(next.relevantSql[index].filePath) ?? 0) > 1) {
+          redundantIndex = index;
+          break;
+        }
+      }
+      if (redundantIndex < 0 && next.taskType === "database") {
+        if (next.relevantTests.length) {
+          next.relevantTests = next.relevantTests.slice(0, -1);
+          budgetExclusions.add("Excluded lower-ranked tests to preserve focused SQL evidence within the context budget.");
+        } else if (next.relevantMemories.length) {
+          next.relevantMemories = next.relevantMemories.slice(0, -1);
+          budgetExclusions.add("Excluded lower-ranked memories to preserve focused SQL evidence within the context budget.");
+        } else if (next.relevantFiles.length > 1) {
+          next.relevantFiles = next.relevantFiles.slice(0, -1);
+          budgetExclusions.add("Excluded lower-ranked files to preserve focused SQL evidence within the context budget.");
+        } else {
+          budgetExclusions.add("Estimated compact database plan retains one SQL object per relevant migration despite exceeding the requested token budget.");
+          next.budgetExclusions = Array.from(budgetExclusions);
+          break;
+        }
+      } else {
+        const removeAt = redundantIndex >= 0 ? redundantIndex : next.relevantSql.length - 1;
+        next.relevantSql = next.relevantSql.filter((_, index) => index !== removeAt);
+        budgetExclusions.add("Excluded a lower-ranked SQL object to stay within the estimated context budget.");
+      }
     } else if (next.relevantTests.length) {
       next.relevantTests = next.relevantTests.slice(0, -1);
       budgetExclusions.add("Excluded lower-ranked tests to stay within the estimated context budget.");
@@ -20345,7 +20501,7 @@ async function buildContextPlan(input) {
   const allRelevantSql = rankedSql(input.project, terms);
   const relevantFiles = allRelevantFiles.slice(0, budget.maxFiles);
   const relevantTests = allRelevantTests.slice(0, Math.max(1, Math.ceil(budget.maxFiles / 2)));
-  const relevantSql = allRelevantSql.slice(0, budget.maxSqlObjects);
+  const relevantSql = selectSqlAcrossFiles(allRelevantSql, budget.maxSqlObjects);
   const relevantMemories = rankedMemories(input.memories, terms, budget.maxMemories);
   const budgetExclusions = [];
   if (allRelevantFiles.length > relevantFiles.length) budgetExclusions.push(`${allRelevantFiles.length - relevantFiles.length} lower-ranked file(s) excluded by profile or explicit file budget.`);
@@ -20506,7 +20662,19 @@ async function compressContext(input) {
   });
   const projectPaths = new Set(input.project.files.map((file) => file.path));
   const preservedReads = extractFileReads(preservedConstraints, projectPaths);
-  const recommendedFirstReads = mergeFirstReads(preservedReads, plan.recommendedFirstReads);
+  const relevantTestPaths = new Set(plan.relevantTests.map((test) => test.path));
+  const testDependencies = input.project.imports.filter((edge) => relevantTestPaths.has(edge.filePath) && edge.resolvedPath && projectPaths.has(edge.resolvedPath)).map((edge) => ({ path: edge.resolvedPath, reason: `Imported by focused test ${edge.filePath}.`, score: 80 }));
+  const plannedEvidenceReads = [
+    ...plan.recommendedFirstReads,
+    ...plan.relevantTests,
+    ...testDependencies,
+    ...plan.relevantSql.map((entry) => ({
+      path: entry.filePath,
+      reason: entry.reason,
+      score: entry.score
+    }))
+  ];
+  const recommendedFirstReads = mergeFirstReads(preservedReads, plannedEvidenceReads);
   const memoryRefs = referencedMemories([...plan.relevantMemories, ...input.memories], contextForPlanning, PROFILE_DEFAULTS[profile].maxMemories);
   const wikiRefs = referencedWikiPages(input.wiki, contextForPlanning);
   const rawLineCount = text ? text.split(/\r?\n/).filter((line) => line.trim().length > 0).length : 0;
@@ -20605,11 +20773,313 @@ function compressOutput(input) {
   };
 }
 
+// src/core/compactResponses.ts
+var NO_RAW_READ_GUIDANCE = "Do not perform raw file reads; rely only on returned/indexed context and ask for an explicit policy change if evidence is insufficient.";
+function unique2(values) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+function uniqueVerbatim(values) {
+  return Array.from(new Set(values));
+}
+function compactFiles(files) {
+  const selected = /* @__PURE__ */ new Map();
+  for (const file of files) {
+    const path = "path" in file ? file.path : file.filePath;
+    if (!selected.has(path)) selected.set(path, { path, reason: compactReason(file.reason) });
+  }
+  return [...selected.values()];
+}
+function compactReason(reason) {
+  if (/matches task terms/i.test(reason)) return "Task match.";
+  if (/linked evidence/i.test(reason)) return "Memory evidence.";
+  if (/imported by focused test/i.test(reason)) return "Test dependency.";
+  if (/\b(table columns|policy on|index on|sql)\b/i.test(reason)) return "SQL evidence.";
+  return reason.length <= 48 ? reason : `${reason.slice(0, 45).trimEnd()}...`;
+}
+function compactWarnings(warnings) {
+  return unique2(warnings.map((warning) => {
+    const count = warning.match(/^(\d+) lower-ranked .* excluded/i)?.[1];
+    if (count) return `${count} lower-ranked item(s) omitted.`;
+    if (/^manual review: tenant isolation changed or appears in affected sql/i.test(warning)) return "Review tenant isolation and affected SQL.";
+    if (/^manual review: rls policy behavior is involved/i.test(warning)) return "Review RLS behavior.";
+    if (/^manual review: audit logging behavior is involved/i.test(warning)) return "Review audit logging.";
+    if (/^manual review: database migration changes can affect persisted data/i.test(warning)) return "Review migration data effects.";
+    const omitted = warning.match(/^(\d+) non-critical line\(s\) omitted/i)?.[1];
+    if (omitted) return `${omitted} non-critical line(s) omitted.`;
+    if (/failure needs a targeted first read because no indexed path was detected/i.test(warning)) return "No indexed path detected; verify a targeted read.";
+    return warning;
+  }));
+}
+function firstReadIndices(files, paths, limit = 2) {
+  return unique2(paths).map((path) => files.findIndex((file) => file.path === path)).filter((index) => index >= 0).slice(0, limit);
+}
+function hasSqlIntent(task) {
+  return /\b(sql|database|table|migration|rls|policy|postgres|supabase|schema|index)\b/i.test(task) || /\b[a-z0-9_]+_(?:idx|pkey|fkey|key)\b/i.test(task);
+}
+function focusedSql(files, task) {
+  if (!files.length) return [];
+  const byPath2 = /* @__PURE__ */ new Map();
+  for (const file of files) {
+    const current = byPath2.get(file.filePath);
+    if (!current || file.score > current.score) byPath2.set(file.filePath, file);
+  }
+  const normalize2 = (term) => term.length > 4 && term.endsWith("s") ? term.slice(0, -1) : term;
+  const terms = task.toLowerCase().match(/[a-z0-9]+/g)?.map(normalize2).filter((term) => term.length >= 4 && !["review", "change", "policy", "migration", "database", "table", "tenant"].includes(term)) ?? [];
+  const scored = [...byPath2.values()].map((file) => ({
+    file,
+    lexical: terms.filter((term) => files.some((candidate) => {
+      if (candidate.filePath !== file.filePath) return false;
+      const candidateTerms = `${candidate.filePath} ${candidate.name}`.toLowerCase().match(/[a-z0-9]+/g)?.map(normalize2) ?? [];
+      return candidateTerms.includes(term);
+    })).length
+  }));
+  if (scored.some((entry) => entry.lexical > 0)) return scored.filter((entry) => entry.lexical > 0).map((entry) => entry.file);
+  const maximum = Math.max(...scored.map((entry) => entry.file.score));
+  return scored.filter((entry) => entry.file.score === maximum).map((entry) => entry.file);
+}
+function guidance(allowRawReads = true, lowConfidence = false) {
+  if (!allowRawReads) return NO_RAW_READ_GUIDANCE;
+  return lowConfidence ? "Low confidence: verify the named file or failure segment." : "Use targeted reads only when confidence or warnings require verification.";
+}
+function testsExplicitlyLinkedToFiles(project, sourceFiles) {
+  const sources = new Set(sourceFiles);
+  const tests = new Set(project.files.filter((file) => file.isTest).map((file) => file.path));
+  return unique2(project.imports.filter((edge) => tests.has(edge.filePath) && edge.resolvedPath !== void 0 && sources.has(edge.resolvedPath)).map((edge) => edge.filePath));
+}
+function base(options, input) {
+  const confidence = input.confidence ?? "medium";
+  const response = {
+    constraints: uniqueVerbatim(options.constraints ?? []),
+    files: input.files ?? [],
+    firstReads: input.firstReads ?? [],
+    tests: unique2(input.tests ?? []),
+    commands: unique2(input.commands ?? []),
+    confidence,
+    rawReadGuidance: input.rawReadGuidance ?? guidance(options.allowRawReads, confidence === "low")
+  };
+  const warnings = compactWarnings(input.warnings ?? []);
+  const conflicts = unique2(input.conflicts ?? []);
+  if (warnings.length) response.warnings = warnings;
+  if (conflicts.length) response.conflicts = conflicts;
+  return response;
+}
+function compactModeEnvelope(_mode, result) {
+  return result;
+}
+function compactCompressionEnvelope(mode, result, estimates) {
+  return estimates ? { mode, result, estimates } : result;
+}
+function compactPrepareEnvelope(input) {
+  return input;
+}
+function compactPlanResponse(plan, options = {}) {
+  const sql = hasSqlIntent(plan.task) ? focusedSql(plan.relevantSql, plan.task) : [];
+  const files = compactFiles([...plan.recommendedFirstReads.slice(0, 3), ...plan.relevantTests, ...sql]);
+  const tests = plan.relevantTests.map((test) => test.path);
+  return base(options, {
+    files,
+    firstReads: firstReadIndices(files, plan.recommendedFirstReads.map((file) => file.path)),
+    tests,
+    commands: tests.map((test) => `pnpm test ${test}`),
+    confidence: plan.recommendedFirstReads.length ? "high" : files.length ? "medium" : "low",
+    warnings: plan.budgetExclusions,
+    conflicts: [],
+    rawReadGuidance: guidance(options.allowRawReads)
+  });
+}
+function compactFailureResponse(report, options = {}) {
+  const tests = unique2([
+    ...report.detectedTests ?? [],
+    ...(report.relatedFiles ?? []).map((file) => file.path).filter((path) => /(?:\.test|\.spec)\.[cm]?[jt]sx?$/.test(path))
+  ]);
+  const warnings = [
+    ...(report.hypotheses ?? []).map((hypothesis) => `${hypothesis.confidence} confidence hypothesis: ${hypothesis.statement}`)
+  ];
+  const files = compactFiles([
+    ...report.recommendedFirstReads ?? [],
+    ...(report.relatedFiles ?? []).filter((file) => /(?:\.test|\.spec)\.[cm]?[jt]sx?$/.test(file.path)),
+    ...options.includeSql ? focusedSql(report.relatedSql ?? [], "") : []
+  ]);
+  return base(options, {
+    files,
+    firstReads: firstReadIndices(files, report.recommendedFirstReads.map((file) => file.path)),
+    tests,
+    commands: report.recommendedCommands,
+    confidence: report.confidence,
+    warnings,
+    conflicts: [],
+    rawReadGuidance: guidance(options.allowRawReads, report.confidence === "low")
+  });
+}
+function compactRiskResponse(report, options = {}) {
+  const files = compactFiles([...report.affectedFiles, ...report.affectedTests, ...report.affectedSql]);
+  return base(options, {
+    files,
+    firstReads: firstReadIndices(files, [...report.affectedFiles, ...report.affectedTests].map((file) => file.path)),
+    tests: report.affectedTests.map((test) => test.path),
+    commands: report.recommendedTests,
+    confidence: report.riskLevel,
+    warnings: report.manualReviewWarnings,
+    conflicts: report.affectedRules.map((finding) => finding.message)
+  });
+}
+function compactCompressionResponse(report, options = {}) {
+  const task = report.compressedTask.split("\n", 1)[0] ?? "";
+  const firstReads = report.recommendedFirstReads.filter((file) => !file.path.endsWith(".sql"));
+  const sqlReads = hasSqlIntent(task) ? report.recommendedFirstReads.filter((file) => file.path.endsWith(".sql")) : [];
+  const taskTerms = task.toLowerCase().match(/[a-z0-9]+/g)?.filter((term) => term.length >= 4 && !["review", "context", "policy", "migration", "security", "tenant"].includes(term)) ?? [];
+  const sqlScores = sqlReads.map((file) => ({ file, score: taskTerms.filter((term) => file.path.toLowerCase().includes(term)).length }));
+  const sqlMaximum = Math.max(0, ...sqlScores.map((entry) => entry.score));
+  const selectedSql = sqlMaximum > 0 ? sqlScores.filter((entry) => entry.score === sqlMaximum).map((entry) => entry.file) : sqlReads.slice(0, 1);
+  const selected = [...firstReads, ...selectedSql];
+  const files = compactFiles(selected);
+  return base(options, {
+    files,
+    firstReads: firstReadIndices(files, selected.map((file) => file.path)),
+    tests: selected.map((file) => file.path).filter((path) => /(?:\.test|\.spec)\.[cm]?[jt]sx?$/.test(path)),
+    commands: selected.map((file) => file.path).filter((path) => /(?:\.test|\.spec)\.[cm]?[jt]sx?$/.test(path)).map((path) => `pnpm test ${path}`),
+    confidence: report.confidence,
+    warnings: report.omissions.filter((warning) => /non-critical|low confidence|wiki page/i.test(warning)),
+    conflicts: []
+  });
+}
+function compactRecallResponse(review, options = {}, sourceMemories = [], project) {
+  const bestScore = Math.max(0, ...review.matches.map((match) => match.score));
+  const relevantMatches = bestScore > 0 ? review.matches.filter((match) => match.score === bestScore) : review.matches.slice(0, 1);
+  const memories = relevantMatches.map((match) => ({
+    id: match.id,
+    title: match.title,
+    confidence: match.confidence,
+    action: match.action,
+    reason: match.reason
+  }));
+  const confidence = memories.some((memory) => memory.confidence === "low" || memory.action === "review") ? "low" : memories.length ? "medium" : "low";
+  const matchedIds = new Set(relevantMatches.map((match) => match.id));
+  const linkedFiles = compactFiles(sourceMemories.filter((memory) => matchedIds.has(memory.id)).flatMap((memory) => memory.linkedFiles.map((path) => ({ path, reason: `Linked evidence for recalled memory ${memory.title}.` }))));
+  const tests = unique2([...options.suggestedTests ?? [], ...project ? testsExplicitlyLinkedToFiles(project, linkedFiles.map((file) => file.path)) : []]);
+  return {
+    ...base(options, {
+      files: linkedFiles,
+      firstReads: firstReadIndices(linkedFiles, linkedFiles.map((file) => file.path)),
+      tests,
+      commands: tests.map((test) => `pnpm test ${test}`),
+      confidence,
+      warnings: [review.policy],
+      conflicts: relevantMatches.filter((match) => match.action === "review").map((match) => `${match.title}: ${match.reason}`)
+    }),
+    memories
+  };
+}
+function compactMemoryRecallResponse(sourceMemories, options = {}) {
+  const files = compactFiles(sourceMemories.flatMap(
+    (memory) => memory.linkedFiles.map((path) => ({ path, reason: `Linked evidence for recalled memory ${memory.title}.` }))
+  ));
+  return {
+    ...base(options, {
+      files,
+      firstReads: firstReadIndices(files, files.map((file) => file.path)),
+      confidence: sourceMemories.some((memory) => memory.confidence === "low") ? "low" : sourceMemories.length ? "medium" : "low",
+      warnings: sourceMemories.some((memory) => memory.confidence === "low") ? ["Verify low-confidence memory evidence before reuse."] : []
+    }),
+    memories: sourceMemories.map(({ id, type, title, confidence, status }) => ({ id, type, title, confidence, status }))
+  };
+}
+function compactWikiResponse(wiki, options = {}) {
+  const pages = wiki.pages.map((page2) => ({
+    slug: page2.slug,
+    title: page2.title,
+    freshness: page2.freshness ?? "fresh",
+    backlinks: page2.backlinks ?? []
+  }));
+  const stale = wiki.pages.filter((page2) => page2.freshness === "stale");
+  return {
+    ...base(options, {
+      confidence: stale.length ? "low" : pages.length ? "medium" : "low",
+      warnings: stale.map((page2) => `Wiki page ${page2.slug} is stale.`),
+      conflicts: wiki.pages.flatMap((page2) => (page2.contradictions ?? []).map((conflict) => `${page2.slug}: ${conflict}`))
+    }),
+    pages
+  };
+}
+
+// src/core/toolContracts.ts
+function compactToolResultEnvelope(structuredContent) {
+  return { content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
+}
+var tokenSavingProfileSchema = _enum(["conservative", "balanced", "aggressive"]);
+var contextCompressionKindSchema = _enum(["prompt", "memory", "diff", "sql", "wiki", "mixed"]);
+var compactResponseFields = {
+  constraints: array(string2().min(1)).optional(),
+  responseMode: _enum(["compact", "verbose"]).optional()
+};
+var prepareContextInputSchema = object({
+  root: string2().optional(),
+  task: string2().min(3),
+  profile: tokenSavingProfileSchema.optional(),
+  maxTokens: number2().int().min(1).optional(),
+  allowRawReads: boolean2().optional(),
+  ...compactResponseFields,
+  refreshIndex: boolean2().default(true),
+  host: _enum(["codex", "claude", "unknown"]).optional()
+});
+var queryContextInputSchema = object({
+  taskId: string2().uuid(),
+  root: string2().optional(),
+  mode: _enum(["overview", "search", "symbol", "sql", "wiki"]),
+  query: string2().min(1).optional(),
+  target: string2().min(1).optional(),
+  slug: string2().min(1).optional(),
+  limit: number2().int().min(1).max(50).optional(),
+  ...compactResponseFields
+}).superRefine((input, context) => {
+  if ((input.mode === "search" || input.mode === "sql") && !input.query) context.addIssue({ code: "custom", message: `${input.mode} mode requires query.` });
+  if (input.mode === "symbol" && !input.target) context.addIssue({ code: "custom", message: "symbol mode requires target." });
+});
+var compressInputSchema = object({
+  taskId: string2().uuid(),
+  root: string2().optional(),
+  mode: _enum(["output", "context"]),
+  kind: _enum(["test", "build", "install", "diff", "log"]).optional(),
+  text: string2().optional(),
+  maxLines: number2().int().min(1).max(200).optional(),
+  task: string2().min(1).optional(),
+  contentKind: contextCompressionKindSchema.optional(),
+  preserveRawReferences: boolean2().optional(),
+  ...compactResponseFields
+}).superRefine((input, context) => {
+  if (input.mode === "output" && (!input.kind || input.text === void 0)) context.addIssue({ code: "custom", message: "output mode requires kind and text." });
+  if (input.mode === "context" && (!input.task || !input.contentKind)) context.addIssue({ code: "custom", message: "context mode requires task and contentKind." });
+});
+var recallInputSchema = object({
+  taskId: string2().uuid(),
+  root: string2().optional(),
+  mode: _enum(["recall", "review"]),
+  query: string2().optional(),
+  limit: number2().int().min(1).max(100).optional(),
+  audit: boolean2().optional(),
+  ...compactResponseFields
+});
+var analyzeInputSchema = object({
+  taskId: string2().uuid(),
+  root: string2().optional(),
+  mode: _enum(["failure", "risk", "architecture"]),
+  kind: _enum(["test", "build", "runtime", "install", "log"]).optional(),
+  text: string2().min(1).optional(),
+  changedFiles: array(string2().min(1)).min(1).optional(),
+  diffSummary: string2().optional(),
+  task: string2().optional(),
+  files: array(string2()).optional(),
+  ...compactResponseFields
+}).superRefine((input, context) => {
+  if (input.mode === "failure" && (!input.kind || !input.text)) context.addIssue({ code: "custom", message: "failure mode requires kind and text." });
+  if (input.mode === "risk" && !input.changedFiles) context.addIssue({ code: "custom", message: "risk mode requires changedFiles." });
+});
+
 // src/core/fileScanner.ts
 var ignorePackage = __toESM(require_ignore(), 1);
 import { createHash } from "node:crypto";
-import { readdir, readFile as readFile5, stat } from "node:fs/promises";
-import { basename, dirname as dirname3, extname, join as join4, normalize, relative as relative2, sep } from "node:path";
+import { readdir, readFile as readFile5, stat as stat2 } from "node:fs/promises";
+import { basename, dirname as dirname3, extname, join as join4, normalize, relative as relative3, sep } from "node:path";
 var DEPENDENCY_DIRS = /* @__PURE__ */ new Set(["node_modules", "vendor", "bower_components"]);
 var BUILD_DIRS = /* @__PURE__ */ new Set([".next", "dist", "build", "out", "coverage", ".turbo", ".cache", ".parcel-cache"]);
 var SUPPORTED_EXTENSIONS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".sql", ".md", ".mdx"]);
@@ -20635,10 +21105,10 @@ function exclusionForName(name) {
   if (SECRET_FILE_PATTERNS.some((pattern) => pattern.test(name))) return "secret";
   return void 0;
 }
-async function loadIgnoreScopes(base, inherited = []) {
+async function loadIgnoreScopes(base2, inherited = []) {
   let content;
   try {
-    content = await readFile5(join4(base, ".gitignore"), "utf8");
+    content = await readFile5(join4(base2, ".gitignore"), "utf8");
   } catch (error2) {
     if (error2.code !== "ENOENT") {
       throw error2;
@@ -20647,11 +21117,11 @@ async function loadIgnoreScopes(base, inherited = []) {
   }
   const matcher = createIgnore();
   matcher.add(content);
-  return [...inherited, { base, matcher }];
+  return [...inherited, { base: base2, matcher }];
 }
 function isIgnored(scopes, absolutePath, isDirectory) {
-  return scopes.some(({ base, matcher }) => {
-    const path = normalizePath(relative2(base, absolutePath));
+  return scopes.some(({ base: base2, matcher }) => {
+    const path = normalizePath(relative3(base2, absolutePath));
     return Boolean(path) && matcher.ignores(isDirectory ? `${path}/` : path);
   });
 }
@@ -20859,7 +21329,7 @@ function candidatePathsForBase(root, basePath) {
     `${normalized}/index.js`,
     `${normalized}/index.jsx`
   ]);
-  return candidates.map((candidate) => normalizePath(relative2(root, join4(root, candidate))));
+  return candidates.map((candidate) => normalizePath(relative3(root, join4(root, candidate))));
 }
 function resolveLocalImports(root, graph) {
   const indexedPaths = new Set(graph.files.map((file) => file.path));
@@ -20891,13 +21361,13 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
   try {
     entries = await readdir(current, { withFileTypes: true });
   } catch {
-    addUnreadable(graph, normalizePath(relative2(root, current)));
+    addUnreadable(graph, normalizePath(relative3(root, current)));
     return;
   }
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
     const absolute = join4(current, entry.name);
-    const relativePath = normalizePath(relative2(root, absolute));
+    const relativePath = normalizePath(relative3(root, absolute));
     if (entry.name === ".tokengraph") {
       continue;
     }
@@ -20937,7 +21407,7 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
     }
     let fileStat;
     try {
-      fileStat = await stat(absolute);
+      fileStat = await stat2(absolute);
     } catch {
       addUnreadable(graph, relativePath);
       continue;
@@ -21016,13 +21486,13 @@ async function scanProjectFileMetadata(root, options) {
     try {
       entries = await readdir(current, { withFileTypes: true });
     } catch {
-      rows.push({ path: normalizePath(relative2(root, current)), reason: "unreadable" });
+      rows.push({ path: normalizePath(relative3(root, current)), reason: "unreadable" });
       return;
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       const absolute = join4(current, entry.name);
-      const relativePath = normalizePath(relative2(root, absolute));
+      const relativePath = normalizePath(relative3(root, absolute));
       if (entry.name === ".tokengraph") continue;
       if (relativePath && isIgnored(currentScopes, absolute, entry.isDirectory())) {
         rows.push({ path: relativePath, reason: "ignored" });
@@ -21064,7 +21534,7 @@ async function scanProjectFileMetadata(root, options) {
       }
       let fileStat;
       try {
-        fileStat = await stat(absolute, { bigint: true });
+        fileStat = await stat2(absolute, { bigint: true });
       } catch {
         rows.push({ path: relativePath, reason: "unreadable" });
         exclusions.push({ path: relativePath, reason: "unreadable" });
@@ -21852,7 +22322,7 @@ function normalizePath2(path) {
     line: match?.[2] ? Number(match[2]) : void 0
   };
 }
-function unique2(items) {
+function unique3(items) {
   return Array.from(new Set(items));
 }
 function detectPathHints(text, project) {
@@ -21872,11 +22342,11 @@ function detectTests(text) {
       tests.push(failMatch[1].replace(/\s+\(\d+\s*ms\)$/i, "").trim());
     }
   }
-  return unique2(tests);
+  return unique3(tests);
 }
 function detectSymbols(text, project) {
   const terms = new Set(tokenize(text));
-  return unique2(
+  return unique3(
     project.symbols.filter((symbol) => text.includes(symbol.name) || terms.has(symbol.name.toLowerCase())).map((symbol) => symbol.name)
   );
 }
@@ -21939,9 +22409,9 @@ function sqlMatches(project, termsText, plannedSql) {
   }
   return Array.from(byKey.values()).sort((a, b) => b.score - a.score).slice(0, 10);
 }
-function recommendedCommands(kind, detectedTests, detectedPaths) {
+function recommendedCommands(kind, detectedTests, detectedPaths, plannedTests) {
   if (kind === "test") {
-    const testPath = detectedPaths.find((path) => /\.test\.[tj]sx?$/.test(path)) ?? detectedTests[0]?.split(/\s+>\s+/)[0];
+    const testPath = detectedPaths.find((path) => /\.test\.[tj]sx?$/.test(path)) ?? detectedTests[0]?.split(/\s+>\s+/)[0] ?? plannedTests[0]?.path;
     return testPath ? [`pnpm test -- ${testPath}`] : ["pnpm test"];
   }
   if (kind === "build") return ["pnpm build", "pnpm typecheck"];
@@ -21970,7 +22440,7 @@ async function traceFailure(input) {
   const compressedOutput = compressOutput({ kind: compressionKind(input.kind), text: input.text, maxLines: 20 });
   const task = input.task?.trim() || compressedOutput.summary;
   const pathHints = detectPathHints(input.text, input.project);
-  const detectedPaths = unique2(pathHints.map((hint) => hint.path));
+  const detectedPaths = unique3(pathHints.map((hint) => hint.path));
   const detectedTests = detectTests(input.text);
   const detectedSymbols = detectSymbols(input.text, input.project);
   const imports = relatedImportEdges(input.project, detectedPaths);
@@ -21991,9 +22461,9 @@ ${compressedOutput.keyLines.join("\n")}`,
   const relatedSql2 = sqlMatches(input.project, `${task}
 ${input.text}`, plan.relevantSql);
   const relatedMemories2 = plan.relevantMemories;
-  const files = relatedFiles(input.project, pathHints, imports, plan.relevantFiles);
+  const files = relatedFiles(input.project, pathHints, imports, [...plan.relevantFiles, ...plan.relevantTests]);
   const hypotheses = buildHypotheses({ detectedPaths, detectedTests, detectedSymbols, relatedSql: relatedSql2, relatedMemories: relatedMemories2 });
-  const firstReads = relatedFiles(input.project, pathHints, imports, plan.recommendedFirstReads).slice(0, 6);
+  const firstReads = relatedFiles(input.project, pathHints, imports, [...plan.recommendedFirstReads, ...plan.relevantTests]).slice(0, 6);
   const confidence = hypotheses[0]?.confidence ?? "low";
   return {
     compressedOutput,
@@ -22006,7 +22476,7 @@ ${input.text}`, plan.relevantSql);
     relatedMemories: relatedMemories2,
     hypotheses,
     recommendedFirstReads: firstReads,
-    recommendedCommands: recommendedCommands(input.kind, detectedTests, detectedPaths),
+    recommendedCommands: recommendedCommands(input.kind, detectedTests, detectedPaths, plan.relevantTests),
     confidence,
     tokenEstimate: {
       original: estimateTokens(input.text),
@@ -22018,14 +22488,14 @@ ${input.text}`, plan.relevantSql);
 
 // src/core/memoryStore.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { mkdir as mkdir4, readFile as readFile6, rename as rename3, rm as rm4, writeFile as writeFile3 } from "node:fs/promises";
+import { mkdir as mkdir3, readFile as readFile6, rename as rename3, rm as rm4, writeFile as writeFile3 } from "node:fs/promises";
 import { dirname as dirname4, join as join5, resolve as resolve4 } from "node:path";
 var DEFAULT_SOURCE = "manual";
 var CURRENT_MEMORY_SCHEMA_VERSION = 1;
 function nowIso2() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
-function unique3(values) {
+function unique4(values) {
   return Array.from(new Set((values ?? []).filter((value) => typeof value === "string" && value.trim().length > 0).map((value) => value.trim())));
 }
 function scoreMemory(memory, terms) {
@@ -22056,22 +22526,22 @@ function normalizeMemory(value) {
     type: candidate.type,
     title: candidate.title,
     body: candidate.body,
-    tags: unique3(candidate.tags),
+    tags: unique4(candidate.tags),
     id: candidate.id,
     createdAt,
     status,
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : createdAt,
     ...typeof candidate.lastUsedAt === "string" ? { lastUsedAt: candidate.lastUsedAt } : {},
     ...typeof candidate.confirmedAt === "string" ? { confirmedAt: candidate.confirmedAt } : {},
-    linkedFiles: unique3(candidate.linkedFiles),
-    linkedSymbols: unique3(candidate.linkedSymbols),
-    linkedSqlObjects: unique3(candidate.linkedSqlObjects),
-    linkedRules: unique3(candidate.linkedRules),
+    linkedFiles: unique4(candidate.linkedFiles),
+    linkedSymbols: unique4(candidate.linkedSymbols),
+    linkedSqlObjects: unique4(candidate.linkedSqlObjects),
+    linkedRules: unique4(candidate.linkedRules),
     confidence: candidate.confidence === "high" || candidate.confidence === "low" ? candidate.confidence : "medium",
-    supersedes: unique3(candidate.supersedes),
-    supersededBy: unique3(candidate.supersededBy),
+    supersedes: unique4(candidate.supersedes),
+    supersededBy: unique4(candidate.supersededBy),
     source: typeof candidate.source === "string" && candidate.source.trim() ? candidate.source : DEFAULT_SOURCE,
-    evidence: unique3(candidate.evidence)
+    evidence: unique4(candidate.evidence)
   };
 }
 function createMemory(input) {
@@ -22080,34 +22550,34 @@ function createMemory(input) {
     type: input.type,
     title: input.title,
     body: input.body,
-    tags: unique3(input.tags),
+    tags: unique4(input.tags),
     id: `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     createdAt: timestamp,
     status: input.status ?? "active",
     updatedAt: timestamp,
-    linkedFiles: unique3(input.linkedFiles),
-    linkedSymbols: unique3(input.linkedSymbols),
-    linkedSqlObjects: unique3(input.linkedSqlObjects),
-    linkedRules: unique3(input.linkedRules),
+    linkedFiles: unique4(input.linkedFiles),
+    linkedSymbols: unique4(input.linkedSymbols),
+    linkedSqlObjects: unique4(input.linkedSqlObjects),
+    linkedRules: unique4(input.linkedRules),
     confidence: input.confidence ?? "medium",
-    supersedes: unique3(input.supersedes),
-    supersededBy: unique3(input.supersededBy),
+    supersedes: unique4(input.supersedes),
+    supersededBy: unique4(input.supersededBy),
     source: input.source?.trim() || DEFAULT_SOURCE,
-    evidence: unique3(input.evidence)
+    evidence: unique4(input.evidence)
   };
 }
 function mergeMemory(memory, update) {
   return {
     ...memory,
     ...update,
-    tags: update.tags ? unique3(update.tags) : memory.tags,
-    linkedFiles: update.linkedFiles ? unique3(update.linkedFiles) : memory.linkedFiles,
-    linkedSymbols: update.linkedSymbols ? unique3(update.linkedSymbols) : memory.linkedSymbols,
-    linkedSqlObjects: update.linkedSqlObjects ? unique3(update.linkedSqlObjects) : memory.linkedSqlObjects,
-    linkedRules: update.linkedRules ? unique3(update.linkedRules) : memory.linkedRules,
-    supersedes: update.supersedes ? unique3(update.supersedes) : memory.supersedes,
-    supersededBy: update.supersededBy ? unique3(update.supersededBy) : memory.supersededBy,
-    evidence: update.evidence ? unique3(update.evidence) : memory.evidence,
+    tags: update.tags ? unique4(update.tags) : memory.tags,
+    linkedFiles: update.linkedFiles ? unique4(update.linkedFiles) : memory.linkedFiles,
+    linkedSymbols: update.linkedSymbols ? unique4(update.linkedSymbols) : memory.linkedSymbols,
+    linkedSqlObjects: update.linkedSqlObjects ? unique4(update.linkedSqlObjects) : memory.linkedSqlObjects,
+    linkedRules: update.linkedRules ? unique4(update.linkedRules) : memory.linkedRules,
+    supersedes: update.supersedes ? unique4(update.supersedes) : memory.supersedes,
+    supersededBy: update.supersededBy ? unique4(update.supersededBy) : memory.supersededBy,
+    evidence: update.evidence ? unique4(update.evidence) : memory.evidence,
     id: memory.id,
     createdAt: memory.createdAt,
     status: update.status ?? memory.status,
@@ -22157,8 +22627,8 @@ var MemoryStore = class _MemoryStore {
       id,
       (memory) => mergeMemory(memory, {
         status: "deprecated",
-        supersededBy: unique3([...memory.supersededBy, ...supersededBy]),
-        evidence: unique3([...memory.evidence, ...evidence])
+        supersededBy: unique4([...memory.supersededBy, ...supersededBy]),
+        evidence: unique4([...memory.evidence, ...evidence])
       })
     );
   }
@@ -22182,7 +22652,7 @@ var MemoryStore = class _MemoryStore {
       (memory) => mergeMemory(memory, {
         confirmedAt: nowIso2(),
         confidence,
-        evidence: unique3([...memory.evidence, ...evidence])
+        evidence: unique4([...memory.evidence, ...evidence])
       })
     );
   }
@@ -22190,11 +22660,11 @@ var MemoryStore = class _MemoryStore {
     return this.mutate(
       id,
       (memory) => mergeMemory(memory, {
-        linkedFiles: unique3([...memory.linkedFiles, ...links.linkedFiles ?? []]),
-        linkedSymbols: unique3([...memory.linkedSymbols, ...links.linkedSymbols ?? []]),
-        linkedSqlObjects: unique3([...memory.linkedSqlObjects, ...links.linkedSqlObjects ?? []]),
-        linkedRules: unique3([...memory.linkedRules, ...links.linkedRules ?? []]),
-        evidence: unique3([...memory.evidence, ...links.evidence ?? []]),
+        linkedFiles: unique4([...memory.linkedFiles, ...links.linkedFiles ?? []]),
+        linkedSymbols: unique4([...memory.linkedSymbols, ...links.linkedSymbols ?? []]),
+        linkedSqlObjects: unique4([...memory.linkedSqlObjects, ...links.linkedSqlObjects ?? []]),
+        linkedRules: unique4([...memory.linkedRules, ...links.linkedRules ?? []]),
+        evidence: unique4([...memory.evidence, ...links.evidence ?? []]),
         ...links.source ? { source: links.source } : {}
       })
     );
@@ -22228,7 +22698,7 @@ var MemoryStore = class _MemoryStore {
     );
     return memories.filter((memory) => memory.id !== input.id).map((memory) => {
       const memoryTerms = tokenize(`${memory.title} ${memory.body} ${memory.tags.join(" ")}`);
-      const matchedTerms2 = unique3(terms.filter((term) => memoryTerms.some((part) => part.includes(term) || term.includes(part))));
+      const matchedTerms2 = unique4(terms.filter((term) => memoryTerms.some((part) => part.includes(term) || term.includes(part))));
       const sameType = input.candidate?.type ? memory.type === input.candidate.type : baseMemory ? memory.type === baseMemory.type : true;
       const contradictionHint = /\b(no|not|never|avoid|prefer|instead|deprecated|replace|use)\b/i.test(`${queryText} ${memory.title} ${memory.body}`);
       const reason = contradictionHint ? "Potential conflict: overlapping memory terms and incompatible guidance language were found." : "Potential conflict: overlapping memory terms should be reviewed before relying on either memory.";
@@ -22305,7 +22775,7 @@ var MemoryStore = class _MemoryStore {
   }
   async writeAtomic(memories) {
     const directory = dirname4(this.filePath);
-    await mkdir4(directory, { recursive: true });
+    await mkdir3(directory, { recursive: true });
     const tempPath = join5(directory, `.memory-${process.pid}-${Date.now()}-${randomUUID3()}.tmp`);
     try {
       await writeFile3(
@@ -22338,7 +22808,7 @@ var MemoryStore = class _MemoryStore {
 };
 
 // src/core/regressionRisk.ts
-function unique4(items) {
+function unique5(items) {
   return Array.from(new Set(items));
 }
 function importTarget2(edge) {
@@ -22360,7 +22830,7 @@ function routeLabel(project, path) {
   if (pagesMatch?.[1]) return `/${pagesMatch[1].replace(/\/index$/, "")}`;
   return void 0;
 }
-function relatedCode(project, changedFiles) {
+function relatedCode(project, changedFiles, task = "") {
   const changed = new Set(changedFiles);
   const inbound = project.imports.filter((edge) => {
     const target = importTarget2(edge);
@@ -22377,14 +22847,18 @@ function relatedCode(project, changedFiles) {
     }
   }
   const changedBases = changedFiles.map((path) => path.replace(/\.[^.]+$/, ""));
+  const normalize2 = (term) => term.length > 4 && term.endsWith("s") ? term.slice(0, -1) : term;
+  const taskTerms = new Set(tokenize(task).flatMap((term) => term.split(/[_/.$\[\]-]+/)).map(normalize2).filter((term) => term.length >= 4 && !["asses", "change", "risk", "policy", "migration", "tenant"].includes(term)));
   const affectedTests = project.files.filter((file) => {
     if (!file.isTest) return false;
     if (changed.has(file.path)) return true;
     const importsChanged = project.imports.some((edge) => edge.filePath === file.path && edge.resolvedPath !== void 0 && changed.has(edge.resolvedPath));
-    const nameMatches = changedBases.some((base) => file.path.includes(base));
-    return importsChanged || nameMatches;
+    const nameMatches = changedBases.some((base2) => file.path.includes(base2));
+    const testTerms = new Set(tokenize(file.path).flatMap((term) => term.split(/[_/.$\[\]-]+/)).map(normalize2));
+    const taskMatches = [...taskTerms].some((term) => testTerms.has(term));
+    return importsChanged || nameMatches || taskMatches;
   }).map((file) => fileScore(file.path, "Test is linked to a changed file.", 85));
-  const routePaths = unique4([...changedFiles, ...inbound.map((edge) => edge.filePath)].map((path) => routeLabel(project, path)).filter((route) => Boolean(route)));
+  const routePaths = unique5([...changedFiles, ...inbound.map((edge) => edge.filePath)].map((path) => routeLabel(project, path)).filter((route) => Boolean(route)));
   const seen = /* @__PURE__ */ new Set();
   return {
     affectedFiles: rows.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path)).filter((row) => {
@@ -22481,7 +22955,7 @@ function reviewWarnings(input) {
   if (input.affectedRoutes.length > 0) warnings.push("Manual review: user-facing route exposure is affected.");
   if (input.affectedRules.length > 0) warnings.push("Manual review: architecture rule findings overlap changed files.");
   if (input.affectedMemories.some((memory) => memory.type === "bug")) warnings.push("Manual review: known bug memories match this change.");
-  return unique4(warnings);
+  return unique5(warnings);
 }
 function riskScore(input) {
   const score = input.changedFiles.length * 8 + Math.min(input.inboundCount * 10, 30) + Math.min(input.outboundCount * 5, 15) + input.routeCount * 15 + input.sqlCount * 8 + input.ruleCount * 12 + input.memoryCount * 8 + input.warningCount * 5 - Math.min(input.testCount * 4, 12);
@@ -22493,12 +22967,12 @@ function riskLevel(score) {
   return "low";
 }
 function recommendedTests(tests) {
-  return unique4(tests.map((test) => `pnpm test -- ${test.path}`)).slice(0, 10);
+  return unique5(tests.map((test) => `pnpm test -- ${test.path}`)).slice(0, 10);
 }
 async function assessChangeRisk(input) {
-  const changedFiles = unique4(input.changedFiles.map((path) => path.replace(/\\/g, "/"))).filter((path) => path.length > 0);
+  const changedFiles = unique5(input.changedFiles.map((path) => path.replace(/\\/g, "/"))).filter((path) => path.length > 0);
   const text = [input.task, input.diffSummary, changedFiles.join(" ")].filter(Boolean).join("\n");
-  const code = relatedCode(input.project, changedFiles);
+  const code = relatedCode(input.project, changedFiles, input.task);
   const sql = relatedSql(input.project, changedFiles, text);
   const architecture = await checkArchitecture({ root: input.root, project: input.project, rules: input.rules, files: changedFiles });
   const ruleFindings = filterRuleFindings([...architecture.violations, ...architecture.warnings], changedFiles).slice(0, 20);
@@ -22638,16 +23112,185 @@ function exportProjectMap(project, options = {}) {
   };
 }
 
+// src/core/taskEstimator.ts
+var TASK_ESTIMATOR_VERSION = "task-estimator-v1";
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function isNonNegativeFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+function isConfidence(value) {
+  return value === "low" || value === "medium" || value === "high";
+}
+function isQualityStatus(value) {
+  return value === "passed" || value === "warning" || value === "not_evaluated";
+}
+function reconstructTaskReport(value, expectedTaskId, expectedEventCount) {
+  if (!isRecord(value) || !isRecord(value.estimate) || !isRecord(value.estimate.range) || !isRecord(value.quality)) {
+    return void 0;
+  }
+  const range = value.estimate.range;
+  const basis = value.estimate.basis;
+  const checks = value.quality.checks;
+  if (value.taskId !== expectedTaskId || value.eventCount !== expectedEventCount || !Number.isInteger(value.eventCount) || !isNonNegativeFiniteNumber(range.low) || !isNonNegativeFiniteNumber(range.likely) || !isNonNegativeFiniteNumber(range.high) || range.low > range.likely || range.likely > range.high || range.unit !== "estimated_tokens" || !isConfidence(value.estimate.confidence) || !Array.isArray(basis) || !basis.every((item) => typeof item === "string") || !isNonNegativeFiniteNumber(value.estimate.overhead) || value.estimate.estimatorVersion !== TASK_ESTIMATOR_VERSION || !isQualityStatus(value.quality.status) || !Array.isArray(checks) || !checks.every((item) => typeof item === "string")) {
+    return void 0;
+  }
+  return {
+    taskId: value.taskId,
+    eventCount: value.eventCount,
+    estimate: {
+      range: { low: range.low, likely: range.likely, high: range.high, unit: "estimated_tokens" },
+      confidence: value.estimate.confidence,
+      basis: [...basis],
+      overhead: value.estimate.overhead,
+      estimatorVersion: TASK_ESTIMATOR_VERSION
+    },
+    quality: { status: value.quality.status, checks: [...checks] }
+  };
+}
+var confidenceRank = { low: 0, medium: 1, high: 2 };
+function finite(value) {
+  return Number.isFinite(value) ? value : 0;
+}
+function buildTaskReport(ledger, calibration = {}, reportOverheadTokens = 0) {
+  let low = 0;
+  let likely = 0;
+  let high = 0;
+  let overhead = 0;
+  let confidence = ledger.events.length > 0 ? "high" : "low";
+  const basis = /* @__PURE__ */ new Set();
+  const checks = [];
+  let hasFailedCheck = false;
+  for (const event of ledger.events) {
+    const original = Math.max(0, finite(event.originalTokens));
+    const compact = Math.max(0, finite(event.compactTokens));
+    const eventOverhead = Math.max(0, finite(event.overheadTokens));
+    const net = Math.max(0, original - compact - eventOverhead);
+    const gross = Math.max(0, original - compact);
+    const categoryCalibration = calibration[event.category];
+    const isCalibrated = Boolean(categoryCalibration && categoryCalibration.observations >= 10);
+    likely += net;
+    overhead += eventOverhead;
+    if (isCalibrated && categoryCalibration) {
+      low += Math.max(0, net + finite(categoryCalibration.lowResidual));
+      high += Math.max(net, gross, net + finite(categoryCalibration.highResidual));
+      basis.add(`${event.category}:calibrated:${categoryCalibration.observations}`);
+      if (confidenceRank[event.confidence] < confidenceRank[confidence]) {
+        confidence = event.confidence;
+      }
+    } else {
+      high += gross;
+      confidence = "low";
+      basis.add(`${event.category}:uncalibrated`);
+    }
+    for (const check of event.qualityChecks) {
+      checks.push(`${check.name}:${check.passed ? "passed" : "failed"}`);
+      if (!check.passed) {
+        hasFailedCheck = true;
+      }
+    }
+  }
+  const reportOverhead = Math.max(0, finite(reportOverheadTokens));
+  low = Math.min(Math.max(0, low), likely);
+  high = Math.max(likely, high);
+  low = Math.max(0, low - reportOverhead);
+  likely = Math.max(low, likely - reportOverhead);
+  high = Math.max(likely, high - reportOverhead);
+  overhead += reportOverhead;
+  return {
+    taskId: ledger.taskId,
+    eventCount: ledger.events.length,
+    estimate: {
+      range: { low, likely, high, unit: "estimated_tokens" },
+      confidence,
+      basis: [...basis].sort(),
+      overhead,
+      estimatorVersion: TASK_ESTIMATOR_VERSION
+    },
+    quality: {
+      status: hasFailedCheck ? "warning" : checks.length > 0 ? "passed" : "not_evaluated",
+      checks
+    }
+  };
+}
+function formatTaskReportFooter(report) {
+  if (report.eventCount === 0) {
+    return "TokenGraph: savings not measured (no qualifying task events).";
+  }
+  const { low, high } = report.estimate.range;
+  const savings = low === high ? `${low}` : `${low}-${high}`;
+  const quality = report.quality.status === "not_evaluated" ? "not evaluated" : report.quality.status;
+  return `TokenGraph: ~${savings} tokens saved (estimated, ${report.estimate.confidence} confidence); quality ${quality}.`;
+}
+
 // src/core/wiki.ts
+import { createHash as createHash3 } from "node:crypto";
+import { posix } from "node:path";
 var CURRENT_WIKI_SCHEMA_VERSION = 1;
 var LIST_LIMIT = 20;
-function page(slug, title, lines) {
-  const body = [`# ${title}`, "", ...lines].join("\n").trimEnd() + "\n";
+function page(slug, title, lines, sourcePaths = [], links = []) {
+  return { slug, title, lines, sourcePaths, links };
+}
+function yamlList(label, values) {
+  return values.length ? [`${label}:`, ...values.map((value) => `  - ${JSON.stringify(value)}`)] : [`${label}: []`];
+}
+function wikiLink(fromSlug, target) {
+  const relativeSlug = posix.relative(posix.dirname(fromSlug), target.slug) || posix.basename(target.slug);
+  const alias = target.title.replaceAll("]", " ").replaceAll("|", " ").replace(/\r?\n/g, " ");
+  return `[[${relativeSlug}|${alias}]]`;
+}
+function pageSourceFingerprints(index, draft, applications) {
+  const indexed = draft.sourcePaths.map((path) => index.scanMetadata?.files[path]).filter((metadata) => Boolean(metadata)).map((metadata) => `path:${metadata.path}:${metadata.contentHash}`);
+  const reviewed = applications.flatMap(
+    (application) => application.sources.map((source) => `${source.kind}:${source.sourceId}:${source.fingerprint}`)
+  );
+  const indexedFingerprint = indexed.length ? [`index:${createHash3("sha256").update(JSON.stringify(indexed.sort())).digest("hex")}`] : [];
+  return Array.from(/* @__PURE__ */ new Set([...indexedFingerprint, ...reviewed])).sort();
+}
+function sourceIsStale(index, application) {
+  return application.sources.some((source) => {
+    if (source.kind !== "path") return false;
+    const indexed = index.scanMetadata?.files[source.sourceId];
+    return !indexed || indexed.contentHash !== source.fingerprint;
+  });
+}
+function renderPage(index, draft, drafts, backlinks, applications) {
+  const relevant = applications.filter((application) => application.affectedTargets.wikiPages.includes(draft.slug));
+  const contradictions = Array.from(new Set(relevant.flatMap((application) => application.conflictNotes))).sort();
+  const freshness = relevant.some((application) => sourceIsStale(index, application)) ? "stale" : "fresh";
+  const sourceFingerprints = pageSourceFingerprints(index, draft, relevant);
+  const links = draft.links.map((slug) => drafts.find((candidate) => candidate.slug === slug)).filter((candidate) => Boolean(candidate));
+  const backlinkDrafts = backlinks.map((slug) => drafts.find((candidate) => candidate.slug === slug)).filter((candidate) => Boolean(candidate));
+  const body = [
+    "---",
+    `title: ${JSON.stringify(draft.title)}`,
+    `slug: ${JSON.stringify(draft.slug)}`,
+    `freshness: ${JSON.stringify(freshness)}`,
+    ...yamlList("source_fingerprints", sourceFingerprints),
+    ...yamlList("backlinks", backlinks),
+    "---",
+    "",
+    `# ${draft.title}`,
+    "",
+    ...draft.lines,
+    ...links.length ? ["", "## Related Pages", ...links.map((candidate) => `- ${wikiLink(draft.slug, candidate)}`)] : [],
+    ...backlinkDrafts.length ? ["", "## Backlinks", ...backlinkDrafts.map((candidate) => `- ${wikiLink(draft.slug, candidate)}`)] : [],
+    ...relevant.length ? ["", "## Reviewed Knowledge", ...relevant.flatMap((application) => [
+      `### ${application.title}`,
+      application.proposedContent
+    ])] : [],
+    ...contradictions.length ? ["", "## Contradictions", ...contradictions.map((note) => `> [!warning] Conflict: ${note}`)] : []
+  ].join("\n").trimEnd() + "\n";
   return {
-    slug,
-    title,
+    slug: draft.slug,
+    title: draft.title,
     body,
-    estimatedTokens: estimateTokens(body)
+    estimatedTokens: estimateTokens(body),
+    sourceFingerprints,
+    backlinks,
+    contradictions,
+    freshness
   };
 }
 function topLevelDirectory(path) {
@@ -22678,7 +23321,7 @@ function buildOverviewPage(index) {
     "## Top-Level Directories",
     `- Top-level directories: ${directories.length ? directories.join(", ") : "."}`
   ];
-  return page("overview", "Project Overview", lines);
+  return page("overview", "Project Overview", lines, index.files.map((file) => file.path), ["structure", "routes", "database", "decisions"]);
 }
 function exportedSymbolsForFile(index, filePath) {
   const names = index.symbols.filter((symbol) => symbol.filePath === filePath && symbol.exported).map((symbol) => symbol.name).sort();
@@ -22699,14 +23342,14 @@ function buildStructurePage(index) {
     lines.push(`## ${directory}`);
     lines.push(...cappedLines(entries, (file) => `- ${file.path} (${file.kind}) ${exportedSymbolsForFile(index, file.path)}`));
   }
-  return page("structure", "Project Structure", lines);
+  return page("structure", "Project Structure", lines, files.map((file) => file.path), ["overview"]);
 }
 function buildRoutesPage(index) {
   const routes = index.files.filter((file) => file.route).sort((a, b) => (a.route ?? "").localeCompare(b.route ?? "") || a.path.localeCompare(b.path));
   if (!routes.length) {
     return void 0;
   }
-  return page("routes", "Routes", cappedLines(routes, (file) => `- ${file.route} -> ${file.path}`));
+  return page("routes", "Routes", cappedLines(routes, (file) => `- ${file.route} -> ${file.path}`), routes.map((file) => file.path), ["overview", "structure"]);
 }
 function hasDatabaseContent(index) {
   return index.sql.tables.length > 0 || index.sql.policies.length > 0 || index.sql.constraints.length > 0 || index.sql.indexes.length > 0 || index.sql.triggers.length > 0 || index.sql.functions.length > 0 || index.sql.views.length > 0 || index.sql.enums.length > 0 || index.sql.extensions.length > 0 || index.sql.grants.length > 0 || index.sql.materializedViews.length > 0 || index.sql.history.length > 0;
@@ -22750,7 +23393,7 @@ function buildDatabasePage(index) {
       lines.push(`- and ${history.length - visible.length} more`);
     }
   }
-  return page("database", "Database", lines);
+  return page("database", "Database", lines, index.files.filter((file) => file.kind === "sql").map((file) => file.path), ["overview", "structure"]);
 }
 function buildDecisionsPage(memories) {
   if (!memories.length) {
@@ -22760,10 +23403,12 @@ function buildDecisionsPage(memories) {
   return page(
     "decisions",
     "Recorded Decisions",
-    cappedLines(sorted, (memory) => `- ${memory.title} (${memory.type}; tags: ${memory.tags.slice().sort().join(", ") || "none"})`)
+    cappedLines(sorted, (memory) => `- ${memory.title} (${memory.type}; tags: ${memory.tags.slice().sort().join(", ") || "none"})`),
+    [],
+    ["overview"]
   );
 }
-function buildProjectWiki(index, memories) {
+function buildProjectWiki(index, memories, applications = []) {
   const maybePages = [
     buildOverviewPage(index),
     buildStructurePage(index),
@@ -22771,10 +23416,700 @@ function buildProjectWiki(index, memories) {
     buildDatabasePage(index),
     buildDecisionsPage(memories)
   ];
+  const drafts = maybePages.filter((candidate) => Boolean(candidate));
+  const customTargets = /* @__PURE__ */ new Map();
+  for (const application of applications.filter((candidate) => candidate.type === "wiki")) {
+    for (const slug of application.affectedTargets.wikiPages) {
+      customTargets.set(slug, [...customTargets.get(slug) ?? [], application]);
+    }
+  }
+  for (const [slug, matches] of Array.from(customTargets).sort(([left], [right]) => left.localeCompare(right))) {
+    if (drafts.some((draft) => draft.slug === slug)) continue;
+    const sorted = matches.sort((left, right) => left.suggestionId.localeCompare(right.suggestionId));
+    drafts.push(page(
+      slug,
+      sorted[0].title,
+      ["This page contains explicitly reviewed local knowledge."],
+      sorted.flatMap((application) => application.sources.filter((source) => source.kind === "path").map((source) => source.sourceId)),
+      ["overview"]
+    ));
+  }
+  const backlinkMap = /* @__PURE__ */ new Map();
+  for (const draft of drafts) {
+    for (const target of draft.links) {
+      if (!drafts.some((candidate) => candidate.slug === target)) continue;
+      backlinkMap.set(target, [...backlinkMap.get(target) ?? [], draft.slug]);
+    }
+  }
   return {
     schemaVersion: CURRENT_WIKI_SCHEMA_VERSION,
     fingerprint: index.fingerprint,
-    pages: maybePages.filter((candidate) => Boolean(candidate))
+    pages: drafts.map((draft) => renderPage(
+      index,
+      draft,
+      drafts,
+      (backlinkMap.get(draft.slug) ?? []).sort(),
+      applications.filter((application) => application.type === "wiki")
+    ))
+  };
+}
+
+// src/core/taskLedger.ts
+import { randomUUID as randomUUID4 } from "node:crypto";
+import { readFile as readFile7, readdir as readdir2, rename as rename4, rm as rm5 } from "node:fs/promises";
+import { join as join6, resolve as resolve5 } from "node:path";
+var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
+var TASK_LEDGER_SCHEMA_VERSION = 1;
+var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var taskLedgerWriteChains = /* @__PURE__ */ new Map();
+function assertTaskId(taskId) {
+  if (!UUID_PATTERN.test(taskId)) {
+    throw new Error("Task id must be a UUID.");
+  }
+}
+function tasksDirectory(root) {
+  return join6(resolve5(root), ".tokengraph", "tasks");
+}
+function taskLedgerPath(root, taskId) {
+  assertTaskId(taskId);
+  return join6(tasksDirectory(root), `${taskId}.json`);
+}
+function isRecord2(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function isTimestamp(value) {
+  if (typeof value !== "string") return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+function isIdentifier(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+function isOptionalIdentifier(value) {
+  return value === void 0 || isIdentifier(value);
+}
+function reconstructQualityCheck(value) {
+  if (!isRecord2(value) || typeof value.name !== "string" || typeof value.passed !== "boolean") return void 0;
+  return { name: value.name, passed: value.passed };
+}
+function reconstructEvent(value) {
+  if (!isRecord2(value) || !Array.isArray(value.qualityChecks)) return void 0;
+  const qualityChecks = value.qualityChecks.map(reconstructQualityCheck);
+  if (typeof value.id !== "string" || typeof value.fingerprint !== "string" || typeof value.category !== "string" || typeof value.toolName !== "string" || typeof value.originalTokens !== "number" || !Number.isFinite(value.originalTokens) || value.originalTokens < 0 || typeof value.compactTokens !== "number" || !Number.isFinite(value.compactTokens) || value.compactTokens < 0 || typeof value.overheadTokens !== "number" || !Number.isFinite(value.overheadTokens) || value.overheadTokens < 0 || value.confidence !== "low" && value.confidence !== "medium" && value.confidence !== "high" || !isTimestamp(value.timestamp) || qualityChecks.some((check) => check === void 0)) {
+    return void 0;
+  }
+  return {
+    id: value.id,
+    fingerprint: value.fingerprint,
+    category: value.category,
+    toolName: value.toolName,
+    originalTokens: value.originalTokens,
+    compactTokens: value.compactTokens,
+    overheadTokens: value.overheadTokens,
+    confidence: value.confidence,
+    timestamp: value.timestamp,
+    qualityChecks
+  };
+}
+function reconstructTaskLedger(value, expectedTaskId) {
+  if (!isRecord2(value) || !Array.isArray(value.events)) return void 0;
+  const events = value.events.map(reconstructEvent);
+  if (value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId || !["codex", "claude", "unknown"].includes(String(value.host)) || !["open", "paused", "completed", "quarantined"].includes(String(value.status)) || !isOptionalIdentifier(value.sessionId) || !isOptionalIdentifier(value.turnId) || !isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt) || value.pausedAt !== void 0 && !isTimestamp(value.pausedAt) || value.completedAt !== void 0 && !isTimestamp(value.completedAt) || value.estimatorVersion !== TASK_ESTIMATOR_VERSION || events.some((event) => event === void 0) || value.lastDisposition !== void 0 && value.lastDisposition !== "pause" && value.lastDisposition !== "complete" || Date.parse(value.updatedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) > Date.parse(value.updatedAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) < Date.parse(value.createdAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) > Date.parse(value.updatedAt)) {
+    return void 0;
+  }
+  const completedReport = value.completedReport === void 0 ? void 0 : reconstructTaskReport(value.completedReport, expectedTaskId, events.length);
+  if (value.completedReport !== void 0 && completedReport === void 0) return void 0;
+  if (value.status === "open" && (value.pausedAt !== void 0 || value.completedAt !== void 0 || completedReport !== void 0 || value.lastDisposition !== void 0)) {
+    return void 0;
+  }
+  if (value.status === "paused" && (value.pausedAt === void 0 || value.completedAt !== void 0 || completedReport !== void 0 || value.lastDisposition !== "pause")) {
+    return void 0;
+  }
+  if (value.status === "completed" && (value.completedAt === void 0 || completedReport === void 0 || value.lastDisposition !== "complete")) {
+    return void 0;
+  }
+  return {
+    schemaId: TASK_LEDGER_SCHEMA_ID,
+    schemaVersion: TASK_LEDGER_SCHEMA_VERSION,
+    taskId: expectedTaskId,
+    host: value.host,
+    ...value.sessionId === void 0 ? {} : { sessionId: value.sessionId },
+    ...value.turnId === void 0 ? {} : { turnId: value.turnId },
+    status: value.status,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    ...value.pausedAt === void 0 ? {} : { pausedAt: value.pausedAt },
+    ...value.completedAt === void 0 ? {} : { completedAt: value.completedAt },
+    estimatorVersion: TASK_ESTIMATOR_VERSION,
+    events,
+    ...value.lastDisposition === void 0 ? {} : { lastDisposition: value.lastDisposition },
+    ...completedReport === void 0 ? {} : { completedReport }
+  };
+}
+async function quarantine(path, now = /* @__PURE__ */ new Date()) {
+  const timestamp = now.toISOString().replaceAll(":", "-");
+  try {
+    await rename4(path, `${path}.quarantine-${timestamp}`);
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+  }
+}
+function sanitizeNumber2(value) {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+function sanitizeEvent(event) {
+  return {
+    id: String(event.id),
+    fingerprint: String(event.fingerprint),
+    category: String(event.category),
+    toolName: String(event.toolName),
+    originalTokens: sanitizeNumber2(event.originalTokens),
+    compactTokens: sanitizeNumber2(event.compactTokens),
+    overheadTokens: sanitizeNumber2(event.overheadTokens),
+    confidence: ["low", "medium", "high"].includes(event.confidence) ? event.confidence : "low",
+    timestamp: String(event.timestamp),
+    qualityChecks: Array.isArray(event.qualityChecks) ? event.qualityChecks.map((check) => ({ name: String(check.name), passed: check.passed === true })) : []
+  };
+}
+function netEstimate(event) {
+  return Math.max(0, event.originalTokens - event.compactTokens - event.overheadTokens);
+}
+async function enqueueLedgerOperation(root, taskId, operation) {
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "tasks", `${taskId}.json`);
+  const previous = taskLedgerWriteChains.get(key) ?? Promise.resolve();
+  const runWithFileLock = async () => withFileLock(`${taskLedgerPath(root, taskId)}.lock`, operation);
+  const current = previous.then(runWithFileLock, runWithFileLock);
+  let settled;
+  const cleanUp = () => {
+    if (taskLedgerWriteChains.get(key) === settled) {
+      taskLedgerWriteChains.delete(key);
+    }
+  };
+  settled = current.then(cleanUp, cleanUp);
+  taskLedgerWriteChains.set(key, settled);
+  return current;
+}
+async function createTaskLedger(root, options) {
+  if (options.sessionId !== void 0 && !isIdentifier(options.sessionId)) throw new Error("Session id must be non-empty.");
+  if (options.turnId !== void 0 && !isIdentifier(options.turnId)) throw new Error("Turn id must be non-empty.");
+  const taskId = randomUUID4();
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const ledger = {
+    schemaId: TASK_LEDGER_SCHEMA_ID,
+    schemaVersion: TASK_LEDGER_SCHEMA_VERSION,
+    taskId,
+    host: options.host,
+    ...options.sessionId === void 0 ? {} : { sessionId: options.sessionId },
+    ...options.turnId === void 0 ? {} : { turnId: options.turnId },
+    status: "open",
+    createdAt: now,
+    updatedAt: now,
+    estimatorVersion: TASK_ESTIMATOR_VERSION,
+    events: []
+  };
+  await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+  return ledger;
+}
+async function loadTaskLedger(root, taskId) {
+  const path = taskLedgerPath(root, taskId);
+  try {
+    const parsed = JSON.parse(await readFile7(path, "utf8"));
+    const ledger = reconstructTaskLedger(parsed, taskId);
+    if (!ledger) {
+      await quarantine(path);
+      return void 0;
+    }
+    return ledger;
+  } catch (error2) {
+    if (error2.code === "ENOENT") return void 0;
+    if (error2 instanceof SyntaxError) {
+      await quarantine(path);
+      return void 0;
+    }
+    throw error2;
+  }
+}
+async function requireTaskLedger(root, taskId) {
+  const ledger = await loadTaskLedger(root, taskId);
+  if (!ledger) throw new Error(`Task ledger ${taskId} was not found or was corrupt.`);
+  return ledger;
+}
+async function recordTaskEvent(root, taskId, event) {
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId);
+    if (ledger.status === "completed") {
+      throw new Error("A completed task ledger cannot accept new events.");
+    }
+    const candidate = sanitizeEvent(event);
+    const existingIndex = ledger.events.findIndex((stored) => stored.fingerprint === candidate.fingerprint);
+    if (existingIndex < 0) {
+      ledger.events.push(candidate);
+    } else if (netEstimate(candidate) > netEstimate(ledger.events[existingIndex])) {
+      ledger.events[existingIndex] = candidate;
+    }
+    ledger.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    return ledger;
+  });
+}
+async function setTaskDisposition(root, taskId, disposition, turnId, calibration, reportOverheadTokens = 0) {
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId);
+    if (ledger.status === "completed" && ledger.completedReport) {
+      if (disposition === "pause") {
+        throw new Error("A completed task ledger cannot accept a pause disposition.");
+      }
+      return { ledger, report: ledger.completedReport };
+    }
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    if (turnId !== void 0) ledger.turnId = turnId;
+    ledger.lastDisposition = disposition;
+    ledger.updatedAt = now;
+    if (disposition === "pause") {
+      ledger.status = "paused";
+      ledger.pausedAt = now;
+      await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+      return { ledger };
+    }
+    ledger.status = "completed";
+    ledger.completedAt = now;
+    ledger.completedReport = buildTaskReport(ledger, calibration, reportOverheadTokens);
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    return { ledger, report: ledger.completedReport };
+  });
+}
+
+// src/core/knowledgeReviewQueue.ts
+import { createHash as createHash4, randomUUID as randomUUID5 } from "node:crypto";
+import { readFile as readFile8, realpath as realpath2 } from "node:fs/promises";
+import { isAbsolute as isAbsolute3, join as join7, relative as relative4, resolve as resolve6 } from "node:path";
+var REVIEW_QUEUE_SCHEMA_VERSION = 2;
+var APPLICATION_SCHEMA_VERSION = 1;
+var DEFAULT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1e3;
+var SUGGESTION_TYPES = /* @__PURE__ */ new Set(["wiki", "memory", "skill"]);
+var SUGGESTION_STATUSES = /* @__PURE__ */ new Set(["proposed", "approved", "rejected", "expired"]);
+var REVIEW_DECISIONS = /* @__PURE__ */ new Set(["approve", "reject"]);
+var UUID_PATTERN2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
+var WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
+var MEMORY_ID_PATTERN = /^mem_[A-Za-z0-9][A-Za-z0-9_-]*$/;
+var SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+var SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
+var queueWriteChains = /* @__PURE__ */ new Map();
+function queuePath(root) {
+  return join7(resolve6(root), ".tokengraph", "review-queue.json");
+}
+function applicationPath(root) {
+  return join7(resolve6(root), ".tokengraph", "knowledge-applications.json");
+}
+function nonEmptyString(value, label) {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a non-empty string.`);
+  return value.trim();
+}
+function normalizeUnique(values, label, allowEmpty = false) {
+  if (!Array.isArray(values) || !allowEmpty && values.length === 0) {
+    throw new Error(`${label} must contain ${allowEmpty ? "an array of" : "at least one"} value${allowEmpty ? "s" : ""}.`);
+  }
+  const normalized = values.map((value) => nonEmptyString(value, label));
+  return Array.from(new Set(normalized)).sort((left, right) => left.localeCompare(right));
+}
+function validateAffectedIdentifiers(type, values, allowEmpty = false) {
+  const identifiers = normalizeUnique(values, `Affected ${type} identifiers`, allowEmpty);
+  const pattern = type === "wiki" ? WIKI_SLUG_PATTERN : type === "memory" ? MEMORY_ID_PATTERN : SKILL_NAME_PATTERN;
+  if (identifiers.some((identifier) => !pattern.test(identifier))) {
+    throw new Error(`Affected identifiers must be safe logical ${type} identifiers, not absolute or traversing paths.`);
+  }
+  return identifiers;
+}
+function validateType(value) {
+  if (!SUGGESTION_TYPES.has(value)) throw new Error("Unknown knowledge suggestion type.");
+  return value;
+}
+function validateStatus(value) {
+  if (!SUGGESTION_STATUSES.has(value)) throw new Error("Unknown knowledge suggestion status.");
+  return value;
+}
+function validateTimestamp(value, label) {
+  if (typeof value !== "string" || Number.isNaN(Date.parse(value)) || new Date(value).toISOString() !== value) {
+    throw new Error(`${label} must be a valid ISO timestamp.`);
+  }
+  return value;
+}
+function normalizeSourceId(value) {
+  const sourceId = nonEmptyString(value, "Source id").replaceAll("\\", "/");
+  if (isAbsolute3(sourceId) || sourceId.startsWith("../") || sourceId.includes("/../") || !SOURCE_ID_PATTERN.test(sourceId)) {
+    throw new Error("Source ids must be privacy-safe relative paths or stable logical ids.");
+  }
+  return sourceId;
+}
+function normalizeSources(value, legacyFingerprints) {
+  const raw = value === void 0 ? legacyFingerprints.map((fingerprint) => ({ kind: "id", sourceId: `source:${fingerprint}`, fingerprint })) : value;
+  if (!Array.isArray(raw) || raw.length === 0) throw new Error("Sources must contain at least one provenance reference.");
+  const byKey = /* @__PURE__ */ new Map();
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Source references must be objects.");
+    const source = item;
+    if (!hasExactKeys(source, ["kind", "sourceId", "fingerprint"])) throw new Error("Source references contain unknown fields.");
+    if (source.kind !== "path" && source.kind !== "id") throw new Error("Source kind must be path or id.");
+    const normalized = {
+      kind: source.kind,
+      sourceId: normalizeSourceId(source.sourceId),
+      fingerprint: nonEmptyString(source.fingerprint, "Source fingerprint")
+    };
+    byKey.set(`${normalized.sourceId}\0${normalized.fingerprint}`, normalized);
+  }
+  return Array.from(byKey.values()).sort(
+    (left, right) => left.kind.localeCompare(right.kind) || left.sourceId.localeCompare(right.sourceId) || left.fingerprint.localeCompare(right.fingerprint)
+  );
+}
+function normalizeAffectedTargets(value, type, legacyIdentifiers) {
+  const raw = value === void 0 ? {} : value;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Affected targets must be an object.");
+  const target = raw;
+  if (Object.keys(target).some((key) => !["wikiPages", "memories", "skills"].includes(key))) {
+    throw new Error("Affected targets contain unknown fields.");
+  }
+  const result = {
+    wikiPages: validateAffectedIdentifiers("wiki", target.wikiPages ?? (type === "wiki" ? legacyIdentifiers : []), true),
+    memories: validateAffectedIdentifiers("memory", target.memories ?? (type === "memory" ? legacyIdentifiers : []), true),
+    skills: validateAffectedIdentifiers("skill", target.skills ?? (type === "skill" ? legacyIdentifiers : []), true)
+  };
+  if (result.wikiPages.length + result.memories.length + result.skills.length === 0) {
+    throw new Error("At least one affected knowledge target is required.");
+  }
+  return result;
+}
+function suggestionFingerprint(input) {
+  return createHash4("sha256").update(JSON.stringify({
+    type: input.type,
+    title: input.title,
+    rationale: input.rationale,
+    proposedContent: input.proposedContent,
+    sourceFingerprints: input.sourceFingerprints,
+    affectedIdentifiers: input.affectedIdentifiers,
+    sources: input.sources,
+    affectedTargets: input.affectedTargets,
+    conflictNotes: input.conflictNotes
+  })).digest("hex");
+}
+function sanitizeProposal(input) {
+  const type = validateType(input.type);
+  const sourceFingerprints = normalizeUnique(input.sourceFingerprints, "Source fingerprints");
+  const affectedIdentifiers = validateAffectedIdentifiers(type, input.affectedIdentifiers);
+  return {
+    type,
+    title: nonEmptyString(input.title, "Title"),
+    rationale: nonEmptyString(input.rationale, "Rationale"),
+    proposedContent: nonEmptyString(input.proposedContent, "Proposed content"),
+    sourceFingerprints,
+    affectedIdentifiers,
+    sources: normalizeSources(input.sources, sourceFingerprints),
+    affectedTargets: normalizeAffectedTargets(input.affectedTargets, type, affectedIdentifiers),
+    conflictNotes: normalizeUnique(input.conflictNotes ?? [], "Conflict notes", true),
+    ...input.expiresAt === void 0 ? {} : { expiresAt: validateTimestamp(input.expiresAt, "Expiry timestamp") }
+  };
+}
+function hasExactKeys(value, expected) {
+  const actual = Object.keys(value).sort();
+  const sorted = [...expected].sort();
+  return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
+}
+function reconstructSuggestion(value, schemaVersion) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Suggestion must be an object.");
+  const candidate = value;
+  const baseKeys = ["affectedIdentifiers", "createdAt", "fingerprint", "id", "proposedContent", "rationale", "sourceFingerprints", "status", "title", "type", "updatedAt"];
+  const versionTwoKeys = ["sources", "affectedTargets", "conflictNotes", "expiresAt"];
+  const expectedKeys = [
+    ...baseKeys,
+    ...schemaVersion === 2 ? versionTwoKeys : [],
+    ...candidate.reviewedAt === void 0 ? [] : ["reviewedAt"],
+    ...candidate.reviewReason === void 0 ? [] : ["reviewReason"]
+  ];
+  if (!hasExactKeys(candidate, expectedKeys)) throw new Error("Suggestion contains unknown or missing persisted fields.");
+  if (typeof candidate.id !== "string" || !UUID_PATTERN2.test(candidate.id)) throw new Error("Suggestion id must be a UUID.");
+  const type = validateType(candidate.type);
+  const createdAt = validateTimestamp(candidate.createdAt, "Created timestamp");
+  const proposal = sanitizeProposal({
+    type,
+    title: candidate.title,
+    rationale: candidate.rationale,
+    proposedContent: candidate.proposedContent,
+    sourceFingerprints: candidate.sourceFingerprints,
+    affectedIdentifiers: candidate.affectedIdentifiers,
+    ...schemaVersion === 2 ? {
+      sources: candidate.sources,
+      affectedTargets: candidate.affectedTargets,
+      conflictNotes: candidate.conflictNotes,
+      expiresAt: candidate.expiresAt
+    } : {}
+  });
+  const expectedFingerprint = schemaVersion === 1 ? createHash4("sha256").update(JSON.stringify({
+    type: proposal.type,
+    title: proposal.title,
+    proposedContent: proposal.proposedContent,
+    sourceFingerprints: proposal.sourceFingerprints,
+    affectedIdentifiers: proposal.affectedIdentifiers
+  })).digest("hex") : suggestionFingerprint(proposal);
+  if (typeof candidate.fingerprint !== "string" || !FINGERPRINT_PATTERN.test(candidate.fingerprint) || candidate.fingerprint !== expectedFingerprint) {
+    throw new Error("Suggestion fingerprint is invalid or does not match its content.");
+  }
+  return {
+    id: candidate.id,
+    fingerprint: schemaVersion === 1 ? suggestionFingerprint(proposal) : candidate.fingerprint,
+    ...proposal,
+    expiresAt: schemaVersion === 1 ? new Date(Date.parse(createdAt) + DEFAULT_EXPIRY_MS).toISOString() : validateTimestamp(candidate.expiresAt, "Expiry timestamp"),
+    status: validateStatus(candidate.status),
+    createdAt,
+    updatedAt: validateTimestamp(candidate.updatedAt, "Updated timestamp"),
+    ...candidate.reviewedAt === void 0 ? {} : { reviewedAt: validateTimestamp(candidate.reviewedAt, "Reviewed timestamp") },
+    ...candidate.reviewReason === void 0 ? {} : { reviewReason: nonEmptyString(candidate.reviewReason, "Review reason") }
+  };
+}
+async function readQueue(root) {
+  const path = queuePath(root);
+  try {
+    const parsed = JSON.parse(await readFile8(path, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Queue must be an object.");
+    const queue = parsed;
+    if (!hasExactKeys(queue, ["schemaVersion", "suggestions"]) || ![1, 2].includes(queue.schemaVersion) || !Array.isArray(queue.suggestions)) {
+      throw new Error("Queue schema is invalid.");
+    }
+    return queue.suggestions.map((suggestion) => reconstructSuggestion(suggestion, queue.schemaVersion));
+  } catch (error2) {
+    if (error2.code === "ENOENT") return [];
+    await quarantineCorruptJson(path);
+    return [];
+  }
+}
+async function writeQueue(root, suggestions) {
+  await writeJsonAtomic(queuePath(root), { schemaVersion: REVIEW_QUEUE_SCHEMA_VERSION, suggestions });
+}
+function reconstructApplication(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Applied knowledge must be an object.");
+  const candidate = value;
+  const keys = ["affectedTargets", "appliedAt", "conflictNotes", "fingerprint", "proposedContent", "rationale", "sources", "suggestionId", "title", "type"];
+  if (!hasExactKeys(candidate, keys) || typeof candidate.suggestionId !== "string" || !UUID_PATTERN2.test(candidate.suggestionId)) {
+    throw new Error("Applied knowledge schema is invalid.");
+  }
+  return {
+    suggestionId: candidate.suggestionId,
+    fingerprint: nonEmptyString(candidate.fingerprint, "Application fingerprint"),
+    type: validateType(candidate.type),
+    title: nonEmptyString(candidate.title, "Application title"),
+    rationale: nonEmptyString(candidate.rationale, "Application rationale"),
+    proposedContent: nonEmptyString(candidate.proposedContent, "Applied content"),
+    sources: normalizeSources(candidate.sources, []),
+    affectedTargets: normalizeAffectedTargets(candidate.affectedTargets, validateType(candidate.type), []),
+    conflictNotes: normalizeUnique(candidate.conflictNotes, "Conflict notes", true),
+    appliedAt: validateTimestamp(candidate.appliedAt, "Applied timestamp")
+  };
+}
+async function readApplications(root) {
+  const path = applicationPath(root);
+  try {
+    const parsed = JSON.parse(await readFile8(path, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Application store must be an object.");
+    const store = parsed;
+    if (!hasExactKeys(store, ["schemaVersion", "applications"]) || store.schemaVersion !== APPLICATION_SCHEMA_VERSION || !Array.isArray(store.applications)) {
+      throw new Error("Application store schema is invalid.");
+    }
+    const applications = store.applications.map(reconstructApplication);
+    if (new Set(applications.map((application) => application.suggestionId)).size !== applications.length) {
+      throw new Error("Application ids must be unique.");
+    }
+    return applications;
+  } catch (error2) {
+    if (error2.code === "ENOENT") return [];
+    await quarantineCorruptJson(path);
+    return [];
+  }
+}
+function targetFiles(root, application) {
+  const base2 = join7(resolve6(root), ".tokengraph", "knowledge");
+  return [
+    ...application.affectedTargets.wikiPages.map((slug) => join7(base2, "wiki", ...slug.split("/"), `${application.suggestionId}.md`)),
+    ...application.affectedTargets.memories.map((id) => join7(base2, "memories", id, `${application.suggestionId}.md`)),
+    ...application.affectedTargets.skills.map((name) => join7(base2, "skills", name, `${application.suggestionId}.md`))
+  ];
+}
+function applicationMarkdown(application) {
+  return [
+    "---",
+    `suggestion_id: "${application.suggestionId}"`,
+    `title: ${JSON.stringify(application.title)}`,
+    `applied_at: "${application.appliedAt}"`,
+    "---",
+    "",
+    application.proposedContent,
+    ""
+  ].join("\n");
+}
+async function writeApplication(root, applications, application) {
+  await ensureApplicationTargets(root, application);
+  await writeJsonAtomic(applicationPath(root), { schemaVersion: APPLICATION_SCHEMA_VERSION, applications: [...applications, application] });
+}
+async function ensureApplicationTargets(root, application) {
+  const expected = applicationMarkdown(application);
+  const logicalBase = join7(resolve6(root), ".tokengraph", "knowledge");
+  for (const logicalPath of targetFiles(root, application)) {
+    const path = await resolveConfinedPath(root, join7(".tokengraph", "knowledge", relative4(logicalBase, logicalPath)), true);
+    try {
+      const existing = await readFile8(path, "utf8");
+      if (existing !== expected) throw new Error("Applied knowledge target differs from its reviewed payload.");
+    } catch (error2) {
+      if (error2.code !== "ENOENT") throw error2;
+      await writeTextAtomic(path, expected);
+    }
+  }
+}
+function applicationMatchesSuggestion(application, suggestion) {
+  return application.suggestionId === suggestion.id && application.fingerprint === suggestion.fingerprint && application.type === suggestion.type && application.title === suggestion.title && application.rationale === suggestion.rationale && application.proposedContent === suggestion.proposedContent && JSON.stringify(application.sources) === JSON.stringify(suggestion.sources) && JSON.stringify(application.affectedTargets) === JSON.stringify(suggestion.affectedTargets) && JSON.stringify(application.conflictNotes) === JSON.stringify(suggestion.conflictNotes);
+}
+async function assertFreshForApproval(root, suggestion) {
+  for (const source of suggestion.sources) {
+    if (source.kind !== "path") continue;
+    let content;
+    try {
+      const canonicalRoot = await realpath2(resolve6(root));
+      const canonicalSource = await realpath2(join7(canonicalRoot, ...source.sourceId.split("/")));
+      const confined = relative4(canonicalRoot, canonicalSource);
+      if (!confined || confined.startsWith("..") || isAbsolute3(confined)) {
+        throw new Error(`Knowledge source ${source.sourceId} resolves outside the trusted workspace.`);
+      }
+      content = await readFile8(canonicalSource);
+    } catch (error2) {
+      if (error2.code === "ENOENT") throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} is missing.`);
+      throw error2;
+    }
+    const current = createHash4("sha256").update(content.toString("utf8").replace(/\r\n?/g, "\n")).digest("hex");
+    if (current !== source.fingerprint) throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} fingerprint changed.`);
+  }
+}
+async function enqueueQueueOperation(root, operation) {
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "review-queue.json");
+  const previous = queueWriteChains.get(key) ?? Promise.resolve();
+  const current = previous.then(
+    () => withFileLock(`${key}.lock`, operation),
+    () => withFileLock(`${key}.lock`, operation)
+  );
+  let settled;
+  const cleanUp = () => {
+    if (queueWriteChains.get(key) === settled) queueWriteChains.delete(key);
+  };
+  settled = current.then(cleanUp, cleanUp);
+  queueWriteChains.set(key, settled);
+  return current;
+}
+async function proposeKnowledgeChange(root, input) {
+  const proposal = sanitizeProposal(input);
+  const fingerprint = suggestionFingerprint(proposal);
+  return enqueueQueueOperation(root, async () => {
+    const suggestions = await readQueue(root);
+    const duplicate = suggestions.find((suggestion2) => suggestion2.status === "proposed" && suggestion2.fingerprint === fingerprint);
+    if (duplicate) return duplicate;
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const suggestion = {
+      id: randomUUID5(),
+      fingerprint,
+      ...proposal,
+      expiresAt: proposal.expiresAt ?? new Date(Date.parse(timestamp) + DEFAULT_EXPIRY_MS).toISOString(),
+      status: "proposed",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    suggestions.push(suggestion);
+    await writeQueue(root, suggestions);
+    return suggestion;
+  });
+}
+async function listKnowledgeSuggestions(root, options = {}) {
+  const suggestions = await readQueue(root);
+  const types = options.type === void 0 ? void 0 : Array.isArray(options.type) ? options.type : [options.type];
+  const statuses = options.status === void 0 ? void 0 : Array.isArray(options.status) ? options.status : [options.status];
+  types?.forEach(validateType);
+  statuses?.forEach(validateStatus);
+  return suggestions.filter((suggestion) => (!types || types.includes(suggestion.type)) && (!statuses || statuses.includes(suggestion.status)));
+}
+async function listAppliedKnowledge(root) {
+  const [applications, suggestions] = await Promise.all([readApplications(root), readQueue(root)]);
+  return applications.filter((application) => {
+    const suggestion = suggestions.find((candidate) => candidate.id === application.suggestionId && candidate.status === "approved");
+    return Boolean(suggestion && applicationMatchesSuggestion(application, suggestion));
+  });
+}
+async function reviewKnowledgeSuggestion(root, id, decision, reason) {
+  if (!UUID_PATTERN2.test(id)) throw new Error("Knowledge suggestion id must be a UUID.");
+  if (!REVIEW_DECISIONS.has(decision)) throw new Error("Unknown review decision.");
+  const nextStatus = decision === "approve" ? "approved" : "rejected";
+  return enqueueQueueOperation(root, async () => {
+    const suggestions = await readQueue(root);
+    const index = suggestions.findIndex((suggestion) => suggestion.id === id);
+    if (index < 0) throw new Error(`Knowledge suggestion ${id} was not found.`);
+    const current = suggestions[index];
+    const applications = await readApplications(root);
+    const existingApplication = applications.find((application2) => application2.suggestionId === id);
+    if (decision === "approve" && existingApplication && !applicationMatchesSuggestion(existingApplication, current)) {
+      throw new Error("Durable application does not match the reviewed proposal payload.");
+    }
+    if (current.status === "expired") throw new Error("Expired knowledge suggestions cannot be reviewed.");
+    if (current.status === nextStatus) {
+      if (decision === "approve") {
+        if (existingApplication) return { suggestion: current, applicationStatus: "applied", application: existingApplication };
+        if (Date.parse(current.expiresAt) <= Date.now()) {
+          suggestions[index] = { ...current, status: "expired", updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+          await writeQueue(root, suggestions);
+          throw new Error("Knowledge suggestion has expired and cannot be recovered or applied.");
+        }
+        await assertFreshForApproval(root, current);
+        const migratedApplication = applicationForSuggestion(current, current.reviewedAt ?? current.updatedAt);
+        await writeApplication(root, applications, migratedApplication);
+        await writeQueue(root, suggestions);
+        return { suggestion: current, applicationStatus: "applied", application: migratedApplication };
+      }
+      return { suggestion: current, applicationStatus: "not-applied" };
+    }
+    if (current.status !== "proposed") throw new Error(`Review decision conflicts with existing ${current.status} status.`);
+    if (decision === "reject" && existingApplication) {
+      throw new Error("An application record already exists; resume approval to recover it before any later review action.");
+    }
+    if (decision === "approve" && Date.parse(current.expiresAt) <= Date.now()) {
+      suggestions[index] = { ...current, status: "expired", updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      await writeQueue(root, suggestions);
+      throw new Error("Knowledge suggestion has expired and cannot be applied.");
+    }
+    if (decision === "approve") await assertFreshForApproval(root, current);
+    const timestamp = decision === "approve" ? existingApplication?.appliedAt ?? current.reviewedAt ?? current.updatedAt : (/* @__PURE__ */ new Date()).toISOString();
+    const next = {
+      ...current,
+      status: nextStatus,
+      updatedAt: timestamp,
+      reviewedAt: timestamp,
+      ...reason?.trim() ? { reviewReason: reason.trim() } : {}
+    };
+    suggestions[index] = next;
+    if (decision === "reject") {
+      await writeQueue(root, suggestions);
+      return { suggestion: next, applicationStatus: "not-applied" };
+    }
+    const application = existingApplication ?? applicationForSuggestion(current, timestamp);
+    if (existingApplication) await ensureApplicationTargets(root, existingApplication);
+    else await writeApplication(root, applications, application);
+    await writeQueue(root, suggestions);
+    return { suggestion: next, applicationStatus: "applied", application };
+  });
+}
+function applicationForSuggestion(suggestion, appliedAt) {
+  return {
+    suggestionId: suggestion.id,
+    fingerprint: suggestion.fingerprint,
+    type: suggestion.type,
+    title: suggestion.title,
+    rationale: suggestion.rationale,
+    proposedContent: suggestion.proposedContent,
+    sources: suggestion.sources,
+    affectedTargets: suggestion.affectedTargets,
+    conflictNotes: suggestion.conflictNotes,
+    appliedAt
   };
 }
 
@@ -22793,8 +24128,8 @@ var architectureRuleTypeSchema = _enum([
 ]);
 var memoryTypeSchema = _enum(["architecture", "convention", "bug", "migration", "product", "security", "lesson"]);
 var memoryConfidenceSchema = _enum(["low", "medium", "high"]);
-var tokenSavingProfileSchema = _enum(["conservative", "balanced", "aggressive"]);
-var contextCompressionKindSchema = _enum(["prompt", "memory", "diff", "sql", "wiki", "mixed"]);
+var tokenSavingProfileSchema2 = _enum(["conservative", "balanced", "aggressive"]);
+var contextCompressionKindSchema2 = _enum(["prompt", "memory", "diff", "sql", "wiki", "mixed"]);
 var architectureRuleSeveritySchema = _enum(["info", "warning", "error"]);
 var architectureRuleFields = {
   type: architectureRuleTypeSchema,
@@ -22811,20 +24146,66 @@ var architectureRuleFields = {
   sqlPattern: string2().optional(),
   message: string2().optional()
 };
+var CORE_TOOL_NAMES = [
+  "tokengraph_setup",
+  "tokengraph_prepare_context",
+  "tokengraph_query_context",
+  "tokengraph_compress",
+  "tokengraph_recall",
+  "tokengraph_analyze",
+  "tokengraph_propose_knowledge",
+  "tokengraph_task_report"
+];
+function selectedToolSurface() {
+  const value = process4.env.TOKENGRAPH_TOOL_SURFACE;
+  if (value === void 0 || value === "core") return "core";
+  if (value === "full") return "full";
+  throw new Error(`Invalid TOKENGRAPH_TOOL_SURFACE value "${process4.env.TOKENGRAPH_TOOL_SURFACE}". Valid values are "core" and "full".`);
+}
+function legacyDescription(description) {
+  return `Legacy compatibility tool; prefer the intent-level core tools. Deprecated surface. ${description ?? ""}`.trim();
+}
+function taskHost(value) {
+  if (value === "codex") return "codex";
+  if (value === "claude" || value === "claude-code") return "claude";
+  return "unknown";
+}
+function eventFingerprint(taskId, toolName, category, operation) {
+  return createHash5("sha256").update(JSON.stringify({ taskId, toolName, category, operation })).digest("hex");
+}
+async function recordCoreEvent(input) {
+  const overheadTokens = input.overheadTokens ?? coreEventOverheadTokens(input.taskId, input.toolName, input.category);
+  await recordTaskEvent(input.root, input.taskId, {
+    id: randomUUID6(),
+    fingerprint: eventFingerprint(input.taskId, input.toolName, input.category, input.operation),
+    category: input.category,
+    toolName: input.toolName,
+    originalTokens: input.originalTokens,
+    compactTokens: input.compactTokens,
+    overheadTokens,
+    confidence: "low",
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    qualityChecks: [{ name: "compact-output-produced", passed: true }]
+  });
+  return overheadTokens;
+}
+function coreEventOverheadTokens(taskId, toolName, category) {
+  return estimateTokens(compactJson({ taskId, toolName, category }));
+}
 function ownPluginRoot() {
-  return resolve5(dirname5(fileURLToPath(import.meta.url)), "..");
+  return resolve7(dirname5(fileURLToPath(import.meta.url)), "..");
 }
 async function isPluginRoot(root) {
   try {
-    const [realRoot, realSelf] = await Promise.all([realpath(root), realpath(ownPluginRoot())]);
+    const [realRoot, realSelf] = await Promise.all([realpath3(root), realpath3(ownPluginRoot())]);
     if (realRoot !== realSelf) return false;
     const hasManifest = await Promise.any([
-      access(join6(root, ".codex-plugin", "plugin.json")),
-      access(join6(root, ".claude-plugin", "plugin.json"))
+      access(join8(root, ".codex-plugin", "plugin.json")),
+      access(join8(root, ".claude-plugin", "plugin.json"))
     ]).then(() => true, () => false);
     const hasMcpConfig = await Promise.any([
-      access(join6(root, ".mcp.json")),
-      access(join6(root, ".mcp.claude.json"))
+      access(join8(root, ".mcp.json")),
+      access(join8(root, ".mcp.claude.json"))
     ]).then(() => true, () => false);
     return hasManifest && hasMcpConfig;
   } catch {
@@ -22850,7 +24231,7 @@ function detectedHost() {
   return "unknown";
 }
 async function inspectWorkspaceSetup(server, provider) {
-  const cwd = await realpath(process4.cwd());
+  const cwd = await realpath3(process4.cwd());
   const pluginRootLaunch = await isPluginRoot(cwd);
   const injected = provider ? await provider() : void 0;
   const candidate = injected ? { source: "injected", root: injected } : await resolveTrustedWorkspace(server) ?? (!pluginRootLaunch ? { source: "process-cwd", root: cwd } : void 0);
@@ -22873,19 +24254,19 @@ async function inspectWorkspaceSetup(server, provider) {
   }
   let root;
   try {
-    root = await realpath(candidate.root);
+    root = await realpath3(candidate.root);
   } catch {
     return {
       status: "blocked",
       host: detectedHost(),
-      trustedWorkspace: { ...candidate, root: resolve5(candidate.root) },
+      trustedWorkspace: { ...candidate, root: resolve7(candidate.root) },
       blockingReason: "unreadable-trusted-workspace",
       pluginRootLaunch,
       message: "The host-provided TokenGraph workspace does not exist or is not readable.",
       nextSteps
     };
   }
-  const home = await realpath(homedir());
+  const home = await realpath3(homedir());
   const trustedWorkspace = { ...candidate, root };
   if (root === parse3(root).root || root === home) {
     return {
@@ -22922,15 +24303,15 @@ function createWorkspaceResolver(server, provider) {
     }
     const allowedRoot = setup.trustedWorkspace?.root;
     if (!allowedRoot) throw new Error(setup.message);
-    const requested = inputRoot?.trim() ? resolve5(allowedRoot, inputRoot.trim()) : allowedRoot;
+    const requested = inputRoot?.trim() ? resolve7(allowedRoot, inputRoot.trim()) : allowedRoot;
     let resolvedRoot;
     try {
-      resolvedRoot = await realpath(requested);
+      resolvedRoot = await realpath3(requested);
     } catch {
       throw new Error(`Requested workspace root does not exist or is not readable: ${requested}`);
     }
-    const relativeToAllowed = relative3(allowedRoot, resolvedRoot);
-    if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute2(relativeToAllowed))) {
+    const relativeToAllowed = relative5(allowedRoot, resolvedRoot);
+    if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute4(relativeToAllowed))) {
       throw new Error(`Requested root is outside the trusted workspace: ${resolvedRoot}`);
     }
     return resolvedRoot;
@@ -22940,10 +24321,7 @@ function compactJson(value) {
   return JSON.stringify(value);
 }
 function ok(output) {
-  return {
-    content: [{ type: "text", text: compactJson(output) }],
-    structuredContent: output
-  };
+  return compactToolResultEnvelope(output);
 }
 function okWithResourceLinks(output) {
   return {
@@ -22962,7 +24340,7 @@ function okWithResourceLinks(output) {
 }
 var projectWriteChains = /* @__PURE__ */ new Map();
 async function enqueueProjectWrite(root, operation) {
-  const key = resolve5(root);
+  const key = resolve7(root);
   const previous = projectWriteChains.get(key) ?? Promise.resolve();
   const current = previous.then(operation, operation);
   projectWriteChains.set(
@@ -22997,7 +24375,7 @@ async function ensureProject(root) {
   });
 }
 function isSafeRelativePath(path) {
-  if (!path || isAbsolute2(path)) return false;
+  if (!path || isAbsolute4(path)) return false;
   const segments = path.split(/[\\/]+/);
   return segments.every((segment) => segment && segment !== "." && segment !== "..");
 }
@@ -23182,395 +24560,81 @@ function sqlSummary(project, query, limit) {
   return rows.filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
 }
 function createTokenGraphServer(options = {}) {
-  const server = new McpServer({ name: "tokengraph", version: "0.19.0" });
-  const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
-  server.registerTool(
-    "tokengraph_setup_status",
+  const toolSurface = selectedToolSurface();
+  const server = new McpServer(
+    { name: "tokengraph", version: "0.20.0" },
     {
-      title: "TokenGraph Setup Status",
-      description: "Use this when TokenGraph project tools are blocked to diagnose host workspace trust without reading project files.",
+      instructions: "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. Start each task with tokengraph_setup, capture its trusted workspace root, then call tokengraph_prepare_context and reuse only its returned taskId for that trusted root. Complete or pause with tokengraph_task_report. TokenGraph tools are task-scoped: never reuse a taskId across workspaces or merge unrelated tasks."
+    }
+  );
+  const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
+  async function requireTaskRoot(root, taskId) {
+    const resolvedRoot = await workspaceRoot(root);
+    const ledger = await loadTaskLedger(resolvedRoot, taskId);
+    if (!ledger) throw new Error(`Task ledger ${taskId} was not found under the requested trusted root.`);
+    return resolvedRoot;
+  }
+  server.registerTool(
+    "tokengraph_setup",
+    {
+      title: "Set Up TokenGraph",
+      description: "Diagnose rootless workspace trust and summarize the selected TokenGraph capability surface.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({})
     },
-    async () => ok(await inspectWorkspaceSetup(server, options.trustedWorkspace))
-  );
-  server.registerTool(
-    "tokengraph_index_project",
-    {
-      title: "Index Project",
-      description: "Use this when the coding agent needs a compact local project map before reading raw files.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root to index. Defaults to the MCP server current working directory."),
-        fullReindex: boolean2().optional().describe("Force a complete rebuild instead of using compatible incremental index data.")
-      })
-    },
-    async ({ root, fullReindex }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const existing = fullReindex ? void 0 : await loadProjectIndex(resolvedRoot);
-      const result = existing && isSafeProjectIndex(resolvedRoot, existing) ? await updateProjectIndexIncremental(resolvedRoot, existing) : {
-        index: await indexProject(resolvedRoot),
-        mode: "full",
-        addedFiles: [],
-        changedFiles: [],
-        deletedFiles: [],
-        parsedFiles: []
-      };
-      const project = result.index;
-      await saveProjectIndex(resolvedRoot, project);
-      const config2 = await loadTokenGraphConfig(resolvedRoot);
-      let wikiRefreshed = false;
-      let wikiWarning;
-      if (config2.wikiGenerationEnabled) {
-        try {
-          const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
-          await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories));
-          wikiRefreshed = true;
-        } catch (error2) {
-          wikiWarning = `Wiki refresh failed: ${error2.message}`;
-        }
+    async () => ok({
+      ...await inspectWorkspaceSetup(server, options.trustedWorkspace),
+      surface: toolSurface,
+      capabilities: {
+        taskScoped: true,
+        coreTools: [...CORE_TOOL_NAMES],
+        legacyCompatibility: toolSurface === "full"
       }
-      return ok({
-        status: "indexed",
-        indexingMode: fullReindex ? "full" : result.mode,
-        wikiRefreshed,
-        ...wikiWarning ? { wikiWarning } : {},
-        changes: {
-          addedFiles: result.addedFiles,
-          changedFiles: result.changedFiles,
-          deletedFiles: result.deletedFiles,
-          parsedFiles: result.parsedFiles
-        },
-        map: projectMap(project),
-        exclusions: project.exclusions.slice(0, 25)
-      });
-    }
+    })
   );
   server.registerTool(
-    "tokengraph_index_status",
+    "tokengraph_prepare_context",
     {
-      title: "Index Status",
-      description: "Use this before trusting a persisted TokenGraph index to detect missing, fresh, or stale project context.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root to check. Defaults to the MCP server current working directory.")
-      })
-    },
-    async ({ root }) => ok(await getIndexStatus(await workspaceRoot(root)))
-  );
-  server.registerTool(
-    "tokengraph_reset_project",
-    {
-      title: "Reset Project State",
-      description: "Use this to clear TokenGraph local state. The default mode clears the persisted index and derived wiki while preserving memories.",
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root to reset. Defaults to the MCP server current working directory."),
-        mode: _enum(["index", "all"]).default("index").describe("index clears index.json and derived wiki pages; all clears the full .tokengraph state directory.")
-      })
-    },
-    async ({ root, mode }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      if (mode === "all") {
-        await clearProjectState(resolvedRoot);
-      } else {
-        await clearProjectIndex(resolvedRoot);
-      }
-      return ok({ status: "reset", mode, root: resolvedRoot });
-    }
-  );
-  server.registerTool(
-    "tokengraph_get_config",
-    {
-      title: "Get TokenGraph Config",
-      description: "Use this to read local TokenGraph settings from .tokengraph/config.json.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory.")
-      })
-    },
-    async ({ root }) => ok(await loadTokenGraphConfig(await workspaceRoot(root)))
-  );
-  server.registerTool(
-    "tokengraph_set_profile",
-    {
-      title: "Set Token Saving Profile",
-      description: "Use this to switch the active local token-saving profile.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        profile: _enum(["conservative", "balanced", "aggressive"])
-      })
-    },
-    async ({ root, profile }) => ok({ status: "updated", config: await setTokenSavingProfile(await workspaceRoot(root), profile) })
-  );
-  server.registerTool(
-    "tokengraph_update_config",
-    {
-      title: "Update TokenGraph Config",
-      description: "Use this to update explicit local TokenGraph settings while preserving unspecified defaults.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        tokenSavingProfile: _enum(["conservative", "balanced", "aggressive"]).optional(),
-        maxFiles: number2().int().min(1).max(50).optional(),
-        maxSqlObjects: number2().int().min(0).max(50).optional(),
-        maxMemories: number2().int().min(0).max(50).optional(),
-        maxPlannedContextTokens: number2().int().min(1).optional(),
-        rawReadWarningThreshold: number2().int().min(1).optional(),
-        sqlIndexingEnabled: boolean2().optional(),
-        memoryEnabled: boolean2().optional(),
-        wikiGenerationEnabled: boolean2().optional()
-      })
-    },
-    async ({ root, ...update }) => ok({ status: "updated", config: await updateTokenGraphConfig(await workspaceRoot(root), update) })
-  );
-  server.registerTool(
-    "tokengraph_list_rules",
-    {
-      title: "List Architecture Rules",
-      description: "Use this to list local TokenGraph architecture rules from .tokengraph/rules.json.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory.")
-      })
-    },
-    async ({ root }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      return ok({ root: resolvedRoot, rules: await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list() });
-    }
-  );
-  server.registerTool(
-    "tokengraph_add_rule",
-    {
-      title: "Add Architecture Rule",
-      description: "Use this to add a local architecture rule to .tokengraph/rules.json.",
+      title: "Prepare Task Context",
+      description: "Resolve workspace trust, refresh the local index when needed, create a task ledger, and return a compact task plan. Set responseMode to verbose only for explicit diagnostics.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
-        ...architectureRuleFields
-      })
+      inputSchema: prepareContextInputSchema
     },
-    async ({ root, ...input }) => {
+    async ({ root, task, profile, maxTokens, allowRawReads, constraints, responseMode, refreshIndex, host }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const rule = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).add(input);
-      return ok({ status: "added", root: resolvedRoot, rule });
-    }
-  );
-  server.registerTool(
-    "tokengraph_update_rule",
-    {
-      title: "Update Architecture Rule",
-      description: "Use this to update a local architecture rule in .tokengraph/rules.json.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
-        id: string2().min(1),
-        type: architectureRuleTypeSchema.optional(),
-        name: string2().min(3).optional(),
-        description: string2().optional(),
-        enabled: boolean2().optional(),
-        severity: architectureRuleSeveritySchema.optional(),
-        fromPattern: string2().optional(),
-        targetPattern: string2().optional(),
-        allowedTargetPattern: string2().optional(),
-        modulePattern: string2().optional(),
-        testPattern: string2().optional(),
-        namePattern: string2().optional(),
-        sqlPattern: string2().optional(),
-        message: string2().optional()
-      })
-    },
-    async ({ root, id, ...update }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const rule = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).update(id, update);
-      if (!rule) {
-        throw new Error(`No architecture rule found for id ${id}.`);
+      const statusBefore = await getIndexStatus(resolvedRoot);
+      const existing = await loadProjectIndex(resolvedRoot);
+      let project;
+      let indexingMode = "existing";
+      let changes = { addedFiles: [], changedFiles: [], deletedFiles: [], parsedFiles: [] };
+      if (statusBefore.state === "fresh" && existing && isSafeProjectIndex(resolvedRoot, existing)) {
+        project = existing;
+      } else if (!refreshIndex) {
+        throw new Error("The TokenGraph index is missing or stale and refreshIndex is false.");
+      } else if (existing && isSafeProjectIndex(resolvedRoot, existing)) {
+        const updated = await updateProjectIndexIncremental(resolvedRoot, existing);
+        project = updated.index;
+        indexingMode = updated.mode;
+        changes = {
+          addedFiles: updated.addedFiles,
+          changedFiles: updated.changedFiles,
+          deletedFiles: updated.deletedFiles,
+          parsedFiles: updated.parsedFiles
+        };
+        await saveProjectIndex(resolvedRoot, project);
+      } else {
+        project = await indexProject(resolvedRoot);
+        indexingMode = "full";
+        changes.parsedFiles = project.files.map((file) => file.path);
+        await saveProjectIndex(resolvedRoot, project);
       }
-      return ok({ status: "updated", root: resolvedRoot, rule });
-    }
-  );
-  server.registerTool(
-    "tokengraph_delete_rule",
-    {
-      title: "Delete Architecture Rule",
-      description: "Use this to delete a local architecture rule from .tokengraph/rules.json.",
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
-        id: string2().min(1)
-      })
-    },
-    async ({ root, id }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const deleted = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).delete(id);
-      if (!deleted) {
-        throw new Error(`No architecture rule found for id ${id}.`);
-      }
-      return ok({ status: "deleted", root: resolvedRoot, id });
-    }
-  );
-  server.registerTool(
-    "tokengraph_check_architecture",
-    {
-      title: "Check Architecture",
-      description: "Use this to check imports, selected module tests, SQL security warnings, and marketplace target sanity against local architecture rules.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
-        files: array(string2()).optional().describe("Optional selected module paths for required-test checks.")
-      })
-    },
-    async ({ root, files }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const project = await ensureProject(resolvedRoot);
-      const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
-      return ok(await checkArchitecture({ root: resolvedRoot, project, rules, files }));
-    }
-  );
-  server.registerTool(
-    "tokengraph_trace_failure",
-    {
-      title: "Trace Failure",
-      description: "Use this to compress failure output and route debugging through graph-related files, imports, SQL, memories, hypotheses, and first reads.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
-        kind: _enum(["test", "build", "runtime", "install", "log"]),
-        text: string2().min(1),
-        task: string2().optional(),
-        profile: _enum(["conservative", "balanced", "aggressive"]).optional()
-      })
-    },
-    async ({ root, kind, text, task, profile }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const project = await ensureProject(resolvedRoot);
-      const memories = await new MemoryStore(memoryPath(resolvedRoot)).search(`${task ?? ""}
-${text}`, 8);
-      return ok(await traceFailure({ root: resolvedRoot, kind, text, task, profile, project, memories }));
-    }
-  );
-  server.registerTool(
-    "tokengraph_assess_change_risk",
-    {
-      title: "Assess Change Risk",
-      description: "Use this to estimate regression risk for changed files using graph, routes, tests, SQL, architecture rules, memories, and targeted test recommendations.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
-        changedFiles: array(string2().min(1)).min(1),
-        diffSummary: string2().optional(),
-        task: string2().optional(),
-        profile: _enum(["conservative", "balanced", "aggressive"]).optional()
-      })
-    },
-    async ({ root, changedFiles, diffSummary, task, profile }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const project = await ensureProject(resolvedRoot);
-      const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
-      const memories = await new MemoryStore(memoryPath(resolvedRoot)).search(`${task ?? ""}
-${diffSummary ?? ""}
-${changedFiles.join("\n")}`, 8);
-      return ok(await assessChangeRisk({ root: resolvedRoot, changedFiles, diffSummary, task, profile, project, rules, memories }));
-    }
-  );
-  server.registerTool(
-    "tokengraph_project_map",
-    {
-      title: "Show Project Map",
-      description: "Use this when the coding agent needs a compact overview of indexed modules, symbols, SQL objects, and freshness.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({ root: string2().optional() })
-    },
-    async ({ root }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const project = await ensureProject(resolvedRoot);
-      const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
-      const map = projectMap(project);
-      map.counts.memories = memories.length;
-      return ok(map);
-    }
-  );
-  server.registerTool(
-    "tokengraph_generate_wiki",
-    {
-      title: "Generate Project Wiki",
-      description: "Use this to generate compact local wiki pages from the persisted TokenGraph index and memory records. Explicit generation works regardless of wikiGenerationEnabled; that flag only controls automatic refresh after indexing.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root whose persisted index should be used. Defaults to the MCP server current working directory.")
-      })
-    },
-    async ({ root }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const project = await loadProjectIndex(resolvedRoot);
-      if (!project || !isSafeProjectIndex(resolvedRoot, project)) {
-        throw new Error("No safe persisted TokenGraph index was found. Run tokengraph_index_project before tokengraph_generate_wiki.");
-      }
-      const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
-      const wiki = buildProjectWiki(project, memories);
-      await saveProjectWiki(resolvedRoot, wiki);
-      return ok({
-        status: "generated",
-        root: resolvedRoot,
-        wikiStatus: await getWikiStatus(resolvedRoot),
-        pages: wiki.pages.map((page2) => ({ slug: page2.slug, title: page2.title, estimatedTokens: page2.estimatedTokens }))
-      });
-    }
-  );
-  server.registerTool(
-    "tokengraph_show_wiki_page",
-    {
-      title: "Show Wiki Page",
-      description: "Use this to read a generated local wiki page before opening raw files. Explicit reads work regardless of wikiGenerationEnabled; that flag only controls automatic refresh after indexing.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional().describe("Workspace root whose generated wiki should be read. Defaults to the MCP server current working directory."),
-        slug: string2().min(1).describe("Wiki page slug to read, such as overview, structure, routes, database, or decisions.")
-      })
-    },
-    async ({ root, slug }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const wiki = await loadProjectWiki(resolvedRoot);
-      if (!wiki) {
-        throw new Error("No generated TokenGraph wiki was found. Run tokengraph_generate_wiki first.");
-      }
-      const page2 = wiki.pages.find((candidate) => candidate.slug === slug);
-      if (!page2) {
-        throw new Error(`Unknown wiki page slug "${slug}". Available slugs: ${wiki.pages.map((candidate) => candidate.slug).join(", ") || "none"}.`);
-      }
-      return ok({
-        slug: page2.slug,
-        title: page2.title,
-        body: page2.body,
-        estimatedTokens: page2.estimatedTokens,
-        wikiStatus: await getWikiStatus(resolvedRoot)
-      });
-    }
-  );
-  server.registerTool(
-    "tokengraph_plan_context",
-    {
-      title: "Plan Context",
-      description: "Use this before raw file exploration to get the smallest likely files, SQL objects, tests, and memories for a task.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        task: string2().min(3).describe("The coding task or question to route."),
-        profile: _enum(["conservative", "balanced", "aggressive"]).optional(),
-        maxFiles: number2().int().min(1).max(20).optional(),
-        maxSqlObjects: number2().int().min(0).max(20).optional(),
-        maxMemories: number2().int().min(0).max(20).optional(),
-        maxEstimatedTokens: number2().int().min(1).optional(),
-        allowRawReads: boolean2().optional()
-      })
-    },
-    async ({ root, task, profile, maxFiles, maxSqlObjects, maxMemories, maxEstimatedTokens, allowRawReads }) => {
-      const resolvedRoot = await workspaceRoot(root);
       const config2 = await loadTokenGraphConfig(resolvedRoot);
-      const project = await ensureProject(resolvedRoot);
-      const memory = new MemoryStore(memoryPath(resolvedRoot));
-      const memories = config2.memoryEnabled ? await memory.search(task, maxMemories ?? 20) : [];
+      if (indexingMode !== "existing" && config2.wikiGenerationEnabled) {
+        const wikiMemories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).list() : [];
+        await saveProjectWiki(resolvedRoot, buildProjectWiki(project, wikiMemories, await listAppliedKnowledge(resolvedRoot)));
+      }
+      const memoryLimit = config2.maxMemories;
+      const memories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(task, memoryLimit) : [];
       const plan = await buildContextPlan({
         root: resolvedRoot,
         task,
@@ -23578,377 +24642,1124 @@ ${changedFiles.join("\n")}`, 8);
         memories,
         budget: {
           profile: profile ?? config2.tokenSavingProfile,
-          maxFiles,
-          maxSqlObjects,
-          maxMemories,
-          maxEstimatedTokens,
-          rawReadWarningThreshold: void 0,
+          maxEstimatedTokens: maxTokens,
           allowRawReads
         }
       });
-      return ok(plan);
+      const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost()) });
+      const projectedPlan = responseMode === "verbose" ? plan : compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
+      const statusAfter = await getIndexStatus(resolvedRoot);
+      const wikiStatus = await getWikiStatus(resolvedRoot);
+      const response = responseMode === "verbose" ? {
+        root: resolvedRoot,
+        taskId: ledger.taskId,
+        index: { status: indexingMode === "existing" ? statusAfter.state : "refreshed", previousStatus: statusBefore.state, postStatus: statusAfter.state, indexingMode, changes },
+        plan: projectedPlan,
+        wikiStatus
+      } : compactPrepareEnvelope({
+        root: resolvedRoot,
+        taskId: ledger.taskId,
+        plan: projectedPlan
+      });
+      await recordCoreEvent({
+        root: resolvedRoot,
+        taskId: ledger.taskId,
+        toolName: "tokengraph_prepare_context",
+        category: "context-routing",
+        operation: { taskHash: createHash5("sha256").update(task).digest("hex"), profile: plan.profile, indexingMode },
+        originalTokens: project.files.reduce((total, file) => total + file.estimatedTokens, 0),
+        compactTokens: estimateTokens(compactJson(compactToolResultEnvelope(response)))
+      });
+      return ok(response);
     }
   );
   server.registerTool(
-    "tokengraph_search_graph",
+    "tokengraph_query_context",
     {
-      title: "Search Graph",
-      description: "Use this to search indexed files, symbols, SQL tables, and routes without reading raw source.",
+      title: "Query Task Context",
+      description: "Query compact overview, graph search, symbol, SQL, or wiki context for one prepared task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        query: string2().min(2),
-        limit: number2().int().min(1).max(50).optional()
-      })
+      inputSchema: queryContextInputSchema
     },
-    async ({ root, query, limit }) => {
-      const project = await ensureProject(await workspaceRoot(root));
-      return ok({ query, results: searchProject(project, query, limit ?? 10) });
+    async (input) => {
+      const { taskId, root, mode, responseMode } = input;
+      const resolvedRoot = await requireTaskRoot(root, taskId);
+      const project = mode === "wiki" ? void 0 : await ensureProject(resolvedRoot);
+      let result;
+      if (mode === "overview") {
+        result = projectMap(project);
+      } else if (mode === "search") {
+        const { query, limit } = input;
+        result = { query, results: searchProject(project, query, limit ?? 10) };
+      } else if (mode === "symbol") {
+        const { target } = input;
+        result = explain(project, target);
+      } else if (mode === "sql") {
+        const { query, limit } = input;
+        result = { query, sql: sqlSummary(project, query, limit ?? 10) };
+      } else {
+        const { slug, constraints, responseMode: responseMode2 } = input;
+        const wiki = await loadProjectWiki(resolvedRoot);
+        if (!wiki) throw new Error("No generated TokenGraph wiki was found.");
+        if (!slug && responseMode2 === "verbose") throw new Error("A wiki slug is required for verbose wiki responses.");
+        if (responseMode2 !== "verbose") {
+          const selectedWiki = slug ? { ...wiki, pages: wiki.pages.filter((candidate) => candidate.slug === slug) } : wiki;
+          if (slug && selectedWiki.pages.length === 0) throw new Error(`Unknown wiki page slug "${slug}".`);
+          result = compactWikiResponse(selectedWiki, { constraints });
+        } else {
+          const page2 = wiki.pages.find((candidate) => candidate.slug === slug);
+          if (!page2) throw new Error(`Unknown wiki page slug "${slug}".`);
+          result = { slug: page2.slug, title: page2.title, body: page2.body, estimatedTokens: page2.estimatedTokens, wikiStatus: await getWikiStatus(resolvedRoot) };
+        }
+      }
+      const response = responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
+      const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
+      const originalTokens = project ? project.files.reduce((total, file) => total + file.estimatedTokens, 0) : compactTokens;
+      await recordCoreEvent({
+        root: resolvedRoot,
+        taskId,
+        toolName: "tokengraph_query_context",
+        category: `query-${mode}`,
+        operation: { mode, queryHash: createHash5("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
+        originalTokens,
+        compactTokens
+      });
+      return ok(response);
     }
   );
   server.registerTool(
-    "tokengraph_explain_symbol",
+    "tokengraph_compress",
     {
-      title: "Explain Symbol",
-      description: "Use this when the coding agent needs to know why a file or symbol is relevant before reading it.",
+      title: "Compress Task Material",
+      description: "Compress command output or mixed task context while recording real token estimates in the task ledger.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({ root: string2().optional(), target: string2().min(1) })
+      inputSchema: compressInputSchema
     },
-    async ({ root, target }) => {
-      const project = await ensureProject(await workspaceRoot(root));
-      return ok(explain(project, target));
-    }
-  );
-  server.registerTool(
-    "tokengraph_summarize_sql",
-    {
-      title: "Summarize SQL",
-      description: "Use this when a task touches data, auth, reports, RLS, migrations, or persistence.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({ root: string2().optional(), query: string2().min(2), limit: number2().int().min(1).max(50).optional() })
-    },
-    async ({ root, query, limit }) => {
-      const project = await ensureProject(await workspaceRoot(root));
-      return ok({ query, sql: sqlSummary(project, query, limit ?? 10) });
-    }
-  );
-  server.registerTool(
-    "tokengraph_compress_output",
-    {
-      title: "Compress Output",
-      description: "Use this to compress test, build, install, diff, or log output before the coding agent reads a long raw output.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        kind: _enum(["test", "build", "install", "diff", "log"]),
-        text: string2(),
-        maxLines: number2().int().min(1).max(200).optional()
-      })
-    },
-    async ({ kind, text, maxLines }) => ok(compressOutput({ kind, text, maxLines }))
-  );
-  server.registerTool(
-    "tokengraph_compress_context",
-    {
-      title: "Compress Context",
-      description: "Use this to compress prompts, memories, diffs, SQL, wiki text, logs, or mixed context while preserving exact implementation-critical references and first-read recommendations.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        task: string2().min(1),
-        contentKind: contextCompressionKindSchema,
-        text: string2().optional(),
-        profile: tokenSavingProfileSchema.optional(),
-        preserveRawReferences: boolean2().optional()
-      })
-    },
-    async ({ root, task, contentKind, text, profile, preserveRawReferences }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const [project, config2, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
-      const memoryQuery = [task, text ?? ""].join("\n");
-      const memories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(memoryQuery, config2.maxMemories) : [];
-      return ok(
-        await compressContext({
+    async (input) => {
+      const { taskId, root, mode } = input;
+      const resolvedRoot = await requireTaskRoot(root, taskId);
+      let result;
+      let estimates;
+      if (mode === "output") {
+        const { kind, text, maxLines } = input;
+        const compressed = compressOutput({ kind, text, maxLines });
+        result = compressed;
+        estimates = compressed.estimatedTokens;
+      } else {
+        const { task, contentKind, text, preserveRawReferences, constraints, responseMode } = input;
+        const [project, config2, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
+        const memories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(`${task}
+${text ?? ""}`, config2.maxMemories) : [];
+        const compressed = await compressContext({
           root: resolvedRoot,
           task,
           contentKind,
           text,
-          profile: profile ?? config2.tokenSavingProfile,
+          profile: config2.tokenSavingProfile,
           preserveRawReferences,
           project,
           memories,
           wiki
-        })
-      );
+        });
+        result = responseMode === "verbose" ? compressed : compactCompressionResponse(compressed, { constraints });
+        estimates = compressed.estimatedTokens;
+      }
+      const compactResponse = compactCompressionEnvelope(mode, result);
+      const category = `compression-${mode}`;
+      const overheadTokens = coreEventOverheadTokens(taskId, "tokengraph_compress", category);
+      const includeEstimates = mode !== "context" || input.responseMode === "verbose";
+      let returnedResponse = compactResponse;
+      let compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
+      if (includeEstimates) {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.original, compact: compactTokens, overhead: overheadTokens });
+          const measured = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
+          if (measured === compactTokens) break;
+          compactTokens = measured;
+        }
+      }
+      await recordCoreEvent({
+        root: resolvedRoot,
+        taskId,
+        toolName: "tokengraph_compress",
+        category,
+        operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash5("sha256").update(`${"task" in input ? input.task : ""}
+${input.text ?? ""}`).digest("hex") },
+        originalTokens: estimates.original,
+        compactTokens,
+        overheadTokens
+      });
+      return ok(returnedResponse);
     }
   );
   server.registerTool(
-    "tokengraph_remember_decision",
+    "tokengraph_recall",
     {
-      title: "Remember Decision",
-      description: "Use this only when the user or task outcome provides a durable project decision worth recalling later.",
+      title: "Recall Task Knowledge",
+      description: "Read active memories or a compact memory review for one prepared task.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: recallInputSchema
+    },
+    async ({ taskId, root, mode, query, limit, audit, constraints, responseMode }) => {
+      const resolvedRoot = await requireTaskRoot(root, taskId);
+      const store = new MemoryStore(memoryPath(resolvedRoot));
+      const project = await ensureProject(resolvedRoot);
+      const memories = await store.list({ includeDeprecated: audit === true, includeDeleted: audit === true });
+      const terms = tokenize(query ?? "");
+      const recalled = memories.filter((memory) => terms.length === 0 || terms.some((term) => tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`).some((part) => part.includes(term) || term.includes(part)))).slice(0, limit ?? 10);
+      const verboseResult = mode === "review" ? await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 }) : { query: query ?? "", auditMode: audit === true, memories: recalled };
+      const result = responseMode === "verbose" ? verboseResult : mode === "review" ? compactRecallResponse(verboseResult, { constraints }, memories, project) : compactMemoryRecallResponse(recalled, { constraints });
+      const response = responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
+      const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
+      await recordCoreEvent({
+        root: resolvedRoot,
+        taskId,
+        toolName: "tokengraph_recall",
+        category: `memory-${mode}`,
+        operation: { mode, queryHash: createHash5("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
+        originalTokens: estimateTokens(compactJson(memories)),
+        compactTokens
+      });
+      return ok(response);
+    }
+  );
+  server.registerTool(
+    "tokengraph_analyze",
+    {
+      title: "Analyze Task Evidence",
+      description: "Run failure tracing, regression-risk analysis, or architecture checks for one prepared task.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: analyzeInputSchema
+    },
+    async (input) => {
+      const { taskId, root, mode } = input;
+      const resolvedRoot = await requireTaskRoot(root, taskId);
+      const project = await ensureProject(resolvedRoot);
+      const store = new MemoryStore(memoryPath(resolvedRoot));
+      let result;
+      if (mode === "failure") {
+        const { kind, text, task } = input;
+        const memories = await store.search(`${task ?? ""}
+${text}`, 8);
+        const verbose = await traceFailure({ root: resolvedRoot, kind, text, task, project, memories });
+        result = input.responseMode === "verbose" ? verbose : compactFailureResponse(verbose, { constraints: input.constraints, includeSql: hasSqlIntent(`${task ?? ""}
+${text}`) });
+      } else if (mode === "risk") {
+        const { changedFiles, diffSummary, task } = input;
+        const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+        const memories = await store.search(`${task ?? ""}
+${diffSummary ?? ""}
+${changedFiles.join("\n")}`, 8);
+        const verbose = await assessChangeRisk({ root: resolvedRoot, changedFiles, diffSummary, task, project, rules, memories });
+        result = input.responseMode === "verbose" ? verbose : compactRiskResponse(verbose, { constraints: input.constraints });
+      } else {
+        const { files } = input;
+        const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+        result = await checkArchitecture({ root: resolvedRoot, project, rules, files });
+      }
+      const response = input.responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
+      const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
+      await recordCoreEvent({
+        root: resolvedRoot,
+        taskId,
+        toolName: "tokengraph_analyze",
+        category: `analysis-${mode}`,
+        operation: { mode, inputHash: createHash5("sha256").update(JSON.stringify(input)).digest("hex") },
+        originalTokens: Math.max(compactTokens, project.files.reduce((total, file) => total + file.estimatedTokens, 0)),
+        compactTokens
+      });
+      return ok(response);
+    }
+  );
+  server.registerTool(
+    "tokengraph_propose_knowledge",
+    {
+      title: "Propose Task Knowledge",
+      description: "Propose or list local knowledge, or explicitly approve/reject reviewed payloads. Approval applies only fresh reviewed content; rejection never applies it.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: object({
+        taskId: string2().uuid(),
         root: string2().optional(),
-        type: memoryTypeSchema,
-        title: string2().min(3),
-        body: string2().min(3),
-        tags: array(string2()).default([]),
-        confidence: memoryConfidenceSchema.optional(),
-        source: string2().optional(),
-        evidence: array(string2()).optional(),
-        linkedFiles: array(string2()).optional(),
-        linkedSymbols: array(string2()).optional(),
-        linkedSqlObjects: array(string2()).optional(),
-        linkedRules: array(string2()).optional(),
-        supersedes: array(string2()).optional(),
-        importance: _enum(["normal", "important"]).optional(),
-        approved: boolean2().optional()
-      })
+        action: literal("propose"),
+        type: _enum(["wiki", "memory", "skill"]),
+        title: string2().min(1),
+        rationale: string2().min(1),
+        proposedContent: string2().min(1),
+        sourceFingerprints: array(string2()).min(1),
+        affectedIdentifiers: array(string2()).min(1),
+        sources: array(object({ kind: _enum(["path", "id"]), sourceId: string2().min(1), fingerprint: string2().min(1) })).min(1).optional(),
+        affectedTargets: object({
+          wikiPages: array(string2()).optional(),
+          memories: array(string2()).optional(),
+          skills: array(string2()).optional()
+        }).optional(),
+        conflictNotes: array(string2()).optional(),
+        expiresAt: string2().datetime().optional()
+      }).or(object({
+        taskId: string2().uuid(),
+        root: string2().optional(),
+        action: literal("list"),
+        type: _enum(["wiki", "memory", "skill"]).optional(),
+        status: _enum(["proposed", "approved", "rejected", "expired"]).optional()
+      })).or(object({
+        taskId: string2().uuid(),
+        root: string2().optional(),
+        action: literal("approve"),
+        id: string2().uuid(),
+        reason: string2().optional()
+      })).or(object({
+        taskId: string2().uuid(),
+        root: string2().optional(),
+        action: literal("reject"),
+        id: string2().uuid(),
+        reason: string2().optional()
+      }))
     },
-    async ({ root, type, title, body, tags, confidence, source, evidence, linkedFiles, linkedSymbols, linkedSqlObjects, linkedRules, supersedes, importance, approved }) => {
-      if (importance === "important" && approved !== true) {
-        throw new Error("Important durable memories require explicit approval. Retry with approved: true only when the user requested or approved storing it.");
+    async (input) => {
+      const { taskId, root, action } = input;
+      const resolvedRoot = await requireTaskRoot(root, taskId);
+      let output;
+      if (action === "propose") {
+        const { type, title, rationale, proposedContent, sourceFingerprints, affectedIdentifiers, sources, affectedTargets, conflictNotes, expiresAt } = input;
+        output = { suggestion: await proposeKnowledgeChange(resolvedRoot, {
+          type,
+          title,
+          rationale,
+          proposedContent,
+          sourceFingerprints,
+          affectedIdentifiers,
+          ...sources ? { sources } : {},
+          ...affectedTargets ? { affectedTargets } : {},
+          ...conflictNotes ? { conflictNotes } : {},
+          ...expiresAt ? { expiresAt } : {}
+        }) };
+      } else if (action === "list") {
+        const { type, status } = input;
+        output = { suggestions: await listKnowledgeSuggestions(resolvedRoot, { type, status }) };
+      } else {
+        output = await reviewKnowledgeSuggestion(resolvedRoot, input.id, action, input.reason);
+        if (action === "approve") {
+          const [project, existingWiki, memories, applications] = await Promise.all([
+            loadProjectIndex(resolvedRoot),
+            loadProjectWiki(resolvedRoot),
+            new MemoryStore(memoryPath(resolvedRoot)).list(),
+            listAppliedKnowledge(resolvedRoot)
+          ]);
+          if (project && existingWiki) await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories, applications));
+        }
       }
-      const resolvedRoot = await workspaceRoot(root);
-      const entry = await new MemoryStore(memoryPath(resolvedRoot)).add({
-        type,
-        title,
-        body,
-        tags,
-        confidence,
-        source,
-        evidence,
-        linkedFiles,
-        linkedSymbols,
-        linkedSqlObjects,
-        linkedRules,
-        supersedes
+      const compactTokens = estimateTokens(compactJson(output));
+      await recordCoreEvent({
+        root: resolvedRoot,
+        taskId,
+        toolName: "tokengraph_propose_knowledge",
+        category: `knowledge-${action}`,
+        operation: action === "propose" ? { action, proposalHash: createHash5("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") } : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
+        originalTokens: compactTokens,
+        compactTokens
       });
-      return ok({ status: "remembered", memory: entry });
+      return ok(output);
     }
   );
   server.registerTool(
-    "tokengraph_update_memory",
+    "tokengraph_task_report",
     {
-      title: "Update Memory",
-      description: "Use this to update a local memory's text, tags, confidence, links, source, or evidence without deleting history.",
+      title: "Set Task Disposition",
+      description: "Pause a task ledger or complete it and return the nested TaskReport.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        id: string2().min(1),
-        type: memoryTypeSchema.optional(),
-        title: string2().min(3).optional(),
-        body: string2().min(3).optional(),
-        tags: array(string2()).optional(),
-        confidence: memoryConfidenceSchema.optional(),
-        source: string2().optional(),
-        evidence: array(string2()).optional(),
-        linkedFiles: array(string2()).optional(),
-        linkedSymbols: array(string2()).optional(),
-        linkedSqlObjects: array(string2()).optional(),
-        linkedRules: array(string2()).optional(),
-        supersedes: array(string2()).optional(),
-        supersededBy: array(string2()).optional()
-      })
+      inputSchema: object({ taskId: string2().uuid(), root: string2().optional(), disposition: _enum(["pause", "complete"]) })
     },
-    async ({ root, id, ...update }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const memory = await new MemoryStore(memoryPath(resolvedRoot)).update(id, update);
-      if (!memory) {
-        throw new Error(`No memory found for id ${id}.`);
+    async ({ taskId, root, disposition }) => {
+      const resolvedRoot = await requireTaskRoot(root, taskId);
+      if (disposition === "pause") {
+        await setTaskDisposition(resolvedRoot, taskId, disposition);
+        return ok({ status: "paused", taskId, reportingStatus: "paused" });
       }
-      return ok({ status: "updated", root: resolvedRoot, memory });
+      const ledger = await loadTaskLedger(resolvedRoot, taskId);
+      if (!ledger) throw new Error(`Task ledger ${taskId} was not found or was corrupt.`);
+      const previewFooter = formatTaskReportFooter(buildTaskReport(ledger));
+      const result = await setTaskDisposition(
+        resolvedRoot,
+        taskId,
+        disposition,
+        void 0,
+        void 0,
+        estimateTokens(previewFooter)
+      );
+      if (!result.report) throw new Error(`Task ledger ${taskId} did not produce a completion report.`);
+      const footer = formatTaskReportFooter(result.report);
+      return ok({ status: "completed", taskId, report: result.report, footer, reportingStatus: "ready" });
     }
   );
-  server.registerTool(
-    "tokengraph_delete_memory",
-    {
-      title: "Delete Memory",
-      description: "Use this to soft-delete a memory by default. Deleted memories are hidden from normal recall and visible only in audit mode.",
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        id: string2().min(1),
-        hard: boolean2().optional()
-      })
-    },
-    async ({ root, id, hard }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const deleted = await new MemoryStore(memoryPath(resolvedRoot)).delete(id, { hard: hard === true });
-      if (!deleted) {
-        throw new Error(`No memory found for id ${id}.`);
+  if (toolSurface === "full") {
+    const registerTool = server.registerTool.bind(server);
+    server.registerTool = ((name, config2, handler) => registerTool(name, { ...config2, description: legacyDescription(config2.description) }, handler));
+    server.registerTool(
+      "tokengraph_setup_status",
+      {
+        title: "TokenGraph Setup Status",
+        description: "Use this when TokenGraph project tools are blocked to diagnose host workspace trust without reading project files.",
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({})
+      },
+      async () => ok(await inspectWorkspaceSetup(server, options.trustedWorkspace))
+    );
+    server.registerTool(
+      "tokengraph_index_project",
+      {
+        title: "Index Project",
+        description: "Use this when the coding agent needs a compact local project map before reading raw files.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root to index. Defaults to the MCP server current working directory."),
+          fullReindex: boolean2().optional().describe("Force a complete rebuild instead of using compatible incremental index data.")
+        })
+      },
+      async ({ root, fullReindex }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const existing = fullReindex ? void 0 : await loadProjectIndex(resolvedRoot);
+        const result = existing && isSafeProjectIndex(resolvedRoot, existing) ? await updateProjectIndexIncremental(resolvedRoot, existing) : {
+          index: await indexProject(resolvedRoot),
+          mode: "full",
+          addedFiles: [],
+          changedFiles: [],
+          deletedFiles: [],
+          parsedFiles: []
+        };
+        const project = result.index;
+        await saveProjectIndex(resolvedRoot, project);
+        const config2 = await loadTokenGraphConfig(resolvedRoot);
+        let wikiRefreshed = false;
+        let wikiWarning;
+        if (config2.wikiGenerationEnabled) {
+          try {
+            const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+            await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories, await listAppliedKnowledge(resolvedRoot)));
+            wikiRefreshed = true;
+          } catch (error2) {
+            wikiWarning = `Wiki refresh failed: ${error2.message}`;
+          }
+        }
+        return ok({
+          status: "indexed",
+          indexingMode: fullReindex ? "full" : result.mode,
+          wikiRefreshed,
+          ...wikiWarning ? { wikiWarning } : {},
+          changes: {
+            addedFiles: result.addedFiles,
+            changedFiles: result.changedFiles,
+            deletedFiles: result.deletedFiles,
+            parsedFiles: result.parsedFiles
+          },
+          map: projectMap(project),
+          exclusions: project.exclusions.slice(0, 25)
+        });
       }
-      return ok({ status: "deleted", root: resolvedRoot, id, hard: hard === true });
-    }
-  );
-  server.registerTool(
-    "tokengraph_deprecate_memory",
-    {
-      title: "Deprecate Memory",
-      description: "Use this to mark a memory stale without deleting it. Deprecated memories are excluded from normal planning and recall.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        id: string2().min(1),
-        supersededBy: array(string2()).optional(),
-        evidence: array(string2()).optional()
-      })
-    },
-    async ({ root, id, supersededBy, evidence }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const memory = await new MemoryStore(memoryPath(resolvedRoot)).deprecate(id, supersededBy ?? [], evidence ?? []);
-      if (!memory) {
-        throw new Error(`No memory found for id ${id}.`);
+    );
+    server.registerTool(
+      "tokengraph_index_status",
+      {
+        title: "Index Status",
+        description: "Use this before trusting a persisted TokenGraph index to detect missing, fresh, or stale project context.",
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root to check. Defaults to the MCP server current working directory.")
+        })
+      },
+      async ({ root }) => ok(await getIndexStatus(await workspaceRoot(root)))
+    );
+    server.registerTool(
+      "tokengraph_reset_project",
+      {
+        title: "Reset Project State",
+        description: "Use this to clear TokenGraph local state. The default mode clears the persisted index and derived wiki while preserving memories.",
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root to reset. Defaults to the MCP server current working directory."),
+          mode: _enum(["index", "all"]).default("index").describe("index clears index.json and derived wiki pages; all clears the full .tokengraph state directory.")
+        })
+      },
+      async ({ root, mode }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        if (mode === "all") {
+          await clearProjectState(resolvedRoot);
+        } else {
+          await clearProjectIndex(resolvedRoot);
+        }
+        return ok({ status: "reset", mode, root: resolvedRoot });
       }
-      return ok({ status: "deprecated", root: resolvedRoot, memory });
-    }
-  );
-  server.registerTool(
-    "tokengraph_confirm_memory",
-    {
-      title: "Confirm Memory",
-      description: "Use this to mark a memory as confirmed with evidence and raise or set confidence.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        id: string2().min(1),
-        evidence: array(string2()).optional(),
-        confidence: memoryConfidenceSchema.optional()
-      })
-    },
-    async ({ root, id, evidence, confidence }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const memory = await new MemoryStore(memoryPath(resolvedRoot)).confirm(id, evidence ?? [], confidence ?? "high");
-      if (!memory) {
-        throw new Error(`No memory found for id ${id}.`);
+    );
+    server.registerTool(
+      "tokengraph_get_config",
+      {
+        title: "Get TokenGraph Config",
+        description: "Use this to read local TokenGraph settings from .tokengraph/config.json.",
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory.")
+        })
+      },
+      async ({ root }) => ok(await loadTokenGraphConfig(await workspaceRoot(root)))
+    );
+    server.registerTool(
+      "tokengraph_set_profile",
+      {
+        title: "Set Token Saving Profile",
+        description: "Use this to switch the active local token-saving profile.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          profile: _enum(["conservative", "balanced", "aggressive"])
+        })
+      },
+      async ({ root, profile }) => ok({ status: "updated", config: await setTokenSavingProfile(await workspaceRoot(root), profile) })
+    );
+    server.registerTool(
+      "tokengraph_update_config",
+      {
+        title: "Update TokenGraph Config",
+        description: "Use this to update explicit local TokenGraph settings while preserving unspecified defaults.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          tokenSavingProfile: _enum(["conservative", "balanced", "aggressive"]).optional(),
+          maxFiles: number2().int().min(1).max(50).optional(),
+          maxSqlObjects: number2().int().min(0).max(50).optional(),
+          maxMemories: number2().int().min(0).max(50).optional(),
+          maxPlannedContextTokens: number2().int().min(1).optional(),
+          rawReadWarningThreshold: number2().int().min(1).optional(),
+          sqlIndexingEnabled: boolean2().optional(),
+          memoryEnabled: boolean2().optional(),
+          wikiGenerationEnabled: boolean2().optional()
+        })
+      },
+      async ({ root, ...update }) => ok({ status: "updated", config: await updateTokenGraphConfig(await workspaceRoot(root), update) })
+    );
+    server.registerTool(
+      "tokengraph_list_rules",
+      {
+        title: "List Architecture Rules",
+        description: "Use this to list local TokenGraph architecture rules from .tokengraph/rules.json.",
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory.")
+        })
+      },
+      async ({ root }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        return ok({ root: resolvedRoot, rules: await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list() });
       }
-      return ok({ status: "confirmed", root: resolvedRoot, memory });
-    }
-  );
-  server.registerTool(
-    "tokengraph_find_memory_conflicts",
-    {
-      title: "Find Memory Conflicts",
-      description: "Use this to surface potentially conflicting active memories. It never resolves or edits conflicts automatically.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        id: string2().optional(),
-        query: string2().optional(),
-        candidate: object({
+    );
+    server.registerTool(
+      "tokengraph_add_rule",
+      {
+        title: "Add Architecture Rule",
+        description: "Use this to add a local architecture rule to .tokengraph/rules.json.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+          ...architectureRuleFields
+        })
+      },
+      async ({ root, ...input }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const rule = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).add(input);
+        return ok({ status: "added", root: resolvedRoot, rule });
+      }
+    );
+    server.registerTool(
+      "tokengraph_update_rule",
+      {
+        title: "Update Architecture Rule",
+        description: "Use this to update a local architecture rule in .tokengraph/rules.json.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+          id: string2().min(1),
+          type: architectureRuleTypeSchema.optional(),
+          name: string2().min(3).optional(),
+          description: string2().optional(),
+          enabled: boolean2().optional(),
+          severity: architectureRuleSeveritySchema.optional(),
+          fromPattern: string2().optional(),
+          targetPattern: string2().optional(),
+          allowedTargetPattern: string2().optional(),
+          modulePattern: string2().optional(),
+          testPattern: string2().optional(),
+          namePattern: string2().optional(),
+          sqlPattern: string2().optional(),
+          message: string2().optional()
+        })
+      },
+      async ({ root, id, ...update }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const rule = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).update(id, update);
+        if (!rule) {
+          throw new Error(`No architecture rule found for id ${id}.`);
+        }
+        return ok({ status: "updated", root: resolvedRoot, rule });
+      }
+    );
+    server.registerTool(
+      "tokengraph_delete_rule",
+      {
+        title: "Delete Architecture Rule",
+        description: "Use this to delete a local architecture rule from .tokengraph/rules.json.",
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+          id: string2().min(1)
+        })
+      },
+      async ({ root, id }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const deleted = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).delete(id);
+        if (!deleted) {
+          throw new Error(`No architecture rule found for id ${id}.`);
+        }
+        return ok({ status: "deleted", root: resolvedRoot, id });
+      }
+    );
+    server.registerTool(
+      "tokengraph_check_architecture",
+      {
+        title: "Check Architecture",
+        description: "Use this to check imports, selected module tests, SQL security warnings, and marketplace target sanity against local architecture rules.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+          files: array(string2()).optional().describe("Optional selected module paths for required-test checks.")
+        })
+      },
+      async ({ root, files }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const project = await ensureProject(resolvedRoot);
+        const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+        return ok(await checkArchitecture({ root: resolvedRoot, project, rules, files }));
+      }
+    );
+    server.registerTool(
+      "tokengraph_trace_failure",
+      {
+        title: "Trace Failure",
+        description: "Use this to compress failure output and route debugging through graph-related files, imports, SQL, memories, hypotheses, and first reads.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+          kind: _enum(["test", "build", "runtime", "install", "log"]),
+          text: string2().min(1),
+          task: string2().optional(),
+          profile: _enum(["conservative", "balanced", "aggressive"]).optional()
+        })
+      },
+      async ({ root, kind, text, task, profile }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const project = await ensureProject(resolvedRoot);
+        const memories = await new MemoryStore(memoryPath(resolvedRoot)).search(`${task ?? ""}
+${text}`, 8);
+        return ok(await traceFailure({ root: resolvedRoot, kind, text, task, profile, project, memories }));
+      }
+    );
+    server.registerTool(
+      "tokengraph_assess_change_risk",
+      {
+        title: "Assess Change Risk",
+        description: "Use this to estimate regression risk for changed files using graph, routes, tests, SQL, architecture rules, memories, and targeted test recommendations.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root. Defaults to the MCP server current working directory."),
+          changedFiles: array(string2().min(1)).min(1),
+          diffSummary: string2().optional(),
+          task: string2().optional(),
+          profile: _enum(["conservative", "balanced", "aggressive"]).optional()
+        })
+      },
+      async ({ root, changedFiles, diffSummary, task, profile }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const project = await ensureProject(resolvedRoot);
+        const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+        const memories = await new MemoryStore(memoryPath(resolvedRoot)).search(`${task ?? ""}
+${diffSummary ?? ""}
+${changedFiles.join("\n")}`, 8);
+        return ok(await assessChangeRisk({ root: resolvedRoot, changedFiles, diffSummary, task, profile, project, rules, memories }));
+      }
+    );
+    server.registerTool(
+      "tokengraph_project_map",
+      {
+        title: "Show Project Map",
+        description: "Use this when the coding agent needs a compact overview of indexed modules, symbols, SQL objects, and freshness.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({ root: string2().optional() })
+      },
+      async ({ root }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const project = await ensureProject(resolvedRoot);
+        const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+        const map = projectMap(project);
+        map.counts.memories = memories.length;
+        return ok(map);
+      }
+    );
+    server.registerTool(
+      "tokengraph_generate_wiki",
+      {
+        title: "Generate Project Wiki",
+        description: "Use this to generate compact local wiki pages from the persisted TokenGraph index and memory records. Explicit generation works regardless of wikiGenerationEnabled; that flag only controls automatic refresh after indexing.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root whose persisted index should be used. Defaults to the MCP server current working directory.")
+        })
+      },
+      async ({ root }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const project = await loadProjectIndex(resolvedRoot);
+        if (!project || !isSafeProjectIndex(resolvedRoot, project)) {
+          throw new Error("No safe persisted TokenGraph index was found. Run tokengraph_index_project before tokengraph_generate_wiki.");
+        }
+        const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+        const wiki = buildProjectWiki(project, memories, await listAppliedKnowledge(resolvedRoot));
+        await saveProjectWiki(resolvedRoot, wiki);
+        return ok({
+          status: "generated",
+          root: resolvedRoot,
+          wikiStatus: await getWikiStatus(resolvedRoot),
+          pages: wiki.pages.map((page2) => ({ slug: page2.slug, title: page2.title, estimatedTokens: page2.estimatedTokens }))
+        });
+      }
+    );
+    server.registerTool(
+      "tokengraph_show_wiki_page",
+      {
+        title: "Show Wiki Page",
+        description: "Use this to read a generated local wiki page before opening raw files. Explicit reads work regardless of wikiGenerationEnabled; that flag only controls automatic refresh after indexing.",
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional().describe("Workspace root whose generated wiki should be read. Defaults to the MCP server current working directory."),
+          slug: string2().min(1).describe("Wiki page slug to read, such as overview, structure, routes, database, or decisions.")
+        })
+      },
+      async ({ root, slug }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const wiki = await loadProjectWiki(resolvedRoot);
+        if (!wiki) {
+          throw new Error("No generated TokenGraph wiki was found. Run tokengraph_generate_wiki first.");
+        }
+        const page2 = wiki.pages.find((candidate) => candidate.slug === slug);
+        if (!page2) {
+          throw new Error(`Unknown wiki page slug "${slug}". Available slugs: ${wiki.pages.map((candidate) => candidate.slug).join(", ") || "none"}.`);
+        }
+        return ok({
+          slug: page2.slug,
+          title: page2.title,
+          body: page2.body,
+          estimatedTokens: page2.estimatedTokens,
+          wikiStatus: await getWikiStatus(resolvedRoot)
+        });
+      }
+    );
+    server.registerTool(
+      "tokengraph_plan_context",
+      {
+        title: "Plan Context",
+        description: "Use this before raw file exploration to get the smallest likely files, SQL objects, tests, and memories for a task.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          task: string2().min(3).describe("The coding task or question to route."),
+          profile: _enum(["conservative", "balanced", "aggressive"]).optional(),
+          maxFiles: number2().int().min(1).max(20).optional(),
+          maxSqlObjects: number2().int().min(0).max(20).optional(),
+          maxMemories: number2().int().min(0).max(20).optional(),
+          maxEstimatedTokens: number2().int().min(1).optional(),
+          allowRawReads: boolean2().optional()
+        })
+      },
+      async ({ root, task, profile, maxFiles, maxSqlObjects, maxMemories, maxEstimatedTokens, allowRawReads }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const config2 = await loadTokenGraphConfig(resolvedRoot);
+        const project = await ensureProject(resolvedRoot);
+        const memory = new MemoryStore(memoryPath(resolvedRoot));
+        const memories = config2.memoryEnabled ? await memory.search(task, maxMemories ?? 20) : [];
+        const plan = await buildContextPlan({
+          root: resolvedRoot,
+          task,
+          project,
+          memories,
+          budget: {
+            profile: profile ?? config2.tokenSavingProfile,
+            maxFiles,
+            maxSqlObjects,
+            maxMemories,
+            maxEstimatedTokens,
+            rawReadWarningThreshold: void 0,
+            allowRawReads
+          }
+        });
+        return ok(plan);
+      }
+    );
+    server.registerTool(
+      "tokengraph_search_graph",
+      {
+        title: "Search Graph",
+        description: "Use this to search indexed files, symbols, SQL tables, and routes without reading raw source.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          query: string2().min(2),
+          limit: number2().int().min(1).max(50).optional()
+        })
+      },
+      async ({ root, query, limit }) => {
+        const project = await ensureProject(await workspaceRoot(root));
+        return ok({ query, results: searchProject(project, query, limit ?? 10) });
+      }
+    );
+    server.registerTool(
+      "tokengraph_explain_symbol",
+      {
+        title: "Explain Symbol",
+        description: "Use this when the coding agent needs to know why a file or symbol is relevant before reading it.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({ root: string2().optional(), target: string2().min(1) })
+      },
+      async ({ root, target }) => {
+        const project = await ensureProject(await workspaceRoot(root));
+        return ok(explain(project, target));
+      }
+    );
+    server.registerTool(
+      "tokengraph_summarize_sql",
+      {
+        title: "Summarize SQL",
+        description: "Use this when a task touches data, auth, reports, RLS, migrations, or persistence.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({ root: string2().optional(), query: string2().min(2), limit: number2().int().min(1).max(50).optional() })
+      },
+      async ({ root, query, limit }) => {
+        const project = await ensureProject(await workspaceRoot(root));
+        return ok({ query, sql: sqlSummary(project, query, limit ?? 10) });
+      }
+    );
+    server.registerTool(
+      "tokengraph_compress_output",
+      {
+        title: "Compress Output",
+        description: "Use this to compress test, build, install, diff, or log output before the coding agent reads a long raw output.",
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          kind: _enum(["test", "build", "install", "diff", "log"]),
+          text: string2(),
+          maxLines: number2().int().min(1).max(200).optional()
+        })
+      },
+      async ({ kind, text, maxLines }) => ok(compressOutput({ kind, text, maxLines }))
+    );
+    server.registerTool(
+      "tokengraph_compress_context",
+      {
+        title: "Compress Context",
+        description: "Use this to compress prompts, memories, diffs, SQL, wiki text, logs, or mixed context while preserving exact implementation-critical references and first-read recommendations.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          task: string2().min(1),
+          contentKind: contextCompressionKindSchema2,
+          text: string2().optional(),
+          profile: tokenSavingProfileSchema2.optional(),
+          preserveRawReferences: boolean2().optional()
+        })
+      },
+      async ({ root, task, contentKind, text, profile, preserveRawReferences }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const [project, config2, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
+        const memoryQuery = [task, text ?? ""].join("\n");
+        const memories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(memoryQuery, config2.maxMemories) : [];
+        return ok(
+          await compressContext({
+            root: resolvedRoot,
+            task,
+            contentKind,
+            text,
+            profile: profile ?? config2.tokenSavingProfile,
+            preserveRawReferences,
+            project,
+            memories,
+            wiki
+          })
+        );
+      }
+    );
+    server.registerTool(
+      "tokengraph_remember_decision",
+      {
+        title: "Remember Decision",
+        description: "Use this only when the user or task outcome provides a durable project decision worth recalling later.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
           type: memoryTypeSchema,
           title: string2().min(3),
           body: string2().min(3),
-          tags: array(string2()).default([])
-        }).optional(),
-        limit: number2().int().min(1).max(50).optional()
-      })
-    },
-    async ({ root, id, query, candidate, limit }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const conflicts = await new MemoryStore(memoryPath(resolvedRoot)).findConflicts({ id, query, candidate, limit });
-      return ok({
-        root: resolvedRoot,
-        conflicts,
-        policy: "Memory conflicts are surfaced for review and not automatically resolved."
-      });
-    }
-  );
-  server.registerTool(
-    "tokengraph_link_memory",
-    {
-      title: "Link Memory",
-      description: "Use this to link a memory to files, symbols, SQL objects, architecture rules, source, and evidence.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        id: string2().min(1),
-        linkedFiles: array(string2()).optional(),
-        linkedSymbols: array(string2()).optional(),
-        linkedSqlObjects: array(string2()).optional(),
-        linkedRules: array(string2()).optional(),
-        evidence: array(string2()).optional(),
-        source: string2().optional()
-      })
-    },
-    async ({ root, id, ...links }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const memory = await new MemoryStore(memoryPath(resolvedRoot)).link(id, links);
-      if (!memory) {
-        throw new Error(`No memory found for id ${id}.`);
+          tags: array(string2()).default([]),
+          confidence: memoryConfidenceSchema.optional(),
+          source: string2().optional(),
+          evidence: array(string2()).optional(),
+          linkedFiles: array(string2()).optional(),
+          linkedSymbols: array(string2()).optional(),
+          linkedSqlObjects: array(string2()).optional(),
+          linkedRules: array(string2()).optional(),
+          supersedes: array(string2()).optional(),
+          importance: _enum(["normal", "important"]).optional(),
+          approved: boolean2().optional()
+        })
+      },
+      async ({ root, type, title, body, tags, confidence, source, evidence, linkedFiles, linkedSymbols, linkedSqlObjects, linkedRules, supersedes, importance, approved }) => {
+        if (importance === "important" && approved !== true) {
+          throw new Error("Important durable memories require explicit approval. Retry with approved: true only when the user requested or approved storing it.");
+        }
+        const resolvedRoot = await workspaceRoot(root);
+        const entry = await new MemoryStore(memoryPath(resolvedRoot)).add({
+          type,
+          title,
+          body,
+          tags,
+          confidence,
+          source,
+          evidence,
+          linkedFiles,
+          linkedSymbols,
+          linkedSqlObjects,
+          linkedRules,
+          supersedes
+        });
+        return ok({ status: "remembered", memory: entry });
       }
-      return ok({ status: "linked", root: resolvedRoot, memory });
-    }
-  );
-  server.registerTool(
-    "tokengraph_recall_memory",
-    {
-      title: "Recall Memory",
-      description: "Use this to retrieve relevant active memories. Audit mode is required to include deprecated or deleted memories.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        query: string2().optional(),
-        limit: number2().int().min(1).max(50).optional(),
-        auditMode: boolean2().optional()
-      })
-    },
-    async ({ root, query, limit, auditMode }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const recall = await new MemoryStore(memoryPath(resolvedRoot)).recall(query ?? "", { limit, auditMode: auditMode === true });
-      return ok({ root: resolvedRoot, ...recall });
-    }
-  );
-  server.registerTool(
-    "tokengraph_review_memories",
-    {
-      title: "Review Memories",
-      description: "Use this to review local TokenGraph memories before relying on them. This is read-only and never edits memory state.",
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        query: string2().optional().describe("Optional review focus. Empty query returns recent memories for manual review."),
-        limit: number2().int().min(1).max(100).optional()
-      })
-    },
-    async ({ root, query, limit }) => {
-      const resolvedRoot = await workspaceRoot(root);
-      const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
-      return ok(await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 }));
-    }
-  );
-  server.registerTool(
-    "tokengraph_export_project_map",
-    {
-      title: "Export Project Map",
-      description: "Use this to export a compact visual project map without raw source content.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({
-        root: string2().optional(),
-        format: _enum(["mermaid", "json"]).default("mermaid"),
-        limit: number2().int().min(1).max(200).optional()
-      })
-    },
-    async ({ root, format, limit }) => {
-      const project = await ensureProject(await workspaceRoot(root));
-      return okWithResourceLinks(exportProjectMap(project, { format, limit: limit ?? 50 }));
-    }
-  );
-  server.registerTool(
-    "tokengraph_show_token_savings",
-    {
-      title: "Show Token Savings",
-      description: "Use this to estimate how many tokens TokenGraph avoided by using the compact local index.",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({ root: string2().optional() })
-    },
-    async ({ root }) => {
-      const project = await ensureProject(await workspaceRoot(root));
-      const original = project.files.reduce((total, file) => total + file.estimatedTokens, 0);
-      const compact = estimateTokens(compactJson(projectMap(project)));
-      return ok({ original, compact, avoided: Math.max(0, original - compact), unit: "estimated tokens" });
-    }
-  );
+    );
+    server.registerTool(
+      "tokengraph_update_memory",
+      {
+        title: "Update Memory",
+        description: "Use this to update a local memory's text, tags, confidence, links, source, or evidence without deleting history.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          id: string2().min(1),
+          type: memoryTypeSchema.optional(),
+          title: string2().min(3).optional(),
+          body: string2().min(3).optional(),
+          tags: array(string2()).optional(),
+          confidence: memoryConfidenceSchema.optional(),
+          source: string2().optional(),
+          evidence: array(string2()).optional(),
+          linkedFiles: array(string2()).optional(),
+          linkedSymbols: array(string2()).optional(),
+          linkedSqlObjects: array(string2()).optional(),
+          linkedRules: array(string2()).optional(),
+          supersedes: array(string2()).optional(),
+          supersededBy: array(string2()).optional()
+        })
+      },
+      async ({ root, id, ...update }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const memory = await new MemoryStore(memoryPath(resolvedRoot)).update(id, update);
+        if (!memory) {
+          throw new Error(`No memory found for id ${id}.`);
+        }
+        return ok({ status: "updated", root: resolvedRoot, memory });
+      }
+    );
+    server.registerTool(
+      "tokengraph_delete_memory",
+      {
+        title: "Delete Memory",
+        description: "Use this to soft-delete a memory by default. Deleted memories are hidden from normal recall and visible only in audit mode.",
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          id: string2().min(1),
+          hard: boolean2().optional()
+        })
+      },
+      async ({ root, id, hard }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const deleted = await new MemoryStore(memoryPath(resolvedRoot)).delete(id, { hard: hard === true });
+        if (!deleted) {
+          throw new Error(`No memory found for id ${id}.`);
+        }
+        return ok({ status: "deleted", root: resolvedRoot, id, hard: hard === true });
+      }
+    );
+    server.registerTool(
+      "tokengraph_deprecate_memory",
+      {
+        title: "Deprecate Memory",
+        description: "Use this to mark a memory stale without deleting it. Deprecated memories are excluded from normal planning and recall.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          id: string2().min(1),
+          supersededBy: array(string2()).optional(),
+          evidence: array(string2()).optional()
+        })
+      },
+      async ({ root, id, supersededBy, evidence }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const memory = await new MemoryStore(memoryPath(resolvedRoot)).deprecate(id, supersededBy ?? [], evidence ?? []);
+        if (!memory) {
+          throw new Error(`No memory found for id ${id}.`);
+        }
+        return ok({ status: "deprecated", root: resolvedRoot, memory });
+      }
+    );
+    server.registerTool(
+      "tokengraph_confirm_memory",
+      {
+        title: "Confirm Memory",
+        description: "Use this to mark a memory as confirmed with evidence and raise or set confidence.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          id: string2().min(1),
+          evidence: array(string2()).optional(),
+          confidence: memoryConfidenceSchema.optional()
+        })
+      },
+      async ({ root, id, evidence, confidence }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const memory = await new MemoryStore(memoryPath(resolvedRoot)).confirm(id, evidence ?? [], confidence ?? "high");
+        if (!memory) {
+          throw new Error(`No memory found for id ${id}.`);
+        }
+        return ok({ status: "confirmed", root: resolvedRoot, memory });
+      }
+    );
+    server.registerTool(
+      "tokengraph_find_memory_conflicts",
+      {
+        title: "Find Memory Conflicts",
+        description: "Use this to surface potentially conflicting active memories. It never resolves or edits conflicts automatically.",
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          id: string2().optional(),
+          query: string2().optional(),
+          candidate: object({
+            type: memoryTypeSchema,
+            title: string2().min(3),
+            body: string2().min(3),
+            tags: array(string2()).default([])
+          }).optional(),
+          limit: number2().int().min(1).max(50).optional()
+        })
+      },
+      async ({ root, id, query, candidate, limit }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const conflicts = await new MemoryStore(memoryPath(resolvedRoot)).findConflicts({ id, query, candidate, limit });
+        return ok({
+          root: resolvedRoot,
+          conflicts,
+          policy: "Memory conflicts are surfaced for review and not automatically resolved."
+        });
+      }
+    );
+    server.registerTool(
+      "tokengraph_link_memory",
+      {
+        title: "Link Memory",
+        description: "Use this to link a memory to files, symbols, SQL objects, architecture rules, source, and evidence.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          id: string2().min(1),
+          linkedFiles: array(string2()).optional(),
+          linkedSymbols: array(string2()).optional(),
+          linkedSqlObjects: array(string2()).optional(),
+          linkedRules: array(string2()).optional(),
+          evidence: array(string2()).optional(),
+          source: string2().optional()
+        })
+      },
+      async ({ root, id, ...links }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const memory = await new MemoryStore(memoryPath(resolvedRoot)).link(id, links);
+        if (!memory) {
+          throw new Error(`No memory found for id ${id}.`);
+        }
+        return ok({ status: "linked", root: resolvedRoot, memory });
+      }
+    );
+    server.registerTool(
+      "tokengraph_recall_memory",
+      {
+        title: "Recall Memory",
+        description: "Use this to retrieve relevant active memories. Audit mode is required to include deprecated or deleted memories.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          query: string2().optional(),
+          limit: number2().int().min(1).max(50).optional(),
+          auditMode: boolean2().optional()
+        })
+      },
+      async ({ root, query, limit, auditMode }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const recall = await new MemoryStore(memoryPath(resolvedRoot)).recall(query ?? "", { limit, auditMode: auditMode === true });
+        return ok({ root: resolvedRoot, ...recall });
+      }
+    );
+    server.registerTool(
+      "tokengraph_review_memories",
+      {
+        title: "Review Memories",
+        description: "Use this to review local TokenGraph memories before relying on them. This is read-only and never edits memory state.",
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          query: string2().optional().describe("Optional review focus. Empty query returns recent memories for manual review."),
+          limit: number2().int().min(1).max(100).optional()
+        })
+      },
+      async ({ root, query, limit }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+        return ok(await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 }));
+      }
+    );
+    server.registerTool(
+      "tokengraph_export_project_map",
+      {
+        title: "Export Project Map",
+        description: "Use this to export a compact visual project map without raw source content.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({
+          root: string2().optional(),
+          format: _enum(["mermaid", "json"]).default("mermaid"),
+          limit: number2().int().min(1).max(200).optional()
+        })
+      },
+      async ({ root, format, limit }) => {
+        const project = await ensureProject(await workspaceRoot(root));
+        return okWithResourceLinks(exportProjectMap(project, { format, limit: limit ?? 50 }));
+      }
+    );
+    server.registerTool(
+      "tokengraph_show_token_savings",
+      {
+        title: "Show Token Savings",
+        description: "Use this to estimate how many tokens TokenGraph avoided by using the compact local index.",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        inputSchema: object({ root: string2().optional() })
+      },
+      async ({ root }) => {
+        const project = await ensureProject(await workspaceRoot(root));
+        const original = project.files.reduce((total, file) => total + file.estimatedTokens, 0);
+        const compact = estimateTokens(compactJson(projectMap(project)));
+        return ok({ original, compact, avoided: Math.max(0, original - compact), unit: "estimated tokens" });
+      }
+    );
+  }
   return server;
 }
 

@@ -107,7 +107,7 @@ Claude Code GitHub install:
 /reload-plugins
 \`\`\`
 
-Claude launches through \`\${CLAUDE_PLUGIN_ROOT}\` and forwards \`\${CLAUDE_PROJECT_DIR}\`. Codex must provide MCP Roots or inherit \`TOKENGRAPH_WORKSPACE_ROOT\`. Call \`tokengraph_setup_status\` before project tools; it diagnoses setup without granting filesystem trust.
+Claude launches through \`\${CLAUDE_PLUGIN_ROOT}\` and forwards \`\${CLAUDE_PROJECT_DIR}\`. Codex must provide MCP Roots or inherit \`TOKENGRAPH_WORKSPACE_ROOT\`. Call \`tokengraph_setup\` before project tools; it diagnoses setup without granting filesystem trust.
 
 ## Runtime
 
@@ -120,6 +120,10 @@ node ./dist/index.js
 The server is local-first. It indexes the selected workspace locally and stores project state under \`.tokengraph/\` in that workspace.
 
 TokenGraph stores project state under \`.tokengraph/\` inside the trusted workspace. Token savings are estimates.
+
+The default surface exposes eight compact tools; the opt-in full surface exposes 42. JSON-only successes return one serialized JSON text item, with project-map resource links as the documented exception. Wiki and memory changes use source-linked review-before-apply proposals.
+
+The checked-in benchmark passes its strict gate with median estimated net savings of 30.5 tokens, p25 -166, 100% constraint preservation and recall, and zero critical false negatives. Eleven tasks remain individually non-positive and every category remains low-confidence. These estimates are not provider billing counts.
 
 The PostToolUse/Stop hook stores only a schema-versioned session hash, task id, trusted root, turn id, and timestamp in the host-provided plugin data directory. It never stores prompts, transcripts, or tool payloads. Normal Stop can request one pause-or-complete report or the exact canonical footer; interrupts and API failures are not completion events. Review and trust the hook definition before enabling it, or disable host hooks and call \`tokengraph_task_report\` explicitly.
 

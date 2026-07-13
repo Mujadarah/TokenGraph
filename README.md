@@ -7,7 +7,7 @@ TokenGraph is a local-first plugin for Codex and Claude Code. It indexes a trust
 
 - No OpenAI or Anthropic API key required.
 - No cloud index, embeddings service, telemetry, or paid external service.
-- Current release: `0.19.0`.
+- Current release: `0.20.0`.
 - Runtime: Node.js 22 or newer.
 - Source-available under the repository [license](LICENSE).
 
@@ -57,15 +57,15 @@ Claude Code forwards `CLAUDE_PROJECT_DIR` to TokenGraph automatically.
 
 ## Install the release ZIP
 
-Download `tokengraph-0.19.0.zip` from the [latest GitHub release](https://github.com/Mujadarah/TokenGraph/releases/latest) and extract it. The extracted directory is a standalone marketplace root containing both host catalogs and the installable `tokengraph/` plugin.
+Download `tokengraph-0.20.0.zip` from the [latest GitHub release](https://github.com/Mujadarah/TokenGraph/releases/latest) and extract it. The extracted directory is a standalone marketplace root containing both host catalogs and the installable `tokengraph/` plugin.
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.19.0
+codex plugin marketplace add C:\path\to\tokengraph-0.20.0
 codex plugin add tokengraph@tokengraph
 ```
 
 ```bash
-claude plugin marketplace add /path/to/tokengraph-0.19.0
+claude plugin marketplace add /path/to/tokengraph-0.20.0
 claude plugin install tokengraph@tokengraph
 ```
 
@@ -79,16 +79,16 @@ Ask the agent:
 
 The expected sequence is:
 
-1. `tokengraph_setup_status` reports `ready` and identifies the host-provided trust source.
-2. `tokengraph_index_status` reports whether the local index is missing, fresh, or stale.
-3. `tokengraph_index_project` creates or refreshes `.tokengraph/index.json`.
-4. `tokengraph_plan_context` selects focused first reads for the task.
+1. `tokengraph_setup` reports `ready` and identifies the host-provided trust source.
+2. `tokengraph_prepare_context` indexes or refreshes the workspace, plans focused context, and returns one task id plus the trusted root.
+3. Reuse that exact task id and root with `tokengraph_query_context`, `tokengraph_compress`, `tokengraph_recall`, or `tokengraph_analyze` only as the task requires.
+4. Call `tokengraph_task_report` with `pause` or `complete` before stopping.
 
 The setup diagnostic never grants filesystem trust. If it reports `blocked`, follow its recovery steps and restart or reload the host.
 
 ## What agents can use
 
-TokenGraph provides 34 MCP tools and focused skills for:
+TokenGraph exposes eight compact intent-level tools by default and 42 tools on the opt-in full compatibility surface. Nine focused skills cover:
 
 - setup diagnosis and workspace-safe indexing;
 - project maps, symbol/import search, and context planning;
@@ -99,6 +99,14 @@ TokenGraph provides 34 MCP tools and focused skills for:
 - token-saving profiles and release-package auditing.
 
 See the [source plugin guide](plugins/tokengraph/README.md) for the complete tool catalog.
+
+## v0.20 behavior and evidence
+
+Every measured task has one canonical completion footer backed by a task ledger. JSON-only MCP successes return one serialized JSON `TextContent` item; `tokengraph_export_project_map` remains the documented resource-link exception. Wiki and memory updates use source-linked review-before-apply proposals: listing and proposing do not mutate derived knowledge, approval rechecks current provenance, and stale or expired proposals fail.
+
+The checked-in 30-task benchmark preserves 100% of critical constraints, has zero critical false negatives, reaches 100% required-file recall, and reports median estimated net savings of 30.5 tokens after response, schema, and footer overhead. Its 25th percentile is -166 tokens and 11 tasks remain individually non-positive. Every category has fewer than 10 observations, so confidence remains low. These are deterministic estimates, not provider billing counts or universal quality proof.
+
+Lifecycle hooks are cooperative automation. Users must review and trust them; they can be disabled, and interrupts, process termination, StopFailure, or API failure do not run normal completion enforcement. Missing or corrupt hook state fails open with a warning.
 
 ## Documentation
 
@@ -113,10 +121,10 @@ See the [source plugin guide](plugins/tokengraph/README.md) for the complete too
 
 ## Troubleshooting
 
-- Setup is blocked: call `tokengraph_setup_status` and apply the host-specific recovery steps.
+- Setup is blocked: call `tokengraph_setup` and apply the host-specific recovery steps.
 - Plugin is missing: inspect `codex plugin marketplace list` and `codex plugin list --json`, or `/plugin` in Claude Code.
 - Tools are missing after install: start a new Codex task or run `/reload-plugins` in Claude Code.
-- Index is stale: call `tokengraph_index_status`, then `tokengraph_index_project`.
+- Context is stale: start a fresh task and rerun `tokengraph_prepare_context`; it refreshes the index before planning.
 - Release ZIP will not install: add the extracted bundle root, not its nested `tokengraph/` directory.
 
 ## Maintainer workflow

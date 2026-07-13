@@ -1,28 +1,24 @@
 ---
 name: context-compression
-description: Use TokenGraph compression and planning tools to preserve important constraints while reducing prompt, diff, log, SQL, memory, and wiki context.
-when_to_use: Use when a coding agent must reduce a large context while preserving implementation-critical details.
+description: Use when large logs, diffs, prompts, SQL, memory, or mixed context must be reduced without losing critical detail.
 ---
 
 # Context Compression
 
-Use this skill when a prompt, diff, log, test output, SQL block, memory set, or wiki context is too large to use directly.
+## When not to use
 
-## MCP tools to call
+Do not use for already-small material or when exact full text is itself the requested evidence.
 
-Call `tokengraph_setup_status` first when compression needs project context. If it reports `blocked`, follow its recovery steps and do not claim project-aware compression was used.
+## Workflow
 
-1. Call `tokengraph_compress_context` for prompt, memory, diff, SQL, wiki, and mixed context.
-2. Call `tokengraph_compress_output` for logs, tests, builds, installs, diffs, and mixed command output.
-3. Call `tokengraph_plan_context` to replace broad background with targeted first reads.
-4. Call `tokengraph_show_wiki_page` for compact project orientation instead of repeated raw summaries.
-5. Call `tokengraph_review_memories` with a narrow query instead of dumping memory files.
-6. Call `tokengraph_summarize_sql` for database context instead of reading full migrations by default.
+Follow the common lifecycle in the general `tokengraph` skill:
 
-## Operating rules
+1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root; on blocked setup follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root: trusted root, task })` once and capture its taskId.
+3. Reuse the exact taskId and trusted root. Call `tokengraph_compress({ taskId, root: trusted root, mode: "output", kind, text })` for test, build, install, diff, or log output. Call `tokengraph_compress({ taskId, root: trusted root, mode: "context", task, contentKind, text? })` for prompt, memory, diff, SQL, wiki, or mixed context.
+4. Preserve user constraints, exact errors, test names, paths, identifiers, security warnings, raw references, and reported omissions. For output mode, use `omittedLineCount` and the returned token estimate—not confidence—to decide whether targeted raw lines are still required. For context mode, treat confidence as routing evidence and use targeted raw reads on low confidence.
+5. Call `tokengraph_task_report({ taskId, root: trusted root, disposition: "complete" })` only after the compressed result supports the requested outcome and verification. Use `tokengraph_task_report({ taskId, root: trusted root, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
 
-- Avoid raw reads and raw dumps by default. Use raw content only when compression confidence is low or the exact source is required.
-- Preserve user constraints, exact error messages, test names, stack paths, migration identifiers, public API names, and security warnings.
-- Mark hypotheses clearly when compressed context suggests a cause or patch scope.
-- Do not pretend `tokengraph_compress_context` or any unavailable MCP tool was used.
-- Report important omissions and recommend targeted raw reads when compression could hide implementation-critical detail.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use the existing narrow local fallback, and claim no savings or graph-backed evidence.
+
+A host refresh may require a fresh task or `/reload-plugins`. The lifecycle hook checks reports and exact footers at normal Stop. If hooks are disabled, untrusted, unavailable, or the turn ends by interrupt or API failure, call the report explicitly and manually include its returned status.

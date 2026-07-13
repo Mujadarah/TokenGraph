@@ -34,7 +34,7 @@ TOKENGRAPH_WORKSPACE_ROOT="$PWD" codex
 
 For Codex Desktop, the task must receive MCP Roots or the app process must inherit `TOKENGRAPH_WORKSPACE_ROOT`. A root argument passed by a tool caller is never treated as authority.
 
-Call `tokengraph_setup_status` first. A `blocked` result includes the missing or unsafe trust reason and recovery commands without reading project files. A `ready` result identifies the trusted source and root.
+Call `tokengraph_setup` first. A `blocked` result includes the missing or unsafe trust reason and recovery commands without reading project files. A `ready` result identifies the trusted source and root.
 
 ## Lifecycle hook trust and control
 
@@ -53,10 +53,10 @@ When the hook is disabled, untrusted, missing state, or the turn ends through an
 
 ## Install an extracted release bundle
 
-Extract `tokengraph-0.19.0.zip`, then add the extracted bundle root:
+Extract `tokengraph-0.20.0.zip`, then add the extracted bundle root:
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.19.0
+codex plugin marketplace add C:\path\to\tokengraph-0.20.0
 codex plugin add tokengraph@tokengraph
 ```
 

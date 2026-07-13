@@ -290,6 +290,30 @@ describe("tokengraph focused skills", () => {
 });
 
 describe("tokengraph release package command", () => {
+  it("uses v0.20.0 across every active source and marketplace version contract", async () => {
+    const repoRoot = resolve("..", "..");
+    const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8"));
+    const codexManifest = JSON.parse(await readFile(resolve(".codex-plugin", "plugin.json"), "utf8"));
+    const claudeManifest = JSON.parse(await readFile(resolve(".claude-plugin", "plugin.json"), "utf8"));
+    const claudeMarketplace = JSON.parse(await readFile(resolve(repoRoot, ".claude-plugin", "marketplace.json"), "utf8"));
+    const serverSource = await readFile(resolve("src", "server.ts"), "utf8");
+    const validatorSource = await readFile(resolve("scripts", "validate-plugin.mjs"), "utf8");
+    const limitations = await readFile(resolve(repoRoot, "docs", "trust", "limitations.md"), "utf8");
+    const rootReadme = await readFile(resolve(repoRoot, "README.md"), "utf8");
+    const firstUse = rootReadme.split("## First use")[1]?.split("## What agents can use")[0] ?? "";
+    const troubleshooting = rootReadme.split("## Troubleshooting")[1]?.split("## Maintainer workflow")[0] ?? "";
+
+    expect(packageJson.version).toBe("0.20.0");
+    expect(codexManifest.version).toBe("0.20.0");
+    expect(claudeManifest.version).toBe("0.20.0");
+    expect(claudeMarketplace.plugins[0].version).toBe("0.20.0");
+    expect(serverSource).toContain('version: "0.20.0"');
+    expect(validatorSource).not.toContain("STALE_RELEASE_HOOK_TRANSITION_SHA256");
+    expect(limitations).not.toMatch(/Phase 5.*remove this transition allowance/i);
+    expect(firstUse).toMatch(/tokengraph_setup[\s\S]*tokengraph_prepare_context[\s\S]*task id/i);
+    expect(`${firstUse}\n${troubleshooting}`).not.toMatch(/tokengraph_(?:index_status|index_project|plan_context)/);
+  });
+
   it("classifies transitional skill sets from content and rejects legacy names in a core set", async () => {
     const helperUrl = pathToFileURL(resolve("scripts", "skill-contract.mjs")).href;
     const helper = await import(helperUrl) as {
@@ -316,8 +340,8 @@ describe("tokengraph release package command", () => {
     const validator = await readFile(resolve("scripts", "validate-plugin.mjs"), "utf8");
     expect(validator).toMatch(/releaseSkillsPath/);
     expect(validator).toMatch(/packaged.*files|packagedFiles/i);
-    expect(validator).toMatch(/STALE_RELEASE_HOOK_TRANSITION_SHA256/);
-    expect(validator).toMatch(/createHash\("sha256"\)/);
+    expect(validator).not.toMatch(/STALE_RELEASE_HOOK_TRANSITION_SHA256/);
+    expect(validator).not.toMatch(/stale committed release snapshot/i);
   });
 
   it("keeps the root marketplace pointed at a committed installable release plugin", async () => {
@@ -351,9 +375,8 @@ describe("tokengraph release package command", () => {
     await expect(access(resolve(releaseRoot, ".mcp.json"))).resolves.toBeUndefined();
     await expect(access(resolve(releaseRoot, ".mcp.claude.json"))).resolves.toBeUndefined();
     await expect(access(resolve(releaseRoot, "dist", "index.js"))).resolves.toBeUndefined();
-    // Phase 3 transition: the committed v0.19 release remains valid until Phase 5 regenerates it.
-    await expect(access(resolve(releaseRoot, "dist", "hooks.js"))).rejects.toThrow();
-    await expect(access(resolve(releaseRoot, "hooks", "hooks.json"))).rejects.toThrow();
+    await expect(access(resolve(releaseRoot, "dist", "hooks.js"))).resolves.toBeUndefined();
+    await expect(access(resolve(releaseRoot, "hooks", "hooks.json"))).resolves.toBeUndefined();
     await expect(access(resolve(releaseRoot, "dist", "server.js"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "dist", "core"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "skills", "tokengraph", "SKILL.md"))).resolves.toBeUndefined();
@@ -387,11 +410,11 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.19.0"
+      version: "0.20.0"
     });
-    expect(report.bundleDir).toBe(resolve(outRoot, "tokengraph-0.19.0"));
+    expect(report.bundleDir).toBe(resolve(outRoot, "tokengraph-0.20.0"));
     expect(report.packageDir).toBe(resolve(report.bundleDir, "tokengraph"));
-    expect(report.archivePath).toBe(resolve(outRoot, "tokengraph-0.19.0.zip"));
+    expect(report.archivePath).toBe(resolve(outRoot, "tokengraph-0.20.0.zip"));
     expect(report.codexMarketplacePath).toBe(resolve(report.bundleDir, ".agents", "plugins", "marketplace.json"));
     expect(report.claudeMarketplacePath).toBe(resolve(report.bundleDir, ".claude-plugin", "marketplace.json"));
     expect(report.files).toEqual(
@@ -409,6 +432,9 @@ describe("tokengraph release package command", () => {
         "package.json"
       ])
     );
+    const generatedReadme = await readFile(resolve(report.packageDir, "README.md"), "utf8");
+    expect(generatedReadme.match(/The default surface exposes eight compact tools/g)).toHaveLength(1);
+    expect(generatedReadme.match(/The checked-in benchmark passes its strict gate/g)).toHaveLength(1);
     await expect(access(resolve(report.packageDir, "src"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "tests"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "node_modules"))).rejects.toThrow();
@@ -464,6 +490,23 @@ describe("tokengraph release package command", () => {
     })).resolves.toMatchObject({ stdout: expect.stringMatching(/validation passed/i) });
   });
 
+  it("rejects a release whose skill content drifts from the source plugin", async () => {
+    const sandbox = await makeRoot();
+    const repoRoot = resolve("..", "..");
+    const repoCopy = join(sandbox, "repo");
+    await cp(repoRoot, repoCopy, {
+      recursive: true,
+      filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts"].includes(source.split(/[\\/]/).at(-1) ?? "")
+    });
+    const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+    const driftedSkill = join(repoCopy, "release", "tokengraph", "skills", "tokengraph", "SKILL.md");
+    await writeFile(driftedSkill, `${await readFile(driftedSkill, "utf8")}\nDrifted release copy.\n`);
+
+    await expect(execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "validate-plugin.mjs")], {
+      cwd: copiedPlugin
+    })).rejects.toMatchObject({ stderr: expect.stringMatching(/release skill.*match source/i) });
+  });
+
   it("writes a direct release plugin layout when requested", async () => {
     const releaseRoot = resolve(await makeRoot(), "release-plugin");
 
@@ -481,7 +524,7 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.19.0",
+      version: "0.20.0",
       releaseDir: releaseRoot
     });
     expect(report.files).toEqual(

@@ -1,29 +1,29 @@
 ---
 name: graph-context-retrieval
-description: Use focused TokenGraph graph, wiki, SQL, and planner tools to retrieve compact implementation context before raw reads.
-when_to_use: Use when a coding agent needs project structure, scope, routes, imports, SQL objects, or symbols before reading source.
+description: Use when project structure, symbols, SQL objects, routes, or wiki orientation must be narrowed before source inspection.
 ---
 
 # Graph Context Retrieval
 
-Use this skill when a coding agent needs to understand project structure, likely patch scope, routes, imports, SQL objects, or symbols before opening source files.
+## When not to use
 
-## MCP tools to call
+Do not use for a known one-file lookup or when the user explicitly wants raw source only.
 
-Call `tokengraph_setup_status` first. If it reports `blocked`, follow its recovery steps and do not retry graph tools with arbitrary roots.
+## Workflow
 
-1. Call `tokengraph_get_config` to understand the active profile and context limits.
-2. Call `tokengraph_index_status` with the explicit workspace root. If the index is missing or stale, call `tokengraph_index_project`.
-3. Prefer `tokengraph_show_wiki_page` for overview, structure, routes, database, and decisions orientation.
-4. Call `tokengraph_project_map` when counts, frameworks, or graph shape are needed.
-5. Call `tokengraph_plan_context` with the concrete task before selecting files.
-6. Call `tokengraph_explain_symbol` when inbound or outbound references would clarify a target symbol.
-7. Call `tokengraph_summarize_sql` when SQL, RLS, auth, tenant isolation, migrations, or data access are relevant.
+Follow the common lifecycle in the general `tokengraph` skill:
 
-## Operating rules
+1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root. If blocked, follow recovery and do not invent a taskId.
+2. Call `tokengraph_prepare_context({ root: trusted root, task })` once and capture its taskId.
+3. Reuse that exact taskId and trusted root for queries:
+   - `tokengraph_query_context({ taskId, root: trusted root, mode: "overview" })` for project shape.
+   - `tokengraph_query_context({ taskId, root: trusted root, mode: "search", query })` for paths or identifiers.
+   - `tokengraph_query_context({ taskId, root: trusted root, mode: "symbol", target })` for references.
+   - `tokengraph_query_context({ taskId, root: trusted root, mode: "sql", query })` for schema, policy, or migration context.
+   - `tokengraph_query_context({ taskId, root: trusted root, mode: "wiki", slug })` for a known page.
+4. Use targeted raw reads only when recommended by the plan or when confidence is insufficient. State which exact evidence requires the read.
+5. Call `tokengraph_task_report({ taskId, root: trusted root, disposition: "complete" })` only after the requested orientation is delivered and checked. Use `tokengraph_task_report({ taskId, root: trusted root, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
 
-- Avoid raw reads until the wiki, project map, and planner have narrowed the target.
-- Use raw files only for the recommended first reads or narrowly targeted snippets.
-- Mark hypotheses clearly when the graph suggests but does not prove a relationship.
-- Do not pretend TokenGraph MCP tools were used when they are unavailable. Say they are unavailable and fall back to narrow `rg` plus targeted file reads.
-- Preserve implementation quality. If compact context omits something important, recommend a targeted raw read.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use narrow local `rg` and targeted file reads, and claim no graph-backed evidence or savings.
+
+A host refresh may require a fresh task or `/reload-plugins`. The lifecycle hook checks reports and exact footers at normal Stop. If hooks are disabled, untrusted, unavailable, or the turn ends by interrupt or API failure, call the report explicitly and manually include its returned status.

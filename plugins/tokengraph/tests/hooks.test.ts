@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,7 +15,8 @@ import {
   type TaskEvent
 } from "../src/core/taskLedger.js";
 
-const hookEntry = resolve("dist", "hooks.js");
+const hookEntry = resolve(process.env.TOKENGRAPH_HOOK_ENTRY ?? resolve("dist", "hooks.js"));
+const hookPluginRoot = resolve(dirname(hookEntry), "..");
 const roots: string[] = [];
 
 async function makeRoot(prefix: string): Promise<string> {
@@ -468,6 +469,77 @@ describe("built lifecycle hook process", () => {
     expect(run).toMatchObject({ code: 0, output: {} });
     expect(run.stdout).not.toMatch(/complete|saved/i);
     expect(run.stderr).not.toContain("API failure detail");
+  });
+
+  it("keeps canonical footer and Stop outcomes byte-equivalent across Codex and Claude adapter environments", async () => {
+    const summaries: Record<string, unknown>[] = [];
+    for (const host of ["codex", "claude"] as const) {
+      const root = await makeRoot(`tokengraph-hook-paired-${host}-root-`);
+      const dataRoot = await makeRoot(`tokengraph-hook-paired-${host}-data-`);
+      const sessionId = `paired-${host}`;
+      const env = host === "codex"
+        ? { PLUGIN_ROOT: hookPluginRoot, PLUGIN_DATA: dataRoot, TOKENGRAPH_HOOK_HOST: host }
+        : { CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: dataRoot, TOKENGRAPH_HOOK_HOST: host };
+      const attach = async (taskId: string) => runHook("post-tool-use", postInput({
+        session_id: sessionId,
+        tool_input: { taskId, root }
+      }), env);
+      const stop = async (overrides: Record<string, unknown> = {}) => runHook("stop", stopInput({ session_id: sessionId, ...overrides }), env);
+
+      const measured = await createTaskLedger(root, { host: "unknown" });
+      await recordTaskEvent(root, measured.taskId, taskEvent());
+      const measuredResult = await setTaskDisposition(root, measured.taskId, "complete");
+      const measuredFooter = formatTaskReportFooter(measuredResult.report!);
+      await attach(measured.taskId);
+      const measuredStop = await stop({ last_assistant_message: `Done.\n\n${measuredFooter}` });
+
+      const noEvents = await createTaskLedger(root, { host: "unknown" });
+      const noEventsResult = await setTaskDisposition(root, noEvents.taskId, "complete");
+      const noEventsFooter = formatTaskReportFooter(noEventsResult.report!);
+      await attach(noEvents.taskId);
+      const noEventsStop = await stop({ last_assistant_message: noEventsFooter });
+
+      const paused = await createTaskLedger(root, { host: "unknown" });
+      await setTaskDisposition(root, paused.taskId, "pause");
+      await attach(paused.taskId);
+      const pausedStop = await stop();
+
+      await attach(measured.taskId);
+      const missingFooter = await stop();
+      const repeatedStop = await stop({ stop_hook_active: true });
+
+      const emptyData = await makeRoot(`tokengraph-hook-paired-${host}-empty-`);
+      const emptyEnv = host === "codex"
+        ? { PLUGIN_ROOT: hookPluginRoot, PLUGIN_DATA: emptyData, TOKENGRAPH_HOOK_HOST: host }
+        : { CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: emptyData, TOKENGRAPH_HOOK_HOST: host };
+      const noState = await runHook("stop", stopInput({ session_id: `empty-${host}` }), emptyEnv);
+      await mkdir(join(emptyData, "sessions"), { recursive: true });
+      await writeFile(pointerPath(emptyData, `empty-${host}`), "{corrupt\n");
+      const corruptState = await runHook("stop", stopInput({ session_id: `empty-${host}` }), emptyEnv);
+
+      summaries.push({
+        measuredFooter,
+        noEventsFooter,
+        measuredStop: measuredStop.output,
+        noEventsStop: noEventsStop.output,
+        pausedStop: pausedStop.output,
+        missingFooterIncludesCanonicalBytes: String(missingFooter.output.reason).includes(measuredFooter),
+        repeatedStopIncludesCanonicalBytes: String(repeatedStop.output.systemMessage).includes(measuredFooter),
+        noState: noState.output,
+        corruptState: corruptState.output
+      });
+    }
+
+    expect(summaries[0]).toEqual(summaries[1]);
+    expect(summaries[0]).toMatchObject({
+      measuredFooter: expect.stringMatching(/^TokenGraph: /),
+      noEventsFooter: expect.stringMatching(/^TokenGraph: /),
+      measuredStop: {}, noEventsStop: {}, pausedStop: {},
+      missingFooterIncludesCanonicalBytes: true,
+      repeatedStopIncludesCanonicalBytes: true,
+      noState: {},
+      corruptState: { systemMessage: expect.stringMatching(/corrupt/i) }
+    });
   });
 });
 
