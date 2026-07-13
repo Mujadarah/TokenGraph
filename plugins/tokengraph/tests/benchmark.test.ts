@@ -1,5 +1,6 @@
-import { access, readFile, readdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { access, cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -27,6 +28,18 @@ async function corpus() {
 
 async function evidence() {
   return JSON.parse(await readFile(evidencePath, "utf8"));
+}
+
+async function rewriteTextTree(root: string, eol: "\n" | "\r\n"): Promise<void> {
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const path = resolve(root, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name !== ".tokengraph") await rewriteTextTree(path, eol);
+      continue;
+    }
+    const text = await readFile(path, "utf8");
+    await writeFile(path, text.replace(/\r\n|\r|\n/g, eol), "utf8");
+  }
 }
 
 describe("evidence benchmark", () => {
@@ -362,6 +375,29 @@ describe("evidence benchmark", () => {
     expect(firstTimestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(secondTimestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(stableBenchmarkJson(first)).toBe(stableBenchmarkJson(second));
+  });
+
+  it("produces identical evidence for LF and CRLF fixture checkouts", async () => {
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "tokengraph-benchmark-eol-"));
+    const sourceFixture = resolve("tests", "fixtures", "evidence-project");
+    const lfFixture = join(temporaryRoot, "lf");
+    const crlfFixture = join(temporaryRoot, "crlf");
+
+    try {
+      await cp(sourceFixture, lfFixture, { recursive: true, filter: (source) => !source.includes(`${resolve(sourceFixture, ".tokengraph")}`) });
+      await cp(sourceFixture, crlfFixture, { recursive: true, filter: (source) => !source.includes(`${resolve(sourceFixture, ".tokengraph")}`) });
+      await rewriteTextTree(lfFixture, "\n");
+      await rewriteTextTree(crlfFixture, "\r\n");
+
+      const lf = await evaluateBenchmark(await corpus(), lfFixture);
+      const crlf = await evaluateBenchmark(await corpus(), crlfFixture);
+      delete (lf as { generatedAt?: string }).generatedAt;
+      delete (crlf as { generatedAt?: string }).generatedAt;
+
+      expect(stableBenchmarkJson(crlf)).toBe(stableBenchmarkJson(lf));
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
   });
 
   it("rejects the legacy nine-task placeholder report", () => {

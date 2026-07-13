@@ -249,13 +249,19 @@ async function loadEvidence(): Promise<BenchmarkEvidence> {
   return evidence;
 }
 
+function canonicalBenchmarkText(text: string): string {
+  return text.replace(/\r\n|\r/g, "\n");
+}
+
 async function rawBaseline(root: string, files: string[]): Promise<{
   text: string;
   tokens: number;
   files: Array<{ path: string; text: string }>;
 }> {
   const parts: Array<{ path: string; text: string }> = [];
-  for (const path of files) parts.push({ path, text: await readFile(resolve(root, path), "utf8") });
+  for (const path of files) {
+    parts.push({ path, text: canonicalBenchmarkText(await readFile(resolve(root, path), "utf8")) });
+  }
   const text = parts.map((part) => part.text).join("\n");
   return { text, tokens: estimateTokens(text), files: parts };
 }
@@ -443,7 +449,9 @@ async function evaluateTask(
     .filter((path) => indexedPaths.has(path))
     .map(async (path, index) => {
       const targetedRequest = request(taskOrdinal * 100 + 50 + index, "read_file", { path });
-      const response = { content: [{ type: "text" as const, text: await readFile(resolve(root, path), "utf8") }] };
+      const response = {
+        content: [{ type: "text" as const, text: canonicalBenchmarkText(await readFile(resolve(root, path), "utf8")) }]
+      };
       return {
         tool: "read_file",
         request: targetedRequest,
