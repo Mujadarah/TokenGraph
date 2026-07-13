@@ -202,6 +202,10 @@ export interface WikiPage {
   title: string;
   body: string;
   estimatedTokens: number;
+  sourceFingerprints?: string[];
+  backlinks?: string[];
+  contradictions?: string[];
+  freshness?: "fresh" | "stale";
 }
 
 export interface ProjectWiki {

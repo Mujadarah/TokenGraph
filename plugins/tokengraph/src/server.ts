@@ -36,7 +36,7 @@ import { buildTaskReport, formatTaskReportFooter } from "./core/taskEstimator.js
 import type { ProjectIndex, RankedSqlObject } from "./core/types.js";
 import { buildProjectWiki } from "./core/wiki.js";
 import { createTaskLedger, loadTaskLedger, recordTaskEvent, setTaskDisposition, type TaskHost } from "./core/taskLedger.js";
-import { listKnowledgeSuggestions, proposeKnowledgeChange, reviewKnowledgeSuggestion } from "./core/knowledgeReviewQueue.js";
+import { listAppliedKnowledge, listKnowledgeSuggestions, proposeKnowledgeChange, reviewKnowledgeSuggestion } from "./core/knowledgeReviewQueue.js";
 
 const architectureRuleTypeSchema = z.enum([
   "forbidden-import",
@@ -652,7 +652,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const config = await loadTokenGraphConfig(resolvedRoot);
       if (indexingMode !== "existing" && config.wikiGenerationEnabled) {
         const wikiMemories = config.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).list() : [];
-        await saveProjectWiki(resolvedRoot, buildProjectWiki(project, wikiMemories));
+        await saveProjectWiki(resolvedRoot, buildProjectWiki(project, wikiMemories, await listAppliedKnowledge(resolvedRoot)));
       }
       const memoryLimit = budgets?.maxMemories ?? config.maxMemories;
       const memories = config.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(task, memoryLimit) : [];
@@ -876,11 +876,16 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     "tokengraph_propose_knowledge",
     {
       title: "Propose Task Knowledge",
-      description: "Propose, list, approve, or reject review-queue knowledge without directly applying it.",
+      description: "Propose or list local knowledge, or explicitly approve/reject reviewed payloads. Approval applies only fresh reviewed content; rejection never applies it.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: z.object({
         taskId: z.string().uuid(), root: z.string().optional(), action: z.literal("propose"), type: z.enum(["wiki", "memory", "skill"]),
-        title: z.string().min(1), rationale: z.string().min(1), proposedContent: z.string().min(1), sourceFingerprints: z.array(z.string()).min(1), affectedIdentifiers: z.array(z.string()).min(1)
+        title: z.string().min(1), rationale: z.string().min(1), proposedContent: z.string().min(1), sourceFingerprints: z.array(z.string()).min(1), affectedIdentifiers: z.array(z.string()).min(1),
+        sources: z.array(z.object({ kind: z.enum(["path", "id"]), sourceId: z.string().min(1), fingerprint: z.string().min(1) })).min(1).optional(),
+        affectedTargets: z.object({
+          wikiPages: z.array(z.string()).optional(), memories: z.array(z.string()).optional(), skills: z.array(z.string()).optional()
+        }).optional(),
+        conflictNotes: z.array(z.string()).optional(), expiresAt: z.string().datetime().optional()
       }).or(z.object({
         taskId: z.string().uuid(), root: z.string().optional(), action: z.literal("list"), type: z.enum(["wiki", "memory", "skill"]).optional(),
         status: z.enum(["proposed", "approved", "rejected", "expired"]).optional()
@@ -895,19 +900,30 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const resolvedRoot = await requireTaskRoot(root, taskId);
       let output: object;
       if (action === "propose") {
-        const { type, title, rationale, proposedContent, sourceFingerprints, affectedIdentifiers } = input;
-        output = { suggestion: await proposeKnowledgeChange(resolvedRoot, { type, title, rationale, proposedContent, sourceFingerprints, affectedIdentifiers }) };
+        const { type, title, rationale, proposedContent, sourceFingerprints, affectedIdentifiers, sources, affectedTargets, conflictNotes, expiresAt } = input;
+        output = { suggestion: await proposeKnowledgeChange(resolvedRoot, {
+          type, title, rationale, proposedContent, sourceFingerprints, affectedIdentifiers,
+          ...(sources ? { sources } : {}), ...(affectedTargets ? { affectedTargets } : {}),
+          ...(conflictNotes ? { conflictNotes } : {}), ...(expiresAt ? { expiresAt } : {})
+        }) };
       } else if (action === "list") {
         const { type, status } = input;
         output = { suggestions: await listKnowledgeSuggestions(resolvedRoot, { type, status }) };
       } else {
         output = await reviewKnowledgeSuggestion(resolvedRoot, input.id, action, input.reason);
+        if (action === "approve") {
+          const [project, existingWiki, memories, applications] = await Promise.all([
+            loadProjectIndex(resolvedRoot), loadProjectWiki(resolvedRoot),
+            new MemoryStore(memoryPath(resolvedRoot)).list(), listAppliedKnowledge(resolvedRoot)
+          ]);
+          if (project && existingWiki) await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories, applications));
+        }
       }
       const compactTokens = estimateTokens(compactJson(output));
       await recordCoreEvent({
         root: resolvedRoot, taskId, toolName: "tokengraph_propose_knowledge", category: `knowledge-${action}`,
         operation: action === "propose"
-          ? { action, proposalHash: createHash("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers })).digest("hex") }
+          ? { action, proposalHash: createHash("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") }
           : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
         originalTokens: compactTokens, compactTokens
       });
@@ -995,7 +1011,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       if (config.wikiGenerationEnabled) {
         try {
           const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
-          await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories));
+          await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories, await listAppliedKnowledge(resolvedRoot)));
           wikiRefreshed = true;
         } catch (error) {
           wikiWarning = `Wiki refresh failed: ${(error as Error).message}`;
@@ -1291,7 +1307,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         throw new Error("No safe persisted TokenGraph index was found. Run tokengraph_index_project before tokengraph_generate_wiki.");
       }
       const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
-      const wiki = buildProjectWiki(project, memories);
+      const wiki = buildProjectWiki(project, memories, await listAppliedKnowledge(resolvedRoot));
       await saveProjectWiki(resolvedRoot, wiki);
       return ok({
         status: "generated",

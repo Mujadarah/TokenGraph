@@ -17,7 +17,7 @@ Use this skill as the router for TokenGraph work. Specialized bundled skills fol
    - `tokengraph_compress` for output or mixed context.
    - `tokengraph_recall` for recalled or reviewed knowledge.
    - `tokengraph_analyze` for failure, risk, or architecture analysis.
-   - `tokengraph_propose_knowledge` for review-queue actions, never direct application.
+   - `tokengraph_propose_knowledge` for explicit review-before-apply actions. Proposal does not mutate derived knowledge; approval applies a fresh reviewed payload once, and rejection applies nothing.
 5. Call `tokengraph_task_report({ taskId, root: trusted root, disposition: "complete" })` only after the requested outcome and verification are complete. Use `tokengraph_task_report({ taskId, root: trusted root, disposition: "pause" })` for approval, missing evidence, blocked setup after task creation, or unfinished work.
 
 Setup blocked before task creation means recovery without an invented taskId. Setup blocked after task creation means pause the captured task. If core tools are unavailable, state “TokenGraph was not used,” use narrow local `rg`, targeted file reads, and relevant local commands, and never claim savings or graph-backed evidence.

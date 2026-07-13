@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export interface JsonTokenGraphStoreOptions {
   schemaVersion: number;
@@ -84,6 +84,39 @@ export async function writeTextAtomic(path: string, content: string): Promise<vo
   } finally {
     await rm(tempPath, { force: true });
   }
+}
+
+export async function resolveConfinedPath(root: string, relativeFile: string, createParents = false): Promise<string> {
+  if (!relativeFile || isAbsolute(relativeFile) || relativeFile.replaceAll("\\", "/").split("/").includes("..")) {
+    throw new Error("Confined path must be a safe relative file path.");
+  }
+  const canonicalRoot = await realpath(resolve(root));
+  const segments = relativeFile.replaceAll("\\", "/").split("/").filter(Boolean);
+  const fileName = segments.pop();
+  if (!fileName) throw new Error("Confined path must name a file.");
+  let parent = canonicalRoot;
+  for (const segment of segments) {
+    const candidate = join(parent, segment);
+    if (createParents) await mkdir(candidate, { recursive: false }).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    });
+    parent = await realpath(candidate);
+    const confined = relative(canonicalRoot, parent);
+    if (!confined || confined.startsWith("..") || isAbsolute(confined)) {
+      throw new Error("Path resolves outside the trusted workspace.");
+    }
+  }
+  const filePath = join(parent, fileName);
+  try {
+    if ((await lstat(filePath)).isSymbolicLink()) throw new Error("Confined file path cannot be a symbolic link.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return filePath;
+}
+
+export async function writeTextAtomicConfined(root: string, relativeFile: string, content: string): Promise<void> {
+  await writeTextAtomic(await resolveConfinedPath(root, relativeFile, true), content);
 }
 
 export async function quarantineCorruptJson(path: string): Promise<void> {

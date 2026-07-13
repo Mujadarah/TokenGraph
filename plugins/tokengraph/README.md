@@ -43,6 +43,12 @@ The default `TOKENGRAPH_TOOL_SURFACE=core` surface exposes exactly eight intent-
 
 Set `TOKENGRAPH_TOOL_SURFACE=full` before starting the MCP host to add the 34 deprecated compatibility tools below. Their names, schemas, and behavior remain available during migration; prefer the core tools for new tasks.
 
+### Reviewed local knowledge
+
+`tokengraph_propose_knowledge` records privacy-safe local proposals with normalized source ids and fingerprints, intended wiki/memory/skill targets, rationale, conflict notes, and expiry. Proposing and listing never mutate derived knowledge. Explicit approval rechecks expiry and current relative-file fingerprints while holding the persistence lock, then applies only the reviewed payload once under `.tokengraph/knowledge/`; repeated approval returns the original application. Stale or expired approval fails clearly, and rejection applies nothing.
+
+Generated wiki Markdown uses deterministic Obsidian-compatible YAML frontmatter and relative wiki links. It includes backlinks, reviewed conflict markers, and fresh/stale source status. Refresh rewrites only changed page files. All review, application, and wiki state stays workspace-confined and local; no cloud service or embeddings are used. These source changes are not present in the committed release directory until the release packaging phase regenerates it.
+
 Legacy setup and indexing:
 
 - `tokengraph_setup_status`

@@ -102,7 +102,7 @@ describe("bundled skill contracts", () => {
     "root-cause-debugger": [/When not to use/i, /mode: "output"/, /mode: "failure"/, /original failure text/i, /exactly once/i, /returned compressed evidence/i, /not the consumer/i, /tokengraph_query_context/, /facts/i, /hypotheses/i, /regression evidence/i],
     "regression-detector": [/When not to use/i, /mode: "risk"/, /mode: "symbol"/, /mode: "sql"/, /recommend/i, /verif(?:y|ied).*tests/i],
     "architecture-consistency-checker": [/When not to use/i, /mode: "architecture"/, /mode: "risk"/, /import/i, /SQL/i, /security/i, /release/i, /proposals/i, /enforced facts/i],
-    "memory-curator": [/When not to use/i, /mode: "review"/, /audit: true/, /tokengraph_query_context/, /action: "propose"/, /applicationStatus/, /pending/, /approval/i, /application/i],
+    "memory-curator": [/When not to use/i, /mode: "review"/, /audit: true/, /tokengraph_query_context/, /action: "propose"/, /applicationStatus.*applied/i, /stale or expired.*cannot|cannot.*stale or expired/i, /approval/i, /application/i],
     "release-packaging-auditor": [/When not to use/i, /tokengraph_prepare_context/, /tokengraph_query_context/, /mode: "risk"/, /tokengraph_compress/, /typecheck/i, /full tests/i, /build/i, /core smoke/i, /full smoke/i, /validation/i, /generated release/i, /direct release/i, /extracted ZIP/i, /host/i]
   };
 

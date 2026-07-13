@@ -1,4 +1,4 @@
-import { access, cp, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { access, cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -988,6 +988,56 @@ describe("index status and reset", () => {
 });
 
 describe("project wiki", () => {
+  it("renders deterministic Obsidian frontmatter, backlinks, conflicts, and source freshness", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "flow.ts"), "export const flow = true;\n");
+    const project = await indexProject(root);
+    const sourceFingerprint = project.scanMetadata?.files["src/flow.ts"]?.contentHash;
+    expect(sourceFingerprint).toBeTruthy();
+    const applications = [{
+      suggestionId: "11111111-1111-4111-8111-111111111111",
+      fingerprint: "reviewed-flow-v1",
+      type: "wiki" as const,
+      title: "Reviewed flow",
+      rationale: "The source defines the flow.",
+      proposedContent: "The reviewed flow is active.",
+      sources: [{ kind: "path" as const, sourceId: "src/flow.ts", fingerprint: sourceFingerprint! }],
+      affectedTargets: { wikiPages: ["overview"], memories: [], skills: [] },
+      conflictNotes: ["Older notes say the flow is disabled."],
+      appliedAt: "2026-07-13T10:00:00.000Z"
+    }];
+
+    const first = buildProjectWiki(project, [], applications);
+    const second = buildProjectWiki(project, [], applications);
+    const overview = first.pages.find((page) => page.slug === "overview")!;
+    const structure = first.pages.find((page) => page.slug === "structure")!;
+
+    expect(first).toEqual(second);
+    expect(overview.body).toMatch(/^---\ntitle: "Project Overview"\nslug: "overview"\nfreshness: "fresh"/);
+    expect(overview.body).toContain("[[structure|Project Structure]]");
+    expect(structure.body).toContain("## Backlinks\n- [[overview|Project Overview]]");
+    expect(overview.body).toContain("> [!warning] Conflict: Older notes say the flow is disabled.");
+    expect(overview.body).toContain("The reviewed flow is active.");
+    expect(overview.freshness).toBe("fresh");
+
+    const changed = structuredClone(project);
+    changed.scanMetadata!.files["src/flow.ts"]!.contentHash = "changed";
+    const staleOverview = buildProjectWiki(changed, [], applications).pages.find((page) => page.slug === "overview")!;
+    expect(staleOverview.freshness).toBe("stale");
+    expect(staleOverview.body).toContain('freshness: "stale"');
+
+    delete changed.scanMetadata!.files["src/flow.ts"];
+    expect(buildProjectWiki(changed, [], applications).pages.find((page) => page.slug === "overview")!.freshness).toBe("stale");
+
+    const customTarget = structuredClone(applications);
+    customTarget[0]!.affectedTargets.wikiPages = ["architecture/request-flow"];
+    const customPage = buildProjectWiki(project, [], customTarget).pages.find((page) => page.slug === "architecture/request-flow");
+    expect(customPage).toMatchObject({ title: "Reviewed flow", freshness: "fresh" });
+    expect(customPage!.body).toContain("The reviewed flow is active.");
+    expect(customPage!.body).toContain("[[../overview|Project Overview]]");
+  });
+
   it("builds deterministic wiki pages from the indexed fixture and memories", async () => {
     const root = resolve("tests", "fixtures", "next-supabase");
     const project = await indexProject(root);
@@ -1081,6 +1131,43 @@ describe("project wiki", () => {
     await expect(loadProjectWiki(stateRoot)).resolves.toEqual(wiki);
   });
 
+  it("refreshes only wiki pages whose deterministic content changed", async () => {
+    const fixtureRoot = resolve("tests", "fixtures", "next-supabase");
+    const root = await makeRoot();
+    const project = await indexProject(fixtureRoot);
+    const wiki = buildProjectWiki(project, []);
+    await saveProjectWiki(root, wiki);
+    const overviewPath = join(wikiDir(root), "overview.md");
+    const structurePath = join(wikiDir(root), "structure.md");
+    const beforeOverview = (await stat(overviewPath)).mtimeMs;
+    const beforeStructure = (await stat(structurePath)).mtimeMs;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 30));
+
+    const changed = structuredClone(wiki);
+    const overview = changed.pages.find((page) => page.slug === "overview")!;
+    overview.body += "\nReviewed increment.\n";
+    overview.estimatedTokens = estimateTokens(overview.body);
+    await saveProjectWiki(root, changed);
+
+    expect((await stat(overviewPath)).mtimeMs).toBeGreaterThan(beforeOverview);
+    expect((await stat(structurePath)).mtimeMs).toBe(beforeStructure);
+  });
+
+  it("rejects nested wiki directory symlinks that escape the workspace", async () => {
+    const fixtureRoot = resolve("tests", "fixtures", "next-supabase");
+    const root = await makeRoot();
+    const outside = await makeRoot();
+    const project = await indexProject(fixtureRoot);
+    const wiki = buildProjectWiki(project, []);
+    wiki.pages.push({ slug: "architecture/request-flow", title: "Flow", body: "# Flow\n", estimatedTokens: 2 });
+    await mkdir(join(wikiDir(root), "architecture"), { recursive: true });
+    await rm(join(wikiDir(root), "architecture"), { recursive: true, force: true });
+    await symlink(outside, join(wikiDir(root), "architecture"), "junction");
+
+    await expect(saveProjectWiki(root, wiki)).rejects.toThrow(/workspace|outside|confined/i);
+    expect(await readdir(outside)).toEqual([]);
+  });
+
   it("returns undefined for missing or invalid wiki manifests", async () => {
     const root = await makeRoot();
     await expect(loadProjectWiki(root)).resolves.toBeUndefined();
@@ -1117,6 +1204,17 @@ describe("project wiki", () => {
       })
     );
 
+    await expect(loadProjectWiki(root)).resolves.toBeUndefined();
+
+    await writeFile(
+      join(wikiDir(root), "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        fingerprint: "unsafe",
+        generatedAt: "2026-07-07T00:00:00.000Z",
+        pages: [{ slug: "../../outside", title: "Unsafe slug", estimatedTokens: 1, file: "overview.md" }]
+      })
+    );
     await expect(loadProjectWiki(root)).resolves.toBeUndefined();
   });
 

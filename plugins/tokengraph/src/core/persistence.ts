@@ -1,7 +1,7 @@
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
-import { quarantineCorruptJson, writeJsonAtomic, writeTextAtomic } from "./storage.js";
+import { quarantineCorruptJson, resolveConfinedPath, writeJsonAtomic, writeTextAtomic, writeTextAtomicConfined } from "./storage.js";
 import type { ProjectIndex, ProjectWiki, WikiPage } from "./types.js";
 
 export function stateDir(root: string): string {
@@ -96,6 +96,10 @@ interface WikiManifestPage {
   title: string;
   estimatedTokens: number;
   file: string;
+  sourceFingerprints?: string[];
+  backlinks?: string[];
+  contradictions?: string[];
+  freshness?: "fresh" | "stale";
 }
 
 interface WikiManifest {
@@ -103,6 +107,12 @@ interface WikiManifest {
   fingerprint: string;
   generatedAt: string;
   pages: WikiManifestPage[];
+}
+
+const SAFE_WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function isWikiManifest(value: unknown): value is WikiManifest {
@@ -120,9 +130,14 @@ function isWikiManifest(value: unknown): value is WikiManifest {
         page &&
         typeof page === "object" &&
         typeof (page as Partial<WikiManifestPage>).slug === "string" &&
+        SAFE_WIKI_SLUG_PATTERN.test((page as Partial<WikiManifestPage>).slug!) &&
         typeof (page as Partial<WikiManifestPage>).title === "string" &&
         typeof (page as Partial<WikiManifestPage>).estimatedTokens === "number" &&
-        typeof (page as Partial<WikiManifestPage>).file === "string"
+        typeof (page as Partial<WikiManifestPage>).file === "string" &&
+        ((page as Partial<WikiManifestPage>).sourceFingerprints === undefined || isStringArray((page as Partial<WikiManifestPage>).sourceFingerprints)) &&
+        ((page as Partial<WikiManifestPage>).backlinks === undefined || isStringArray((page as Partial<WikiManifestPage>).backlinks)) &&
+        ((page as Partial<WikiManifestPage>).contradictions === undefined || isStringArray((page as Partial<WikiManifestPage>).contradictions)) &&
+        ((page as Partial<WikiManifestPage>).freshness === undefined || ["fresh", "stale"].includes((page as Partial<WikiManifestPage>).freshness!))
     )
   );
 }
@@ -138,28 +153,47 @@ function isSafeWikiPageFile(root: string, file: string): boolean {
 }
 
 export async function saveProjectWiki(root: string, wiki: ProjectWiki): Promise<void> {
-  await mkdir(wikiDir(root), { recursive: true });
+  if (wiki.pages.some((page) => !SAFE_WIKI_SLUG_PATTERN.test(page.slug))) {
+    throw new Error("Wiki page slugs must be safe relative logical identifiers.");
+  }
+  const previous = await loadProjectWiki(root);
   const pages = wiki.pages.map((page) => ({
     slug: page.slug,
     title: page.title,
     estimatedTokens: page.estimatedTokens,
-    file: `${page.slug}.md`
+    file: `${page.slug}.md`,
+    ...(page.sourceFingerprints === undefined ? {} : { sourceFingerprints: page.sourceFingerprints }),
+    ...(page.backlinks === undefined ? {} : { backlinks: page.backlinks }),
+    ...(page.contradictions === undefined ? {} : { contradictions: page.contradictions }),
+    ...(page.freshness === undefined ? {} : { freshness: page.freshness })
   }));
   for (const wikiPage of wiki.pages) {
-    await writeTextAtomic(join(wikiDir(root), `${wikiPage.slug}.md`), wikiPage.body);
+    const relativeFile = join(".tokengraph", "wiki", `${wikiPage.slug}.md`);
+    const path = await resolveConfinedPath(root, relativeFile, true);
+    let existing: string | undefined;
+    try {
+      existing = await readFile(path, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (existing !== wikiPage.body) await writeTextAtomic(path, wikiPage.body);
   }
+  const retained = new Set(pages.map((page) => page.file));
+  await Promise.all((previous?.pages ?? [])
+    .filter((page) => !retained.has(`${page.slug}.md`))
+    .map(async (page) => rm(await resolveConfinedPath(root, join(".tokengraph", "wiki", `${page.slug}.md`)), { force: true })));
   const manifest: WikiManifest = {
     schemaVersion: wiki.schemaVersion,
     fingerprint: wiki.fingerprint,
     generatedAt: new Date().toISOString(),
     pages
   };
-  await writeJsonAtomic(wikiManifestPath(root), manifest);
+  await writeTextAtomicConfined(root, join(".tokengraph", "wiki", "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
 export async function loadProjectWiki(root: string): Promise<ProjectWiki | undefined> {
   try {
-    const manifest = JSON.parse(await readFile(wikiManifestPath(root), "utf8")) as unknown;
+    const manifest = JSON.parse(await readFile(await resolveConfinedPath(root, join(".tokengraph", "wiki", "manifest.json")), "utf8")) as unknown;
     if (!isWikiManifest(manifest) || !manifest.pages.every((page) => isSafeWikiPageFile(root, page.file))) {
       return undefined;
     }
@@ -169,7 +203,11 @@ export async function loadProjectWiki(root: string): Promise<ProjectWiki | undef
         slug: manifestPage.slug,
         title: manifestPage.title,
         estimatedTokens: manifestPage.estimatedTokens,
-        body: await readFile(join(wikiDir(root), manifestPage.file), "utf8")
+        body: await readFile(await resolveConfinedPath(root, join(".tokengraph", "wiki", manifestPage.file)), "utf8"),
+        ...(manifestPage.sourceFingerprints === undefined ? {} : { sourceFingerprints: manifestPage.sourceFingerprints }),
+        ...(manifestPage.backlinks === undefined ? {} : { backlinks: manifestPage.backlinks }),
+        ...(manifestPage.contradictions === undefined ? {} : { contradictions: manifestPage.contradictions }),
+        ...(manifestPage.freshness === undefined ? {} : { freshness: manifestPage.freshness })
       });
     }
     return {

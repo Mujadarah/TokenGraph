@@ -355,7 +355,7 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_propose_knowledge",
       arguments: { root: "first", taskId: prepared.taskId, action: "approve", id: proposed.suggestion.id }
     });
-    expect(approvedCall.structuredContent).toMatchObject({ applicationStatus: "pending" });
+    expect(approvedCall.structuredContent).toMatchObject({ applicationStatus: "applied" });
     const listedCall = await request(9043, "tools/call", {
       name: "tokengraph_propose_knowledge",
       arguments: { root: "first", taskId: prepared.taskId, action: "list" }
