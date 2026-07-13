@@ -110,7 +110,7 @@ describe("knowledge review queue", () => {
     expect(await readFile(queuePath(root), "utf8")).not.toContain("C:\\\\Users");
   });
 
-  it.each(["../secret.ts", "/private/secret.ts", "C:\\private\\secret.ts"])(
+  it.each(["../secret.ts", "/private/secret.ts", "C:\\private\\secret.ts", "C:/private/secret.ts"])(
     "rejects forged source path %s before creating state",
     async (sourceId) => {
       const root = await makeRoot();

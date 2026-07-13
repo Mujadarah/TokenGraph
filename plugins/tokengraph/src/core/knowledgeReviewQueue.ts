@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, win32 } from "node:path";
 
 import { canonicalPersistenceLockKey, quarantineCorruptJson, resolveConfinedPath, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
 
@@ -149,7 +149,7 @@ function validateTimestamp(value: unknown, label: string): string {
 
 function normalizeSourceId(value: unknown): string {
   const sourceId = nonEmptyString(value, "Source id").replaceAll("\\", "/");
-  if (isAbsolute(sourceId) || sourceId.startsWith("../") || sourceId.includes("/../") || !SOURCE_ID_PATTERN.test(sourceId)) {
+  if (isAbsolute(sourceId) || win32.isAbsolute(sourceId) || sourceId.startsWith("../") || sourceId.includes("/../") || !SOURCE_ID_PATTERN.test(sourceId)) {
     throw new Error("Source ids must be privacy-safe relative paths or stable logical ids.");
   }
   return sourceId;
