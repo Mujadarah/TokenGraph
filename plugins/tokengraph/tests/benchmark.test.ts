@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import {
   evaluateBenchmark,
   evaluateReleaseGate,
   median,
+  measureSerializedOutput,
   stableBenchmarkJson,
   validateCorpus
 } from "../scripts/benchmark-lib.js";
@@ -29,6 +30,13 @@ async function evidence() {
 }
 
 describe("evidence benchmark", () => {
+  it("documents the JSON-only result contract and resource-link exception for generic MCP clients", async () => {
+    const guide = await readFile(resolve("..", "..", "docs", "hosts", "generic-mcp.md"), "utf8");
+    expect(guide).toMatch(/core tools[\s\S]*one JSON `TextContent` item containing serialized JSON/i);
+    expect(guide).not.toMatch(/return structured JSON in `structuredContent`/i);
+    expect(guide).toMatch(/export_project_map[\s\S]*resource-link exception[\s\S]*structuredContent/i);
+  });
+
   it("validates a versioned corpus with 30 distinct tasks and four per category", async () => {
     const loaded = await corpus();
     const result = validateCorpus(loaded);
@@ -37,6 +45,7 @@ describe("evidence benchmark", () => {
     expect(result.tasks).toHaveLength(30);
     expect(new Set(result.tasks.map((task) => task.query)).size).toBe(30);
     for (const task of result.tasks) {
+      expect(task.constraints).toEqual(task.criticalConstraints);
       for (const path of task.requiredFiles) {
         await expect(access(resolve("tests", "fixtures", "evidence-project", path))).resolves.toBeUndefined();
       }
@@ -85,6 +94,52 @@ describe("evidence benchmark", () => {
     expect(changed.tasks[0]?.metrics.recommendedTests).toEqual(baseline.tasks[0]?.metrics.recommendedTests);
   });
 
+  it("takes constraints from public task input and fails preservation when one is removed", async () => {
+    const loaded = await corpus();
+    const baseline = await evaluateBenchmark(loaded, resolve("tests", "fixtures", "evidence-project"));
+    expect(baseline.tasks[0]?.metrics.criticalConstraintPreservation).toBe(1);
+    expect(JSON.stringify(baseline.tasks[0]?.coreOutput)).toContain(loaded.tasks[0].constraints[0]);
+
+    const removed = structuredClone(loaded);
+    removed.tasks[0].constraints = [];
+    const changed = await evaluateBenchmark(removed, resolve("tests", "fixtures", "evidence-project"));
+    expect(changed.tasks[0]?.metrics.criticalConstraintPreservation).toBe(0);
+  });
+
+  it("takes raw-read policy from public input and fails preservation when permissive guidance violates the independent expectation", async () => {
+    const loaded = await corpus();
+    const taskIndex = loaded.tasks.findIndex((task: { targetedRawReadsAllowed: boolean }) => !task.targetedRawReadsAllowed);
+    const baseline = await evaluateBenchmark(loaded, resolve("tests", "fixtures", "evidence-project"));
+    expect(JSON.stringify(baseline.tasks[taskIndex]?.coreOutput).match(/Do not perform raw file reads/g)).toHaveLength(2);
+    expect(baseline.tasks[taskIndex]?.metrics.criticalConstraintPreservation).toBe(1);
+
+    const unsafe = structuredClone(loaded);
+    unsafe.tasks[taskIndex].allowRawReads = true;
+    const changed = await evaluateBenchmark(unsafe, resolve("tests", "fixtures", "evidence-project"));
+    expect(changed.tasks[taskIndex]?.metrics.criticalConstraintPreservation).toBe(0);
+    expect(changed.releaseGate.passed).toBe(false);
+  });
+
+  it("keeps corpus ids and independent expected references out of production code", async () => {
+    const loaded = await corpus();
+    const checkedEvidence = await evidence();
+    const files = (await readdir(resolve("src"), { recursive: true })).filter((path) => /\.[cm]?[jt]s$/.test(path));
+    const production = (await Promise.all(files.map((path) => readFile(resolve("src", path), "utf8")))).join("\n");
+    for (const task of loaded.tasks) {
+      expect(production).not.toContain(task.id);
+      expect(production).not.toContain(checkedEvidence.tasks[task.id].expectedCompactReference);
+    }
+  });
+
+  it("keeps benchmark contracts side-effect free and independent from the server module", async () => {
+    const source = await readFile(resolve("src", "core", "toolContracts.ts"), "utf8");
+    expect(source).not.toMatch(/from ["']\.\.\/server/);
+    const before = process.listenerCount("uncaughtException");
+    const contracts = await import("../src/core/toolContracts.js");
+    expect(contracts.benchmarkMcpInputSchemas().planner).toEqual(expect.any(Object));
+    expect(process.listenerCount("uncaughtException")).toBe(before);
+  });
+
   it("reports an absent required file as a false negative and fails the release gate", async () => {
     const loaded = await corpus();
     loaded.tasks[0].requiredFiles = ["absent/required-file.ts"];
@@ -117,7 +172,21 @@ describe("evidence benchmark", () => {
       expect(task.metrics.compactTokens).toBe(task.accounting.coreOutputTokens.reduce((total, tokens) => total + tokens, 0));
       expect(task.metrics.toolOverheadTokens).toBe(task.accounting.schemaOverheadTokens + task.accounting.footerOverheadTokens);
       expect(task.metrics.rawTokens).toBe(task.accounting.rawBaselineTokens);
+      expect(task.accounting.completionFooter).toMatch(/^TokenGraph: ~\d+(?:-\d+)? tokens saved \(estimated, .+ confidence\); quality .+\.$/);
     }
+  });
+
+  it("keeps a serialization margin above the release threshold", async () => {
+    const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "evidence-project"));
+    expect(report.aggregate.medianNetSavings).toBeGreaterThanOrEqual(25);
+  });
+
+  it("charges inflated compact payloads instead of rewarding them", () => {
+    const compact = measureSerializedOutput({ rawTokens: 400, serializedOutputs: [{ files: ["src/auth.ts"] }], schemaOverheadTokens: 20, footerOverheadTokens: 10 });
+    const inflated = measureSerializedOutput({ rawTokens: 400, serializedOutputs: [{ files: ["src/auth.ts"], padding: "x".repeat(4000) }], schemaOverheadTokens: 20, footerOverheadTokens: 10 });
+    expect(compact.netEstimatedSavings).toBeGreaterThan(0);
+    expect(inflated.compactTokens).toBeGreaterThan(compact.compactTokens);
+    expect(inflated.netEstimatedSavings).toBeLessThan(0);
   });
 
   it("fails and passes release gates for the documented deterministic conditions", () => {

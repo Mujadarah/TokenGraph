@@ -149,7 +149,21 @@ export async function compressContext(input: ContextCompressionInput): Promise<C
   });
   const projectPaths = new Set(input.project.files.map((file) => file.path));
   const preservedReads = extractFileReads(preservedConstraints, projectPaths);
-  const recommendedFirstReads = mergeFirstReads(preservedReads, plan.recommendedFirstReads);
+  const relevantTestPaths = new Set(plan.relevantTests.map((test) => test.path));
+  const testDependencies: RankedFile[] = input.project.imports
+    .filter((edge) => relevantTestPaths.has(edge.filePath) && edge.resolvedPath && projectPaths.has(edge.resolvedPath))
+    .map((edge) => ({ path: edge.resolvedPath!, reason: `Imported by focused test ${edge.filePath}.`, score: 80 }));
+  const plannedEvidenceReads: RankedFile[] = [
+    ...plan.recommendedFirstReads,
+    ...plan.relevantTests,
+    ...testDependencies,
+    ...plan.relevantSql.map((entry) => ({
+      path: entry.filePath,
+      reason: entry.reason,
+      score: entry.score
+    }))
+  ];
+  const recommendedFirstReads = mergeFirstReads(preservedReads, plannedEvidenceReads);
   const memoryRefs = referencedMemories([...plan.relevantMemories, ...input.memories], contextForPlanning, PROFILE_DEFAULTS[profile].maxMemories);
   const wikiRefs = referencedWikiPages(input.wiki, contextForPlanning);
   const rawLineCount = text ? text.split(/\r?\n/).filter((line) => line.trim().length > 0).length : 0;

@@ -4,17 +4,17 @@ TokenGraph's evidence benchmark is a deterministic regression harness. It exerci
 
 ## Corpus
 
-`plugins/tokengraph/scripts/benchmark-corpus-v1.json` contains 30 distinct task specifications across code routing, SQL/security, debugging, change risk, compression, memory/wiki, and release packaging. Each task declares a stable id, query, critical constraints, required files, applicable forbidden false-positive files, expected tests, and whether targeted raw reads are allowed. Corpus validation requires at least 30 tasks and at least four tasks in every category.
+`plugins/tokengraph/scripts/benchmark-corpus-v1.json` contains 30 distinct task specifications across code routing, SQL/security, debugging, change risk, compression, memory/wiki, and release packaging. Each task declares a stable id, query, public input constraints, independent critical-constraint labels, required files, applicable forbidden false-positive files, expected tests, and whether targeted raw reads are allowed. Corpus validation requires at least 30 tasks and at least four tasks in every category.
 
 The checked-in `plugins/tokengraph/tests/fixtures/evidence-project` contains route, service, test, authorization, audit, compression, memory, SQL migration, documentation, smoke, validation, and packaging evidence. Independent task inputs and reproducible expected compact references live in `plugins/tokengraph/scripts/benchmark-evidence-v1.json`; they are not derived from corpus scoring labels at runtime.
 
 ## Task metrics
 
-For each task the harness reports required-file recall, false positives, false negatives, critical-constraint preservation, recommended tests, estimated raw tokens, compact tokens, schema/footer overhead, net estimated savings, a quality result, and explicit failure reasons. Required files, forbidden files, critical constraints, expected tests, and targeted-raw-read expectations are scoring labels only. Mutating them does not change the core input, output, accounting, or recommendations.
+For each task the harness reports required-file recall, false positives, false negatives, critical-constraint preservation, recommended tests, estimated raw tokens, compact tokens, schema/footer overhead, net estimated savings, a quality result, and explicit failure reasons. Public input constraints travel through the normal compact core response and are reproduced verbatim. Required files, forbidden files, independent critical-constraint labels, expected tests, and targeted-raw-read expectations remain evaluator-only labels; mutating those labels does not change core output or accounting.
 
-Each category has one mutually exclusive flow: planner for code routing, SQL/security, and release packaging; tracer for debugging; risk assessment for change risk; compressor for compression; and a combined wiki/memory-review flow for memory/wiki tasks. The report counts every serialized core result it scores: one for the first four flows and both wiki and memory-review results for the combined flow. Compact tokens are the sum of those exact serialized outputs.
+Each category has one mutually exclusive flow: planner for code routing, SQL/security, and release packaging; tracer for debugging; risk assessment for change risk; compressor for compression; and a combined wiki/memory-review flow for memory/wiki tasks. The benchmark and MCP server share the same side-effect-free schemas, compact projection functions, and response-envelope builders; detailed internal reports require explicit `responseMode: "verbose"`. An integration test compares those exported schemas with the built server's actual `tools/list` schemas.
 
-Raw tokens come from the task's independent, explicitly listed fixture files rather than the entire fixture. Schema overhead is estimated from the flow's serialized tool/schema envelope, and footer overhead is estimated from the benchmark caution footer. Net savings subtract compact, schema, and footer costs from the per-task raw baseline. These are estimates, not tokenizer billing measurements.
+Raw tokens come from the task's independent, explicitly listed fixture files rather than the entire fixture. Schema overhead is estimated from the actual registered input schema for the flow. Footer overhead comes from `formatTaskReportFooter` applied to a deterministic representative measured ledger. Net savings subtract the full compact response, schema, and canonical footer exactly once from the per-task raw baseline. These are estimates, not tokenizer billing measurements.
 
 Constraint preservation uses exact normalized predicates. Case, Unicode form, whitespace, and punctuation are normalized, but words and polarity are not discarded. A negated predicate therefore cannot pass because a positive, reversed, or partially overlapping phrase appears in output.
 
@@ -29,7 +29,7 @@ The deterministic release gate passes only when all of these conditions hold:
 - Required-file recall does not regress below the checked-in corpus baseline.
 - Median net estimated savings is positive after tool and footer overhead.
 
-Task-level false-positive, false-negative, preservation, test-recommendation, and net-savings failures remain visible. The current evidence does not force the release gate to pass.
+Task-level false-positive, false-negative, preservation, test-recommendation, and net-savings failures remain visible even when the aggregate gate passes.
 
 ## Calibration
 

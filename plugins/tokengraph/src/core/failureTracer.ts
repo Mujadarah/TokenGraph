@@ -119,9 +119,9 @@ function sqlMatches(project: ProjectIndex, termsText: string, plannedSql: Ranked
   return Array.from(byKey.values()).sort((a, b) => b.score - a.score).slice(0, 10);
 }
 
-function recommendedCommands(kind: FailureTraceKind, detectedTests: string[], detectedPaths: string[]): string[] {
+function recommendedCommands(kind: FailureTraceKind, detectedTests: string[], detectedPaths: string[], plannedTests: RankedFile[]): string[] {
   if (kind === "test") {
-    const testPath = detectedPaths.find((path) => /\.test\.[tj]sx?$/.test(path)) ?? detectedTests[0]?.split(/\s+>\s+/)[0];
+    const testPath = detectedPaths.find((path) => /\.test\.[tj]sx?$/.test(path)) ?? detectedTests[0]?.split(/\s+>\s+/)[0] ?? plannedTests[0]?.path;
     return testPath ? [`pnpm test -- ${testPath}`] : ["pnpm test"];
   }
   if (kind === "build") return ["pnpm build", "pnpm typecheck"];
@@ -187,9 +187,9 @@ export async function traceFailure(input: {
   });
   const relatedSql = sqlMatches(input.project, `${task}\n${input.text}`, plan.relevantSql);
   const relatedMemories = plan.relevantMemories;
-  const files = relatedFiles(input.project, pathHints, imports, plan.relevantFiles);
+  const files = relatedFiles(input.project, pathHints, imports, [...plan.relevantFiles, ...plan.relevantTests]);
   const hypotheses = buildHypotheses({ detectedPaths, detectedTests, detectedSymbols, relatedSql, relatedMemories });
-  const firstReads = relatedFiles(input.project, pathHints, imports, plan.recommendedFirstReads).slice(0, 6);
+  const firstReads = relatedFiles(input.project, pathHints, imports, [...plan.recommendedFirstReads, ...plan.relevantTests]).slice(0, 6);
   const confidence = hypotheses[0]?.confidence ?? "low";
   return {
     compressedOutput,
@@ -202,7 +202,7 @@ export async function traceFailure(input: {
     relatedMemories,
     hypotheses,
     recommendedFirstReads: firstReads,
-    recommendedCommands: recommendedCommands(input.kind, detectedTests, detectedPaths),
+    recommendedCommands: recommendedCommands(input.kind, detectedTests, detectedPaths, plan.relevantTests),
     confidence,
     tokenEstimate: {
       original: estimateTokens(input.text),

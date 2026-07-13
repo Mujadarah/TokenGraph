@@ -177,6 +177,18 @@ function rankedSql(project: ProjectIndex, terms: string[]): RankedSqlObject[] {
   return rows.filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 }
 
+function selectSqlAcrossFiles(rows: RankedSqlObject[], limit: number): RankedSqlObject[] {
+  const representatives: RankedSqlObject[] = [];
+  const represented = new Set<string>();
+  for (const row of rows) {
+    if (represented.has(row.filePath)) continue;
+    represented.add(row.filePath);
+    representatives.push(row);
+  }
+  const selected = [...representatives, ...rows.filter((row) => !representatives.includes(row))];
+  return selected.slice(0, limit);
+}
+
 function planText(plan: Omit<ContextPlan, "estimatedTokens">): string {
   return JSON.stringify(plan);
 }
@@ -208,8 +220,35 @@ function trimPlanToBudget(plan: Omit<ContextPlan, "estimatedTokens">): Omit<Cont
       next.filesToAvoid = next.filesToAvoid.slice(0, -1);
       budgetExclusions.add("Removed low-priority avoid-list entries to stay within the estimated context budget.");
     } else if (next.relevantSql.length) {
-      next.relevantSql = next.relevantSql.slice(0, -1);
-      budgetExclusions.add("Excluded lower-ranked SQL objects to stay within the estimated context budget.");
+      const pathCounts = new Map<string, number>();
+      for (const sql of next.relevantSql) pathCounts.set(sql.filePath, (pathCounts.get(sql.filePath) ?? 0) + 1);
+      let redundantIndex = -1;
+      for (let index = next.relevantSql.length - 1; index >= 0; index -= 1) {
+        if ((pathCounts.get(next.relevantSql[index]!.filePath) ?? 0) > 1) {
+          redundantIndex = index;
+          break;
+        }
+      }
+      if (redundantIndex < 0 && next.taskType === "database") {
+        if (next.relevantTests.length) {
+          next.relevantTests = next.relevantTests.slice(0, -1);
+          budgetExclusions.add("Excluded lower-ranked tests to preserve focused SQL evidence within the context budget.");
+        } else if (next.relevantMemories.length) {
+          next.relevantMemories = next.relevantMemories.slice(0, -1);
+          budgetExclusions.add("Excluded lower-ranked memories to preserve focused SQL evidence within the context budget.");
+        } else if (next.relevantFiles.length > 1) {
+          next.relevantFiles = next.relevantFiles.slice(0, -1);
+          budgetExclusions.add("Excluded lower-ranked files to preserve focused SQL evidence within the context budget.");
+        } else {
+          budgetExclusions.add("Estimated compact database plan retains one SQL object per relevant migration despite exceeding the requested token budget.");
+          next.budgetExclusions = Array.from(budgetExclusions);
+          break;
+        }
+      } else {
+        const removeAt = redundantIndex >= 0 ? redundantIndex : next.relevantSql.length - 1;
+        next.relevantSql = next.relevantSql.filter((_, index) => index !== removeAt);
+        budgetExclusions.add("Excluded a lower-ranked SQL object to stay within the estimated context budget.");
+      }
     } else if (next.relevantTests.length) {
       next.relevantTests = next.relevantTests.slice(0, -1);
       budgetExclusions.add("Excluded lower-ranked tests to stay within the estimated context budget.");
@@ -242,7 +281,7 @@ export async function buildContextPlan(input: ContextPlanInput): Promise<Context
   const allRelevantSql = rankedSql(input.project, terms);
   const relevantFiles = allRelevantFiles.slice(0, budget.maxFiles);
   const relevantTests = allRelevantTests.slice(0, Math.max(1, Math.ceil(budget.maxFiles / 2)));
-  const relevantSql = allRelevantSql.slice(0, budget.maxSqlObjects);
+  const relevantSql = selectSqlAcrossFiles(allRelevantSql, budget.maxSqlObjects);
   const relevantMemories = rankedMemories(input.memories, terms, budget.maxMemories);
   const budgetExclusions = [];
   if (allRelevantFiles.length > relevantFiles.length) budgetExclusions.push(`${allRelevantFiles.length - relevantFiles.length} lower-ranked file(s) excluded by profile or explicit file budget.`);

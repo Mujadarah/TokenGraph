@@ -11,6 +11,27 @@ import * as z from "zod/v4";
 import { ArchitectureRuleStore, checkArchitecture } from "./core/architectureRules.js";
 import { compressContext } from "./core/contextCompressor.js";
 import { compressOutput } from "./core/compressor.js";
+import {
+  compactCompressionResponse,
+  compactFailureResponse,
+  hasSqlIntent,
+  compactMemoryRecallResponse,
+  compactPlanResponse,
+  compactRecallResponse,
+  compactRiskResponse,
+  compactWikiResponse
+} from "./core/compactResponses.js";
+import {
+  analyzeInputSchema,
+  compactCompressionEnvelope,
+  compactModeEnvelope,
+  compactPrepareEnvelope,
+  compactToolResultEnvelope,
+  compressInputSchema,
+  prepareContextInputSchema,
+  queryContextInputSchema,
+  recallInputSchema
+} from "./core/toolContracts.js";
 import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } from "./core/config.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
@@ -115,11 +136,7 @@ async function recordCoreEvent(input: {
   compactTokens: number;
   overheadTokens?: number;
 }): Promise<number> {
-  const overheadTokens = input.overheadTokens ?? estimateTokens(compactJson({
-    taskId: input.taskId,
-    toolName: input.toolName,
-    category: input.category
-  }));
+  const overheadTokens = input.overheadTokens ?? coreEventOverheadTokens(input.taskId, input.toolName, input.category);
   await recordTaskEvent(input.root, input.taskId, {
     id: randomUUID(),
     fingerprint: eventFingerprint(input.taskId, input.toolName, input.category, input.operation),
@@ -133,6 +150,10 @@ async function recordCoreEvent(input: {
     qualityChecks: [{ name: "compact-output-produced", passed: true }]
   });
   return overheadTokens;
+}
+
+function coreEventOverheadTokens(taskId: string, toolName: string, category: string): number {
+  return estimateTokens(compactJson({ taskId, toolName, category }));
 }
 
 function ownPluginRoot(): string {
@@ -297,10 +318,7 @@ function compactJson(value: unknown): string {
 }
 
 function ok<T extends object>(output: T) {
-  return {
-    content: [{ type: "text" as const, text: compactJson(output) }],
-    structuredContent: output
-  };
+  return compactToolResultEnvelope(output);
 }
 
 function okWithResourceLinks<T extends { resourceLinks?: Array<{ label: string; uri: string; mimeType: string }> }>(output: T) {
@@ -602,24 +620,11 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     "tokengraph_prepare_context",
     {
       title: "Prepare Task Context",
-      description: "Resolve workspace trust, refresh the local index when needed, create a task ledger, and return a compact task plan.",
+      description: "Resolve workspace trust, refresh the local index when needed, create a task ledger, and return a compact task plan. Set responseMode to verbose only for explicit diagnostics.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-      inputSchema: z.object({
-        root: z.string().optional(),
-        task: z.string().min(3),
-        profile: tokenSavingProfileSchema.optional(),
-        budgets: z.object({
-          maxFiles: z.number().int().min(1).max(20).optional(),
-          maxSqlObjects: z.number().int().min(0).max(20).optional(),
-          maxMemories: z.number().int().min(0).max(20).optional(),
-          maxEstimatedTokens: z.number().int().min(1).optional()
-        }).optional(),
-        allowRawReads: z.boolean().optional(),
-        refreshIndex: z.boolean().default(true),
-        host: z.enum(["codex", "claude", "unknown"]).optional()
-      })
+      inputSchema: prepareContextInputSchema
     },
-    async ({ root, task, profile, budgets, allowRawReads, refreshIndex, host }) => {
+    async ({ root, task, profile, maxTokens, allowRawReads, constraints, responseMode, refreshIndex, host }) => {
       const resolvedRoot = await workspaceRoot(root);
       const statusBefore = await getIndexStatus(resolvedRoot);
       const existing = await loadProjectIndex(resolvedRoot);
@@ -654,7 +659,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         const wikiMemories = config.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).list() : [];
         await saveProjectWiki(resolvedRoot, buildProjectWiki(project, wikiMemories, await listAppliedKnowledge(resolvedRoot)));
       }
-      const memoryLimit = budgets?.maxMemories ?? config.maxMemories;
+      const memoryLimit = config.maxMemories;
       const memories = config.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(task, memoryLimit) : [];
       const plan = await buildContextPlan({
         root: resolvedRoot,
@@ -663,14 +668,23 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         memories,
         budget: {
           profile: profile ?? config.tokenSavingProfile,
-          maxFiles: budgets?.maxFiles,
-          maxSqlObjects: budgets?.maxSqlObjects,
-          maxMemories: budgets?.maxMemories,
-          maxEstimatedTokens: budgets?.maxEstimatedTokens,
+          maxEstimatedTokens: maxTokens,
           allowRawReads
         }
       });
       const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost()) });
+      const projectedPlan = responseMode === "verbose" ? plan : compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
+      const statusAfter = await getIndexStatus(resolvedRoot);
+      const wikiStatus = await getWikiStatus(resolvedRoot);
+      const response = responseMode === "verbose"
+        ? {
+            root: resolvedRoot, taskId: ledger.taskId,
+            index: { status: indexingMode === "existing" ? statusAfter.state : "refreshed", previousStatus: statusBefore.state, postStatus: statusAfter.state, indexingMode, changes },
+            plan: projectedPlan, wikiStatus
+          }
+        : compactPrepareEnvelope({
+            root: resolvedRoot, taskId: ledger.taskId, plan: projectedPlan
+          });
       await recordCoreEvent({
         root: resolvedRoot,
         taskId: ledger.taskId,
@@ -678,22 +692,9 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         category: "context-routing",
         operation: { taskHash: createHash("sha256").update(task).digest("hex"), profile: plan.profile, indexingMode },
         originalTokens: project.files.reduce((total, file) => total + file.estimatedTokens, 0),
-        compactTokens: plan.estimatedTokens.compressed
+        compactTokens: estimateTokens(compactJson(compactToolResultEnvelope(response)))
       });
-      const statusAfter = await getIndexStatus(resolvedRoot);
-      return ok({
-        root: resolvedRoot,
-        taskId: ledger.taskId,
-        index: {
-          status: indexingMode === "existing" ? statusAfter.state : "refreshed",
-          previousStatus: statusBefore.state,
-          postStatus: statusAfter.state,
-          indexingMode,
-          changes
-        },
-        plan,
-        wikiStatus: await getWikiStatus(resolvedRoot)
-      });
+      return ok(response);
     }
   );
 
@@ -703,20 +704,10 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       title: "Query Task Context",
       description: "Query compact overview, graph search, symbol, SQL, or wiki context for one prepared task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), mode: z.literal("overview")
-      }).or(z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), mode: z.literal("search"), query: z.string().min(1), limit: z.number().int().min(1).max(50).optional()
-      })).or(z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), mode: z.literal("symbol"), target: z.string().min(1)
-      })).or(z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), mode: z.literal("sql"), query: z.string().min(1), limit: z.number().int().min(1).max(50).optional()
-      })).or(z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), mode: z.literal("wiki"), slug: z.string().min(1)
-      }))
+      inputSchema: queryContextInputSchema
     },
     async (input) => {
-      const { taskId, root, mode } = input;
+      const { taskId, root, mode, responseMode } = input;
       const resolvedRoot = await requireTaskRoot(root, taskId);
       const project = mode === "wiki" ? undefined : await ensureProject(resolvedRoot);
       let result: object;
@@ -724,29 +715,37 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         result = projectMap(project!);
       } else if (mode === "search") {
         const { query, limit } = input;
-        result = { query, results: searchProject(project!, query, limit ?? 10) };
+        result = { query, results: searchProject(project!, query!, limit ?? 10) };
       } else if (mode === "symbol") {
         const { target } = input;
-        result = explain(project!, target);
+        result = explain(project!, target!);
       } else if (mode === "sql") {
         const { query, limit } = input;
-        result = { query, sql: sqlSummary(project!, query, limit ?? 10) };
+        result = { query, sql: sqlSummary(project!, query!, limit ?? 10) };
       } else {
-        const { slug } = input;
+        const { slug, constraints, responseMode } = input;
         const wiki = await loadProjectWiki(resolvedRoot);
         if (!wiki) throw new Error("No generated TokenGraph wiki was found.");
-        const page = wiki.pages.find((candidate) => candidate.slug === slug);
-        if (!page) throw new Error(`Unknown wiki page slug "${slug}".`);
-        result = { slug: page.slug, title: page.title, body: page.body, estimatedTokens: page.estimatedTokens, wikiStatus: await getWikiStatus(resolvedRoot) };
+        if (!slug && responseMode === "verbose") throw new Error("A wiki slug is required for verbose wiki responses.");
+        if (responseMode !== "verbose") {
+          const selectedWiki = slug ? { ...wiki, pages: wiki.pages.filter((candidate) => candidate.slug === slug) } : wiki;
+          if (slug && selectedWiki.pages.length === 0) throw new Error(`Unknown wiki page slug "${slug}".`);
+          result = compactWikiResponse(selectedWiki, { constraints });
+        } else {
+          const page = wiki.pages.find((candidate) => candidate.slug === slug);
+          if (!page) throw new Error(`Unknown wiki page slug "${slug}".`);
+          result = { slug: page.slug, title: page.title, body: page.body, estimatedTokens: page.estimatedTokens, wikiStatus: await getWikiStatus(resolvedRoot) };
+        }
       }
-      const compactTokens = estimateTokens(compactJson(result));
+      const response = responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
+      const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
       const originalTokens = project ? project.files.reduce((total, file) => total + file.estimatedTokens, 0) : compactTokens;
       await recordCoreEvent({
         root: resolvedRoot, taskId, toolName: "tokengraph_query_context", category: `query-${mode}`,
-        operation: { mode, queryHash: createHash("sha256").update("query" in input ? input.query : "target" in input ? input.target : "slug" in input ? input.slug : "overview").digest("hex"), limit: "limit" in input ? input.limit ?? null : null },
+        operation: { mode, queryHash: createHash("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
         originalTokens, compactTokens
       });
-      return ok({ mode, result });
+      return ok(response);
     }
   );
 
@@ -756,13 +755,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       title: "Compress Task Material",
       description: "Compress command output or mixed task context while recording real token estimates in the task ledger.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), mode: z.literal("output"),
-        kind: z.enum(["test", "build", "install", "diff", "log"]), text: z.string(), maxLines: z.number().int().min(1).max(200).optional()
-      }).or(z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), mode: z.literal("context"), task: z.string().min(1),
-        contentKind: contextCompressionKindSchema, text: z.string().optional(), profile: tokenSavingProfileSchema.optional(), preserveRawReferences: z.boolean().optional()
-      }))
+      inputSchema: compressInputSchema
     },
     async (input) => {
       const { taskId, root, mode } = input;
@@ -771,26 +764,40 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       let estimates: { original: number; compressed: number; avoided: number };
       if (mode === "output") {
         const { kind, text, maxLines } = input;
-        const compressed = compressOutput({ kind, text, maxLines });
+        const compressed = compressOutput({ kind: kind!, text: text!, maxLines });
         result = compressed;
         estimates = compressed.estimatedTokens;
       } else {
-        const { task, contentKind, text, profile, preserveRawReferences } = input;
+        const { task, contentKind, text, preserveRawReferences, constraints, responseMode } = input;
         const [project, config, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
         const memories = config.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(`${task}\n${text ?? ""}`, config.maxMemories) : [];
         const compressed = await compressContext({
-          root: resolvedRoot, task, contentKind, text, profile: profile ?? config.tokenSavingProfile,
+          root: resolvedRoot, task: task!, contentKind: contentKind!, text, profile: config.tokenSavingProfile,
           preserveRawReferences, project, memories, wiki
         });
-        result = compressed;
+        result = responseMode === "verbose" ? compressed : compactCompressionResponse(compressed, { constraints });
         estimates = compressed.estimatedTokens;
       }
-      const overheadTokens = await recordCoreEvent({
-        root: resolvedRoot, taskId, toolName: "tokengraph_compress", category: `compression-${mode}`,
+      const compactResponse = compactCompressionEnvelope(mode, result);
+      const category = `compression-${mode}`;
+      const overheadTokens = coreEventOverheadTokens(taskId, "tokengraph_compress", category);
+      const includeEstimates = mode !== "context" || input.responseMode === "verbose";
+      let returnedResponse: object = compactResponse;
+      let compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
+      if (includeEstimates) {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.original, compact: compactTokens, overhead: overheadTokens });
+          const measured = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
+          if (measured === compactTokens) break;
+          compactTokens = measured;
+        }
+      }
+      await recordCoreEvent({
+        root: resolvedRoot, taskId, toolName: "tokengraph_compress", category,
         operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash("sha256").update(`${"task" in input ? input.task : ""}\n${input.text ?? ""}`).digest("hex") },
-        originalTokens: estimates.original, compactTokens: estimates.compressed
+        originalTokens: estimates.original, compactTokens, overheadTokens
       });
-      return ok({ mode, result, estimates: { original: estimates.original, compact: estimates.compressed, overhead: overheadTokens } });
+      return ok(returnedResponse);
     }
   );
 
@@ -800,29 +807,33 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       title: "Recall Task Knowledge",
       description: "Read active memories or a compact memory review for one prepared task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), mode: z.enum(["recall", "review"]),
-        query: z.string().optional(), limit: z.number().int().min(1).max(100).optional(), audit: z.boolean().optional()
-      })
+      inputSchema: recallInputSchema
     },
-    async ({ taskId, root, mode, query, limit, audit }) => {
+    async ({ taskId, root, mode, query, limit, audit, constraints, responseMode }) => {
       const resolvedRoot = await requireTaskRoot(root, taskId);
       const store = new MemoryStore(memoryPath(resolvedRoot));
+      const project = await ensureProject(resolvedRoot);
       const memories = await store.list({ includeDeprecated: audit === true, includeDeleted: audit === true });
       const terms = tokenize(query ?? "");
       const recalled = memories
         .filter((memory) => terms.length === 0 || terms.some((term) => tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`).some((part) => part.includes(term) || term.includes(part))))
         .slice(0, limit ?? 10);
-      const result = mode === "review"
+      const verboseResult = mode === "review"
         ? await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 })
         : { query: query ?? "", auditMode: audit === true, memories: recalled };
-      const compactTokens = estimateTokens(compactJson(result));
+      const result = responseMode === "verbose"
+        ? verboseResult
+        : mode === "review"
+          ? compactRecallResponse(verboseResult as Awaited<ReturnType<typeof reviewMemories>>, { constraints }, memories, project)
+          : compactMemoryRecallResponse(recalled, { constraints });
+      const response = responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
+      const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
       await recordCoreEvent({
         root: resolvedRoot, taskId, toolName: "tokengraph_recall", category: `memory-${mode}`,
         operation: { mode, queryHash: createHash("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
         originalTokens: estimateTokens(compactJson(memories)), compactTokens
       });
-      return ok({ mode, result });
+      return ok(response);
     }
   );
 
@@ -832,15 +843,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       title: "Analyze Task Evidence",
       description: "Run failure tracing, regression-risk analysis, or architecture checks for one prepared task.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), mode: z.literal("failure"),
-        kind: z.enum(["test", "build", "runtime", "install", "log"]), text: z.string().min(1), task: z.string().optional(), profile: tokenSavingProfileSchema.optional()
-      }).or(z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), mode: z.literal("risk"), changedFiles: z.array(z.string().min(1)).min(1),
-        diffSummary: z.string().optional(), task: z.string().optional(), profile: tokenSavingProfileSchema.optional()
-      })).or(z.object({
-        taskId: z.string().uuid(), root: z.string().optional(), mode: z.literal("architecture"), files: z.array(z.string()).optional()
-      }))
+      inputSchema: analyzeInputSchema
     },
     async (input) => {
       const { taskId, root, mode } = input;
@@ -849,26 +852,29 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const store = new MemoryStore(memoryPath(resolvedRoot));
       let result: object;
       if (mode === "failure") {
-        const { kind, text, task, profile } = input;
+        const { kind, text, task } = input;
         const memories = await store.search(`${task ?? ""}\n${text}`, 8);
-        result = await traceFailure({ root: resolvedRoot, kind, text, task, profile, project, memories });
+        const verbose = await traceFailure({ root: resolvedRoot, kind: kind!, text: text!, task, project, memories });
+        result = input.responseMode === "verbose" ? verbose : compactFailureResponse(verbose, { constraints: input.constraints, includeSql: hasSqlIntent(`${task ?? ""}\n${text}`) });
       } else if (mode === "risk") {
-        const { changedFiles, diffSummary, task, profile } = input;
+        const { changedFiles, diffSummary, task } = input;
         const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
-        const memories = await store.search(`${task ?? ""}\n${diffSummary ?? ""}\n${changedFiles.join("\n")}`, 8);
-        result = await assessChangeRisk({ root: resolvedRoot, changedFiles, diffSummary, task, profile, project, rules, memories });
+        const memories = await store.search(`${task ?? ""}\n${diffSummary ?? ""}\n${changedFiles!.join("\n")}`, 8);
+        const verbose = await assessChangeRisk({ root: resolvedRoot, changedFiles: changedFiles!, diffSummary, task, project, rules, memories });
+        result = input.responseMode === "verbose" ? verbose : compactRiskResponse(verbose, { constraints: input.constraints });
       } else {
         const { files } = input;
         const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
         result = await checkArchitecture({ root: resolvedRoot, project, rules, files });
       }
-      const compactTokens = estimateTokens(compactJson(result));
+      const response = input.responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
+      const compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(response)));
       await recordCoreEvent({
         root: resolvedRoot, taskId, toolName: "tokengraph_analyze", category: `analysis-${mode}`,
         operation: { mode, inputHash: createHash("sha256").update(JSON.stringify(input)).digest("hex") },
         originalTokens: Math.max(compactTokens, project.files.reduce((total, file) => total + file.estimatedTokens, 0)), compactTokens
       });
-      return ok({ mode, result });
+      return ok(response);
     }
   );
 

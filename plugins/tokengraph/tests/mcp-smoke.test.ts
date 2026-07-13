@@ -5,6 +5,9 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { indexProject } from "../src/core/projectIndexer.js";
+import { estimateTokens } from "../src/core/token.js";
+import { benchmarkMcpInputSchemas } from "../src/core/toolContracts.js";
+import { loadTaskLedger } from "../src/core/taskLedger.js";
 import { createTokenGraphServer } from "../src/server.js";
 
 interface JsonRpcResponse {
@@ -134,7 +137,13 @@ async function request(id: number, method: string, params?: Record<string, unkno
   if (response.error) {
     throw new Error(`${method} failed: ${response.error.message}`);
   }
-  return response.result as Record<string, unknown>;
+  const result = response.result as Record<string, unknown>;
+  if (method === "tools/call" && result && !result.isError && !("structuredContent" in result)) {
+    const content = result.content as Array<{ type?: string; text?: string }> | undefined;
+    const text = content?.find((item) => item.type === "text")?.text;
+    if (text) Object.defineProperty(result, "structuredContent", { value: JSON.parse(text), enumerable: false });
+  }
+  return result;
 }
 
 function startServer(cwd: string = process.cwd(), env: NodeJS.ProcessEnv = {}) {
@@ -205,10 +214,14 @@ describe("TokenGraph MCP stdio server", () => {
     expect(tools.find((tool) => tool.name === "tokengraph_recall")?.annotations?.readOnlyHint).toBe(false);
     expect(tools.find((tool) => tool.name === "tokengraph_propose_knowledge")?.annotations?.readOnlyHint).toBe(false);
     expect(tools.find((tool) => tool.name === "tokengraph_task_report")?.annotations?.readOnlyHint).toBe(false);
-    for (const name of ["tokengraph_query_context", "tokengraph_compress", "tokengraph_analyze", "tokengraph_propose_knowledge"]) {
-      const schema = JSON.stringify(tools.find((tool) => tool.name === name)?.inputSchema);
-      expect(schema).toMatch(/oneOf|anyOf/);
-    }
+    const contracts = benchmarkMcpInputSchemas();
+    const actual = Object.fromEntries(tools.map((tool) => [tool.name, tool.inputSchema]));
+    expect(actual.tokengraph_prepare_context).toEqual(contracts.planner);
+    expect(actual.tokengraph_query_context).toEqual(contracts.wiki);
+    expect(actual.tokengraph_compress).toEqual(contracts.compressor);
+    expect(actual.tokengraph_recall).toEqual(contracts.memory);
+    expect(actual.tokengraph_analyze).toEqual(contracts.tracer);
+    expect(contracts.risk).toEqual(contracts.tracer);
   });
 
   it("retains all legacy contracts behind the full surface and materially reduces default schema tokens", async () => {
@@ -263,13 +276,35 @@ describe("TokenGraph MCP stdio server", () => {
     send({ method: "notifications/initialized" });
 
     const setupCall = await request(9031, "tools/call", { name: "tokengraph_setup", arguments: {} });
+    expect(Object.keys(setupCall)).not.toContain("structuredContent");
+    const setupText = (setupCall.content as Array<{ type: string; text: string }>)[0]?.text;
+    expect(JSON.parse(setupText!)).toEqual(setupCall.structuredContent);
     expect(setupCall.structuredContent).toMatchObject({ surface: "full", capabilities: expect.any(Object) });
     const preparedCall = await request(9032, "tools/call", {
       name: "tokengraph_prepare_context",
-      arguments: { root: "first", task: "Debug patient summary", profile: "balanced", budgets: { maxFiles: 4 }, host: "codex" }
+      arguments: { root: "first", task: "Debug patient summary", constraints: ["  Must preserve patient privacy.  "], profile: "balanced", maxTokens: 4000, host: "codex" }
     });
-    const prepared = preparedCall.structuredContent as { root: string; taskId: string; index: { status: string }; plan: unknown; wikiStatus: unknown };
-    expect(prepared).toMatchObject({ root: firstRoot, taskId: expect.any(String), index: { status: expect.any(String) }, plan: expect.any(Object), wikiStatus: expect.any(Object) });
+    const prepared = preparedCall.structuredContent as { root: string; taskId: string; plan: unknown };
+    expect(prepared).toMatchObject({ root: firstRoot, taskId: expect.any(String), plan: expect.any(Object) });
+    expect(prepared).not.toHaveProperty("index");
+    expect(prepared).not.toHaveProperty("wikiStatus");
+    expect(prepared.plan).toMatchObject({ constraints: ["  Must preserve patient privacy.  "], files: expect.any(Array), firstReads: expect.any(Array) });
+    expect(prepared.plan).not.toHaveProperty("relevantFiles");
+    const verbosePreparedCall = await request(9051, "tools/call", {
+      name: "tokengraph_prepare_context",
+      arguments: { root: "first", task: "Debug patient summary", responseMode: "verbose", refreshIndex: false }
+    });
+    expect(verbosePreparedCall.structuredContent).toHaveProperty("plan.relevantFiles");
+    await request(9052, "tools/call", { name: "tokengraph_generate_wiki", arguments: { root: "first" } });
+    const compactWikiCall = await request(9053, "tools/call", {
+      name: "tokengraph_query_context", arguments: { root: "first", taskId: prepared.taskId, mode: "wiki", slug: "overview", responseMode: "compact" }
+    });
+    expect(compactWikiCall.structuredContent).toMatchObject({ pages: [expect.objectContaining({ slug: "overview" })] });
+    expect(JSON.stringify(compactWikiCall.structuredContent)).not.toContain('"body"');
+    const verboseWikiCall = await request(9054, "tools/call", {
+      name: "tokengraph_query_context", arguments: { root: "first", taskId: prepared.taskId, mode: "wiki", slug: "overview", responseMode: "verbose" }
+    });
+    expect(verboseWikiCall.structuredContent).toHaveProperty("result.body");
     const rememberedCall = await request(9046, "tools/call", {
       name: "tokengraph_remember_decision",
       arguments: { root: "first", type: "lesson", title: "Audit-only memory", body: "audit-only patient history", tags: ["audit-only"] }
@@ -283,18 +318,19 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_recall",
       arguments: { root: "first", taskId: prepared.taskId, mode: "recall", query: "audit-only" }
     });
-    expect(normalRecallCall.structuredContent).toMatchObject({ result: { memories: [] } });
+    expect(normalRecallCall.structuredContent).toMatchObject({ memories: [] });
     const auditRecallCall = await request(9049, "tools/call", {
       name: "tokengraph_recall",
       arguments: { root: "first", taskId: prepared.taskId, mode: "recall", query: "audit-only", audit: true }
     });
-    expect(auditRecallCall.structuredContent).toMatchObject({ result: { memories: [expect.objectContaining({ id: remembered.memory.id })] } });
+    expect(auditRecallCall.structuredContent).toMatchObject({ memories: [expect.objectContaining({ id: remembered.memory.id })] });
 
     const overviewCall = await request(9033, "tools/call", {
       name: "tokengraph_query_context",
       arguments: { root: "first", taskId: prepared.taskId, mode: "overview" }
     });
-    expect(overviewCall.structuredContent).toMatchObject({ mode: "overview", result: expect.any(Object) });
+    expect(overviewCall.structuredContent).toEqual(expect.any(Object));
+    expect(overviewCall.structuredContent).not.toHaveProperty("mode");
     await request(9034, "tools/call", {
       name: "tokengraph_query_context",
       arguments: { root: "first", taskId: prepared.taskId, mode: "overview" }
@@ -303,7 +339,7 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_query_context",
       arguments: { root: "first", taskId: prepared.taskId, mode: "search", query: "patient summary", limit: 5 }
     });
-    expect(searchCall.structuredContent).toMatchObject({ mode: "search", result: expect.any(Object) });
+    expect(searchCall.structuredContent).toMatchObject({ query: "patient summary", results: expect.any(Array) });
     const invalidSymbol = await request(9036, "tools/call", {
       name: "tokengraph_query_context",
       arguments: { root: "first", taskId: prepared.taskId, mode: "symbol" }
@@ -315,22 +351,35 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { root: "first", taskId: prepared.taskId, mode: "output", kind: "test", text: "PASS patient summary\nPASS patient route", maxLines: 5 }
     });
     expect(compressedOutputCall.structuredContent).toMatchObject({ mode: "output", result: expect.any(Object), estimates: expect.any(Object) });
+    const outputCompressionEvent = (await loadTaskLedger(firstRoot, prepared.taskId))?.events.find((event) => event.toolName === "tokengraph_compress" && event.category === "compression-output");
+    expect(outputCompressionEvent?.compactTokens).toBe(estimateTokens(JSON.stringify(compressedOutputCall)));
     const compressedContextCall = await request(9038, "tools/call", {
       name: "tokengraph_compress",
-      arguments: { root: "first", taskId: prepared.taskId, mode: "context", task: "Debug patient summary", contentKind: "mixed", text: "patient summary failure" }
+      arguments: { root: "first", taskId: prepared.taskId, mode: "context", task: "Debug patient summary", constraints: ["Must preserve patient privacy."], contentKind: "mixed", text: "patient summary failure" }
     });
-    expect(compressedContextCall.structuredContent).toMatchObject({ mode: "context", result: expect.any(Object), estimates: expect.any(Object) });
+    expect(compressedContextCall.structuredContent).toMatchObject({ constraints: ["Must preserve patient privacy."], files: expect.any(Array) });
+    expect(compressedContextCall.structuredContent).not.toHaveProperty("preservedConstraints");
+    const compressionEvent = (await loadTaskLedger(firstRoot, prepared.taskId))?.events.find((event) => event.toolName === "tokengraph_compress" && event.category === "compression-context");
+    expect(compressionEvent?.compactTokens).toBe(estimateTokens(JSON.stringify(compressedContextCall)));
+    const verboseCompressedContextCall = await request(9055, "tools/call", {
+      name: "tokengraph_compress",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "context", task: "Inspect verbose patient summary", contentKind: "mixed", text: "different verbose patient summary", responseMode: "verbose" }
+    });
+    expect(verboseCompressedContextCall.structuredContent).toHaveProperty("estimates.compact");
+    const contextCompressionEvents = (await loadTaskLedger(firstRoot, prepared.taskId))?.events.filter((event) => event.toolName === "tokengraph_compress" && event.category === "compression-context") ?? [];
+    expect(contextCompressionEvents.some((event) => event.compactTokens === estimateTokens(JSON.stringify(verboseCompressedContextCall)))).toBe(true);
 
     const recallCall = await request(9039, "tools/call", {
       name: "tokengraph_recall",
       arguments: { root: "first", taskId: prepared.taskId, mode: "recall", query: "patient", limit: 5 }
     });
-    expect(recallCall.structuredContent).toMatchObject({ mode: "recall", result: expect.any(Object) });
+    expect(recallCall.structuredContent).toMatchObject({ memories: expect.any(Array) });
     const analyzeCall = await request(9040, "tools/call", {
       name: "tokengraph_analyze",
       arguments: { root: "first", taskId: prepared.taskId, mode: "architecture", files: ["src/patientSummary.ts"] }
     });
-    expect(analyzeCall.structuredContent).toMatchObject({ mode: "architecture", result: expect.any(Object) });
+    expect(analyzeCall.structuredContent).toEqual(expect.any(Object));
+    expect(analyzeCall.structuredContent).not.toHaveProperty("mode");
 
     const proposedCall = await request(9041, "tools/call", {
       name: "tokengraph_propose_knowledge",
@@ -386,7 +435,7 @@ describe("TokenGraph MCP stdio server", () => {
       footer: expect.stringMatching(/^TokenGraph: ~\d+(?:-\d+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated)\.$/),
       reportingStatus: "ready"
     });
-    expect(report.report.eventCount).toBe(13);
+    expect(report.report.eventCount).toBe(15);
     expect(report.report.estimate.overhead).toBeGreaterThan(0);
 
     const repeatedReportCall = await request(9046, "tools/call", {
@@ -483,7 +532,7 @@ describe("TokenGraph MCP stdio server", () => {
 
     const preparedCall = await request(9061, "tools/call", {
       name: "tokengraph_prepare_context",
-      arguments: { task: "Inspect the real symbol" }
+      arguments: { task: "Inspect the real symbol", responseMode: "verbose" }
     });
     expect(preparedCall.structuredContent).toMatchObject({
       root,

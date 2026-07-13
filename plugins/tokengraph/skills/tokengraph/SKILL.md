@@ -10,7 +10,7 @@ Use this skill as the router for TokenGraph work. Specialized bundled skills fol
 ## Common lifecycle
 
 1. Call `tokengraph_setup({})` before any project tool and capture `trustedWorkspace.root` as the trusted root. If setup is blocked, follow its recovery guidance, do not invent a taskId, and do not call project tools against an arbitrary root.
-2. Call `tokengraph_prepare_context({ root: trusted root, task, profile?, budgets?, host? })` once and capture its one taskId. Confirm its returned resolved root matches the trusted root.
+2. Call `tokengraph_prepare_context({ root: trusted root, task, constraints?, profile?, maxTokens?, host? })` once and capture its one taskId. Forward explicit user constraints verbatim. Confirm its returned resolved root matches the trusted root.
 3. Pass the exact taskId and trusted root to every subsequent task-aware call. Never merge tasks or workspaces, invent an id, reuse an id from another task, or reuse a completed taskId.
 4. Route evidence through the core surface as needed:
    - `tokengraph_query_context` for overview, search, symbol, SQL, or wiki context.
@@ -27,6 +27,7 @@ Codex or Claude plugin refresh may require a fresh task or `/reload-plugins`. Th
 ## Completion discipline
 
 - Treat compact output as routing evidence; use recommended targeted raw reads when exact source or confidence requires them.
+- Core tools return compact projections by default. Request `responseMode: "verbose"` only for an explicit diagnostic need; do not use it as the normal retrieval path.
 - Preserve user constraints and distinguish verified facts from hypotheses.
 - Do not claim exact token savings; estimates include tool overhead.
 - Do not complete a task whose approval, application, evidence, change, or verification remains pending.

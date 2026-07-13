@@ -34,7 +34,10 @@ export function tokenize(text: string): string[] {
         .replace(/([a-z])([A-Z])/g, "$1 $2")
         .toLowerCase()
         .split(/[^a-z0-9_/$.[\]-]+/i)
-        .map((part) => part.trim())
+        .flatMap((part) => {
+          const trimmed = part.trim();
+          return [trimmed, ...trimmed.split(/[_/.$\[\]-]+/)];
+        })
         .filter((part) => part.length > 1)
     )
   );

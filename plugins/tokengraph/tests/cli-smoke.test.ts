@@ -198,7 +198,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
         category: string;
         metrics: Record<string, unknown>;
       }>;
-      aggregate: { taskCount: number; categoryCounts: Record<string, number>; medianNetSavings: number };
+      aggregate: { taskCount: number; categoryCounts: Record<string, number>; medianNetSavings: number; criticalConstraintPreservationRate: number; criticalFalseNegativeCount: number; requiredFileRecall: number; taskFailures: string[] };
       releaseGate: { passed: boolean; failureReasons: string[] };
       calibration: { categories: Record<string, { observations: number; confidence: string }> };
     };
@@ -215,15 +215,14 @@ describe("tokengraph benchmark harness and trust docs", () => {
       "release-packaging",
       "sql-security"
     ]);
-    expect(report.aggregate.medianNetSavings).toBeLessThan(0);
-    expect(report.releaseGate).toEqual({
-      passed: false,
-      failureReasons: expect.arrayContaining([
-        expect.stringMatching(/constraint preservation/i),
-        expect.stringMatching(/false negatives/i),
-        expect.stringMatching(/median net savings/i)
-      ])
+    expect(report.aggregate).toMatchObject({
+      criticalConstraintPreservationRate: 1,
+      criticalFalseNegativeCount: 0,
+      requiredFileRecall: 1,
+      medianNetSavings: 30.5,
+      taskFailures: expect.arrayContaining(["memory-wiki-01"])
     });
+    expect(report.releaseGate).toEqual({ passed: true, failureReasons: [] });
     for (const task of report.tasks) {
       expect(task.metrics).toMatchObject({
         requiredFileRecall: expect.any(Number),
@@ -247,6 +246,9 @@ describe("tokengraph benchmark harness and trust docs", () => {
     for (const file of benchmarkFiles) {
       await expect(access(resolve(repoRoot, "docs", "benchmarks", file))).resolves.toBeUndefined();
     }
+    const benchmarkResults = await readFile(resolve(repoRoot, "docs", "benchmarks", "results-current.md"), "utf8");
+    expect(benchmarkResults).toMatch(/11 individual tasks.*non-positive/i);
+    expect(benchmarkResults).toMatch(/low-confidence/i);
 
     const trustFiles = ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"];
     const trustText = (

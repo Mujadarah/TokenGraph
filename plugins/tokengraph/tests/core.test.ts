@@ -1627,6 +1627,45 @@ describe("compressOutput", () => {
 });
 
 describe("compressContext", () => {
+  it("routes focused tests and SQL sources into first reads without requiring literal paths in raw text", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "services"), { recursive: true });
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await writeFile(join(root, "services", "patientService.ts"), "export const getPatient = true;");
+    await writeFile(join(root, "services", "patientService.test.ts"), "test('getPatient tenant behavior', () => true);");
+    await writeFile(join(root, "supabase", "migrations", "001_patients.sql"), "create policy patient_rls on patients using (tenant_id = auth.uid());");
+    const project = await indexProject(root);
+
+    const report = await compressContext({
+      root,
+      task: "Compress the failing getPatient test and patients RLS tenant policy context",
+      contentKind: "mixed",
+      text: "Security warning: preserve tenant_id and auth.uid while fixing the failing getPatient test.",
+      project,
+      memories: []
+    });
+
+    expect(report.recommendedFirstReads).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "services/patientService.test.ts" }),
+      expect.objectContaining({ path: "supabase/migrations/001_patients.sql" })
+    ]));
+  });
+
+  it("keeps one SQL representative per lexically relevant migration before compact selection", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "supabase", "migrations"), { recursive: true });
+    await writeFile(join(root, "supabase", "migrations", "001_patients.sql"), `create table public.patients (id uuid, tenant_id uuid); create index patients_tenant_id_idx on public.patients (tenant_id);`);
+    await writeFile(join(root, "supabase", "migrations", "002_audit.sql"), `create table public.audit_events (id uuid, tenant_id uuid); create policy "audit tenant" on public.audit_events using (tenant_id = auth.uid());`);
+    const project = await indexProject(root);
+    const plan = await buildContextPlan({
+      root, task: "Check authenticated RLS policies across patients and audit_events migrations", project, memories: [],
+      budget: { maxFiles: 1, maxSqlObjects: 4, maxMemories: 0, maxEstimatedTokens: 250 }
+    });
+    expect(new Set(plan.relevantSql.map((entry) => entry.filePath))).toEqual(new Set([
+      "supabase/migrations/001_patients.sql", "supabase/migrations/002_audit.sql"
+    ]));
+  });
+
   it("preserves constraints, failure details, migrations, public API names, and targeted first reads", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "services"), { recursive: true });
@@ -1683,6 +1722,22 @@ describe("compressContext", () => {
 });
 
 describe("traceFailure", () => {
+  it("routes a focused test named by the task even when raw failure text omits its path", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "services"), { recursive: true });
+    await writeFile(join(root, "services", "patientService.ts"), "export const getPatient = true;");
+    await writeFile(join(root, "services", "patientService.test.ts"), "test('getPatient', () => true);");
+    const project = await indexProject(root);
+    const trace = await traceFailure({
+      root, kind: "test", text: "AssertionError: expected tenant row", task: "Fix failing getPatient test at services/patientService.test.ts",
+      project, memories: []
+    });
+
+    expect(trace.relatedFiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "services/patientService.test.ts" })]));
+    expect(trace.recommendedFirstReads).toEqual(expect.arrayContaining([expect.objectContaining({ path: "services/patientService.test.ts" })]));
+    expect(trace.recommendedCommands).toContain("pnpm test -- services/patientService.test.ts");
+  });
+
   it("preserves exact failure details and routes to graph-related context", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "services"), { recursive: true });
@@ -1865,6 +1920,10 @@ describe("assessChangeRisk", () => {
 describe("tokenize", () => {
   it("splits camelCase before lowercasing", () => {
     expect(tokenize("PatientCard fetchUserById")).toEqual(expect.arrayContaining(["patient", "card", "fetch", "user", "by", "id"]));
+  });
+
+  it("keeps identifiers while exposing underscore-separated relation terms", () => {
+    expect(tokenize("patients_tenant_id_idx")).toEqual(expect.arrayContaining(["patients_tenant_id_idx", "patients", "tenant", "id", "idx"]));
   });
 
   it("estimates dense scripts and emoji closer to one token per code point", () => {

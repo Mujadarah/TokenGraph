@@ -168,7 +168,9 @@ function assertToolResult(result, toolName) {
   if (result?.isError) {
     throw new Error(`${toolName} returned an MCP tool error: ${compactJson(result)}`);
   }
-  return result?.structuredContent ?? {};
+  if (result?.structuredContent) return result.structuredContent;
+  const text = result?.content?.find((item) => item?.type === "text")?.text;
+  return text ? JSON.parse(text) : {};
 }
 
 async function runSmoke() {
@@ -211,7 +213,7 @@ async function runSmoke() {
     const prepared = assertToolResult(
       await client.request("tools/call", {
         name: "tokengraph_prepare_context",
-        arguments: { root, task: "TokenGraph CLI smoke validation", profile: "aggressive", budgets: { maxFiles: 3, maxSqlObjects: 3, maxMemories: 0 } }
+        arguments: { root, task: "TokenGraph CLI smoke validation", profile: "aggressive", maxTokens: 4000, responseMode: "verbose" }
       }),
       "tokengraph_prepare_context"
     );
@@ -254,13 +256,13 @@ async function runSmoke() {
       tools,
       taskId: prepared.taskId,
       indexStateBeforeMap: prepared.index?.previousStatus ?? "unknown",
-      filesIndexed: overview.result?.counts?.files ?? 0,
-      symbolsIndexed: overview.result?.counts?.symbols ?? 0,
-      recommendedFirstReads: prepared.plan?.recommendedFirstReads ?? [],
+      filesIndexed: overview.counts?.files ?? overview.result?.counts?.files ?? 0,
+      symbolsIndexed: overview.counts?.symbols ?? overview.result?.counts?.symbols ?? 0,
+      recommendedFirstReads: prepared.plan?.firstReads ?? prepared.plan?.recommendedFirstReads ?? [],
       activeProfile: prepared.plan?.profile ?? "unknown",
       estimatedTokensAvoided: Math.max(0, (compressed.estimates?.original ?? 0) - (compressed.estimates?.compact ?? 0) - (compressed.estimates?.overhead ?? 0)),
-      memoriesReviewed: memoryReview.result?.totalMemories ?? 0,
-      architectureStatus: analysis.result?.status ?? "unknown",
+      memoriesReviewed: memoryReview.totalMemories ?? memoryReview.result?.totalMemories ?? 0,
+      architectureStatus: analysis.status ?? analysis.result?.status ?? "unknown",
       knowledgeSuggestions: knowledge.suggestions?.length ?? 0,
       taskEventCount: completed.report?.eventCount ?? 0,
       wikiPageSlugs: [],

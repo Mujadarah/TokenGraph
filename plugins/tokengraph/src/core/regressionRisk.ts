@@ -39,7 +39,7 @@ function routeLabel(project: ProjectIndex, path: string): string | undefined {
   return undefined;
 }
 
-function relatedCode(project: ProjectIndex, changedFiles: string[]): {
+function relatedCode(project: ProjectIndex, changedFiles: string[], task = ""): {
   affectedFiles: RankedFile[];
   affectedRoutes: string[];
   affectedTests: RankedFile[];
@@ -64,13 +64,17 @@ function relatedCode(project: ProjectIndex, changedFiles: string[]): {
   }
 
   const changedBases = changedFiles.map((path) => path.replace(/\.[^.]+$/, ""));
+  const normalize = (term: string) => term.length > 4 && term.endsWith("s") ? term.slice(0, -1) : term;
+  const taskTerms = new Set(tokenize(task).flatMap((term) => term.split(/[_/.$\[\]-]+/)).map(normalize).filter((term) => term.length >= 4 && !["asses", "change", "risk", "policy", "migration", "tenant"].includes(term)));
   const affectedTests = project.files
     .filter((file) => {
       if (!file.isTest) return false;
       if (changed.has(file.path)) return true;
       const importsChanged = project.imports.some((edge) => edge.filePath === file.path && edge.resolvedPath !== undefined && changed.has(edge.resolvedPath));
       const nameMatches = changedBases.some((base) => file.path.includes(base));
-      return importsChanged || nameMatches;
+      const testTerms = new Set(tokenize(file.path).flatMap((term) => term.split(/[_/.$\[\]-]+/)).map(normalize));
+      const taskMatches = [...taskTerms].some((term) => testTerms.has(term));
+      return importsChanged || nameMatches || taskMatches;
     })
     .map((file) => fileScore(file.path, "Test is linked to a changed file.", 85));
 
@@ -243,7 +247,7 @@ export async function assessChangeRisk(input: {
 }): Promise<ChangeRiskReport> {
   const changedFiles = unique(input.changedFiles.map((path) => path.replace(/\\/g, "/"))).filter((path) => path.length > 0);
   const text = [input.task, input.diffSummary, changedFiles.join(" ")].filter(Boolean).join("\n");
-  const code = relatedCode(input.project, changedFiles);
+  const code = relatedCode(input.project, changedFiles, input.task);
   const sql = relatedSql(input.project, changedFiles, text);
   const architecture = await checkArchitecture({ root: input.root, project: input.project, rules: input.rules, files: changedFiles });
   const ruleFindings = filterRuleFindings([...architecture.violations, ...architecture.warnings], changedFiles).slice(0, 20);

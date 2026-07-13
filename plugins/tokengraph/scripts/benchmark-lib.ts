@@ -10,6 +10,25 @@ import { reviewMemories } from "../src/core/review.js";
 import { TASK_ESTIMATOR_VERSION, type TaskCalibration } from "../src/core/taskEstimator.js";
 import { estimateTokens } from "../src/core/token.js";
 import { buildProjectWiki } from "../src/core/wiki.js";
+import { buildTaskReport, formatTaskReportFooter } from "../src/core/taskEstimator.js";
+import type { TaskLedger } from "../src/core/taskLedger.js";
+import {
+  benchmarkMcpInputSchemas,
+  compactCompressionEnvelope,
+  compactModeEnvelope,
+  compactPrepareEnvelope,
+  compactToolResultEnvelope
+} from "../src/core/toolContracts.js";
+import {
+  compactCompressionResponse,
+  compactFailureResponse,
+  hasSqlIntent,
+  NO_RAW_READ_GUIDANCE,
+  compactPlanResponse,
+  compactRecallResponse,
+  compactRiskResponse,
+  compactWikiResponse
+} from "../src/core/compactResponses.js";
 import type { MemoryEntry, ProjectIndex } from "../src/core/types.js";
 
 export const BENCHMARK_CATEGORIES = [
@@ -29,10 +48,12 @@ export interface BenchmarkTask {
   id: string;
   category: BenchmarkCategory;
   query: string;
+  constraints: string[];
   criticalConstraints: string[];
   requiredFiles: string[];
   forbiddenFalsePositiveFiles: string[];
   expectedTests: string[];
+  allowRawReads?: boolean;
   targetedRawReadsAllowed: boolean;
 }
 
@@ -102,15 +123,16 @@ const FLOW_BY_CATEGORY: Record<BenchmarkCategory, BenchmarkFlow> = {
   "release-packaging": "planner"
 };
 
-const SCHEMA_BY_FLOW: Record<BenchmarkFlow, unknown> = {
-  planner: { task: "string", profile: "balanced", allowRawReads: "boolean" },
-  tracer: { kind: "test", text: "string", task: "string", profile: "balanced" },
-  risk: { changedFiles: "string[]", task: "string", profile: "balanced" },
-  compressor: { task: "string", contentKind: "mixed", text: "string", preserveRawReferences: true },
-  "wiki-memory": [{ tool: "wiki", input: "project-index" }, { tool: "memory-review", query: "string", limit: "number" }]
+const REPRESENTATIVE_LEDGER: TaskLedger = {
+  schemaId: "tokengraph-task-ledger", schemaVersion: 1, taskId: "00000000-0000-4000-8000-000000000000", host: "unknown", status: "open",
+  createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", estimatorVersion: TASK_ESTIMATOR_VERSION,
+  events: [{
+    id: "00000000-0000-4000-8000-000000000001", fingerprint: "benchmark", category: "benchmark", toolName: "tokengraph_task_report",
+    originalTokens: 1000, compactTokens: 400, overheadTokens: 50, confidence: "low", timestamp: "2026-01-01T00:00:00.000Z",
+    qualityChecks: [{ name: "benchmark-quality", passed: true }]
+  }]
 };
-
-const FOOTER = "Token estimates are deterministic fixture estimates; inspect failure reasons and use targeted raw reads when allowed.";
+const FOOTER = formatTaskReportFooter(buildTaskReport(REPRESENTATIVE_LEDGER));
 const EVIDENCE_PATH = resolve("scripts", "benchmark-evidence-v1.json");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -138,12 +160,15 @@ export function validateCorpus(value: unknown): { tasks: BenchmarkTask[]; errors
       typeof candidate.id !== "string" ||
       !BENCHMARK_CATEGORIES.includes(candidate.category as BenchmarkCategory) ||
       typeof candidate.query !== "string" ||
+      !Array.isArray(candidate.constraints) ||
+      !candidate.constraints.every((entry) => typeof entry === "string" && entry.trim().length > 0) ||
       !stringArray(candidate.criticalConstraints) ||
       !stringArray(candidate.requiredFiles) ||
       !Array.isArray(candidate.forbiddenFalsePositiveFiles) ||
       !candidate.forbiddenFalsePositiveFiles.every((entry) => typeof entry === "string") ||
       !Array.isArray(candidate.expectedTests) ||
       !candidate.expectedTests.every((entry) => typeof entry === "string") ||
+      (candidate.allowRawReads !== undefined && typeof candidate.allowRawReads !== "boolean") ||
       typeof candidate.targetedRawReadsAllowed !== "boolean"
     ) {
       errors.push(`Task at index ${index} is malformed.`);
@@ -256,46 +281,54 @@ async function runFlow(input: {
   root: string;
   project: ProjectIndex;
   memories: MemoryEntry[];
-}): Promise<{ coreOutput: unknown; serializedOutputs: unknown[]; selectedFiles: string[]; recommendedTests: string[] }> {
+}): Promise<{ coreOutput: unknown; serializedOutputs: unknown[]; selectedFiles: string[]; recommendedTests: string[]; rawReadGuidance: string[] }> {
   const { flow, task, evidence, rawText, root, project, memories } = input;
   if (flow === "planner") {
-    const output = await buildContextPlan({
+    const verbose = await buildContextPlan({
       root,
       task: task.query,
       project,
       memories,
       budget: { profile: "balanced", maxFiles: 8, maxSqlObjects: 8, maxMemories: 4, firstReads: 4, allowRawReads: true }
     });
+    const output = compactPlanResponse(verbose, { constraints: task.constraints, allowRawReads: task.allowRawReads ?? true });
+    const response = compactPrepareEnvelope({
+      root, taskId: "00000000-0000-4000-8000-000000000000", plan: output
+    });
+    const wire = compactToolResultEnvelope(response);
     return {
-      coreOutput: output,
-      serializedOutputs: [output],
-      selectedFiles: [...output.relevantFiles, ...output.relevantTests].map((entry) => entry.path).concat(output.relevantSql.map((entry) => entry.filePath)),
-      recommendedTests: output.relevantTests.map((entry) => entry.path)
+      coreOutput: wire,
+      serializedOutputs: [wire],
+      selectedFiles: output.files.map((entry) => entry.path),
+      recommendedTests: output.tests, rawReadGuidance: [output.rawReadGuidance]
     };
   }
   if (flow === "tracer") {
-    const output = await traceFailure({ root, kind: "test", text: rawText, task: task.query, project, memories });
+    const verbose = await traceFailure({ root, kind: "test", text: rawText, task: task.query, project, memories });
+    const output = compactFailureResponse(verbose, { constraints: task.constraints, allowRawReads: task.allowRawReads ?? true, includeSql: hasSqlIntent(task.query) });
+    const response = compactModeEnvelope("failure", output);
+    const wire = compactToolResultEnvelope(response);
     return {
-      coreOutput: output,
-      serializedOutputs: [output],
-      selectedFiles: [...output.relatedFiles, ...output.recommendedFirstReads].map((entry) => entry.path).concat(output.relatedSql.map((entry) => entry.filePath)),
-      recommendedTests: [
-        ...output.detectedTests.filter((entry) => /(?:\.test|\.spec)\.[cm]?[jt]sx?$/.test(entry)),
-        ...output.recommendedCommands.flatMap((command) => command.match(/(?:^|\s)([^\s]+\.(?:test|spec)\.[cm]?[jt]sx?)(?:\s|$)/)?.[1] ?? [])
-      ]
+      coreOutput: wire,
+      serializedOutputs: [wire],
+      selectedFiles: output.files.map((entry) => entry.path),
+      recommendedTests: output.tests, rawReadGuidance: [output.rawReadGuidance]
     };
   }
   if (flow === "risk") {
-    const output = await assessChangeRisk({ root, changedFiles: changedFiles(evidence, project), task: task.query, project, rules: [], memories });
+    const verbose = await assessChangeRisk({ root, changedFiles: changedFiles(evidence, project), task: task.query, project, rules: [], memories });
+    const output = compactRiskResponse(verbose, { constraints: task.constraints, allowRawReads: task.allowRawReads ?? true });
+    const response = compactModeEnvelope("risk", output);
+    const wire = compactToolResultEnvelope(response);
     return {
-      coreOutput: output,
-      serializedOutputs: [output],
-      selectedFiles: output.affectedFiles.map((entry) => entry.path).concat(output.affectedTests.map((entry) => entry.path), output.affectedSql.map((entry) => entry.filePath)),
-      recommendedTests: output.affectedTests.map((entry) => entry.path)
+      coreOutput: wire,
+      serializedOutputs: [wire],
+      selectedFiles: output.files.map((entry) => entry.path),
+      recommendedTests: output.tests, rawReadGuidance: [output.rawReadGuidance]
     };
   }
   if (flow === "compressor") {
-    const output = await compressContext({
+    const verbose = await compressContext({
       root,
       task: task.query,
       contentKind: task.category === "sql-security" ? "sql" : "mixed",
@@ -304,21 +337,30 @@ async function runFlow(input: {
       project,
       memories
     });
+    const output = compactCompressionResponse(verbose, { constraints: task.constraints, allowRawReads: task.allowRawReads ?? true });
+    const response = compactCompressionEnvelope("context", output);
+    const wire = compactToolResultEnvelope(response);
     return {
-      coreOutput: output,
-      serializedOutputs: [output],
-      selectedFiles: output.recommendedFirstReads.map((entry) => entry.path),
-      recommendedTests: output.recommendedFirstReads.map((entry) => entry.path).filter((path) => /(?:\.test|\.spec)\.[cm]?[jt]sx?$/.test(path))
+      coreOutput: wire,
+      serializedOutputs: [wire],
+      selectedFiles: output.files.map((entry) => entry.path),
+      recommendedTests: output.tests, rawReadGuidance: [output.rawReadGuidance]
     };
   }
   const wiki = buildProjectWiki(project, memories);
   const memoryReview = await reviewMemories({ memories, query: task.query, limit: 4 });
-  const matchedIds = new Set(memoryReview.matches.filter((match) => match.score > 0).map((match) => match.id));
+  const compactWiki = compactWikiResponse(wiki, { constraints: task.constraints, allowRawReads: task.allowRawReads ?? true });
+  const compactReview = compactRecallResponse(memoryReview, { constraints: task.constraints, allowRawReads: task.allowRawReads ?? true }, memories, project);
+  const wikiResponse = compactModeEnvelope("wiki", compactWiki);
+  const memoryResponse = compactModeEnvelope("review", compactReview);
+  const wikiWire = compactToolResultEnvelope(wikiResponse);
+  const memoryWire = compactToolResultEnvelope(memoryResponse);
   return {
-    coreOutput: { wiki, memoryReview },
-    serializedOutputs: [wiki, memoryReview],
-    selectedFiles: memories.filter((memory) => matchedIds.has(memory.id)).flatMap((memory) => memory.linkedFiles),
-    recommendedTests: []
+    coreOutput: { wiki: wikiWire, memoryReview: memoryWire },
+    serializedOutputs: [wikiWire, memoryWire],
+    selectedFiles: compactReview.files.map((entry) => entry.path),
+    recommendedTests: compactReview.tests,
+    rawReadGuidance: [compactWiki.rawReadGuidance, compactReview.rawReadGuidance]
   };
 }
 
@@ -332,6 +374,18 @@ export function constraintPreserved(constraint: string, serializedOutput: string
   return ` ${normalizePredicate(serializedOutput)} `.includes(` ${predicate} `);
 }
 
+export function measureSerializedOutput(input: {
+  rawTokens: number;
+  serializedOutputs: unknown[];
+  schemaOverheadTokens: number;
+  footerOverheadTokens: number;
+}) {
+  const coreOutputTokens = input.serializedOutputs.map((output) => estimateTokens(JSON.stringify(output)));
+  const compactTokens = coreOutputTokens.reduce((total, tokens) => total + tokens, 0);
+  const toolOverheadTokens = input.schemaOverheadTokens + input.footerOverheadTokens;
+  return { coreOutputTokens, compactTokens, toolOverheadTokens, netEstimatedSavings: input.rawTokens - compactTokens - toolOverheadTokens };
+}
+
 async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: string, project: ProjectIndex, memories: MemoryEntry[]) {
   const flow = FLOW_BY_CATEGORY[task.category];
   const baseline = await rawBaseline(root, evidence.rawFiles);
@@ -342,16 +396,17 @@ async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: s
   const falsePositives = task.forbiddenFalsePositiveFiles.filter((path) => selected.has(path)).sort();
   const serializedOutput = JSON.stringify(result.coreOutput);
   const preservedCount = task.criticalConstraints.filter((constraint) => constraintPreserved(constraint, serializedOutput)).length;
-  const criticalConstraintPreservation = task.criticalConstraints.length ? preservedCount / task.criticalConstraints.length : 1;
+  const rawReadPolicyPreserved = task.targetedRawReadsAllowed || result.rawReadGuidance.every((guidance) => guidance === NO_RAW_READ_GUIDANCE);
+  const criticalConstraintPreservation = (task.criticalConstraints.length ? preservedCount / task.criticalConstraints.length : 1) * (rawReadPolicyPreserved ? 1 : 0);
   const requiredFileRecall = task.requiredFiles.length ? (task.requiredFiles.length - falseNegatives.length) / task.requiredFiles.length : 1;
-  const coreOutputTokens = result.serializedOutputs.map((output) => estimateTokens(JSON.stringify(output)));
-  const compactTokens = coreOutputTokens.reduce((total, tokens) => total + tokens, 0);
+  const schemas = benchmarkMcpInputSchemas();
   const schemaOverheadTokens: number = flow === "wiki-memory"
-    ? (SCHEMA_BY_FLOW[flow] as unknown[]).reduce<number>((total, schema) => total + estimateTokens(JSON.stringify(schema)), 0)
-    : estimateTokens(JSON.stringify({ tool: `tokengraph_${flow}`, inputSchema: SCHEMA_BY_FLOW[flow] }));
+    ? estimateTokens(JSON.stringify(schemas.wiki)) + estimateTokens(JSON.stringify(schemas.memory))
+    : estimateTokens(JSON.stringify(schemas[flow]));
   const footerOverheadTokens = estimateTokens(FOOTER);
-  const toolOverheadTokens = schemaOverheadTokens + footerOverheadTokens;
-  const netEstimatedSavings = baseline.tokens - compactTokens - toolOverheadTokens;
+  const { coreOutputTokens, compactTokens, toolOverheadTokens, netEstimatedSavings } = measureSerializedOutput({
+    rawTokens: baseline.tokens, serializedOutputs: result.serializedOutputs, schemaOverheadTokens, footerOverheadTokens
+  });
   const expectedReferenceTokens = estimateTokens(evidence.expectedCompactReference);
   const expectedNetSavings = baseline.tokens - expectedReferenceTokens - toolOverheadTokens;
   const missingExpectedTests = task.expectedTests.filter((path) => !recommendedTests.includes(path));
@@ -360,6 +415,7 @@ async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: s
     ...(falseNegatives.length ? [`Required files not recalled: ${falseNegatives.join(", ")}.`] : []),
     ...(falsePositives.length ? [`Forbidden false-positive files selected: ${falsePositives.join(", ")}.`] : []),
     ...(criticalConstraintPreservation !== 1 ? ["One or more critical constraints were not preserved."] : []),
+    ...(!rawReadPolicyPreserved ? ["Raw-read fallback guidance violated the task policy."] : []),
     ...(missingExpectedTests.length ? [`Expected tests not recommended: ${missingExpectedTests.join(", ")}.`] : []),
     ...(netEstimatedSavings <= 0 ? ["Net estimated savings were not positive after schema, tool, and footer overhead."] : [])
   ];
@@ -377,6 +433,7 @@ async function evaluateTask(task: BenchmarkTask, evidence: TaskEvidence, root: s
       rawBaselineTokens: baseline.tokens,
       schemaOverheadTokens,
       footerOverheadTokens,
+      completionFooter: FOOTER,
       expectedCompactReference: evidence.expectedCompactReference,
       expectedReferenceTokens,
       expectedNetSavings
