@@ -20,7 +20,7 @@ Follow the common lifecycle in the general `tokengraph` skill:
 5. Recommend tests from direct coverage, inbound dependents, routes, SQL involvement, and risk evidence. Run and verify tests; distinguish verified results from estimated risk.
 6. Only after requested analysis and test verification are complete, call `tokengraph_task_report({ taskId })`; compact reporting is the default. Use `tokengraph_task_report({ taskId, responseMode: "verbose" })` only for report diagnostics, and `tokengraph_task_report({ taskId, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
 
-Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use narrow local diff/search/test inspection, and claim no savings or graph-backed evidence.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state "TokenGraph was not used," use narrow local diff/search/test inspection, and claim no savings or graph-backed evidence.
 
 A paused task id is terminal. Start a new task with `tokengraph_prepare_context` or a direct intent call that omits `taskId`; never reuse the paused id.
 

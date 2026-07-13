@@ -20,7 +20,7 @@ Follow the common lifecycle in the general `tokengraph` skill:
 5. Preserve generated-release discipline: edit source only, regenerate the release through `pnpm package:plugin -- --release`, and inspect the diff. Verify direct release startup/smoke, then install and verify an independently extracted ZIP. Confirm actual host registration, exposed surface, trusted workspace behavior, and readiness rather than relying on file presence.
 6. Only when every requested source, generated release, direct release, extracted ZIP, and host verification result is present and passing, call `tokengraph_task_report({ taskId })`; compact reporting is the default. Use `tokengraph_task_report({ taskId, responseMode: "verbose" })` only for report diagnostics, and `tokengraph_task_report({ taskId, disposition: "pause" })` for approval, missing evidence, blocked setup after creation, or unfinished work.
 
-Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use targeted local packaging checks, and claim no savings or graph-backed evidence.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state "TokenGraph was not used," use targeted local packaging checks, and claim no savings or graph-backed evidence.
 
 A paused task id is terminal. Start a new task with `tokengraph_prepare_context` or a direct intent call that omits `taskId`; never reuse the paused id.
 

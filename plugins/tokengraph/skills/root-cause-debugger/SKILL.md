@@ -20,7 +20,7 @@ Follow the common lifecycle in the general `tokengraph` skill:
 5. Separate verified facts from hypotheses. For each hypothesis, identify supporting evidence and the smallest disconfirming read or command. Add or identify regression evidence and run the relevant regression test before completion.
 6. Only after the cause, requested fix, and regression verification are complete, call `tokengraph_task_report({ taskId })`; compact reporting is the default. Use `tokengraph_task_report({ taskId, responseMode: "verbose" })` only for report diagnostics, and `tokengraph_task_report({ taskId, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
 
-Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state “TokenGraph was not used,” use the existing narrow local debugging fallback, and claim no savings or graph-backed evidence.
+Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state "TokenGraph was not used," use the existing narrow local debugging fallback, and claim no savings or graph-backed evidence.
 
 A paused task id is terminal. Start a new task with `tokengraph_prepare_context` or a direct intent call that omits `taskId`; never reuse the paused id.
 
