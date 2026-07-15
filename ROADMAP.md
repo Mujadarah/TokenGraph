@@ -189,6 +189,16 @@ Status: complete
 - The release ships only the self-contained `dist/index.js` runtime plus Claude Code marketplace, plugin, and MCP manifests with trusted project-root forwarding.
 - CI validates frozen installs, typecheck, tests, build, smoke, plugin validation, non-ASCII scans, and byte-reproducible committed releases.
 
+## v0.19 - Repository Hygiene And Installability
+
+Status: complete
+
+- Rootless setup diagnostics explain missing, unsafe, or unreadable host workspace trust without granting access.
+- Public Codex and Claude Code marketplaces share the `tokengraph` identity and richer discovery metadata.
+- GitHub and extracted-release installation guides include exact host commands, verification, migration, and workspace-trust steps.
+- Release artifacts are deterministic standalone marketplace ZIPs for both hosts.
+- Completed implementation plans and superseded design specs are removed from the current tree while Git history preserves them.
+
 ## v0.20 - Measured Completion And Compact Quality
 
 Status: complete
@@ -199,16 +209,6 @@ Status: complete
 - Source-linked wiki and memory proposals require review and explicit approval before application, rechecking provenance and expiry.
 - The routing-lifecycle evidence benchmark passes its strict gate with 100% constraint preservation, zero critical false negatives, 100% recall, and median net estimated savings of 31.7 tokens. Its p25 is -270.3 and 15/30 tasks are non-positive; the execution-inclusive median is -133.8 with 20/30 non-positive. Per-category confidence is low.
 - Deterministic v0.20 release packaging includes nine skills, the MCP and hook bundles, both host manifests, and a standalone marketplace archive.
-
-## v0.19 - Repository Hygiene And Installability
-
-Status: complete
-
-- Rootless setup diagnostics explain missing, unsafe, or unreadable host workspace trust without granting access.
-- Public Codex and Claude Code marketplaces share the `tokengraph` identity and richer discovery metadata.
-- GitHub and extracted-release installation guides include exact host commands, verification, migration, and workspace-trust steps.
-- Release artifacts are deterministic standalone marketplace ZIPs for both hosts.
-- Completed implementation plans and superseded design specs are removed from the current tree while Git history preserves them.
 
 ## Later
 
