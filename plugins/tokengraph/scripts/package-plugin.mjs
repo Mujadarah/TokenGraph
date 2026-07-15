@@ -246,11 +246,15 @@ async function writeMarketplace(path, value) {
 
 async function writeDeterministicArchive(bundleDir, archivePath) {
   const files = await listFiles(bundleDir);
+  // fflate serializes Date values through local calendar fields. Construct the
+  // epoch as local midnight so a UTC runner and a non-UTC maintainer machine
+  // emit the same DOS timestamp in every ZIP entry.
+  const archiveMtime = new Date(1980, 0, 1, 0, 0, 0, 0);
   const entries = {};
   for (const file of files) {
-    entries[file] = [await readFile(resolve(bundleDir, file)), { mtime: new Date("1980-01-01T00:00:00.000Z") }];
+    entries[file] = [await readFile(resolve(bundleDir, file)), { mtime: archiveMtime }];
   }
-  await writeFile(archivePath, zipSync(entries, { level: 9, mtime: new Date("1980-01-01T00:00:00.000Z") }));
+  await writeFile(archivePath, zipSync(entries, { level: 9, mtime: archiveMtime }));
 }
 
 async function runPackage() {
