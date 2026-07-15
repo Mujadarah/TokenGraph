@@ -2637,7 +2637,7 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
             })));
           }
         }
-        
+
         if (${id}.value === undefined) {
           if (${k} in input) {
             newResult[${k}] = undefined;
@@ -2645,7 +2645,7 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
         } else {
           newResult[${k}] = ${id}.value;
         }
-        
+
       `);
       } else if (!isOptionalIn) {
         doc.write(`
@@ -2682,7 +2682,7 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
             path: iss.path ? [${k}, ...iss.path] : [${k}]
           })));
         }
-        
+
         if (${id}.value === undefined) {
           if (${k} in input) {
             newResult[${k}] = undefined;
@@ -2690,7 +2690,7 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
         } else {
           newResult[${k}] = ${id}.value;
         }
-        
+
       `);
       }
     }
@@ -8025,8 +8025,8 @@ var require_resolve = /* @__PURE__ */ __commonJSMin(((exports) => {
     }
     return count;
   }
-  function getFullPath(resolver, id = "", normalize2) {
-    if (normalize2 !== false) id = normalizeId(id);
+  function getFullPath(resolver, id = "", normalize3) {
+    if (normalize3 !== false) id = normalizeId(id);
     return _getFullPath(resolver, resolver.parse(id));
   }
   exports.getFullPath = getFullPath;
@@ -8650,7 +8650,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
     ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref);
     const schOrFunc = root.refs[ref];
     if (schOrFunc) return schOrFunc;
-    let _sch = resolve9.call(this, root, ref);
+    let _sch = resolve13.call(this, root, ref);
     if (_sch === void 0) {
       const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
       const { schemaId } = this.opts;
@@ -8676,7 +8676,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve9(root, ref) {
+  function resolve13(root, ref) {
     let sch;
     while (typeof (sch = this.refs[ref]) == "string") ref = sch;
     return sch || this.schemas[ref] || resolveSchema.call(this, root, ref);
@@ -9121,52 +9121,52 @@ var require_schemes = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
   const { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizeComponentEncoding, isIPv4, nonSimpleDomain } = require_utils();
   const { SCHEMES, getSchemeHandler } = require_schemes();
-  function normalize2(uri, options) {
-    if (typeof uri === "string") uri = serialize(parse4(uri, options), options);
-    else if (typeof uri === "object") uri = parse4(serialize(uri, options), options);
+  function normalize3(uri, options) {
+    if (typeof uri === "string") uri = serialize(parse5(uri, options), options);
+    else if (typeof uri === "object") uri = parse5(serialize(uri, options), options);
     return uri;
   }
-  function resolve9(baseURI, relativeURI, options) {
+  function resolve13(baseURI, relativeURI, options) {
     const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
-    const resolved = resolveComponent(parse4(baseURI, schemelessOptions), parse4(relativeURI, schemelessOptions), schemelessOptions, true);
+    const resolved = resolveComponent(parse5(baseURI, schemelessOptions), parse5(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
     return serialize(resolved, schemelessOptions);
   }
-  function resolveComponent(base2, relative6, options, skipNormalization) {
+  function resolveComponent(base2, relative8, options, skipNormalization) {
     const target = {};
     if (!skipNormalization) {
-      base2 = parse4(serialize(base2, options), options);
-      relative6 = parse4(serialize(relative6, options), options);
+      base2 = parse5(serialize(base2, options), options);
+      relative8 = parse5(serialize(relative8, options), options);
     }
     options = options || {};
-    if (!options.tolerant && relative6.scheme) {
-      target.scheme = relative6.scheme;
-      target.userinfo = relative6.userinfo;
-      target.host = relative6.host;
-      target.port = relative6.port;
-      target.path = removeDotSegments(relative6.path || "");
-      target.query = relative6.query;
+    if (!options.tolerant && relative8.scheme) {
+      target.scheme = relative8.scheme;
+      target.userinfo = relative8.userinfo;
+      target.host = relative8.host;
+      target.port = relative8.port;
+      target.path = removeDotSegments(relative8.path || "");
+      target.query = relative8.query;
     } else {
-      if (relative6.userinfo !== void 0 || relative6.host !== void 0 || relative6.port !== void 0) {
-        target.userinfo = relative6.userinfo;
-        target.host = relative6.host;
-        target.port = relative6.port;
-        target.path = removeDotSegments(relative6.path || "");
-        target.query = relative6.query;
+      if (relative8.userinfo !== void 0 || relative8.host !== void 0 || relative8.port !== void 0) {
+        target.userinfo = relative8.userinfo;
+        target.host = relative8.host;
+        target.port = relative8.port;
+        target.path = removeDotSegments(relative8.path || "");
+        target.query = relative8.query;
       } else {
-        if (!relative6.path) {
+        if (!relative8.path) {
           target.path = base2.path;
-          if (relative6.query !== void 0) target.query = relative6.query;
+          if (relative8.query !== void 0) target.query = relative8.query;
           else target.query = base2.query;
         } else {
-          if (relative6.path[0] === "/") target.path = removeDotSegments(relative6.path);
+          if (relative8.path[0] === "/") target.path = removeDotSegments(relative8.path);
           else {
-            if ((base2.userinfo !== void 0 || base2.host !== void 0 || base2.port !== void 0) && !base2.path) target.path = "/" + relative6.path;
-            else if (!base2.path) target.path = relative6.path;
-            else target.path = base2.path.slice(0, base2.path.lastIndexOf("/") + 1) + relative6.path;
+            if ((base2.userinfo !== void 0 || base2.host !== void 0 || base2.port !== void 0) && !base2.path) target.path = "/" + relative8.path;
+            else if (!base2.path) target.path = relative8.path;
+            else target.path = base2.path.slice(0, base2.path.lastIndexOf("/") + 1) + relative8.path;
             target.path = removeDotSegments(target.path);
           }
-          target.query = relative6.query;
+          target.query = relative8.query;
         }
         target.userinfo = base2.userinfo;
         target.host = base2.host;
@@ -9174,13 +9174,13 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
       }
       target.scheme = base2.scheme;
     }
-    target.fragment = relative6.fragment;
+    target.fragment = relative8.fragment;
     return target;
   }
   function equal(uriA, uriB, options) {
     if (typeof uriA === "string") {
       uriA = unescape(uriA);
-      uriA = serialize(normalizeComponentEncoding(parse4(uriA, options), true), {
+      uriA = serialize(normalizeComponentEncoding(parse5(uriA, options), true), {
         ...options,
         skipEscape: true
       });
@@ -9190,7 +9190,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     });
     if (typeof uriB === "string") {
       uriB = unescape(uriB);
-      uriB = serialize(normalizeComponentEncoding(parse4(uriB, options), true), {
+      uriB = serialize(normalizeComponentEncoding(parse5(uriB, options), true), {
         ...options,
         skipEscape: true
       });
@@ -9243,7 +9243,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     return uriTokens.join("");
   }
   const URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
-  function parse4(uri, opts) {
+  function parse5(uri, opts) {
     const options = Object.assign({}, opts);
     const parsed = {
       scheme: void 0,
@@ -9299,12 +9299,12 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
   }
   const fastUri = {
     SCHEMES,
-    normalize: normalize2,
-    resolve: resolve9,
+    normalize: normalize3,
+    resolve: resolve13,
     resolveComponent,
     equal,
     serialize,
-    parse: parse4
+    parse: parse5
   };
   module.exports = fastUri;
   module.exports.default = fastUri;
@@ -16227,14 +16227,14 @@ function inputRequiredRoundsExceededMessage(method, maxRounds) {
   return `Multi-round-trip request '${method}' still required input after ${maxRounds} rounds (inputRequired.maxRounds)`;
 }
 function sleep(ms, signal) {
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve13, reject) => {
     if (signal?.aborted) {
       reject(signal.reason instanceof SdkError ? signal.reason : new SdkError(SdkErrorCode.RequestTimeout, String(signal.reason)));
       return;
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve9();
+      resolve13();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
@@ -17100,7 +17100,7 @@ var Protocol = class {
     const flowStartedAt = Date.now();
     let onAbort;
     let cleanupMessageId;
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve13, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -17168,7 +17168,7 @@ var Protocol = class {
         }
         if (decoded.kind === "invalid") return reject(decoded.error);
         if (decoded.kind === "input_required") {
-          if (options?.allowInputRequired === true) return resolve9(manualInputRequiredValue(decoded));
+          if (options?.allowInputRequired === true) return resolve13(manualInputRequiredValue(decoded));
           const flow = {
             codec,
             request,
@@ -17180,11 +17180,11 @@ var Protocol = class {
               params
             }, resultSchema, legOptions)
           };
-          return resolve9(this._resolveNonCompleteResult(decoded, flow));
+          return resolve13(this._resolveNonCompleteResult(decoded, flow));
         }
         const result = decoded.result;
         validateStandardSchema(resultSchema, result).then((parseResult) => {
-          if (parseResult.success) resolve9(parseResult.data);
+          if (parseResult.success) resolve13(parseResult.data);
           else reject(new SdkError(SdkErrorCode.InvalidResult, `Invalid result for ${request.method}: ${parseResult.error}`));
         }, reject);
       });
@@ -19008,7 +19008,7 @@ var StdioServerTransport = class {
   }
   send(message) {
     if (this._closed) return Promise.reject(/* @__PURE__ */ new Error("StdioServerTransport is closed"));
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve13, reject) => {
       const json = serializeMessage(message);
       let settled = false;
       const onError = (error2) => {
@@ -19023,14 +19023,14 @@ var StdioServerTransport = class {
         settled = true;
         this._stdout.off("error", onError);
         this._stdout.off("drain", onDrain);
-        resolve9();
+        resolve13();
       };
       this._stdout.once("error", onError);
       if (this._stdout.write(json)) {
         if (settled) return;
         settled = true;
         this._stdout.off("error", onError);
-        resolve9();
+        resolve13();
       } else if (!settled) this._stdout.once("drain", onDrain);
     });
   }
@@ -19084,14 +19084,14 @@ var StdioConnectionChannel = class {
   */
   async whenRequestsAnswered(timeoutMs) {
     if (this._closed || this._pendingRequests.size === 0) return true;
-    return await new Promise((resolve9) => {
+    return await new Promise((resolve13) => {
       const waiter = () => {
         clearTimeout(timer);
-        resolve9(true);
+        resolve13(true);
       };
       const timer = setTimeout(() => {
         this._drainWaiters = this._drainWaiters.filter((pending) => pending !== waiter);
-        resolve9(false);
+        resolve13(false);
       }, timeoutMs);
       this._drainWaiters.push(waiter);
     });
@@ -19371,14 +19371,14 @@ function serveStdio(factory, options = {}) {
       }
     }
   };
-  const queue = [];
+  const queue2 = [];
   let pumping = false;
   const pump = async () => {
     if (pumping) return;
     pumping = true;
     try {
-      while (queue.length > 0) {
-        const message = queue.shift();
+      while (queue2.length > 0) {
+        const message = queue2.shift();
         try {
           await processMessage(message);
         } catch (error2) {
@@ -19400,7 +19400,7 @@ function serveStdio(factory, options = {}) {
     await wire.close().catch((error2) => reportError(toError(error2)));
   };
   wire.onmessage = (message) => {
-    queue.push(message);
+    queue2.push(message);
     pump();
   };
   wire.onerror = (error2) => {
@@ -19432,15 +19432,15 @@ function toError(value) {
 
 // src/server.ts
 import process4 from "node:process";
-import { createHash as createHash7, randomUUID as randomUUID6 } from "node:crypto";
-import { access, realpath as realpath3 } from "node:fs/promises";
+import { createHash as createHash12, randomUUID as randomUUID6 } from "node:crypto";
+import { access as access5, realpath as realpath4 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname as dirname5, isAbsolute as isAbsolute4, join as join9, parse as parse3, relative as relative5, resolve as resolve8 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname as dirname8, isAbsolute as isAbsolute6, join as join11, parse as parse4, relative as relative7, resolve as resolve12 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // src/core/architectureRules.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { mkdir as mkdir2, readFile as readFile2, rename as rename2, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
+import { chmod as chmod2, mkdir as mkdir2, readFile as readFile2, rename as rename2, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
 import { dirname as dirname2, join as join2, resolve as resolve2 } from "node:path";
 
 // src/core/patternSafety.ts
@@ -19457,7 +19457,7 @@ var PATTERN_FIELDS = [
 var PROBE = `${"a".repeat(12e3)}!`;
 var TIMEOUT_MS = 250;
 function assertSafePattern(pattern) {
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve13, reject) => {
     const worker = new Worker(
       `const { parentPort, workerData } = require("node:worker_threads");
 try {
@@ -19475,7 +19475,7 @@ try {
       clearTimeout(timeout);
       void worker.terminate();
       if (error2) reject(error2);
-      else resolve9();
+      else resolve13();
     };
     const timeout = setTimeout(() => {
       finish(new Error("pattern evaluation exceeded the safety time limit"));
@@ -19505,8 +19505,8 @@ async function assertSafeArchitectureRulePatterns(input) {
 
 // src/core/storage.ts
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, parse as parse3, relative, resolve } from "node:path";
 var FILE_LOCK_ATTEMPTS = 200;
 var FILE_LOCK_WAIT_MS = 10;
 var FILE_LOCK_STALE_MS = 3e4;
@@ -19528,10 +19528,12 @@ async function retryTransientWindowsFs(operation) {
   }
 }
 async function withFileLock(lockPath, operation) {
+  await assertNoSymbolicLinkComponents(lockPath);
   await mkdir(dirname(lockPath), { recursive: true });
+  await assertNoSymbolicLinkComponents(lockPath);
   for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
     try {
-      const handle = await open(lockPath, "wx");
+      const handle = await open(lockPath, "wx", 384);
       try {
         return await operation();
       } finally {
@@ -19571,13 +19573,34 @@ async function writeJsonAtomic(path, value) {
 }
 async function writeTextAtomic(path, content) {
   const directory = dirname(path);
-  await mkdir(directory, { recursive: true });
+  await assertNoSymbolicLinkComponents(path);
+  await mkdir(directory, { recursive: true, mode: 448 });
+  await assertNoSymbolicLinkComponents(path);
+  if (process.platform !== "win32") await chmod(directory, 448);
   const tempPath = join(directory, `.${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
   try {
-    await writeFile(tempPath, content);
+    await writeFile(tempPath, content, { mode: 384 });
     await rename(tempPath, path);
+    if (process.platform !== "win32") await chmod(path, 384);
   } finally {
     await rm(tempPath, { force: true });
+  }
+}
+async function assertNoSymbolicLinkComponents(path) {
+  const absolute = resolve(path);
+  const parsed = parse3(absolute);
+  let current = parsed.root;
+  const remainder = absolute.slice(parsed.root.length).split(/[\\/]+/).filter(Boolean);
+  for (const segment of remainder) {
+    current = join(current, segment);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) {
+        throw new Error(`State write cannot traverse symbolic-link or junction component: ${current}`);
+      }
+    } catch (error2) {
+      if (error2.code === "ENOENT") continue;
+      throw error2;
+    }
   }
 }
 async function resolveConfinedPath(root, relativeFile, createParents = false) {
@@ -19737,7 +19760,8 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
   }
   async writeAtomic(rules) {
     const directory = dirname2(this.filePath);
-    await mkdir2(directory, { recursive: true });
+    await mkdir2(directory, { recursive: true, mode: 448 });
+    if (process.platform !== "win32") await chmod2(directory, 448);
     const tempPath = join2(directory, `.rules-${process.pid}-${Date.now()}-${randomUUID2()}.tmp`);
     try {
       await writeFile2(
@@ -19750,9 +19774,11 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
           null,
           2
         )}
-`
+`,
+        { mode: 384 }
       );
       await rename2(tempPath, this.filePath);
+      if (process.platform !== "win32") await chmod2(this.filePath, 384);
     } finally {
       await rm2(tempPath, { force: true });
     }
@@ -19966,19 +19992,48 @@ async function applyMarketplaceWarnings(root, report) {
   }
 }
 
-// src/core/config.ts
-import { readFile as readFile4 } from "node:fs/promises";
+// src/core/artifact.ts
+import { readFile as readFile5 } from "node:fs/promises";
+import { join as join5 } from "node:path";
+
+// src/core/canonical.ts
+import { createHash } from "node:crypto";
+function normalizeCanonicalText(value) {
+  return value.replace(/\r\n?/g, "\n");
+}
+function canonicalValue(value) {
+  if (typeof value === "string") return normalizeCanonicalText(value);
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).filter(([, entry]) => entry !== void 0).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, canonicalValue(entry)])
+    );
+  }
+  return value;
+}
+function canonicalize(value) {
+  return canonicalValue(value);
+}
+function canonicalJson(value) {
+  return JSON.stringify(canonicalValue(value));
+}
+function canonicalHash(value) {
+  return createHash("sha256").update(canonicalJson(value), "utf8").digest("hex");
+}
 
 // src/core/persistence.ts
-import { readFile as readFile3, rm as rm3 } from "node:fs/promises";
+import { readFile as readFile4, rm as rm3 } from "node:fs/promises";
 import { isAbsolute as isAbsolute2, join as join4, relative as relative2, resolve as resolve4 } from "node:path";
 
 // src/core/repositoryIdentity.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
+import { access, readFile as readFile3 } from "node:fs/promises";
 import { join as join3, resolve as resolve3 } from "node:path";
 var execFileAsync = promisify(execFile);
+var LOCAL_EXCLUDE_WARNING = "TokenGraph could not update .git/info/exclude; add this exact line manually: .tokengraph/";
+var setupWarnings = /* @__PURE__ */ new Map();
 async function git(root, ...args) {
   try {
     const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 });
@@ -19988,31 +20043,105 @@ async function git(root, ...args) {
     return void 0;
   }
 }
+async function ensureLocalExclude(root) {
+  const exclude = await git(root, "rev-parse", "--git-path", "info/exclude");
+  if (!exclude) return;
+  const path = resolve3(root, exclude);
+  try {
+    const lockKey = await canonicalPersistenceLockKey(path);
+    await withFileLock(`${lockKey}.lock`, async () => {
+      let existing = "";
+      try {
+        existing = await readFile3(path, "utf8");
+      } catch (error2) {
+        if (error2.code !== "ENOENT") throw error2;
+      }
+      const lines = existing.split(/\r?\n/);
+      if (lines.some((line) => line.trim() === ".tokengraph/")) return;
+      const next = `${existing.replace(/[\r\n]*$/, "")}${existing ? "\n" : ""}.tokengraph/
+`;
+      await writeTextAtomic(path, next);
+    });
+    setupWarnings.delete(resolve3(root));
+  } catch {
+    setupWarnings.set(resolve3(root), [LOCAL_EXCLUDE_WARNING]);
+  }
+}
+function getRepositorySetupWarnings(root) {
+  return [...setupWarnings.get(resolve3(root)) ?? []];
+}
 function digest(value) {
-  return createHash("sha256").update(value).digest("hex");
+  return createHash2("sha256").update(value).digest("hex");
 }
 async function remoteIdentity(root) {
   const remotes = await git(root, "remote", "get-url", "--all", "origin");
-  return remotes?.split(/\r?\n/).map((value) => value.trim()).filter(Boolean).sort().join("\n");
+  return remotes?.split(/\r?\n/).map((value) => sanitizeRemote(value.trim())).filter(Boolean).sort().join("\n");
+}
+function sanitizeRemote(value) {
+  const scpStyle = value.match(/^[^@\/\s]+@([^:\/\s]+):(.+)$/);
+  if (scpStyle) return `ssh://${scpStyle[1]}/${scpStyle[2]}`;
+  try {
+    const parsed = new URL(value);
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return value.replace(/\/\/[^/@\s]+@/g, "//");
+  }
+}
+async function loadOrCreateRepositoryId(directory) {
+  const path = join3(directory, "identity.json");
+  try {
+    const parsed = JSON.parse(await readFile3(path, "utf8"));
+    if (parsed.schemaVersion === 1 && typeof parsed.repositoryId === "string" && parsed.repositoryId.length >= 16) return parsed.repositoryId;
+  } catch (error2) {
+    if (error2.code !== "ENOENT" && !(error2 instanceof SyntaxError)) throw error2;
+  }
+  const repositoryId = digest(`${directory}
+${Date.now()}
+${Math.random()}`);
+  const lockKey = await canonicalPersistenceLockKey(directory, "identity.json");
+  await withFileLock(`${lockKey}.lock`, async () => {
+    try {
+      const existing = JSON.parse(await readFile3(path, "utf8"));
+      if (existing.schemaVersion === 1 && typeof existing.repositoryId === "string" && existing.repositoryId.length >= 16) return;
+    } catch (error2) {
+      if (error2.code !== "ENOENT" && !(error2 instanceof SyntaxError)) throw error2;
+    }
+    await writeJsonAtomic(path, { schemaVersion: 1, repositoryId });
+  });
+  try {
+    const persisted = JSON.parse(await readFile3(path, "utf8"));
+    return typeof persisted.repositoryId === "string" ? persisted.repositoryId : repositoryId;
+  } catch {
+    return repositoryId;
+  }
 }
 async function getRepositoryIdentity(root) {
   const workspaceRoot = resolve3(root);
-  const [topLevel, commonDir, gitDir, branch, headCommit, remote] = await Promise.all([
+  return getRepositoryIdentityUncached(workspaceRoot);
+}
+async function getRepositoryIdentityUncached(workspaceRoot) {
+  const [topLevel, commonDir, gitDir, branch, headCommit, firstCommits, remote] = await Promise.all([
     git(workspaceRoot, "rev-parse", "--show-toplevel"),
     git(workspaceRoot, "rev-parse", "--git-common-dir"),
     git(workspaceRoot, "rev-parse", "--git-dir"),
     git(workspaceRoot, "symbolic-ref", "--quiet", "--short", "HEAD"),
     git(workspaceRoot, "rev-parse", "HEAD"),
+    git(workspaceRoot, "rev-list", "--max-parents=0", "HEAD"),
     remoteIdentity(workspaceRoot)
   ]);
   const normalizedRoot = resolve3(topLevel ?? workspaceRoot);
   const normalizedCommon = commonDir ? resolve3(workspaceRoot, commonDir) : void 0;
   const normalizedGitDir = gitDir ? resolve3(workspaceRoot, gitDir) : void 0;
-  const repositoryKey = remote ?? normalizedCommon ?? normalizedRoot;
-  const repositoryFingerprint = digest(`${repositoryKey}
-${headCommit ?? "unborn"}`);
+  if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
+  const repositoryState = repositoryStateDirectory(normalizedRoot, normalizedCommon);
+  const repositoryId = await loadOrCreateRepositoryId(repositoryState);
+  const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
+  const repositoryFingerprint = digest(`${repositoryId}
+${firstCommit}`);
   return {
-    repositoryId: digest(repositoryKey),
+    repositoryId,
     repositoryFingerprint,
     workspaceId: digest(normalizedRoot),
     worktreeId: digest(normalizedGitDir ?? normalizedRoot),
@@ -20021,22 +20150,65 @@ ${headCommit ?? "unborn"}`);
     ...remote ? { remoteIdentity: remote } : {}
   };
 }
+async function gitCommonDirectory(root) {
+  const commonDir = await git(resolve3(root), "rev-parse", "--git-common-dir");
+  if (!commonDir) return void 0;
+  return resolve3(root, commonDir);
+}
+function repositoryStateDirectory(root, commonDirectory) {
+  return commonDirectory ? join3(commonDirectory, "tokengraph") : join3(resolve3(root), ".tokengraph", "repository");
+}
+async function resolveRepositoryStateDirectory(root) {
+  return repositoryStateDirectory(root, await gitCommonDirectory(root));
+}
 
 // src/core/persistence.ts
 function stateDir(root) {
   return join4(root, ".tokengraph");
 }
+async function repositoryDir(root) {
+  return resolveRepositoryStateDirectory(root);
+}
+async function repositoryIndexPath(root) {
+  return join4(await repositoryDir(root), "index.json");
+}
+async function repositoryMemoryPath(root) {
+  return migrateRepositoryRecord(root, "memory.json");
+}
+async function repositoryRulesPath(root) {
+  return migrateRepositoryRecord(root, "rules.json");
+}
+async function migrateRepositoryRecord(root, fileName) {
+  const directory = await repositoryDir(root);
+  const target = join4(directory, fileName);
+  try {
+    await readFile4(target, "utf8");
+    return target;
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+  }
+  const legacy = join4(stateDir(root), fileName);
+  try {
+    const contents = await readFile4(legacy, "utf8");
+    const key = await canonicalPersistenceLockKey(directory, fileName);
+    await withFileLock(`${key}.lock`, async () => {
+      try {
+        await readFile4(target, "utf8");
+      } catch (targetError) {
+        if (targetError.code !== "ENOENT") throw targetError;
+        await writeTextAtomic(target, contents);
+      }
+    });
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+  }
+  return target;
+}
 function indexPath(root) {
   return join4(stateDir(root), "index.json");
 }
-function memoryPath(root) {
-  return join4(stateDir(root), "memory.json");
-}
 function configPath(root) {
   return join4(stateDir(root), "config.json");
-}
-function rulesPath(root) {
-  return join4(stateDir(root), "rules.json");
 }
 function runsDir(root) {
   return join4(stateDir(root), "runs");
@@ -20050,31 +20222,70 @@ function wikiDir(root) {
 function wikiManifestPath(root) {
   return join4(wikiDir(root), "manifest.json");
 }
+function vaultDir(root) {
+  return join4(stateDir(root), "vault");
+}
+async function saveVaultProjectionUnlocked(root, notes) {
+  const manifestPath = join4(vaultDir(root), "manifest.json");
+  let previous = [];
+  try {
+    const parsed = JSON.parse(await readFile4(manifestPath, "utf8"));
+    previous = (parsed.notes ?? []).filter((note) => typeof note.path === "string");
+  } catch (error2) {
+    if (error2.code !== "ENOENT" && !(error2 instanceof SyntaxError)) throw error2;
+  }
+  const retained = new Set(notes.map((note) => note.path));
+  await Promise.all(previous.filter((note) => !retained.has(note.path)).map(async (note) => rm3(await resolveConfinedPath(root, join4(".tokengraph", "vault", note.path)), { force: true })));
+  for (const note of notes) await writeTextAtomicConfined(root, join4(".tokengraph", "vault", note.path), note.body);
+  await writeTextAtomicConfined(root, join4(".tokengraph", "vault", "manifest.json"), `${JSON.stringify({ schemaVersion: 1, notes: notes.map(({ path, title, hash, backlinks, archived }) => ({ path, title, hash, backlinks, archived })) }, null, 2)}
+`);
+}
+async function saveVaultProjection(root, notes) {
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "vault", "manifest.json");
+  await withFileLock(`${key}.lock`, () => saveVaultProjectionUnlocked(root, notes));
+}
 async function saveProjectIndex(root, index) {
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "index.json");
-  await withFileLock(`${key}.lock`, () => writeJsonAtomic(indexPath(root), index));
+  if (typeof index.schemaVersion === "number" && index.schemaVersion > 3) {
+    throw new Error(`Unsupported newer TokenGraph index schema version ${index.schemaVersion}; refusing to overwrite it.`);
+  }
+  const worktreePath = indexPath(root);
+  const worktreeKey = await canonicalPersistenceLockKey(worktreePath);
+  await withFileLock(`${worktreeKey}.lock`, async () => {
+    await writeJsonAtomic(worktreePath, index);
+  });
 }
 function isProjectIndex(value) {
   if (!value || typeof value !== "object") {
     return false;
   }
   const candidate = value;
+  if (typeof candidate.schemaVersion === "number" && candidate.schemaVersion > 3) {
+    throw new Error(`Unsupported newer TokenGraph index schema version ${candidate.schemaVersion}; refusing to overwrite it.`);
+  }
   return typeof candidate.root === "string" && typeof candidate.scannedAt === "string" && typeof candidate.fingerprint === "string" && Array.isArray(candidate.files) && Array.isArray(candidate.symbols) && Array.isArray(candidate.imports) && Array.isArray(candidate.exclusions) && Array.isArray(candidate.frameworks) && Boolean(candidate.sql) && Array.isArray(candidate.sql?.tables) && Array.isArray(candidate.sql?.relations) && Array.isArray(candidate.sql?.policies) && Array.isArray(candidate.sql?.indexes) && Array.isArray(candidate.sql?.triggers) && Array.isArray(candidate.sql?.functions) && Array.isArray(candidate.sql?.views) && Array.isArray(candidate.sql?.constraints) && Array.isArray(candidate.sql?.enums) && Array.isArray(candidate.sql?.extensions) && Array.isArray(candidate.sql?.grants) && Array.isArray(candidate.sql?.materializedViews) && Array.isArray(candidate.sql?.history);
 }
 async function loadProjectIndex(root) {
-  try {
-    const parsed = JSON.parse(await readFile3(indexPath(root), "utf8"));
-    return isProjectIndex(parsed) ? parsed : void 0;
-  } catch (error2) {
-    if (error2.code === "ENOENT") {
-      return void 0;
+  const paths = [indexPath(root), await repositoryIndexPath(root)];
+  const currentIdentity = await getRepositoryIdentity(root);
+  for (const path of paths.filter((candidate, index, all) => all.indexOf(candidate) === index)) {
+    try {
+      const parsed = JSON.parse(await readFile4(path, "utf8"));
+      if (isProjectIndex(parsed)) {
+        if (resolve4(parsed.root) !== resolve4(root)) continue;
+        const storedIdentity = parsed.repositoryIdentity;
+        if (storedIdentity && (storedIdentity.repositoryId !== currentIdentity.repositoryId || storedIdentity.repositoryFingerprint !== currentIdentity.repositoryFingerprint || storedIdentity.worktreeId !== currentIdentity.worktreeId || storedIdentity.branch !== currentIdentity.branch || storedIdentity.headCommit !== currentIdentity.headCommit)) continue;
+        return parsed;
+      }
+    } catch (error2) {
+      if (error2.code === "ENOENT") continue;
+      if (error2 instanceof SyntaxError) {
+        await quarantineCorruptJson(path);
+        continue;
+      }
+      throw error2;
     }
-    if (error2 instanceof SyntaxError) {
-      await quarantineCorruptJson(indexPath(root));
-      return void 0;
-    }
-    throw error2;
   }
+  return void 0;
 }
 function isStringArray(value) {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -20097,7 +20308,7 @@ function isSafeWikiPageFile(root, file) {
   const relativePath = relative2(directory, resolved);
   return Boolean(relativePath) && !relativePath.startsWith("..") && !isAbsolute2(relativePath);
 }
-async function saveProjectWiki(root, wiki) {
+async function saveProjectWikiUnlocked(root, wiki) {
   if (wiki.pages.some((page2) => !SAFE_WIKI_SLUG_PATTERN.test(page2.slug))) {
     throw new Error("Wiki page slugs must be safe relative logical identifiers.");
   }
@@ -20117,7 +20328,7 @@ async function saveProjectWiki(root, wiki) {
     const path = await resolveConfinedPath(root, relativeFile, true);
     let existing;
     try {
-      existing = await readFile3(path, "utf8");
+      existing = await readFile4(path, "utf8");
     } catch (error2) {
       if (error2.code !== "ENOENT") throw error2;
     }
@@ -20134,9 +20345,13 @@ async function saveProjectWiki(root, wiki) {
   await writeTextAtomicConfined(root, join4(".tokengraph", "wiki", "manifest.json"), `${JSON.stringify(manifest, null, 2)}
 `);
 }
+async function saveProjectWiki(root, wiki) {
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "wiki", "manifest.json");
+  await withFileLock(`${key}.lock`, () => saveProjectWikiUnlocked(root, wiki));
+}
 async function loadProjectWiki(root) {
   try {
-    const manifest = JSON.parse(await readFile3(await resolveConfinedPath(root, join4(".tokengraph", "wiki", "manifest.json")), "utf8"));
+    const manifest = JSON.parse(await readFile4(await resolveConfinedPath(root, join4(".tokengraph", "wiki", "manifest.json")), "utf8"));
     if (!isWikiManifest(manifest) || !manifest.pages.every((page2) => isSafeWikiPageFile(root, page2.file))) {
       return void 0;
     }
@@ -20146,7 +20361,7 @@ async function loadProjectWiki(root) {
         slug: manifestPage.slug,
         title: manifestPage.title,
         estimatedTokens: manifestPage.estimatedTokens,
-        body: await readFile3(await resolveConfinedPath(root, join4(".tokengraph", "wiki", manifestPage.file)), "utf8"),
+        body: await readFile4(await resolveConfinedPath(root, join4(".tokengraph", "wiki", manifestPage.file)), "utf8"),
         ...manifestPage.sourceFingerprints === void 0 ? {} : { sourceFingerprints: manifestPage.sourceFingerprints },
         ...manifestPage.backlinks === void 0 ? {} : { backlinks: manifestPage.backlinks },
         ...manifestPage.contradictions === void 0 ? {} : { contradictions: manifestPage.contradictions },
@@ -20189,121 +20404,230 @@ async function getWikiStatus(root) {
 }
 async function clearProjectIndex(root) {
   await rm3(indexPath(root), { force: true });
+  await rm3(await repositoryIndexPath(root), { force: true });
   await clearProjectWiki(root);
 }
 async function clearProjectState(root) {
   await rm3(stateDir(root), { recursive: true, force: true });
 }
 
-// src/core/config.ts
-var CURRENT_CONFIG_SCHEMA_VERSION = 1;
-var PROFILE_DEFAULTS = {
-  conservative: {
-    maxFiles: 10,
-    maxSqlObjects: 10,
-    maxMemories: 6,
-    firstReads: 5,
-    maxPlannedContextTokens: 12e3,
-    rawReadWarningThreshold: 12e3
-  },
-  balanced: {
-    maxFiles: 6,
-    maxSqlObjects: 6,
-    maxMemories: 4,
-    firstReads: 3,
-    maxPlannedContextTokens: 8e3,
-    rawReadWarningThreshold: 8e3
-  },
-  aggressive: {
-    maxFiles: 3,
-    maxSqlObjects: 3,
-    maxMemories: 2,
-    firstReads: 2,
-    maxPlannedContextTokens: 4e3,
-    rawReadWarningThreshold: 4e3
-  }
-};
-var DEFAULT_TOKEN_GRAPH_CONFIG = {
-  tokenSavingProfile: "balanced",
-  routingMode: "shadow",
-  maxFiles: PROFILE_DEFAULTS.balanced.maxFiles,
-  maxSqlObjects: PROFILE_DEFAULTS.balanced.maxSqlObjects,
-  maxMemories: PROFILE_DEFAULTS.balanced.maxMemories,
-  maxPlannedContextTokens: PROFILE_DEFAULTS.balanced.maxPlannedContextTokens,
-  rawReadWarningThreshold: PROFILE_DEFAULTS.balanced.rawReadWarningThreshold,
-  sqlIndexingEnabled: true,
-  memoryEnabled: true,
-  wikiGenerationEnabled: false
-};
-function isProfile(value) {
-  return value === "conservative" || value === "balanced" || value === "aggressive";
-}
-function isRoutingMode(value) {
-  return value === "shadow" || value === "enforced" || value === "always-activate" || value === "always-advisory";
-}
-function sanitizeNumber(value, fallback, min = 0) {
-  return Number.isInteger(value) && value >= min ? value : fallback;
-}
-function normalizeConfig(value) {
-  const candidate = value && typeof value === "object" ? value : {};
+// src/core/artifact.ts
+function createStableArtifact(id, content, artifactSchemaVersion = 1, hashContext = {}) {
+  const normalized = canonicalize(content);
+  const normalizedContext = canonicalize(hashContext);
   return {
-    tokenSavingProfile: isProfile(candidate.tokenSavingProfile) ? candidate.tokenSavingProfile : DEFAULT_TOKEN_GRAPH_CONFIG.tokenSavingProfile,
-    routingMode: isRoutingMode(process.env.TOKENGRAPH_ROUTING_MODE) ? process.env.TOKENGRAPH_ROUTING_MODE : isRoutingMode(candidate.routingMode) ? candidate.routingMode : DEFAULT_TOKEN_GRAPH_CONFIG.routingMode,
-    maxFiles: sanitizeNumber(candidate.maxFiles, DEFAULT_TOKEN_GRAPH_CONFIG.maxFiles, 1),
-    maxSqlObjects: sanitizeNumber(candidate.maxSqlObjects, DEFAULT_TOKEN_GRAPH_CONFIG.maxSqlObjects),
-    maxMemories: sanitizeNumber(candidate.maxMemories, DEFAULT_TOKEN_GRAPH_CONFIG.maxMemories),
-    maxPlannedContextTokens: sanitizeNumber(candidate.maxPlannedContextTokens, DEFAULT_TOKEN_GRAPH_CONFIG.maxPlannedContextTokens, 1),
-    rawReadWarningThreshold: sanitizeNumber(candidate.rawReadWarningThreshold, DEFAULT_TOKEN_GRAPH_CONFIG.rawReadWarningThreshold, 1),
-    sqlIndexingEnabled: typeof candidate.sqlIndexingEnabled === "boolean" ? candidate.sqlIndexingEnabled : DEFAULT_TOKEN_GRAPH_CONFIG.sqlIndexingEnabled,
-    memoryEnabled: typeof candidate.memoryEnabled === "boolean" ? candidate.memoryEnabled : DEFAULT_TOKEN_GRAPH_CONFIG.memoryEnabled,
-    wikiGenerationEnabled: typeof candidate.wikiGenerationEnabled === "boolean" ? candidate.wikiGenerationEnabled : DEFAULT_TOKEN_GRAPH_CONFIG.wikiGenerationEnabled
+    id,
+    hash: canonicalHash({ artifactSchemaVersion, id, hashContext: normalizedContext, content: normalized }),
+    artifactSchemaVersion,
+    content: normalized,
+    ...Object.keys(normalizedContext).length ? { hashContext: normalizedContext } : {}
   };
 }
-function unwrapPersistedConfig(value) {
-  if (value && typeof value === "object" && "schemaVersion" in value && "config" in value) {
-    return {
-      config: value.config,
-      needsMigration: value.schemaVersion !== CURRENT_CONFIG_SCHEMA_VERSION
-    };
-  }
-  return { config: value, needsMigration: true };
+function artifactKey(artifact) {
+  return `${artifact.id}@${artifact.hash}`;
 }
-async function saveTokenGraphConfig(root, config2) {
-  const normalized = normalizeConfig(config2);
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "config.json");
-  await withFileLock(`${key}.lock`, () => writeJsonAtomic(configPath(root), {
-    schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
-    config: normalized
-  }));
-  return normalized;
+function shouldSuppressArtifact(artifact, knownArtifacts) {
+  return (knownArtifacts ?? []).includes(artifactKey(artifact));
 }
-async function loadTokenGraphConfig(root) {
+function artifactPath(directory, hash) {
+  return join5(directory, "artifacts", `${hash}.json`);
+}
+async function saveStableArtifact(root, artifact) {
+  if (!/^[a-f0-9]{64}$/.test(artifact.hash)) throw new Error("Stable artifact hash is invalid.");
+  const directory = await repositoryDir(root);
+  const path = artifactPath(directory, artifact.hash);
+  const key = await canonicalPersistenceLockKey(directory, "artifacts", `${artifact.hash}.json`);
+  await withFileLock(`${key}.lock`, () => writeJsonAtomic(path, artifact));
+}
+async function loadStableArtifact(root, hash) {
+  if (!/^[a-f0-9]{64}$/.test(hash)) return void 0;
+  const directory = await repositoryDir(root);
+  const path = artifactPath(directory, hash);
   try {
-    const parsed = JSON.parse(await readFile4(configPath(root), "utf8"));
-    const unwrapped = unwrapPersistedConfig(parsed);
-    const normalized = normalizeConfig(unwrapped.config);
-    if (unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(normalized)) {
-      await saveTokenGraphConfig(root, normalized);
-    }
-    return normalized;
+    const parsed = JSON.parse(await readFile5(path, "utf8"));
+    if (!parsed || typeof parsed !== "object" || parsed.hash !== hash || typeof parsed.id !== "string" || typeof parsed.artifactSchemaVersion !== "number") return void 0;
+    const expected = createStableArtifact(parsed.id, parsed.content, parsed.artifactSchemaVersion, parsed.hashContext);
+    return expected.hash === hash ? expected : void 0;
   } catch (error2) {
-    if (error2.code === "ENOENT") {
-      return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
-    }
+    if (error2.code === "ENOENT") return void 0;
     if (error2 instanceof SyntaxError) {
-      await quarantineCorruptJson(configPath(root));
-      return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
+      await quarantineCorruptJson(path);
+      return void 0;
     }
     throw error2;
   }
 }
-async function setTokenSavingProfile(root, profile) {
-  const config2 = await loadTokenGraphConfig(root);
-  return saveTokenGraphConfig(root, { ...config2, tokenSavingProfile: profile });
+
+// src/core/memoryCore.ts
+import { createHash as createHash3 } from "node:crypto";
+
+// src/core/storagePolicy.ts
+import { chmod as chmod3, lstat as lstat2, mkdir as mkdir3, readFile as readFile6, readdir, realpath as realpath2, rm as rm4 } from "node:fs/promises";
+import { basename, dirname as dirname3, isAbsolute as isAbsolute3, join as join6, relative as relative3, resolve as resolve5 } from "node:path";
+async function usage(path) {
+  try {
+    const info = await lstat2(path);
+    if (info.isSymbolicLink()) throw new Error(`TokenGraph storage accounting refuses symbolic-link paths: ${path}`);
+    if (info.isFile()) return { bytes: info.size, files: 1 };
+    if (!info.isDirectory()) return { bytes: 0, files: 0 };
+    const entries = await readdir(path);
+    const children = await Promise.all(entries.map((entry) => usage(join6(path, entry))));
+    return children.reduce((total, child) => ({ bytes: total.bytes + child.bytes, files: total.files + child.files }), { bytes: 0, files: 0 });
+  } catch (error2) {
+    if (error2.code === "ENOENT") return { bytes: 0, files: 0 };
+    throw error2;
+  }
 }
-async function updateTokenGraphConfig(root, update) {
-  const config2 = await loadTokenGraphConfig(root);
-  return saveTokenGraphConfig(root, { ...config2, ...update });
+function containsPath(parent, child) {
+  const nested = relative3(resolve5(parent), resolve5(child));
+  return nested === "" || !nested.startsWith("..") && !isAbsolute3(nested);
+}
+async function usageMany(paths) {
+  const unique6 = paths.map((path) => resolve5(path)).filter((path, index, all) => all.indexOf(path) === index);
+  const roots = unique6.filter((path, index, all) => !all.some((candidate, candidateIndex) => candidateIndex !== index && containsPath(candidate, path)));
+  const values = await Promise.all(roots.map((path) => usage(path)));
+  return values.reduce((total, current) => ({ bytes: total.bytes + current.bytes, files: total.files + current.files }), { bytes: 0, files: 0 });
+}
+async function storageUsage(root) {
+  return usageMany([stateDir(root), await resolveRepositoryStateDirectory(root)]);
+}
+async function storageClassUsage(root) {
+  const repository = await resolveRepositoryStateDirectory(root);
+  const [total, runs, cache, vault] = await Promise.all([
+    storageUsage(root),
+    usage(runsDir(root)),
+    usageMany([join6(stateDir(root), "index.json"), wikiDir(root), join6(repository, "index.json"), join6(repository, "artifacts")]),
+    usage(vaultDir(root))
+  ]);
+  return {
+    total,
+    runs,
+    cache,
+    vault,
+    durable: {
+      bytes: Math.max(0, total.bytes - runs.bytes - cache.bytes - vault.bytes),
+      files: Math.max(0, total.files - runs.files - cache.files - vault.files)
+    }
+  };
+}
+function assertClassQuotas(quotas) {
+  for (const [name, value] of Object.entries(quotas)) {
+    if (!Number.isInteger(value) || value < (name === "maxBytes" ? 1 : 0)) throw new Error(`Storage ${name} must be a non-negative integer${name === "maxBytes" ? " greater than zero" : ""}.`);
+  }
+}
+function classQuota(quotas, storageClass) {
+  return quotas[`${storageClass}MaxBytes`];
+}
+function quotaExceededError(storageClass, current, maximum) {
+  if (storageClass === "runs") return new Error(`TokenGraph runs storage quota exceeded (${current}/${maximum} bytes); run \`tokengraph purge --class runs\` or raise storage.runsMaxBytes.`);
+  if (storageClass === "vault") return new Error(`TokenGraph vault storage quota exceeded (${current}/${maximum} bytes); explicitly purge derived projections with \`tokengraph purge --class derived\` or raise storage.vaultMaxBytes.`);
+  if (storageClass === "durable") return new Error(`TokenGraph durable storage quota exceeded (${current}/${maximum} bytes); refusing the write. Review durable state or raise storage.durableMaxBytes; reviewed decisions and preferences are never purged implicitly.`);
+  return new Error(`TokenGraph cache item exceeds its storage quota (${current}/${maximum} bytes); raise storage.cacheMaxBytes.`);
+}
+async function safeRemoveUnderBase(base2, relativeTarget, recursive) {
+  if (!relativeTarget || isAbsolute3(relativeTarget) || relativeTarget.replaceAll("\\", "/").split("/").includes("..")) throw new Error("Storage purge target must be a safe relative path.");
+  let canonicalBase;
+  try {
+    if ((await lstat2(base2)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link base paths: ${base2}`);
+    canonicalBase = await realpath2(base2);
+  } catch (error2) {
+    if (error2.code === "ENOENT") return false;
+    throw error2;
+  }
+  const target = join6(canonicalBase, relativeTarget);
+  if (!containsPath(canonicalBase, target) || target === canonicalBase) throw new Error("Storage purge target escapes its approved base directory.");
+  let current = canonicalBase;
+  for (const segment of relativeTarget.replaceAll("\\", "/").split("/").filter(Boolean)) {
+    current = join6(current, segment);
+    try {
+      if ((await lstat2(current)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link or junction paths: ${current}`);
+    } catch (error2) {
+      if (error2.code === "ENOENT") return false;
+      throw error2;
+    }
+  }
+  await rm4(target, { recursive, force: true });
+  return true;
+}
+async function removeWorktreeState(root, relativeTarget, recursive, label) {
+  const workspace = await realpath2(resolve5(root));
+  return await safeRemoveUnderBase(workspace, join6(".tokengraph", relativeTarget), recursive) ? [label] : [];
+}
+async function purgeCache(root) {
+  const repository = await resolveRepositoryStateDirectory(root);
+  const removed = [
+    ...await removeWorktreeState(root, "index.json", false, ".tokengraph/index.json"),
+    ...await removeWorktreeState(root, "wiki", true, ".tokengraph/wiki")
+  ];
+  if (await safeRemoveUnderBase(repository, "index.json", false)) removed.push("repository/index.json");
+  if (await safeRemoveUnderBase(repository, "artifacts", true)) removed.push("repository/artifacts");
+  return removed;
+}
+async function purgeOutcomes(root) {
+  const directory = join6(await realpath2(resolve5(root)), ".tokengraph", "tasks");
+  const entries = await readdir(directory).catch((error2) => error2.code === "ENOENT" ? [] : Promise.reject(error2));
+  const removed = [];
+  for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
+    try {
+      const parsed = JSON.parse(await readFile6(join6(directory, entry), "utf8"));
+      if (parsed.status !== "completed" && parsed.status !== "quarantined") continue;
+    } catch {
+      continue;
+    }
+    removed.push(...await removeWorktreeState(root, join6("tasks", entry), false, `.tokengraph/tasks/${entry}`));
+  }
+  return removed;
+}
+async function purgeStorageClass(root, storageClass) {
+  let removed = [];
+  if (storageClass === "runs" || storageClass === "derived") removed.push(...await removeWorktreeState(root, "runs", true, ".tokengraph/runs"));
+  if (storageClass === "cache" || storageClass === "derived") removed.push(...await purgeCache(root));
+  if (storageClass === "outcomes" || storageClass === "derived") removed.push(...await purgeOutcomes(root));
+  if (storageClass === "derived") removed.push(...await removeWorktreeState(root, "vault", true, ".tokengraph/vault"));
+  return { class: storageClass, removed: [...new Set(removed)] };
+}
+async function enforceStorageClassQuotas(root, quotas) {
+  assertClassQuotas(quotas);
+  let current = await storageClassUsage(root);
+  const cleaned = [];
+  if (current.cache.bytes > quotas.cacheMaxBytes || current.total.bytes > quotas.maxBytes) {
+    if (current.cache.bytes > 0) {
+      await purgeStorageClass(root, "cache");
+      cleaned.push("cache");
+      current = await storageClassUsage(root);
+    }
+  }
+  for (const storageClass of ["runs", "vault", "durable"]) {
+    const maximum = classQuota(quotas, storageClass);
+    if (current[storageClass].bytes > maximum) throw quotaExceededError(storageClass, current[storageClass].bytes, maximum);
+  }
+  if (current.cache.bytes > quotas.cacheMaxBytes) throw quotaExceededError("cache", current.cache.bytes, quotas.cacheMaxBytes);
+  if (current.total.bytes > quotas.maxBytes) throw new Error(`TokenGraph total storage quota exceeded (${current.total.bytes}/${quotas.maxBytes} bytes) after cache cleanup; explicitly purge runs, outcomes, or derived state, or raise storage.maxBytes.`);
+  return { usage: current, cleaned };
+}
+async function assertStorageReplacementAllowed(root, storageClass, replacementBytes, quotas) {
+  if (!Number.isInteger(replacementBytes) || replacementBytes < 0) throw new Error("Replacement storage bytes must be a non-negative integer.");
+  let report = await enforceStorageClassQuotas(root, quotas);
+  const maximum = classQuota(quotas, storageClass);
+  if (replacementBytes > maximum) throw quotaExceededError(storageClass, replacementBytes, maximum);
+  let projectedTotal = report.usage.total.bytes - report.usage[storageClass].bytes + replacementBytes;
+  if (projectedTotal > quotas.maxBytes && storageClass !== "cache" && report.usage.cache.bytes > 0) {
+    await purgeStorageClass(root, "cache");
+    report = { usage: await storageClassUsage(root), cleaned: [.../* @__PURE__ */ new Set([...report.cleaned, "cache"])] };
+    projectedTotal = report.usage.total.bytes - report.usage[storageClass].bytes + replacementBytes;
+  }
+  if (projectedTotal > quotas.maxBytes) throw new Error(`TokenGraph total storage quota would be exceeded by the replacement (${projectedTotal}/${quotas.maxBytes} bytes); explicitly purge storage or raise storage.maxBytes.`);
+  return report;
+}
+var SECRET_PATTERNS = [
+  /\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*[^\s]+/gi,
+  /\b(?:sk|ghp|github_pat)_[A-Za-z0-9_-]{12,}/g
+];
+function isInstructionLikeSourceLine(line) {
+  return /^\s*(?:ignore previous|you must\b|system message|developer message|assistant message|instructions?:|(?:agent|model|assistant)\s*:|(?:call|invoke|use|run|execute)\s+(?:the\s+)?(?:tool|function|command)\b)/i.test(line);
+}
+function filterUntrustedSourceText(value) {
+  return value.split(/\r?\n/).filter((line) => !isInstructionLikeSourceLine(line)).map((line) => SECRET_PATTERNS.reduce((result, pattern) => result.replace(pattern, "[REDACTED]"), line)).join("\n");
 }
 
 // src/core/token.ts
@@ -20342,6 +20666,276 @@ function tokenize(text) {
       }).filter((part) => part.length > 1)
     )
   );
+}
+
+// src/core/memoryCore.ts
+function isExpired(value, now) {
+  return Boolean(value.expiresAt && new Date(value.expiresAt) <= now || value.staleAt && new Date(value.staleAt) <= now);
+}
+function idFor(value) {
+  return createHash3("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+}
+function filterScopedPreferences(preferences, input, now = /* @__PURE__ */ new Date()) {
+  return preferences.filter((preference) => !isExpired(preference, now) && (preference.scope === "user" || preference.scope === "repository" && preference.scopeId === input.repositoryId || preference.scope === "worktree" && preference.scopeId === input.worktreeId || preference.scope === "task" && preference.scopeId === input.taskId)).sort((a, b) => a.scope.localeCompare(b.scope) || a.key.localeCompare(b.key) || b.updatedAt.localeCompare(a.updatedAt));
+}
+function verifiedOutcomes(outcomes, sourceFingerprint, now = /* @__PURE__ */ new Date()) {
+  return outcomes.filter((outcome) => outcome.status === "verified" && !isExpired(outcome, now) && (!sourceFingerprint || !outcome.sourceFingerprint || outcome.sourceFingerprint === sourceFingerprint)).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+}
+function buildAdaptiveProjectBrief(input, maxTokens = 800) {
+  const selected = [];
+  let used = 0;
+  for (const section of [...input.sections].sort((a, b) => a.id.localeCompare(b.id))) {
+    const text = filterUntrustedSourceText(section.text).trim();
+    const tokens = estimateTokens(text);
+    if (!text || used + tokens > maxTokens) continue;
+    selected.push({ id: section.id, text, estimatedTokens: tokens });
+    used += tokens;
+  }
+  return { repositoryId: input.repositoryId, sourceFingerprint: input.sourceFingerprint, generatedAt: input.generatedAt ?? (/* @__PURE__ */ new Date()).toISOString(), sections: selected, estimatedTokens: used };
+}
+function composeMemoryContext(input) {
+  const preferences = filterScopedPreferences(input.preferences ?? [], input);
+  const outcomes = verifiedOutcomes(input.outcomes ?? [], input.sourceFingerprint);
+  const projectBrief = input.projectBrief && (!input.sourceFingerprint || input.projectBrief.sourceFingerprint === input.sourceFingerprint) ? input.projectBrief : void 0;
+  const indexedFacts = Array.from(new Set((input.indexedFacts ?? []).filter((value) => value.trim()))).slice(0, 50);
+  const capsules = Array.from(new Set((input.capsules ?? []).filter((value) => value.trim()))).slice(0, 20);
+  const reviewedDecisions = Array.from(new Set((input.reviewedDecisions ?? []).filter((value) => value.trim()))).slice(0, 50);
+  const maxTokens = input.maxTokens ?? 1200;
+  const result = { preferences, indexedFacts, capsules, reviewedDecisions, outcomes, ...projectBrief ? { projectBrief } : {} };
+  let contextId = idFor(result);
+  while (estimateTokens(JSON.stringify(result)) > maxTokens && result.indexedFacts.length) {
+    result.indexedFacts.pop();
+    contextId = idFor(result);
+  }
+  while (estimateTokens(JSON.stringify(result)) > maxTokens && result.reviewedDecisions.length) {
+    result.reviewedDecisions.pop();
+    contextId = idFor(result);
+  }
+  while (estimateTokens(JSON.stringify(result)) > maxTokens && result.capsules.length) {
+    result.capsules.pop();
+    contextId = idFor(result);
+  }
+  while (estimateTokens(JSON.stringify(result)) > maxTokens && result.outcomes.length) {
+    result.outcomes.pop();
+    contextId = idFor(result);
+  }
+  while (estimateTokens(JSON.stringify(result)) > maxTokens && result.preferences.length) {
+    result.preferences.pop();
+    contextId = idFor(result);
+  }
+  if (estimateTokens(JSON.stringify(result)) > maxTokens) delete result.projectBrief;
+  return { ...result, estimatedTokens: estimateTokens(JSON.stringify(result)), contextId };
+}
+
+// src/core/config.ts
+import { copyFile, readFile as readFile7 } from "node:fs/promises";
+var CURRENT_CONFIG_SCHEMA_VERSION = 2;
+var PROFILE_DEFAULTS = {
+  conservative: {
+    maxFiles: 10,
+    maxSqlObjects: 10,
+    maxMemories: 6,
+    firstReads: 5,
+    maxPlannedContextTokens: 12e3,
+    rawReadWarningThreshold: 12e3
+  },
+  balanced: {
+    maxFiles: 6,
+    maxSqlObjects: 6,
+    maxMemories: 4,
+    firstReads: 3,
+    maxPlannedContextTokens: 8e3,
+    rawReadWarningThreshold: 8e3
+  },
+  aggressive: {
+    maxFiles: 3,
+    maxSqlObjects: 3,
+    maxMemories: 2,
+    firstReads: 2,
+    maxPlannedContextTokens: 4e3,
+    rawReadWarningThreshold: 4e3
+  }
+};
+var DEFAULT_TOKEN_GRAPH_CONFIG = {
+  tokenSavingProfile: "balanced",
+  routingMode: "shadow",
+  maxFiles: PROFILE_DEFAULTS.balanced.maxFiles,
+  maxSqlObjects: PROFILE_DEFAULTS.balanced.maxSqlObjects,
+  maxMemories: PROFILE_DEFAULTS.balanced.maxMemories,
+  maxPlannedContextTokens: PROFILE_DEFAULTS.balanced.maxPlannedContextTokens,
+  rawReadWarningThreshold: PROFILE_DEFAULTS.balanced.rawReadWarningThreshold,
+  sqlIndexingEnabled: true,
+  memoryEnabled: true,
+  wikiGenerationEnabled: false,
+  routingKillSwitch: false,
+  routing: { mode: "shadow", killSwitch: false },
+  parser: {
+    maxFileBytes: 512 * 1024,
+    maxTotalBytes: 8 * 1024 * 1024,
+    maxSymbols: 1e4,
+    maxNodes: 25e4,
+    perFileTimeoutMs: 2e3,
+    wholeIndexTimeoutMs: 6e4,
+    maxRecursionDepth: 64,
+    maxGraphDepth: 3,
+    maxGeneratedFiles: 200,
+    maxTsconfigChain: 8,
+    maxAliases: 500
+  },
+  storage: {
+    maxBytes: 64 * 1024 * 1024,
+    runsMaxBytes: 16 * 1024 * 1024,
+    cacheMaxBytes: 32 * 1024 * 1024,
+    vaultMaxBytes: 8 * 1024 * 1024,
+    durableMaxBytes: 8 * 1024 * 1024,
+    runRetentionDays: 14,
+    cacheRetentionDays: 7
+  },
+  runner: { maxBytes: 64 * 1024, timeoutMs: 12e4, terminateGraceMs: 2e3 },
+  memory: { projectBriefTargetTokens: 220, projectBriefMaxTokens: 600, maxRetrievalTokens: 1200 },
+  responseFormat: { default: "json" }
+};
+function isProfile(value) {
+  return value === "conservative" || value === "balanced" || value === "aggressive";
+}
+function isRoutingMode(value) {
+  return value === "shadow" || value === "enforced" || value === "always-activate" || value === "always-advisory";
+}
+function sanitizeNumber(value, fallback, min = 0) {
+  return Number.isInteger(value) && value >= min ? value : fallback;
+}
+function legacyStorageClassCaps(maxBytes) {
+  const runsMaxBytes = Math.floor(maxBytes * 0.25);
+  const cacheMaxBytes = Math.floor(maxBytes * 0.5);
+  const vaultMaxBytes = Math.floor(maxBytes * 0.125);
+  return { runsMaxBytes, cacheMaxBytes, vaultMaxBytes, durableMaxBytes: maxBytes - runsMaxBytes - cacheMaxBytes - vaultMaxBytes };
+}
+function normalizeConfig(value, applyEnvironment = true) {
+  const candidate = value && typeof value === "object" ? value : {};
+  const nestedRouting = candidate.routing && typeof candidate.routing === "object" ? candidate.routing : {};
+  const nestedParser = candidate.parser && typeof candidate.parser === "object" ? candidate.parser : {};
+  const nestedStorage = candidate.storage && typeof candidate.storage === "object" ? candidate.storage : {};
+  const nestedRunner = candidate.runner && typeof candidate.runner === "object" ? candidate.runner : {};
+  const nestedMemory = candidate.memory && typeof candidate.memory === "object" ? candidate.memory : {};
+  const nestedResponse = candidate.responseFormat && typeof candidate.responseFormat === "object" ? candidate.responseFormat : {};
+  const storageMaxBytes = sanitizeNumber(nestedStorage.maxBytes, DEFAULT_TOKEN_GRAPH_CONFIG.storage.maxBytes, 1);
+  const legacyStorageCaps = legacyStorageClassCaps(storageMaxBytes);
+  const routingMode = applyEnvironment && isRoutingMode(process.env.TOKENGRAPH_ROUTING_MODE) ? process.env.TOKENGRAPH_ROUTING_MODE : isRoutingMode(candidate.routingMode) ? candidate.routingMode : isRoutingMode(nestedRouting.mode) ? nestedRouting.mode : DEFAULT_TOKEN_GRAPH_CONFIG.routingMode;
+  const routingKillSwitch = typeof candidate.routingKillSwitch === "boolean" ? candidate.routingKillSwitch : typeof nestedRouting.killSwitch === "boolean" ? Boolean(nestedRouting.killSwitch) : DEFAULT_TOKEN_GRAPH_CONFIG.routingKillSwitch;
+  const integer2 = (object2, key, fallback, min = 0) => sanitizeNumber(object2[key], fallback, min);
+  return {
+    tokenSavingProfile: isProfile(candidate.tokenSavingProfile) ? candidate.tokenSavingProfile : DEFAULT_TOKEN_GRAPH_CONFIG.tokenSavingProfile,
+    routingMode,
+    maxFiles: sanitizeNumber(candidate.maxFiles, DEFAULT_TOKEN_GRAPH_CONFIG.maxFiles, 1),
+    maxSqlObjects: sanitizeNumber(candidate.maxSqlObjects, DEFAULT_TOKEN_GRAPH_CONFIG.maxSqlObjects),
+    maxMemories: sanitizeNumber(candidate.maxMemories, DEFAULT_TOKEN_GRAPH_CONFIG.maxMemories),
+    maxPlannedContextTokens: sanitizeNumber(candidate.maxPlannedContextTokens, DEFAULT_TOKEN_GRAPH_CONFIG.maxPlannedContextTokens, 1),
+    rawReadWarningThreshold: sanitizeNumber(candidate.rawReadWarningThreshold, DEFAULT_TOKEN_GRAPH_CONFIG.rawReadWarningThreshold, 1),
+    sqlIndexingEnabled: typeof candidate.sqlIndexingEnabled === "boolean" ? candidate.sqlIndexingEnabled : DEFAULT_TOKEN_GRAPH_CONFIG.sqlIndexingEnabled,
+    memoryEnabled: typeof candidate.memoryEnabled === "boolean" ? candidate.memoryEnabled : DEFAULT_TOKEN_GRAPH_CONFIG.memoryEnabled,
+    wikiGenerationEnabled: typeof candidate.wikiGenerationEnabled === "boolean" ? candidate.wikiGenerationEnabled : DEFAULT_TOKEN_GRAPH_CONFIG.wikiGenerationEnabled,
+    routingKillSwitch,
+    routing: { mode: routingMode, killSwitch: routingKillSwitch },
+    parser: {
+      maxFileBytes: integer2(nestedParser, "maxFileBytes", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxFileBytes, 1),
+      maxTotalBytes: integer2(nestedParser, "maxTotalBytes", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxTotalBytes, 1),
+      maxSymbols: integer2(nestedParser, "maxSymbols", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxSymbols, 1),
+      maxNodes: integer2(nestedParser, "maxNodes", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxNodes, 1),
+      perFileTimeoutMs: integer2(nestedParser, "perFileTimeoutMs", DEFAULT_TOKEN_GRAPH_CONFIG.parser.perFileTimeoutMs, 1),
+      wholeIndexTimeoutMs: integer2(nestedParser, "wholeIndexTimeoutMs", DEFAULT_TOKEN_GRAPH_CONFIG.parser.wholeIndexTimeoutMs, 1),
+      maxRecursionDepth: integer2(nestedParser, "maxRecursionDepth", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxRecursionDepth, 1),
+      maxGraphDepth: integer2(nestedParser, "maxGraphDepth", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxGraphDepth, 0),
+      maxGeneratedFiles: integer2(nestedParser, "maxGeneratedFiles", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxGeneratedFiles, 0),
+      maxTsconfigChain: integer2(nestedParser, "maxTsconfigChain", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxTsconfigChain, 1),
+      maxAliases: integer2(nestedParser, "maxAliases", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxAliases, 0)
+    },
+    storage: {
+      maxBytes: storageMaxBytes,
+      runsMaxBytes: integer2(nestedStorage, "runsMaxBytes", legacyStorageCaps.runsMaxBytes, 0),
+      cacheMaxBytes: integer2(nestedStorage, "cacheMaxBytes", legacyStorageCaps.cacheMaxBytes, 0),
+      vaultMaxBytes: integer2(nestedStorage, "vaultMaxBytes", legacyStorageCaps.vaultMaxBytes, 0),
+      durableMaxBytes: integer2(nestedStorage, "durableMaxBytes", legacyStorageCaps.durableMaxBytes, 0),
+      runRetentionDays: integer2(nestedStorage, "runRetentionDays", DEFAULT_TOKEN_GRAPH_CONFIG.storage.runRetentionDays, 0),
+      cacheRetentionDays: integer2(nestedStorage, "cacheRetentionDays", DEFAULT_TOKEN_GRAPH_CONFIG.storage.cacheRetentionDays, 0)
+    },
+    runner: {
+      maxBytes: integer2(nestedRunner, "maxBytes", DEFAULT_TOKEN_GRAPH_CONFIG.runner.maxBytes, 256),
+      timeoutMs: integer2(nestedRunner, "timeoutMs", DEFAULT_TOKEN_GRAPH_CONFIG.runner.timeoutMs, 1),
+      terminateGraceMs: integer2(nestedRunner, "terminateGraceMs", DEFAULT_TOKEN_GRAPH_CONFIG.runner.terminateGraceMs, 1)
+    },
+    memory: {
+      projectBriefTargetTokens: integer2(nestedMemory, "projectBriefTargetTokens", DEFAULT_TOKEN_GRAPH_CONFIG.memory.projectBriefTargetTokens, 150),
+      projectBriefMaxTokens: integer2(nestedMemory, "projectBriefMaxTokens", DEFAULT_TOKEN_GRAPH_CONFIG.memory.projectBriefMaxTokens, 1),
+      maxRetrievalTokens: integer2(nestedMemory, "maxRetrievalTokens", DEFAULT_TOKEN_GRAPH_CONFIG.memory.maxRetrievalTokens, 1)
+    },
+    responseFormat: { default: nestedResponse.default === "compact-tabular" ? "compact-tabular" : "json" }
+  };
+}
+function unwrapPersistedConfig(value) {
+  if (value && typeof value === "object" && "schemaVersion" in value && "config" in value) {
+    const schemaVersion = value.schemaVersion;
+    if (typeof schemaVersion === "number" && schemaVersion > CURRENT_CONFIG_SCHEMA_VERSION) {
+      throw new Error(`Unsupported newer TokenGraph config schema version ${schemaVersion}; refusing to overwrite it.`);
+    }
+    return {
+      config: value.config,
+      needsMigration: schemaVersion !== CURRENT_CONFIG_SCHEMA_VERSION
+    };
+  }
+  return { config: value, needsMigration: true };
+}
+async function saveTokenGraphConfig(root, config2) {
+  const persisted = normalizeConfig(config2, false);
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "config.json");
+  await withFileLock(`${key}.lock`, () => writeJsonAtomic(configPath(root), {
+    schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
+    config: persisted
+  }));
+  return normalizeConfig(persisted);
+}
+async function loadTokenGraphConfig(root) {
+  try {
+    const parsed = JSON.parse(await readFile7(configPath(root), "utf8"));
+    const unwrapped = unwrapPersistedConfig(parsed);
+    const persistedNormalized = normalizeConfig(unwrapped.config, false);
+    const normalized = normalizeConfig(persistedNormalized);
+    if (unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(persistedNormalized)) {
+      await copyFile(configPath(root), `${configPath(root)}.bak`).catch((error2) => {
+        if (error2.code !== "ENOENT") throw error2;
+      });
+      await saveTokenGraphConfig(root, persistedNormalized);
+    }
+    return normalized;
+  } catch (error2) {
+    if (error2.code === "ENOENT") {
+      return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
+    }
+    if (error2 instanceof SyntaxError) {
+      await quarantineCorruptJson(configPath(root));
+      return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
+    }
+    throw error2;
+  }
+}
+async function setTokenSavingProfile(root, profile) {
+  const config2 = await loadTokenGraphConfig(root);
+  return saveTokenGraphConfig(root, { ...config2, tokenSavingProfile: profile });
+}
+async function updateTokenGraphConfig(root, update) {
+  const config2 = await loadTokenGraphConfig(root);
+  const merged = {
+    ...config2,
+    ...update,
+    routing: { ...config2.routing, ...update.routing ?? {} },
+    parser: { ...config2.parser, ...update.parser ?? {} },
+    storage: { ...config2.storage, ...update.storage ?? {} },
+    runner: { ...config2.runner, ...update.runner ?? {} },
+    memory: { ...config2.memory, ...update.memory ?? {} },
+    responseFormat: { ...config2.responseFormat, ...update.responseFormat ?? {} },
+    ...update.routing?.mode === void 0 ? {} : { routingMode: update.routing.mode },
+    ...update.routing?.killSwitch === void 0 ? {} : { routingKillSwitch: update.routing.killSwitch }
+  };
+  return saveTokenGraphConfig(root, merged);
 }
 
 // src/core/planner.ts
@@ -20893,7 +21487,7 @@ function compactWarnings(warnings) {
     return warning;
   }));
 }
-function firstReadIndices(files, paths, limit = 2) {
+function firstReadIndices(files, paths, limit = 1) {
   return unique2(paths).map((path) => files.findIndex((file) => file.path === path)).filter((index) => index >= 0).slice(0, limit);
 }
 function hasSqlIntent(task) {
@@ -20906,13 +21500,13 @@ function focusedSql(files, task) {
     const current = byPath2.get(file.filePath);
     if (!current || file.score > current.score) byPath2.set(file.filePath, file);
   }
-  const normalize2 = (term) => term.length > 4 && term.endsWith("s") ? term.slice(0, -1) : term;
-  const terms2 = task.toLowerCase().match(/[a-z0-9]+/g)?.map(normalize2).filter((term) => term.length >= 4 && !["review", "change", "policy", "migration", "database", "table", "tenant"].includes(term)) ?? [];
+  const normalize3 = (term) => term.length > 4 && term.endsWith("s") ? term.slice(0, -1) : term;
+  const terms2 = task.toLowerCase().match(/[a-z0-9]+/g)?.map(normalize3).filter((term) => term.length >= 4 && !["review", "change", "policy", "migration", "database", "table", "tenant"].includes(term)) ?? [];
   const scored = [...byPath2.values()].map((file) => ({
     file,
     lexical: terms2.filter((term) => files.some((candidate) => {
       if (candidate.filePath !== file.filePath) return false;
-      const candidateTerms = `${candidate.filePath} ${candidate.name}`.toLowerCase().match(/[a-z0-9]+/g)?.map(normalize2) ?? [];
+      const candidateTerms = `${candidate.filePath} ${candidate.name}`.toLowerCase().match(/[a-z0-9]+/g)?.map(normalize3) ?? [];
       return candidateTerms.includes(term);
     })).length
   }));
@@ -20950,11 +21544,29 @@ function base(options, input) {
 function compactModeEnvelope(mode, result) {
   return { mode, result };
 }
+function compactSliceResponse(slice) {
+  return {
+    path: slice.path,
+    range: [slice.startLine, slice.endLine],
+    text: slice.text,
+    verificationHash: slice.hash
+  };
+}
 function compactCompressionEnvelope(mode, result, estimates) {
   return estimates ? { mode, result, estimates } : result;
 }
 function compactPrepareEnvelope(input) {
-  return { taskId: input.taskId, plan: input.plan, ...input.routing === void 0 ? {} : { routing: input.routing } };
+  return {
+    mode: input.mode ?? "tokengraph",
+    taskId: input.taskId,
+    plan: input.plan,
+    ...input.routing === void 0 ? {} : { routing: input.routing },
+    ...input.artifact === void 0 ? {} : { artifact: input.artifact },
+    ...input.artifactReference === void 0 ? {} : { artifactReference: input.artifactReference },
+    deliveredArtifacts: input.deliveredArtifacts ?? [],
+    ...input.unsupportedLanguageCounts && Object.keys(input.unsupportedLanguageCounts).length ? { unsupportedLanguageCounts: input.unsupportedLanguageCounts } : {},
+    ...input.retrieval ? { retrieval: input.retrieval } : {}
+  };
 }
 function compactPlanResponse(plan, options = {}) {
   const sql = hasSqlIntent(plan.task) ? focusedSql(plan.relevantSql, plan.task) : [];
@@ -21115,7 +21727,7 @@ var prepareContextInputSchema = object({
 var queryContextInputSchema = object({
   taskId: taskIdSchema.optional(),
   root: string2().optional(),
-  mode: _enum(["overview", "search", "symbol", "sql", "wiki", "artifact", "run"]),
+  mode: _enum(["overview", "search", "symbol", "sql", "wiki", "artifact", "run", "slice"]),
   query: string2().min(1).optional(),
   target: string2().min(1).optional(),
   slug: string2().min(1).optional(),
@@ -21124,6 +21736,11 @@ var queryContextInputSchema = object({
   test: string2().min(1).optional(),
   file: string2().min(1).optional(),
   errorClass: string2().min(1).optional(),
+  startLine: number2().int().min(1).optional(),
+  endLine: number2().int().min(1).optional(),
+  contentHash: string2().regex(/^[a-f0-9]{64}$/).optional(),
+  evidenceReassessed: boolean2().optional(),
+  evidenceGap: string2().min(1).optional(),
   limit: number2().int().min(1).max(50).optional(),
   ...compactResponseFields
 }).superRefine((input, context) => {
@@ -21135,6 +21752,9 @@ var queryContextInputSchema = object({
     if ([input.test, input.file, input.errorClass].filter((value) => value !== void 0).length !== 1) {
       context.addIssue({ code: "custom", message: "run mode requires exactly one of test, file, or errorClass." });
     }
+  }
+  if (input.mode === "slice" && (!input.file || input.startLine === void 0 || input.endLine === void 0 || !input.contentHash)) {
+    context.addIssue({ code: "custom", message: "slice mode requires file, startLine, endLine, and contentHash." });
   }
 });
 var compressInputSchema = object({
@@ -21226,17 +21846,23 @@ var CORE_TOOL_METADATA = {
 };
 
 // src/core/routingAdvisor.ts
+function failOpenRouting(reason = "routing-unavailable") {
+  return { useTokenGraph: false, stage: 0, reason, expectedOverheadTokens: 0, expectedBenefit: 0, enforced: false };
+}
 function boundedTask(task) {
   const normalized = task.trim();
-  return normalized.length > 0 && normalized.length <= 180 && /\b(what is|where is|show me|rename|format|explain)\b/i.test(normalized) && !/\b(repository|architecture|migration|security|debug|regression|dependencies|all files)\b/i.test(normalized);
+  const singleUsageUpdate = /^update\s+[A-Za-z_$][\w$]*\s+usage\s+in\s+[A-Za-z_$][\w$]*[.!?]?$/i.test(normalized);
+  return normalized.length > 0 && normalized.length <= 180 && (/\b(what is|where is|show me|rename|format|explain)\b/i.test(normalized) || /^(find|locate)\b/i.test(normalized) || singleUsageUpdate) && !/\b(repository|architecture|migration|security|debug|regression|dependencies|all files)\b/i.test(normalized);
 }
 function adviseRouting(input) {
   const mode = input.routingMode ?? "shadow";
   const forcedOn = input.routingOverride === "force-on";
   const forcedBypass = input.routingOverride === "force-bypass";
-  const bypass = forcedBypass || mode !== "always-activate" && !forcedOn && boundedTask(input.task);
-  const useTokenGraph = mode === "always-activate" || forcedOn || !bypass;
-  const stage = input.indexAvailable && (input.cachedStatus ?? "fresh") === "fresh" ? 1 : 0;
+  const killSwitch = input.killSwitch === true;
+  if (killSwitch) return failOpenRouting("routing kill switch");
+  const bypass = killSwitch || forcedBypass || mode !== "always-activate" && !forcedOn && boundedTask(input.task);
+  const useTokenGraph = !bypass && (mode === "always-activate" || forcedOn || !boundedTask(input.task));
+  const stage = input.indexAvailable ? 1 : 0;
   const reason = forcedOn ? "routing override force-on" : forcedBypass ? "routing override force-bypass" : bypass ? "bounded-task" : stage === 1 ? "indexed-discovery" : "context-discovery";
   return {
     useTokenGraph,
@@ -21244,11 +21870,64 @@ function adviseRouting(input) {
     reason,
     expectedOverheadTokens: useTokenGraph ? stage === 1 ? 25 : 80 : 0,
     expectedBenefit: useTokenGraph ? stage === 1 ? 160 : 120 : 0,
-    enforced: mode === "enforced" || mode === "always-activate" || forcedOn || forcedBypass
+    enforced: !forcedBypass && Boolean(input.promotion?.enforcementEnabled) && (mode === "enforced" || mode === "always-activate" || forcedOn)
   };
 }
 
+// src/core/routingControl.ts
+import { readFile as readFile8 } from "node:fs/promises";
+var CURRENT_ROUTING_CONTROL_SCHEMA = 1;
+var REQUIRED_PROMOTION_GATES = [
+  "minimumSamples",
+  "qualityNonInferiority",
+  "tokenSuperiority",
+  "resources",
+  "routerRates",
+  "executionMedian",
+  "executionP25",
+  "nonNegativeActivated"
+];
+function routingControlPath(directory) {
+  return `${directory}/routing-control.json`;
+}
+function isValidatedPromotion(value) {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value;
+  const gateRecord = candidate.gates && typeof candidate.gates === "object" ? candidate.gates : void 0;
+  const gates = gateRecord ? Object.values(gateRecord) : [];
+  const hasRequiredGates = Boolean(gateRecord) && REQUIRED_PROMOTION_GATES.every((name) => typeof gateRecord?.[name] === "boolean") && Object.keys(gateRecord ?? {}).length === REQUIRED_PROMOTION_GATES.length;
+  const allGatesPass = hasRequiredGates && gates.every((gate) => gate === true);
+  const categoryCounts = candidate.categoryCounts && typeof candidate.categoryCounts === "object" ? Object.values(candidate.categoryCounts) : [];
+  const evidencePasses = categoryCounts.length > 0 && categoryCounts.every((count) => Number.isInteger(count) && count >= 10) && typeof candidate.falseBypassRate === "number" && Number.isFinite(candidate.falseBypassRate) && candidate.falseBypassRate >= 0 && candidate.falseBypassRate < 0.1 && typeof candidate.falseActivationRate === "number" && Number.isFinite(candidate.falseActivationRate) && candidate.falseActivationRate >= 0 && candidate.falseActivationRate < 0.1 && typeof candidate.executionInclusiveMedian === "number" && Number.isFinite(candidate.executionInclusiveMedian) && candidate.executionInclusiveMedian > 0 && typeof candidate.executionInclusiveP25 === "number" && Number.isFinite(candidate.executionInclusiveP25) && candidate.executionInclusiveP25 >= 0 && typeof candidate.nonNegativeActivatedRate === "number" && Number.isFinite(candidate.nonNegativeActivatedRate) && candidate.nonNegativeActivatedRate >= 0.8 && candidate.nonNegativeActivatedRate <= 1;
+  return candidate.schemaVersion === 1 && typeof candidate.generatedAt === "string" && typeof candidate.enforcementEnabled === "boolean" && hasRequiredGates && (!candidate.enforcementEnabled || allGatesPass && evidencePasses);
+}
+function normalize(value) {
+  const candidate = value && typeof value === "object" ? value : {};
+  const envKillSwitch = process.env.TOKENGRAPH_ROUTING_KILL_SWITCH;
+  return {
+    schemaVersion: CURRENT_ROUTING_CONTROL_SCHEMA,
+    killSwitch: envKillSwitch === "1" || envKillSwitch === "true" || candidate.killSwitch === true,
+    ...isValidatedPromotion(candidate.promotion) ? { promotion: candidate.promotion } : {}
+  };
+}
+async function loadRoutingControl(root) {
+  const directory = await repositoryDir(root);
+  const path = routingControlPath(directory);
+  try {
+    return normalize(JSON.parse(await readFile8(path, "utf8")));
+  } catch (error2) {
+    if (error2.code === "ENOENT") return normalize(void 0);
+    if (error2 instanceof SyntaxError) {
+      await quarantineCorruptJson(path);
+      return normalize(void 0);
+    }
+    throw error2;
+  }
+}
+
 // src/core/retrieval.ts
+import { createHash as createHash4 } from "node:crypto";
+import { open as open2 } from "node:fs/promises";
 function terms(value) {
   return value.toLocaleLowerCase().match(/[a-z0-9_/-]+/g) ?? [];
 }
@@ -21277,12 +21956,106 @@ function rankFilesBm25(index, query, limit = 10) {
   }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
   return scored.slice(0, Math.max(0, limit)).map((entry, index2) => ({ ...entry, rank: index2 + 1 }));
 }
+function expandGraph(index, paths, depth = 1) {
+  const selected = new Set(paths);
+  let frontier = new Set(paths);
+  for (let level = 0; level < Math.max(0, depth); level += 1) {
+    const next = /* @__PURE__ */ new Set();
+    for (const edge of index.imports) {
+      if (frontier.has(edge.filePath) && edge.resolvedPath) next.add(edge.resolvedPath);
+    }
+    for (const path of next) selected.add(path);
+    frontier = next;
+  }
+  return [...selected].sort();
+}
+function buildRetrievalCapsule(_taskId, query, index, paths = [], graphDepth = 1) {
+  const selectedPaths = new Set(paths.length ? paths : rankFilesBm25(index, query, 8).map((entry) => entry.path));
+  const files = index.files.filter((file) => selectedPaths.has(file.path)).map(({ path, kind, language, estimatedTokens, contentHash }) => ({ path, kind, language, estimatedTokens, contentHash }));
+  const symbols = index.symbols.filter((symbol) => selectedPaths.has(symbol.filePath)).map(({ name, kind, filePath, exported, startLine, endLine }) => ({ name, kind, filePath, exported, ...startLine === void 0 ? {} : { startLine }, ...endLine === void 0 ? {} : { endLine } }));
+  const references = expandGraph(index, [...selectedPaths], graphDepth);
+  const content = { query, files, symbols, references };
+  return { ...content, hash: canonicalHash(content) };
+}
+function capsuleArtifact(capsule) {
+  return createStableArtifact("capsule/retrieval", capsule, 2);
+}
+async function readExactSlice(root, path, startLine, endLine, maxBytes = 64 * 1024, expectedContentHash, maxSourceBytes = 512 * 1024) {
+  if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine - startLine > 500) throw new Error("Exact slice line bounds are invalid.");
+  if (!Number.isInteger(maxSourceBytes) || maxSourceBytes < 1) throw new Error("Exact slice source byte limit is invalid.");
+  const filePath = await resolveConfinedPath(root, path);
+  const handle = await open2(filePath, "r");
+  let text;
+  try {
+    const buffer = Buffer.alloc(maxSourceBytes + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > maxSourceBytes) throw new Error("Exact slice source file exceeds the configured byte limit.");
+    text = buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+  const normalizedText = text.replace(/\r\n?/g, "\n");
+  const contentHash = createHash4("sha256").update(normalizedText).digest("hex");
+  if (expectedContentHash !== void 0 && contentHash !== expectedContentHash) {
+    throw new Error("The requested exact slice does not match the current source hash after reading the file.");
+  }
+  const lines = normalizedText.split("\n").slice(startLine - 1, endLine);
+  const slice = lines.join("\n");
+  if (Buffer.byteLength(slice, "utf8") > maxBytes) throw new Error("Exact slice exceeds the configured byte limit.");
+  return { path, startLine, endLine: startLine + lines.length - 1, text: slice, hash: canonicalHash({ path, startLine, endLine, text: slice }), contentHash };
+}
+function escalateReadPolicy(current, requested) {
+  const levels = ["L0", "L1", "L2", "L3", "L4"];
+  const next = levels[Math.max(levels.indexOf(current.level), levels.indexOf(requested))] ?? current.level;
+  return {
+    level: next,
+    allowRawReads: current.allowRawReads || next === "L3" || next === "L4",
+    reason: next === current.level ? current.reason : `escalated to ${next} for validated task evidence`,
+    targetedReads: current.targetedReads ?? 0,
+    recommendedReadsThisResponse: current.recommendedReadsThisResponse ?? 0,
+    requiresReassessment: current.requiresReassessment ?? false,
+    hasReassessed: current.hasReassessed ?? false,
+    ...current.evidenceGap ? { evidenceGap: current.evidenceGap } : {}
+  };
+}
+function startReadPolicyResponse(current) {
+  return { ...current, recommendedReadsThisResponse: 0 };
+}
+function recommendExactRead(current, options = {}) {
+  const targetedReads = current.targetedReads ?? 0;
+  const recommendedReadsThisResponse = current.recommendedReadsThisResponse ?? 0;
+  const evidenceGap = options.evidenceGap?.trim();
+  const hasReassessed = current.hasReassessed === true || options.reassessed === true;
+  const state = {
+    ...current,
+    targetedReads,
+    recommendedReadsThisResponse,
+    requiresReassessment: current.requiresReassessment ?? false,
+    hasReassessed
+  };
+  if (!current.allowRawReads) return { allowed: false, reason: "Exact reads require an evidence-backed L3 or L4 escalation.", state };
+  if (recommendedReadsThisResponse >= 1) return { allowed: false, reason: "At most one exact read may be recommended per response.", state };
+  if (targetedReads >= 3 && !hasReassessed) return { allowed: false, reason: "Evidence sufficiency reassessment is required after three targeted reads.", state: { ...state, requiresReassessment: true } };
+  if (targetedReads >= 3 && !evidenceGap) return { allowed: false, reason: "Further exact reads require an explicit evidence gap.", state };
+  const nextReads = targetedReads + 1;
+  return {
+    allowed: true,
+    reason: evidenceGap ? `Exact read justified by evidence gap: ${evidenceGap}` : "Exact read is within the targeted-read budget.",
+    state: {
+      ...state,
+      targetedReads: nextReads,
+      recommendedReadsThisResponse: 1,
+      requiresReassessment: nextReads >= 3 && !hasReassessed,
+      ...evidenceGap ? { evidenceGap } : {}
+    }
+  };
+}
 
 // src/core/runner.ts
-import { readFile as readFile5, readdir, rm as rm4 } from "node:fs/promises";
+import { readFile as readFile9, readdir as readdir2, rm as rm5 } from "node:fs/promises";
 async function loadRun(root, runId) {
   try {
-    const parsed = JSON.parse(await readFile5(runPath(root, runId), "utf8"));
+    const parsed = JSON.parse(await readFile9(runPath(root, runId), "utf8"));
     return parsed && parsed.runId === runId && parsed.root === root ? parsed : void 0;
   } catch (error2) {
     if (error2.code === "ENOENT") return void 0;
@@ -21293,35 +22066,244 @@ async function loadRun(root, runId) {
     throw error2;
   }
 }
-async function querySavedRuns(root, selector = {}) {
-  const entries = await readdir(runsDir(root)).catch((error2) => error2.code === "ENOENT" ? [] : Promise.reject(error2));
-  const runs = await Promise.all(entries.filter((entry) => entry.endsWith(".json")).map((entry) => loadRun(root, entry.slice(0, -5))));
-  return runs.filter((run) => Boolean(run) && Object.entries(selector).every(([key, value]) => run?.metadata?.[key] === value)).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+function summarizeRun(run) {
+  const combined = `${run.stderr}
+${run.stdout}`;
+  const lines = combined.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const firstError = lines.find((line) => /\b(error|failed|failure|exception)\b/i.test(line));
+  const tests = lines.filter((line) => /(?:test|spec)\b|\b(pass|fail)ed\b/i.test(line)).slice(0, 20);
+  const stackFrames = lines.filter((line) => /^\s*at\s+|\bat\s+.+:\d+:\d+/.test(line)).slice(0, 20);
+  const locations = lines.map((line) => line.match(/[^\s:()]+:\d+(?::\d+)?/)?.[0]).filter((value) => Boolean(value)).slice(0, 20);
+  const repeatCount = lines.length - new Set(lines).size;
+  return {
+    runId: run.runId,
+    status: run.status,
+    exitCode: run.exitCode,
+    signal: run.signal,
+    timedOut: run.timedOut,
+    ...firstError ? { firstError } : {},
+    repeatCount,
+    tests,
+    stackFrames,
+    locations
+  };
 }
 
 // src/core/fileScanner.ts
 var ignorePackage = __toESM(require_ignore(), 1);
-import { createHash as createHash2 } from "node:crypto";
-import { readdir as readdir2, readFile as readFile6, stat as stat2 } from "node:fs/promises";
-import { basename, dirname as dirname3, extname, join as join5, normalize, relative as relative3, sep } from "node:path";
+import { createHash as createHash6 } from "node:crypto";
+import { readdir as readdir3, readFile as readFile11, stat as stat2 } from "node:fs/promises";
+import { basename as basename2, dirname as dirname6, extname, join as join8, normalize as normalize2, relative as relative4, sep } from "node:path";
+
+// src/core/polyglot.ts
+import { createHash as createHash5 } from "node:crypto";
+import { access as access2, readFile as readFile10 } from "node:fs/promises";
+import { dirname as dirname4, join as join7, resolve as resolve6 } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Worker as Worker2 } from "node:worker_threads";
+var TREE_SITTER_RUNTIME = "web-tree-sitter@0.26.11";
+var PINNED_GRAMMARS = {
+  python: { version: "v0.25.0", asset: "tree-sitter-python.wasm" },
+  go: { version: "v0.25.0", asset: "tree-sitter-go.wasm" },
+  rust: { version: "v0.24.2", asset: "tree-sitter-rust.wasm" },
+  java: { version: "v0.23.5", asset: "tree-sitter-java.wasm" }
+};
+function assertStandalonePolyglot(options = {}) {
+  if (options.workspaceExecution === true) throw new Error("Polyglot parser execution must remain standalone and cannot execute workspace code.");
+}
+async function defaultAssetRoot() {
+  const here = dirname4(fileURLToPath(import.meta.url));
+  const candidates = [resolve6(here, "../../assets/grammars"), resolve6(here, "../assets/grammars")];
+  for (const candidate of candidates) {
+    try {
+      await access2(join7(candidate, PINNED_GRAMMARS.python.asset));
+      return candidate;
+    } catch {
+    }
+  }
+  throw new Error("No bundled Tree-sitter grammar assets were found.");
+}
+async function bundledWorkerPath() {
+  const here = dirname4(fileURLToPath(import.meta.url));
+  const candidates = [resolve6(here, "polyglot-worker.js"), resolve6(here, "../../dist/polyglot-worker.js")];
+  for (const candidate of candidates) {
+    try {
+      await access2(candidate);
+      return candidate;
+    } catch {
+    }
+  }
+  throw new Error("The bundled polyglot parser worker is missing.");
+}
+function symbolNodes(language) {
+  if (language === "python") return ["function_definition", "class_definition"];
+  if (language === "go") return ["function_declaration", "method_declaration", "type_declaration"];
+  if (language === "rust") return ["function_item", "struct_item", "enum_item", "trait_item"];
+  return ["class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "method_declaration", "constructor_declaration"];
+}
+async function parsePolyglotSource(language, source, assetRoot, options = {}) {
+  assertStandalonePolyglot();
+  const grammar = PINNED_GRAMMARS[language];
+  const normalized = source.replace(/\r\n?/g, "\n");
+  const root = assetRoot ?? await defaultAssetRoot();
+  const workerPath2 = await bundledWorkerPath();
+  const limits = {
+    maxBytes: options.maxBytes ?? 512 * 1024,
+    maxSymbols: options.maxSymbols ?? 1e4,
+    maxNodes: options.maxNodes ?? 25e4,
+    timeoutMs: options.timeoutMs ?? 2e3
+  };
+  if (Buffer.byteLength(normalized, "utf8") > limits.maxBytes) throw new Error("AST parsed file byte limit exceeded.");
+  const parsed = await new Promise((resolvePromise, reject) => {
+    const worker = new Worker2(workerPath2, { workerData: { language, source: normalized, assetRoot: root, grammar, symbolNodes: symbolNodes(language), limits } });
+    const timer = setTimeout(() => {
+      void worker.terminate();
+      reject(new Error("AST parser worker timed out."));
+    }, limits.timeoutMs);
+    worker.once("message", (message) => {
+      clearTimeout(timer);
+      void worker.terminate();
+      if (message.ok && message.result) resolvePromise(message.result);
+      else reject(new Error(message.message ?? "AST parser worker failed."));
+    });
+    worker.once("error", (error2) => {
+      clearTimeout(timer);
+      reject(error2);
+    });
+  });
+  return {
+    language,
+    runtime: TREE_SITTER_RUNTIME,
+    grammarVersion: grammar.version,
+    sourceHash: createHash5("sha256").update(normalized).digest("hex"),
+    symbols: parsed.symbols,
+    workspaceExecution: false,
+    parser: parsed.parser,
+    ...parsed.symbolDetails ? { symbolDetails: parsed.symbolDetails } : {},
+    ...parsed.errorNodeCount ? { errorNodeCount: parsed.errorNodeCount } : {},
+    ...parsed.degradedReason ? { degradedReason: parsed.degradedReason } : {}
+  };
+}
+
+// src/core/typescriptParser.ts
+import { access as access3 } from "node:fs/promises";
+import { dirname as dirname5, resolve as resolve7 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { Worker as Worker3 } from "node:worker_threads";
+var nextId = 1;
+var sharedWorker;
+var starting = false;
+var active;
+var queue = [];
+async function workerPath() {
+  const here = dirname5(fileURLToPath2(import.meta.url));
+  const candidates = [resolve7(here, "typescript-worker.cjs"), resolve7(here, "../../dist/typescript-worker.cjs")];
+  for (const candidate of candidates) {
+    try {
+      await access3(candidate);
+      return candidate;
+    } catch {
+    }
+  }
+  throw new Error("The bundled TypeScript parser worker is missing.");
+}
+function rejectActive(error2) {
+  if (!active) return;
+  clearTimeout(active.timer);
+  active.reject(error2);
+  active = void 0;
+}
+async function resetWorker(worker, error2) {
+  if (sharedWorker !== worker) return;
+  sharedWorker = void 0;
+  rejectActive(error2);
+  await worker.terminate().catch(() => void 0);
+  void startNext();
+}
+async function ensureWorker() {
+  if (sharedWorker) return sharedWorker;
+  const worker = new Worker3(await workerPath());
+  worker.unref();
+  worker.on("message", (message) => {
+    if (sharedWorker !== worker || !active || message.id !== active.id) return;
+    const request = active;
+    clearTimeout(request.timer);
+    active = void 0;
+    if (message.ok && message.symbols) {
+      request.resolve({ symbols: message.symbols, ...message.degradedReason ? { degradedReason: message.degradedReason } : {} });
+    } else {
+      request.reject(new Error(message.message ?? "TypeScript parser worker failed."));
+    }
+    void startNext();
+  });
+  worker.on("error", (error2) => void resetWorker(worker, error2));
+  worker.on("exit", (code) => {
+    if (sharedWorker === worker && code !== 0) void resetWorker(worker, new Error(`TypeScript parser worker exited with code ${code}.`));
+  });
+  sharedWorker = worker;
+  return worker;
+}
+async function startNext() {
+  if (active || starting || queue.length === 0) return;
+  starting = true;
+  try {
+    const worker = await ensureWorker();
+    const request = queue.shift();
+    if (!request) return;
+    const timer = setTimeout(() => {
+      void resetWorker(worker, new Error("TypeScript parser worker timed out."));
+    }, request.options.timeoutMs);
+    active = { ...request, timer };
+    worker.postMessage({
+      id: request.id,
+      filePath: request.filePath,
+      source: request.source,
+      maxNodes: request.options.maxNodes,
+      maxSymbols: request.options.maxSymbols
+    });
+  } catch (error2) {
+    const request = queue.shift();
+    request?.reject(error2 instanceof Error ? error2 : new Error(String(error2)));
+  } finally {
+    starting = false;
+    if (!active && queue.length > 0) void startNext();
+  }
+}
+async function parseTypeScriptSource(filePath, source, options) {
+  return new Promise((resolvePromise, reject) => {
+    queue.push({ id: nextId++, filePath, source, options, resolve: resolvePromise, reject });
+    void startNext();
+  });
+}
+
+// src/core/fileScanner.ts
 var DEPENDENCY_DIRS = /* @__PURE__ */ new Set(["node_modules", "vendor", "bower_components"]);
 var BUILD_DIRS = /* @__PURE__ */ new Set([".next", "dist", "build", "out", "coverage", ".turbo", ".cache", ".parcel-cache"]);
-var SUPPORTED_EXTENSIONS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".sql", ".md", ".mdx"]);
-var CODE_EXTENSIONS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+var SUPPORTED_EXTENSIONS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".sql", ".md", ".mdx"]);
+var CODE_EXTENSIONS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java"]);
+var TYPESCRIPT_EXTENSIONS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+var CONFIGURATION_FILES = ["tsconfig.json", "jsconfig.json", ".eslintrc.json", ".prettierrc.json"];
 var SECRET_FILE_PATTERNS = [/^\.env($|\.)/i, /\.pem$/i, /\.key$/i, /\.p12$/i, /^id_rsa$/i, /^id_ed25519$/i];
 var MAX_INDEXED_BYTES = 512 * 1024;
 var DEFAULT_SCAN_BUDGET = {
   maxFiles: 5e3,
   maxDirectories: 1e3,
   maxDepth: 32,
-  maxTotalBytes: 50 * 1024 * 1024
+  maxTotalBytes: 50 * 1024 * 1024,
+  maxFileBytes: MAX_INDEXED_BYTES,
+  maxSymbols: 1e4,
+  maxNodes: 25e4,
+  maxGeneratedFiles: 200,
+  perFileTimeoutMs: 2e3,
+  wholeIndexTimeoutMs: 6e4,
+  polyglotEnabled: false
 };
 var createIgnore = "default" in ignorePackage ? ignorePackage.default : ignorePackage;
 function normalizePath(path) {
   return path.split(sep).join("/");
 }
 function hashText(text) {
-  return createHash2("sha256").update(text.replace(/\r\n?/g, "\n")).digest("hex");
+  return createHash6("sha256").update(text.replace(/\r\n?/g, "\n")).digest("hex");
 }
 function exclusionForName(name) {
   if (DEPENDENCY_DIRS.has(name)) return "dependency";
@@ -21332,7 +22314,7 @@ function exclusionForName(name) {
 async function loadIgnoreScopes(base2, inherited = []) {
   let content;
   try {
-    content = await readFile6(join5(base2, ".gitignore"), "utf8");
+    content = await readFile11(join8(base2, ".gitignore"), "utf8");
   } catch (error2) {
     if (error2.code !== "ENOENT") {
       throw error2;
@@ -21345,7 +22327,7 @@ async function loadIgnoreScopes(base2, inherited = []) {
 }
 function isIgnored(scopes, absolutePath, isDirectory) {
   return scopes.some(({ base: base2, matcher }) => {
-    const path = normalizePath(relative3(base2, absolutePath));
+    const path = normalizePath(relative4(base2, absolutePath));
     return Boolean(path) && matcher.ignores(isDirectory ? `${path}/` : path);
   });
 }
@@ -21361,6 +22343,14 @@ function languageForExtension(extension) {
     case ".mjs":
     case ".cjs":
       return "javascript";
+    case ".py":
+      return "python";
+    case ".go":
+      return "go";
+    case ".rs":
+      return "rust";
+    case ".java":
+      return "java";
     case ".sql":
       return "sql";
     case ".md":
@@ -21369,6 +22359,33 @@ function languageForExtension(extension) {
     default:
       return "text";
   }
+}
+function isGeneratedFile(path, content) {
+  return /(?:^|\/)(?:generated|__generated__)(?:\/|$)|(?:\.generated\.|\.g\.)[A-Za-z0-9]+$/i.test(path) || /^(?:\/\/|#|\/\*)\s*@?generated\b/im.test(content.slice(0, 512));
+}
+function polyglotLanguage(extension) {
+  return extension === ".py" ? "python" : extension === ".go" ? "go" : extension === ".rs" ? "rust" : extension === ".java" ? "java" : void 0;
+}
+async function extractPolyglotSymbols(filePath, extension, content, budget) {
+  const language = polyglotLanguage(extension);
+  if (!language) return { symbols: [] };
+  const parsed = await parsePolyglotSource(language, content, void 0, {
+    maxSymbols: budget?.maxSymbols,
+    maxNodes: budget?.maxNodes,
+    timeoutMs: budget?.perFileTimeoutMs
+  });
+  return { symbols: (parsed.symbolDetails ?? parsed.symbols.map((name) => ({ name, kind: "function", startLine: 1, endLine: 1, signature: name }))).map((symbol) => ({
+    name: symbol.name,
+    kind: symbol.kind === "type" ? "type" : symbol.kind,
+    filePath,
+    exported: true,
+    startLine: symbol.startLine,
+    endLine: symbol.endLine,
+    signature: symbol.signature,
+    summary: `${symbol.kind} ${symbol.name}`,
+    provenance: parsed.parser,
+    parserVersion: `${parsed.runtime}/${parsed.grammarVersion}`
+  })), ...parsed.degradedReason ? { degradedReason: parsed.degradedReason } : {} };
 }
 function isTestPath(path) {
   return /(^|[/.])(test|spec)\.[jt]sx?$/.test(path) || /(^|\/)(__tests__|tests)\//.test(path);
@@ -21529,8 +22546,22 @@ function extractSymbols(filePath, content) {
   }
   return symbols;
 }
+async function extractTypeScriptSymbols(filePath, content, budget) {
+  try {
+    return await parseTypeScriptSource(filePath, content, {
+      maxSymbols: budget.maxSymbols,
+      maxNodes: budget.maxNodes,
+      timeoutMs: budget.perFileTimeoutMs
+    });
+  } catch (error2) {
+    return {
+      symbols: extractSymbols(filePath, content).slice(0, budget.maxSymbols).map((symbol) => ({ ...symbol, provenance: "heuristic", parserVersion: "regex-fallback-v1" })),
+      degradedReason: error2 instanceof Error ? error2.message : String(error2)
+    };
+  }
+}
 function candidateImportPaths(root, fromFile, source) {
-  const basePaths = source.startsWith("@/") || source.startsWith("~/") ? [source.slice(2), normalize(join5("src", source.slice(2)))] : source.startsWith(".") ? [normalize(join5(dirname3(fromFile), source))] : [];
+  const basePaths = source.startsWith("@/") || source.startsWith("~/") ? [source.slice(2), normalize2(join8("src", source.slice(2)))] : source.startsWith(".") ? [normalize2(join8(dirname6(fromFile), source))] : [];
   if (!basePaths.length) {
     return [];
   }
@@ -21553,7 +22584,7 @@ function candidatePathsForBase(root, basePath) {
     `${normalized}/index.js`,
     `${normalized}/index.jsx`
   ]);
-  return candidates.map((candidate) => normalizePath(relative3(root, join5(root, candidate))));
+  return candidates.map((candidate) => normalizePath(relative4(root, join8(root, candidate))));
 }
 function resolveLocalImports(root, graph) {
   const indexedPaths = new Set(graph.files.map((file) => file.path));
@@ -21573,7 +22604,14 @@ function budgetFromOptions(options) {
     maxFiles: options?.maxFiles ?? DEFAULT_SCAN_BUDGET.maxFiles,
     maxDirectories: options?.maxDirectories ?? DEFAULT_SCAN_BUDGET.maxDirectories,
     maxDepth: options?.maxDepth ?? DEFAULT_SCAN_BUDGET.maxDepth,
-    maxTotalBytes: options?.maxTotalBytes ?? DEFAULT_SCAN_BUDGET.maxTotalBytes
+    maxTotalBytes: options?.maxTotalBytes ?? DEFAULT_SCAN_BUDGET.maxTotalBytes,
+    maxFileBytes: options?.maxFileBytes ?? DEFAULT_SCAN_BUDGET.maxFileBytes,
+    maxSymbols: options?.maxSymbols ?? DEFAULT_SCAN_BUDGET.maxSymbols,
+    maxNodes: options?.maxNodes ?? DEFAULT_SCAN_BUDGET.maxNodes,
+    maxGeneratedFiles: options?.maxGeneratedFiles ?? DEFAULT_SCAN_BUDGET.maxGeneratedFiles,
+    perFileTimeoutMs: options?.perFileTimeoutMs ?? DEFAULT_SCAN_BUDGET.perFileTimeoutMs,
+    wholeIndexTimeoutMs: options?.wholeIndexTimeoutMs ?? DEFAULT_SCAN_BUDGET.wholeIndexTimeoutMs,
+    polyglotEnabled: options?.polyglotEnabled ?? DEFAULT_SCAN_BUDGET.polyglotEnabled
   };
 }
 function addUnreadable(graph, path) {
@@ -21583,15 +22621,19 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
   const currentScopes = current === root ? ignoreScopes : await loadIgnoreScopes(current, ignoreScopes);
   let entries;
   try {
-    entries = await readdir2(current, { withFileTypes: true });
+    entries = await readdir3(current, { withFileTypes: true });
   } catch {
-    addUnreadable(graph, normalizePath(relative3(root, current)));
+    addUnreadable(graph, normalizePath(relative4(root, current)));
     return;
   }
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
-    const absolute = join5(current, entry.name);
-    const relativePath = normalizePath(relative3(root, absolute));
+    if (Date.now() >= state.deadline) {
+      graph.exclusions.push({ path: normalizePath(relative4(root, current)) || ".", reason: "budget" });
+      break;
+    }
+    const absolute = join8(current, entry.name);
+    const relativePath = normalizePath(relative4(root, absolute));
     if (entry.name === ".tokengraph") {
       continue;
     }
@@ -21640,13 +22682,13 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
       graph.exclusions.push({ path: relativePath, reason: "budget" });
       continue;
     }
-    if (fileStat.size > MAX_INDEXED_BYTES) {
+    if (fileStat.size > state.budget.maxFileBytes) {
       graph.exclusions.push({ path: relativePath, reason: "large-file" });
       continue;
     }
     let content;
     try {
-      content = await readFile6(absolute, "utf8");
+      content = await readFile11(absolute, "utf8");
     } catch {
       addUnreadable(graph, relativePath);
       continue;
@@ -21654,6 +22696,13 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
     if (content.includes("\0")) {
       graph.exclusions.push({ path: relativePath, reason: "binary" });
       continue;
+    }
+    if (isGeneratedFile(relativePath, content)) {
+      if (state.generatedFiles >= state.budget.maxGeneratedFiles) {
+        graph.exclusions.push({ path: relativePath, reason: "budget" });
+        continue;
+      }
+      state.generatedFiles += 1;
     }
     const kind = detectFileKind(relativePath, extension, content);
     const file = {
@@ -21671,7 +22720,11 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
     state.onFileContent?.({ path: relativePath, language: file.language, content });
     if (CODE_EXTENSIONS.has(extension)) {
       graph.imports.push(...extractImports(relativePath, content));
-      graph.symbols.push(...extractSymbols(relativePath, content));
+      if (TYPESCRIPT_EXTENSIONS.has(extension)) {
+        const extracted = await extractTypeScriptSymbols(relativePath, content, state.budget);
+        if (extracted.degradedReason) graph.exclusions.push({ path: relativePath, reason: "budget" });
+        graph.symbols.push(...extracted.symbols);
+      }
     }
   }
 }
@@ -21684,7 +22737,8 @@ async function scanProject(root, options) {
     imports: [],
     exclusions: []
   };
-  await walk(root, root, graph, ignoreScopes, { budget: budgetFromOptions(options), directories: 0, totalBytes: 0, onFileContent: options?.onFileContent }, 0);
+  const budget = budgetFromOptions(options);
+  await walk(root, root, graph, ignoreScopes, { budget, directories: 0, totalBytes: 0, generatedFiles: 0, onFileContent: options?.onFileContent, deadline: Date.now() + budget.wholeIndexTimeoutMs }, 0);
   graph.files.sort((a, b) => a.path.localeCompare(b.path));
   resolveLocalImports(root, graph);
   graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name));
@@ -21701,22 +22755,29 @@ async function scanProjectFileMetadata(root, options) {
   const files = [];
   const exclusions = [];
   const budget = budgetFromOptions(options);
+  const deadline = Date.now() + budget.wholeIndexTimeoutMs;
   let directories = 0;
   let fileCount = 0;
   let totalBytes = 0;
+  let generatedFiles = 0;
   async function walkSignature(current, depth, inheritedScopes) {
     const currentScopes = current === root ? inheritedScopes : await loadIgnoreScopes(current, inheritedScopes);
     let entries;
     try {
-      entries = await readdir2(current, { withFileTypes: true });
+      entries = await readdir3(current, { withFileTypes: true });
     } catch {
-      rows.push({ path: normalizePath(relative3(root, current)), reason: "unreadable" });
+      rows.push({ path: normalizePath(relative4(root, current)), reason: "unreadable" });
       return;
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
-      const absolute = join5(current, entry.name);
-      const relativePath = normalizePath(relative3(root, absolute));
+      if (Date.now() >= deadline) {
+        rows.push({ path: normalizePath(relative4(root, current)) || ".", reason: "budget" });
+        exclusions.push({ path: normalizePath(relative4(root, current)) || ".", reason: "budget" });
+        break;
+      }
+      const absolute = join8(current, entry.name);
+      const relativePath = normalizePath(relative4(root, absolute));
       if (entry.name === ".tokengraph") continue;
       if (relativePath && isIgnored(currentScopes, absolute, entry.isDirectory())) {
         rows.push({ path: relativePath, reason: "ignored" });
@@ -21770,14 +22831,14 @@ async function scanProjectFileMetadata(root, options) {
         exclusions.push({ path: relativePath, reason: "budget" });
         continue;
       }
-      if (size > MAX_INDEXED_BYTES) {
+      if (size > budget.maxFileBytes) {
         rows.push({ path: relativePath, reason: "large-file" });
         exclusions.push({ path: relativePath, reason: "large-file" });
         continue;
       }
       let content;
       try {
-        content = await readFile6(absolute, "utf8");
+        content = await readFile11(absolute, "utf8");
       } catch {
         rows.push({ path: relativePath, reason: "unreadable" });
         exclusions.push({ path: relativePath, reason: "unreadable" });
@@ -21787,6 +22848,14 @@ async function scanProjectFileMetadata(root, options) {
         rows.push({ path: relativePath, reason: "binary" });
         exclusions.push({ path: relativePath, reason: "binary" });
         continue;
+      }
+      if (isGeneratedFile(relativePath, content)) {
+        if (generatedFiles >= budget.maxGeneratedFiles) {
+          rows.push({ path: relativePath, reason: "budget" });
+          exclusions.push({ path: relativePath, reason: "budget" });
+          continue;
+        }
+        generatedFiles += 1;
       }
       const metadata = {
         path: relativePath,
@@ -21808,12 +22877,20 @@ async function scanProjectFileMetadata(root, options) {
   await walkSignature(root, 0, ignoreScopes);
   files.sort((a, b) => a.path.localeCompare(b.path));
   exclusions.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, exclusions, scanSignature: hashText(JSON.stringify(rows)) };
+  const configurationRows = [];
+  for (const path of CONFIGURATION_FILES) {
+    try {
+      configurationRows.push({ path, contentHash: hashText(await readFile11(join8(root, path), "utf8")) });
+    } catch (error2) {
+      if (error2.code !== "ENOENT") configurationRows.push({ path, contentHash: "unreadable" });
+    }
+  }
+  return { files, exclusions, scanSignature: hashText(JSON.stringify({ rows, configurationRows })) };
 }
-async function scanProjectFile(root, metadata) {
+async function scanProjectFile(root, metadata, options = {}) {
   let content;
   try {
-    content = await readFile6(join5(root, metadata.path), "utf8");
+    content = await readFile11(join8(root, metadata.path), "utf8");
   } catch {
     return void 0;
   }
@@ -21830,16 +22907,22 @@ async function scanProjectFile(root, metadata) {
     route: metadata.route,
     isTest: metadata.isTest
   };
+  const limits = budgetFromOptions(options);
+  const parsed = TYPESCRIPT_EXTENSIONS.has(metadata.extension) ? await extractTypeScriptSymbols(metadata.path, content, limits) : options.polyglotEnabled ? await extractPolyglotSymbols(metadata.path, metadata.extension, content, options) : { symbols: [] };
+  const selectedSymbols = parsed.symbols.slice(0, limits.maxSymbols);
   return {
     file,
     imports: CODE_EXTENSIONS.has(metadata.extension) ? extractImports(metadata.path, content) : [],
-    symbols: CODE_EXTENSIONS.has(metadata.extension) ? extractSymbols(metadata.path, content) : [],
-    content
+    symbols: selectedSymbols,
+    content,
+    ...parsed.degradedReason || parsed.symbols.length > limits.maxSymbols ? { degradedReason: parsed.degradedReason ?? "symbol limit exceeded" } : {}
   };
 }
 
 // src/core/projectIndexer.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
+import { access as access4, readFile as readFile12 } from "node:fs/promises";
+import { dirname as dirname7, extname as extname2, isAbsolute as isAbsolute4, relative as relative5, resolve as resolve8 } from "node:path";
 
 // src/core/sqlParser.ts
 function normalizeSqlName(name) {
@@ -22358,9 +23441,9 @@ function mergeSqlGraphs(graphs) {
 }
 
 // src/core/symbolChunks.ts
-import { createHash as createHash3 } from "node:crypto";
-function idFor(symbol) {
-  return createHash3("sha256").update(JSON.stringify([
+import { createHash as createHash7 } from "node:crypto";
+function idFor2(symbol) {
+  return createHash7("sha256").update(JSON.stringify([
     symbol.filePath,
     symbol.name,
     symbol.kind,
@@ -22370,21 +23453,81 @@ function idFor(symbol) {
   ])).digest("hex");
 }
 function buildSymbolChunks(project) {
+  const files = new Map((project.files ?? []).map((file) => [file.path, file]));
+  const edges = /* @__PURE__ */ new Map();
+  for (const edge of project.imports ?? []) {
+    if (!edge.resolvedPath) continue;
+    edges.set(edge.filePath, [...edges.get(edge.filePath) ?? [], edge.resolvedPath]);
+  }
   return project.symbols.map((symbol) => ({
-    id: idFor(symbol),
+    id: idFor2(symbol),
     filePath: symbol.filePath,
     symbolName: symbol.name,
     kind: symbol.kind,
     exported: symbol.exported,
     ...symbol.startLine === void 0 ? {} : { startLine: symbol.startLine },
-    ...symbol.endLine === void 0 ? {} : { endLine: symbol.endLine }
+    ...symbol.endLine === void 0 ? {} : { endLine: symbol.endLine },
+    ...symbol.signature === void 0 ? {} : { signature: symbol.signature },
+    ...symbol.summary === void 0 ? {} : { summary: symbol.summary },
+    ...edges.has(symbol.filePath) ? { edges: [...new Set(edges.get(symbol.filePath) ?? [])].sort() } : {},
+    ...symbol.provenance === void 0 ? {} : { provenance: symbol.provenance },
+    ...files.get(symbol.filePath)?.contentHash ? { contentHash: files.get(symbol.filePath).contentHash } : {},
+    ...symbol.parserVersion === void 0 ? {} : { parserVersion: symbol.parserVersion }
   })).sort((a, b) => a.filePath.localeCompare(b.filePath) || a.symbolName.localeCompare(b.symbolName) || a.id.localeCompare(b.id));
+}
+
+// src/core/configData.ts
+import { Worker as Worker4 } from "node:worker_threads";
+var DEFAULT_LIMITS = { maxBytes: 512 * 1024, maxDepth: 32, maxNodes: 2e4, timeoutMs: 2e3 };
+async function parseConfigurationDataBounded(text, options = {}) {
+  const limits = { ...DEFAULT_LIMITS, ...options };
+  if (Buffer.byteLength(text, "utf8") > limits.maxBytes) throw new Error("Configuration byte limit exceeded.");
+  const workerSource = `
+    const { parentPort, workerData } = require("node:worker_threads");
+    const unsafe = new Set(["__proto__", "prototype", "constructor"]);
+    const stripComments = (value) => value.replace(/\\/\\*[\\s\\S]*?\\*\\//g, "").replace(/(^|\\s)\\/\\/.*$/gm, "$1");
+    const stripCommas = (value) => value.replace(/,\\s*([}\\]])/g, "$1");
+    const validate = (value, limits, depth = 0, counter = { value: 0 }) => {
+      counter.value += 1;
+      if (counter.value > limits.maxNodes) throw new Error("Configuration node limit exceeded.");
+      if (depth > limits.maxDepth) throw new Error("Configuration nesting limit exceeded.");
+      if (!value || typeof value !== "object") return;
+      for (const [key, entry] of Object.entries(value)) {
+        if (unsafe.has(key)) throw new Error("Unsafe configuration key " + key + ".");
+        validate(entry, limits, depth + 1, counter);
+      }
+    };
+    try {
+      const parsed = JSON.parse(stripCommas(stripComments(workerData.text)));
+      validate(parsed, workerData.limits);
+      parentPort.postMessage({ ok: true, value: parsed });
+    } catch (error) {
+      parentPort.postMessage({ ok: false, message: error instanceof Error ? error.message : String(error) });
+    }
+  `;
+  return new Promise((resolve13, reject) => {
+    const worker = new Worker4(workerSource, { eval: true, workerData: { text, limits } });
+    const timer = setTimeout(() => {
+      void worker.terminate();
+      reject(new Error("Configuration parser worker timed out."));
+    }, limits.timeoutMs);
+    worker.once("message", (message) => {
+      clearTimeout(timer);
+      void worker.terminate();
+      if (message.ok) resolve13(message.value);
+      else reject(new Error(message.message ?? "Configuration parsing failed."));
+    });
+    worker.once("error", (error2) => {
+      clearTimeout(timer);
+      reject(error2);
+    });
+  });
 }
 
 // src/core/projectIndexer.ts
 var CURRENT_INDEX_SCHEMA_VERSION = 3;
 function fingerprintPayload(value) {
-  return createHash4("sha256").update(JSON.stringify(value)).digest("hex");
+  return createHash8("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function detectFrameworks(files) {
   const frameworks = /* @__PURE__ */ new Set();
@@ -22401,6 +23544,15 @@ function detectFrameworks(files) {
     frameworks.add("TypeScript");
   }
   return Array.from(frameworks).sort();
+}
+function unsupportedLanguageCounts(graph) {
+  const counts = {};
+  for (const exclusion of graph.exclusions) {
+    if (exclusion.reason !== "unsupported") continue;
+    const extension = extname2(exclusion.path).toLowerCase() || "<extensionless>";
+    counts[extension] = (counts[extension] ?? 0) + 1;
+  }
+  return Object.fromEntries(Object.entries(counts).sort(([left], [right]) => left.localeCompare(right)));
 }
 function scanMetadataFromFiles(files) {
   return {
@@ -22452,36 +23604,127 @@ function sortGraph(graph) {
   graph.imports.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.source.localeCompare(b.source));
   graph.exclusions.sort((a, b) => a.path.localeCompare(b.path));
 }
-function buildProjectIndex(root, graph, sql, scanSignature, scanMetadata) {
+function configurationExtends(parsed) {
+  if (!parsed || typeof parsed !== "object" || !("extends" in parsed)) return [];
+  const value = parsed.extends;
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) return value;
+  if (value === void 0) return [];
+  throw new Error("Configuration extends must be a string or an array of strings.");
+}
+function configurationAliasCount(parsed) {
+  if (!parsed || typeof parsed !== "object") return 0;
+  const compilerOptions = parsed.compilerOptions;
+  if (!compilerOptions || typeof compilerOptions !== "object") return 0;
+  const paths = compilerOptions.paths;
+  return paths && typeof paths === "object" && !Array.isArray(paths) ? Object.keys(paths).length : 0;
+}
+async function validateTsconfigChain(root, configPath2, parsed, limits, visited = /* @__PURE__ */ new Set(), depth = 1, aliases = { count: 0 }) {
+  const maxChain = limits?.maxTsconfigChain ?? 8;
+  const maxAliases = limits?.maxAliases ?? 500;
+  if (depth > maxChain) throw new Error("Configuration extends-chain limit exceeded.");
+  const key = configPath2.replaceAll("\\", "/").toLowerCase();
+  if (visited.has(key)) throw new Error("Cyclic configuration extends chain detected.");
+  visited.add(key);
+  aliases.count += configurationAliasCount(parsed);
+  if (aliases.count > maxAliases) throw new Error("Configuration path-alias limit exceeded.");
+  for (const extended of configurationExtends(parsed)) {
+    if (isAbsolute4(extended) || !extended.startsWith(".")) {
+      throw new Error("Only workspace-relative configuration extends entries are supported.");
+    }
+    const candidate = resolve8(dirname7(resolve8(root, configPath2)), extended);
+    const withExtension = extname2(candidate) ? candidate : `${candidate}.json`;
+    const relativePath = relative5(resolve8(root), withExtension).replaceAll("\\", "/");
+    const absolute = await resolveConfinedPath(root, relativePath);
+    const source = await readFile12(absolute, "utf8");
+    const nested = await parseConfigurationDataBounded(source, limits);
+    await validateTsconfigChain(root, relativePath, nested, limits, visited, depth + 1, aliases);
+  }
+  visited.delete(key);
+}
+async function configurationEvidence(root, limits) {
+  const candidates = ["tsconfig.json", "jsconfig.json", ".eslintrc.json", ".prettierrc.json"];
+  const evidence = [];
+  for (const path of candidates) {
+    const absolute = `${root}/${path}`;
+    try {
+      await access4(absolute);
+      const source = await readFile12(absolute, "utf8");
+      const contentHash = createHash8("sha256").update(source.replace(/\r\n?/g, "\n")).digest("hex");
+      try {
+        const parsed = await parseConfigurationDataBounded(source, limits);
+        if (path === "tsconfig.json" || path === "jsconfig.json") {
+          await validateTsconfigChain(root, path, parsed, limits);
+        }
+        evidence.push({ path, status: "parsed", contentHash });
+      } catch (error2) {
+        evidence.push({ path, status: "degraded", contentHash, reason: error2 instanceof Error ? error2.message : String(error2) });
+      }
+    } catch (error2) {
+      if (error2.code !== "ENOENT") evidence.push({ path, status: "degraded", contentHash: "", reason: "unreadable" });
+    }
+  }
+  return evidence;
+}
+async function buildProjectIndex(root, graph, sql, scanSignature, scanMetadata, parserLimits) {
+  const [configuration, repositoryIdentity] = await Promise.all([
+    configurationEvidence(root, parserLimits),
+    getRepositoryIdentity(root)
+  ]);
   const fingerprint = fingerprintPayload({
     files: graph.files,
     symbols: graph.symbols,
     imports: graph.imports,
     exclusions: graph.exclusions,
-    sql
+    sql,
+    configuration,
+    unsupportedLanguageCounts: unsupportedLanguageCounts(graph)
   });
   return {
     ...graph,
     schemaVersion: CURRENT_INDEX_SCHEMA_VERSION,
+    repositoryIdentity,
     scannedAt: (/* @__PURE__ */ new Date()).toISOString(),
     fingerprint,
     scanSignature,
     scanMetadata,
     frameworks: detectFrameworks(graph.files),
     sql,
-    symbolChunks: buildSymbolChunks(graph)
+    symbolChunks: buildSymbolChunks(graph),
+    unsupportedLanguageCounts: unsupportedLanguageCounts(graph),
+    ...configuration.length ? { configuration } : {}
   };
 }
 async function indexProject(root, options = {}) {
-  const metadata = await scanProjectFileMetadata(root);
+  const scanLimits = {
+    maxFileBytes: options.parserLimits?.maxFileBytes ?? options.parserLimits?.maxBytes,
+    maxTotalBytes: options.parserLimits?.maxTotalBytes,
+    maxSymbols: options.parserLimits?.maxSymbols,
+    maxNodes: options.parserLimits?.maxNodes,
+    perFileTimeoutMs: options.parserLimits?.perFileTimeoutMs ?? options.parserLimits?.timeoutMs,
+    wholeIndexTimeoutMs: options.parserLimits?.wholeIndexTimeoutMs,
+    maxDepth: options.parserLimits?.maxDepth,
+    maxGeneratedFiles: options.parserLimits?.maxGeneratedFiles,
+    polyglotEnabled: options.polyglotEnabled === true
+  };
+  const metadata = await scanProjectFileMetadata(root, scanLimits);
   const sqlContents = /* @__PURE__ */ new Map();
   const graph = await scanProject(root, {
+    ...scanLimits,
     onFileContent: (file) => {
       if (file.language === "sql") {
         sqlContents.set(file.path, file.content);
       }
     }
   });
+  for (const file of options.polyglotEnabled === true ? metadata.files.filter((candidate) => [".py", ".go", ".rs", ".java"].includes(candidate.extension)) : []) {
+    const parsed = await scanProjectFile(root, file, scanLimits);
+    if (parsed) {
+      graph.symbols.push(...parsed.symbols);
+      if (parsed.degradedReason) graph.exclusions.push({ path: file.path, reason: "budget" });
+    }
+  }
+  graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name) || (a.startLine ?? 0) - (b.startLine ?? 0));
   const sqlGraphs = [];
   for (const file of graph.files.filter((candidate) => candidate.language === "sql").sort((a, b) => a.path.localeCompare(b.path))) {
     const sql = sqlContents.get(file.path);
@@ -22490,15 +23733,26 @@ async function indexProject(root, options = {}) {
     }
     sqlGraphs.push(parsePostgresMigration(file.path, sql));
   }
-  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), options.scanSignature ?? metadata.scanSignature, scanMetadataFromFiles(metadata.files));
+  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), options.scanSignature ?? metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits);
 }
 function metadataChanged(previous, current) {
   return !previous || previous.contentHash !== current.contentHash || previous.language !== current.language || previous.extension !== current.extension;
 }
-async function updateProjectIndexIncremental(root, existingIndex) {
+async function updateProjectIndexIncremental(root, existingIndex, options = {}) {
+  const scanLimits = {
+    maxFileBytes: options.parserLimits?.maxFileBytes ?? options.parserLimits?.maxBytes,
+    maxTotalBytes: options.parserLimits?.maxTotalBytes,
+    maxSymbols: options.parserLimits?.maxSymbols,
+    maxNodes: options.parserLimits?.maxNodes,
+    perFileTimeoutMs: options.parserLimits?.perFileTimeoutMs ?? options.parserLimits?.timeoutMs,
+    wholeIndexTimeoutMs: options.parserLimits?.wholeIndexTimeoutMs,
+    maxDepth: options.parserLimits?.maxDepth,
+    maxGeneratedFiles: options.parserLimits?.maxGeneratedFiles,
+    polyglotEnabled: options.polyglotEnabled === true
+  };
   if (existingIndex.root !== root) {
     return {
-      index: await indexProject(root),
+      index: await indexProject(root, options),
       mode: "full",
       addedFiles: [],
       changedFiles: [],
@@ -22509,7 +23763,7 @@ async function updateProjectIndexIncremental(root, existingIndex) {
   }
   if (!isCompatibleIndex(existingIndex)) {
     return {
-      index: await indexProject(root),
+      index: await indexProject(root, options),
       mode: "full",
       addedFiles: [],
       changedFiles: [],
@@ -22518,7 +23772,7 @@ async function updateProjectIndexIncremental(root, existingIndex) {
       fallbackReason: "Stored index schema metadata is incompatible with incremental indexing."
     };
   }
-  const metadata = await scanProjectFileMetadata(root);
+  const metadata = await scanProjectFileMetadata(root, scanLimits);
   const currentByPath = new Map(metadata.files.map((file) => [file.path, file]));
   const previousMetadata = existingIndex.scanMetadata?.files ?? {};
   const previousPaths = new Set(existingIndex.files.map((file) => file.path));
@@ -22537,7 +23791,7 @@ async function updateProjectIndexIncremental(root, existingIndex) {
     if (!fileMetadata) {
       continue;
     }
-    const parsed = await scanProjectFile(root, fileMetadata);
+    const parsed = await scanProjectFile(root, fileMetadata, scanLimits);
     if (!parsed) {
       continue;
     }
@@ -22569,7 +23823,7 @@ async function updateProjectIndexIncremental(root, existingIndex) {
     ...parsedSqlGraphs
   ]);
   return {
-    index: buildProjectIndex(root, graph, sql, metadata.scanSignature, scanMetadataFromFiles(metadata.files)),
+    index: await buildProjectIndex(root, graph, sql, metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits),
     mode: "incremental",
     addedFiles,
     changedFiles,
@@ -22593,9 +23847,28 @@ function comparableIndex(project) {
 function isFreshProjectIndex(stored, current) {
   return stored.fingerprint === current.fingerprint && JSON.stringify(comparableIndex(stored)) === JSON.stringify(comparableIndex(current));
 }
-async function getIndexStatus(root) {
-  const currentScanSignature = await scanProjectSignature(root);
+async function getIndexStatus(root, options = {}) {
   const stored = await loadProjectIndex(root);
+  if (options.probeOnly) {
+    return stored ? {
+      root,
+      state: "fresh",
+      hasIndex: true,
+      storedScannedAt: stored.scannedAt,
+      currentScannedAt: stored.scannedAt,
+      storedFingerprint: stored.fingerprint,
+      currentFingerprint: stored.fingerprint,
+      storedScanSignature: stored.scanSignature,
+      currentScanSignature: stored.scanSignature
+    } : {
+      root,
+      state: "missing",
+      hasIndex: false,
+      currentScannedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      currentFingerprint: "not-scanned"
+    };
+  }
+  const currentScanSignature = await scanProjectSignature(root, options.projectOptions?.parserLimits);
   if (!stored) {
     return {
       root,
@@ -22609,7 +23882,7 @@ async function getIndexStatus(root) {
   const storedFingerprint = typeof stored.fingerprint === "string" ? stored.fingerprint : void 0;
   const storedScanSignature = stored.scanSignature;
   const signatureFresh = storedScanSignature !== void 0 && storedScanSignature === currentScanSignature;
-  const current = signatureFresh ? void 0 : await indexProject(root, { scanSignature: currentScanSignature });
+  const current = signatureFresh ? void 0 : await indexProject(root, { ...options.projectOptions, scanSignature: currentScanSignature });
   const state = signatureFresh || current && isFreshProjectIndex(stored, current) ? "fresh" : "stale";
   return {
     root,
@@ -22804,8 +24077,8 @@ ${input.text}`, plan.relevantSql);
 
 // src/core/memoryStore.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { mkdir as mkdir3, readFile as readFile7, rename as rename3, rm as rm5, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname4, join as join6, resolve as resolve5 } from "node:path";
+import { readFile as readFile13, rename as rename3 } from "node:fs/promises";
+import { resolve as resolve9 } from "node:path";
 var DEFAULT_SOURCE = "manual";
 var CURRENT_MEMORY_SCHEMA_VERSION = 1;
 function nowIso2() {
@@ -22813,6 +24086,18 @@ function nowIso2() {
 }
 function unique4(values) {
   return Array.from(new Set((values ?? []).filter((value) => typeof value === "string" && value.trim().length > 0).map((value) => value.trim())));
+}
+function isRepositorySource(source) {
+  return /(?:repository|workspace|indexed|untrusted|source[-_ ]?(?:text|prose)|file[-_ ]?content)/i.test(source ?? "");
+}
+function sanitizeRepositoryMemory(memory) {
+  if (!isRepositorySource(memory.source)) return memory;
+  return {
+    ...memory,
+    title: filterUntrustedSourceText(memory.title),
+    body: filterUntrustedSourceText(memory.body),
+    evidence: memory.evidence.map(filterUntrustedSourceText).filter(Boolean)
+  };
 }
 function scoreMemory(memory, terms2) {
   const haystack = tokenize(
@@ -22838,7 +24123,7 @@ function normalizeMemory(value) {
   }
   const status = candidate.status === "deprecated" || candidate.status === "deleted" ? candidate.status : "active";
   const createdAt = candidate.createdAt;
-  return {
+  return sanitizeRepositoryMemory({
     type: candidate.type,
     title: candidate.title,
     body: candidate.body,
@@ -22858,11 +24143,11 @@ function normalizeMemory(value) {
     supersededBy: unique4(candidate.supersededBy),
     source: typeof candidate.source === "string" && candidate.source.trim() ? candidate.source : DEFAULT_SOURCE,
     evidence: unique4(candidate.evidence)
-  };
+  });
 }
 function createMemory(input) {
   const timestamp = nowIso2();
-  return {
+  return sanitizeRepositoryMemory({
     type: input.type,
     title: input.title,
     body: input.body,
@@ -22880,10 +24165,10 @@ function createMemory(input) {
     supersededBy: unique4(input.supersededBy),
     source: input.source?.trim() || DEFAULT_SOURCE,
     evidence: unique4(input.evidence)
-  };
+  });
 }
 function mergeMemory(memory, update) {
-  return {
+  return sanitizeRepositoryMemory({
     ...memory,
     ...update,
     tags: update.tags ? unique4(update.tags) : memory.tags,
@@ -22900,7 +24185,7 @@ function mergeMemory(memory, update) {
     confidence: update.confidence ?? memory.confidence,
     source: update.source?.trim() || memory.source,
     updatedAt: nowIso2()
-  };
+  });
 }
 function filterByStatus(memories, options) {
   return memories.filter((memory) => {
@@ -23061,7 +24346,7 @@ var MemoryStore = class _MemoryStore {
   }
   async readAll() {
     try {
-      const raw = await readFile7(this.filePath, "utf8");
+      const raw = await readFile13(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
       const records = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.memories) ? parsed.memories : [];
       return records.map(normalizeMemory).filter((memory) => Boolean(memory));
@@ -23077,7 +24362,7 @@ var MemoryStore = class _MemoryStore {
     }
   }
   async enqueueWrite(operation) {
-    const key = resolve5(this.filePath);
+    const key = resolve9(this.filePath);
     const previous = _MemoryStore.writeChains.get(key) ?? Promise.resolve();
     const current = previous.then(
       () => withFileLock(`${key}.lock`, operation),
@@ -23093,26 +24378,10 @@ var MemoryStore = class _MemoryStore {
     return current;
   }
   async writeAtomic(memories) {
-    const directory = dirname4(this.filePath);
-    await mkdir3(directory, { recursive: true });
-    const tempPath = join6(directory, `.memory-${process.pid}-${Date.now()}-${randomUUID3()}.tmp`);
-    try {
-      await writeFile3(
-        tempPath,
-        `${JSON.stringify(
-          {
-            schemaVersion: CURRENT_MEMORY_SCHEMA_VERSION,
-            memories
-          },
-          null,
-          2
-        )}
-`
-      );
-      await rename3(tempPath, this.filePath);
-    } finally {
-      await rm5(tempPath, { force: true });
-    }
+    await writeJsonAtomic(this.filePath, {
+      schemaVersion: CURRENT_MEMORY_SCHEMA_VERSION,
+      memories
+    });
   }
   async quarantineCorruptFile() {
     const corruptPath = `${this.filePath}.corrupt-${Date.now()}-${randomUUID3().slice(0, 8)}`;
@@ -23166,14 +24435,14 @@ function relatedCode(project, changedFiles, task = "") {
     }
   }
   const changedBases = changedFiles.map((path) => path.replace(/\.[^.]+$/, ""));
-  const normalize2 = (term) => term.length > 4 && term.endsWith("s") ? term.slice(0, -1) : term;
-  const taskTerms = new Set(tokenize(task).flatMap((term) => term.split(/[_/.$\[\]-]+/)).map(normalize2).filter((term) => term.length >= 4 && !["asses", "change", "risk", "policy", "migration", "tenant"].includes(term)));
+  const normalize3 = (term) => term.length > 4 && term.endsWith("s") ? term.slice(0, -1) : term;
+  const taskTerms = new Set(tokenize(task).flatMap((term) => term.split(/[_/.$\[\]-]+/)).map(normalize3).filter((term) => term.length >= 4 && !["asses", "change", "risk", "policy", "migration", "tenant"].includes(term)));
   const affectedTests = project.files.filter((file) => {
     if (!file.isTest) return false;
     if (changed.has(file.path)) return true;
     const importsChanged = project.imports.some((edge) => edge.filePath === file.path && edge.resolvedPath !== void 0 && changed.has(edge.resolvedPath));
     const nameMatches = changedBases.some((base2) => file.path.includes(base2));
-    const testTerms = new Set(tokenize(file.path).flatMap((term) => term.split(/[_/.$\[\]-]+/)).map(normalize2));
+    const testTerms = new Set(tokenize(file.path).flatMap((term) => term.split(/[_/.$\[\]-]+/)).map(normalize3));
     const taskMatches = [...taskTerms].some((term) => testTerms.has(term));
     return importsChanged || nameMatches || taskMatches;
   }).map((file) => fileScore(file.path, "Test is linked to a changed file.", 85));
@@ -23354,9 +24623,11 @@ function matchedTerms(memory, terms2) {
   const haystack = tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`);
   return terms2.filter((term) => haystack.some((part) => part.includes(term) || term.includes(part)));
 }
+var REVIEW_STOPWORDS = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "of", "on", "or", "the", "to", "use", "with"]);
 async function reviewMemories({ memories, query = "", limit = 20 }) {
   const normalizedLimit = Math.max(1, Math.min(limit, 100));
-  const terms2 = tokenize(query);
+  const terms2 = tokenize(query).filter((term) => term.length > 2 && !REVIEW_STOPWORDS.has(term));
+  const emptyQuery = query.trim().length === 0;
   const matches = memories.map((memory) => {
     const hits = matchedTerms(memory, terms2);
     return {
@@ -23369,8 +24640,8 @@ async function reviewMemories({ memories, query = "", limit = 20 }) {
       confidence: memory.confidence,
       score: hits.length,
       matchedTerms: hits,
-      action: hits.length > 0 || terms2.length === 0 ? "keep" : "review",
-      reason: hits.length > 0 ? `Matched ${hits.length} review term${hits.length === 1 ? "" : "s"}: ${hits.join(", ")}.` : terms2.length === 0 ? "Included because no review query was provided." : "No query terms matched; review whether this memory is still useful."
+      action: hits.length > 0 || emptyQuery ? "keep" : "review",
+      reason: hits.length > 0 ? `Matched ${hits.length} review term${hits.length === 1 ? "" : "s"}: ${hits.join(", ")}.` : emptyQuery ? "Included because no review query was provided." : "No query terms matched; review whether this memory is still useful."
     };
   }).sort((a, b) => b.score - a.score || b.createdAt.localeCompare(a.createdAt)).slice(0, normalizedLimit);
   return {
@@ -23550,7 +24821,7 @@ function formatTaskReportFooter(report) {
 }
 
 // src/core/wiki.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash9 } from "node:crypto";
 import { posix } from "node:path";
 var CURRENT_WIKI_SCHEMA_VERSION = 1;
 var LIST_LIMIT = 20;
@@ -23570,7 +24841,7 @@ function pageSourceFingerprints(index, draft, applications) {
   const reviewed = applications.flatMap(
     (application) => application.sources.map((source) => `${source.kind}:${source.sourceId}:${source.fingerprint}`)
   );
-  const indexedFingerprint = indexed.length ? [`index:${createHash5("sha256").update(JSON.stringify(indexed.sort())).digest("hex")}`] : [];
+  const indexedFingerprint = indexed.length ? [`index:${createHash9("sha256").update(JSON.stringify(indexed.sort())).digest("hex")}`] : [];
   return Array.from(/* @__PURE__ */ new Set([...indexedFingerprint, ...reviewed])).sort();
 }
 function sourceIsStale(index, application) {
@@ -23779,12 +25050,53 @@ function buildProjectWiki(index, memories, applications = []) {
   };
 }
 
+// src/core/vaultProjection.ts
+import { createHash as createHash10 } from "node:crypto";
+function safeName(value) {
+  return value.replace(/[^a-zA-Z0-9 _-]+/g, "-").trim().replace(/\s+/g, "-").toLowerCase() || "untitled";
+}
+function projectToVault(memories, options = {}) {
+  const folder = options.folder ?? "tokengraph";
+  const byId = new Map(memories.map((memory) => [memory.id, memory]));
+  const superseded = new Set(memories.map((memory) => memory.supersedes).filter((id) => Boolean(id)));
+  const notes = [];
+  for (const memory of [...memories].sort((a, b) => a.id.localeCompare(b.id))) {
+    const body = filterUntrustedSourceText(memory.body).trim();
+    const backlinks = [...new Set((memory.links ?? []).filter((id) => byId.has(id)))].sort();
+    const links = backlinks.map((id) => `[[${safeName(byId.get(id).title)}]]`).join(" ");
+    const content = `---
+id: ${memory.id}
+title: ${memory.title.replace(/[\r\n]/g, " ")}
+updated: ${memory.updatedAt}
+archived: ${Boolean(memory.archived || superseded.has(memory.id))}
+---
+
+${body}${links ? `
+
+${links}` : ""}
+`;
+    notes.push({ path: `${folder}/${safeName(memory.title)}-${memory.id}.md`, title: memory.title, body: content, hash: createHash10("sha256").update(content).digest("hex"), backlinks, archived: Boolean(memory.archived || superseded.has(memory.id)) });
+  }
+  return compactVaultNotes(notes, options.maxBytes ?? Number.MAX_SAFE_INTEGER);
+}
+function compactVaultNotes(notes, maxBytes) {
+  const output = [];
+  let used = 0;
+  for (const note of [...notes].sort((a, b) => Number(a.archived) - Number(b.archived) || a.path.localeCompare(b.path))) {
+    const bytes = Buffer.byteLength(note.body, "utf8");
+    if (used + bytes > maxBytes) continue;
+    output.push(note);
+    used += bytes;
+  }
+  return output.sort((a, b) => a.path.localeCompare(b.path));
+}
+
 // src/core/taskLedger.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { readFile as readFile8, readdir as readdir3, rename as rename4, rm as rm6 } from "node:fs/promises";
-import { join as join7, resolve as resolve6 } from "node:path";
+import { readFile as readFile14, readdir as readdir4, rename as rename4, rm as rm6 } from "node:fs/promises";
+import { join as join9, resolve as resolve10 } from "node:path";
 var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
-var TASK_LEDGER_SCHEMA_VERSION = 1;
+var TASK_LEDGER_SCHEMA_VERSION = 2;
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var taskLedgerWriteChains = /* @__PURE__ */ new Map();
 function assertTaskId(taskId) {
@@ -23793,11 +25105,11 @@ function assertTaskId(taskId) {
   }
 }
 function tasksDirectory(root) {
-  return join7(resolve6(root), ".tokengraph", "tasks");
+  return join9(resolve10(root), ".tokengraph", "tasks");
 }
 function taskLedgerPath(root, taskId) {
   assertTaskId(taskId);
-  return join7(tasksDirectory(root), `${taskId}.json`);
+  return join9(tasksDirectory(root), `${taskId}.json`);
 }
 function isRecord2(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -23839,7 +25151,10 @@ function reconstructEvent(value) {
 function reconstructTaskLedger(value, expectedTaskId) {
   if (!isRecord2(value) || !Array.isArray(value.events)) return void 0;
   const events = value.events.map(reconstructEvent);
-  if (value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId || !["codex", "claude", "unknown"].includes(String(value.host)) || !["open", "paused", "completed", "quarantined"].includes(String(value.status)) || !isOptionalIdentifier(value.sessionId) || !isOptionalIdentifier(value.turnId) || !isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt) || value.pausedAt !== void 0 && !isTimestamp(value.pausedAt) || value.completedAt !== void 0 && !isTimestamp(value.completedAt) || value.estimatorVersion !== TASK_ESTIMATOR_VERSION || events.some((event) => event === void 0) || value.lastDisposition !== void 0 && value.lastDisposition !== "pause" && value.lastDisposition !== "complete" || Date.parse(value.updatedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) > Date.parse(value.updatedAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) < Date.parse(value.createdAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) > Date.parse(value.updatedAt)) {
+  const routingObservation = value.routingObservation === void 0 ? void 0 : reconstructRoutingObservation(value.routingObservation);
+  const readPolicy = value.readPolicy === void 0 ? void 0 : reconstructReadPolicy(value.readPolicy);
+  const deliveredArtifacts = value.deliveredArtifacts === void 0 ? [] : Array.isArray(value.deliveredArtifacts) && value.deliveredArtifacts.every((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 512) ? [...new Set(value.deliveredArtifacts)] : void 0;
+  if (value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== 1 && value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId || !["codex", "claude", "unknown"].includes(String(value.host)) || !["open", "paused", "completed", "quarantined"].includes(String(value.status)) || !isOptionalIdentifier(value.sessionId) || !isOptionalIdentifier(value.turnId) || !isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt) || value.pausedAt !== void 0 && !isTimestamp(value.pausedAt) || value.completedAt !== void 0 && !isTimestamp(value.completedAt) || value.estimatorVersion !== TASK_ESTIMATOR_VERSION || value.repositoryIdentity !== void 0 && !isRepositoryIdentity(value.repositoryIdentity) || value.routingObservation !== void 0 && routingObservation === void 0 || value.readPolicy !== void 0 && readPolicy === void 0 || deliveredArtifacts === void 0 || events.some((event) => event === void 0) || value.lastDisposition !== void 0 && value.lastDisposition !== "pause" && value.lastDisposition !== "complete" || Date.parse(value.updatedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) > Date.parse(value.updatedAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) < Date.parse(value.createdAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) > Date.parse(value.updatedAt)) {
     return void 0;
   }
   const completedReport = value.completedReport === void 0 ? void 0 : reconstructTaskReport(value.completedReport, expectedTaskId, events.length);
@@ -23866,9 +25181,43 @@ function reconstructTaskLedger(value, expectedTaskId) {
     ...value.pausedAt === void 0 ? {} : { pausedAt: value.pausedAt },
     ...value.completedAt === void 0 ? {} : { completedAt: value.completedAt },
     estimatorVersion: TASK_ESTIMATOR_VERSION,
+    ...value.repositoryIdentity === void 0 ? {} : { repositoryIdentity: value.repositoryIdentity },
+    ...routingObservation === void 0 ? {} : { routingObservation },
+    ...readPolicy === void 0 ? {} : { readPolicy },
+    deliveredArtifacts,
     events,
     ...value.lastDisposition === void 0 ? {} : { lastDisposition: value.lastDisposition },
     ...completedReport === void 0 ? {} : { completedReport }
+  };
+}
+function isRepositoryIdentity(value) {
+  if (!isRecord2(value)) return false;
+  return ["repositoryId", "repositoryFingerprint", "workspaceId", "worktreeId", "branch", "headCommit"].every((key) => isIdentifier(value[key]));
+}
+function reconstructRoutingObservation(value) {
+  if (!isRecord2(value)) return void 0;
+  if (value.decision !== "activate" && value.decision !== "bypass" || !Number.isInteger(value.stage) || value.stage < 0 || typeof value.reason !== "string" || typeof value.expectedOverheadTokens !== "number" || !Number.isFinite(value.expectedOverheadTokens) || value.expectedOverheadTokens < 0 || !["shadow", "enforced", "always-activate", "always-advisory"].includes(String(value.mode)) || typeof value.enforced !== "boolean") return void 0;
+  return {
+    decision: value.decision,
+    stage: value.stage,
+    reason: value.reason,
+    expectedOverheadTokens: value.expectedOverheadTokens,
+    mode: value.mode,
+    enforced: value.enforced
+  };
+}
+function reconstructReadPolicy(value) {
+  if (!isRecord2(value)) return void 0;
+  if (!["L0", "L1", "L2", "L3", "L4"].includes(String(value.level)) || typeof value.allowRawReads !== "boolean" || typeof value.reason !== "string" || value.targetedReads !== void 0 && (!Number.isInteger(value.targetedReads) || value.targetedReads < 0) || value.recommendedReadsThisResponse !== void 0 && (!Number.isInteger(value.recommendedReadsThisResponse) || value.recommendedReadsThisResponse < 0) || value.requiresReassessment !== void 0 && typeof value.requiresReassessment !== "boolean" || value.hasReassessed !== void 0 && typeof value.hasReassessed !== "boolean" || value.evidenceGap !== void 0 && typeof value.evidenceGap !== "string") return void 0;
+  return {
+    level: value.level,
+    allowRawReads: value.allowRawReads,
+    reason: value.reason,
+    ...value.targetedReads === void 0 ? {} : { targetedReads: value.targetedReads },
+    ...value.recommendedReadsThisResponse === void 0 ? {} : { recommendedReadsThisResponse: value.recommendedReadsThisResponse },
+    ...value.requiresReassessment === void 0 ? {} : { requiresReassessment: value.requiresReassessment },
+    ...value.hasReassessed === void 0 ? {} : { hasReassessed: value.hasReassessed },
+    ...value.evidenceGap === void 0 ? {} : { evidenceGap: value.evidenceGap }
   };
 }
 async function quarantine(path, now = /* @__PURE__ */ new Date()) {
@@ -23919,6 +25268,7 @@ async function createTaskLedger(root, options) {
   if (options.turnId !== void 0 && !isIdentifier(options.turnId)) throw new Error("Turn id must be non-empty.");
   const taskId = randomUUID4();
   const now = (/* @__PURE__ */ new Date()).toISOString();
+  const repositoryIdentity = await getRepositoryIdentity(root);
   const ledger = {
     schemaId: TASK_LEDGER_SCHEMA_ID,
     schemaVersion: TASK_LEDGER_SCHEMA_VERSION,
@@ -23930,6 +25280,8 @@ async function createTaskLedger(root, options) {
     createdAt: now,
     updatedAt: now,
     estimatorVersion: TASK_ESTIMATOR_VERSION,
+    repositoryIdentity,
+    deliveredArtifacts: [],
     events: []
   };
   await enqueueLedgerOperation(root, taskId, async () => {
@@ -23940,11 +25292,19 @@ async function createTaskLedger(root, options) {
 async function loadTaskLedger(root, taskId) {
   const path = taskLedgerPath(root, taskId);
   try {
-    const parsed = JSON.parse(await readFile8(path, "utf8"));
+    const parsed = JSON.parse(await readFile14(path, "utf8"));
+    if (isRecord2(parsed) && typeof parsed.schemaVersion === "number" && parsed.schemaVersion > TASK_LEDGER_SCHEMA_VERSION) {
+      throw new Error(`Task ledger schema ${parsed.schemaVersion} is newer than supported schema ${TASK_LEDGER_SCHEMA_VERSION}; refusing to modify it.`);
+    }
     const ledger = reconstructTaskLedger(parsed, taskId);
     if (!ledger) {
       await quarantine(path);
       return void 0;
+    }
+    if (!ledger.repositoryIdentity || isRecord2(parsed) && parsed.schemaVersion === 1) {
+      ledger.repositoryIdentity = await getRepositoryIdentity(root);
+      ledger.schemaVersion = TASK_LEDGER_SCHEMA_VERSION;
+      await writeJsonAtomic(path, ledger);
     }
     return ledger;
   } catch (error2) {
@@ -23955,6 +25315,41 @@ async function loadTaskLedger(root, taskId) {
     }
     throw error2;
   }
+}
+async function updateTaskRoutingObservation(root, taskId, observation) {
+  const sanitized = reconstructRoutingObservation(observation);
+  if (!sanitized) throw new Error("Routing observation is invalid.");
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
+    ledger.routingObservation = sanitized;
+    ledger.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    return ledger;
+  });
+}
+async function updateTaskReadPolicy(root, taskId, state) {
+  const sanitized = reconstructReadPolicy(state);
+  if (!sanitized) throw new Error("Read policy state is invalid.");
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
+    ledger.readPolicy = sanitized;
+    ledger.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    return ledger;
+  });
+}
+async function recordTaskArtifactDelivery(root, taskId, artifactKeys) {
+  const sanitized = [...new Set(artifactKeys.map((entry) => entry.trim()).filter((entry) => entry.length > 0 && entry.length <= 512))];
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
+    ledger.deliveredArtifacts = [.../* @__PURE__ */ new Set([...ledger.deliveredArtifacts, ...sanitized])];
+    ledger.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    return ledger;
+  });
 }
 async function discardEmptyTaskLedger(root, taskId) {
   return enqueueLedgerOperation(root, taskId, async () => {
@@ -24022,9 +25417,9 @@ async function setTaskDisposition(root, taskId, disposition, turnId, calibration
 }
 
 // src/core/knowledgeReviewQueue.ts
-import { createHash as createHash6, randomUUID as randomUUID5 } from "node:crypto";
-import { readFile as readFile9, realpath as realpath2 } from "node:fs/promises";
-import { isAbsolute as isAbsolute3, join as join8, relative as relative4, resolve as resolve7, win32 } from "node:path";
+import { createHash as createHash11, randomUUID as randomUUID5 } from "node:crypto";
+import { readFile as readFile15, realpath as realpath3 } from "node:fs/promises";
+import { isAbsolute as isAbsolute5, join as join10, relative as relative6, resolve as resolve11, win32 } from "node:path";
 var REVIEW_QUEUE_SCHEMA_VERSION = 3;
 var APPLICATION_SCHEMA_VERSION = 2;
 var DEFAULT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1e3;
@@ -24038,10 +25433,10 @@ var SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 var SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 var queueWriteChains = /* @__PURE__ */ new Map();
 function queuePath(root) {
-  return join8(resolve7(root), ".tokengraph", "review-queue.json");
+  return join10(resolve11(root), ".tokengraph", "review-queue.json");
 }
 function applicationPath(root) {
-  return join8(resolve7(root), ".tokengraph", "knowledge-applications.json");
+  return join10(resolve11(root), ".tokengraph", "knowledge-applications.json");
 }
 function nonEmptyString(value, label) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a non-empty string.`);
@@ -24078,7 +25473,7 @@ function validateTimestamp(value, label) {
 }
 function normalizeSourceId(value) {
   const sourceId = nonEmptyString(value, "Source id").replaceAll("\\", "/");
-  if (isAbsolute3(sourceId) || win32.isAbsolute(sourceId) || sourceId.startsWith("../") || sourceId.includes("/../") || !SOURCE_ID_PATTERN.test(sourceId)) {
+  if (isAbsolute5(sourceId) || win32.isAbsolute(sourceId) || sourceId.startsWith("../") || sourceId.includes("/../") || !SOURCE_ID_PATTERN.test(sourceId)) {
     throw new Error("Source ids must be privacy-safe relative paths or stable logical ids.");
   }
   return sourceId;
@@ -24132,7 +25527,7 @@ function normalizeAffectedTargets(value, type, legacyIdentifiers) {
   return result;
 }
 function suggestionFingerprint(input) {
-  return createHash6("sha256").update(JSON.stringify({
+  return createHash11("sha256").update(JSON.stringify({
     type: input.type,
     title: input.title,
     rationale: input.rationale,
@@ -24197,7 +25592,7 @@ function reconstructSuggestion(value, schemaVersion) {
     } : {}
   });
   if (persistedSources) proposal.sources = persistedSources;
-  const expectedFingerprint = schemaVersion === 1 ? createHash6("sha256").update(JSON.stringify({
+  const expectedFingerprint = schemaVersion === 1 ? createHash11("sha256").update(JSON.stringify({
     type: proposal.type,
     title: proposal.title,
     proposedContent: proposal.proposedContent,
@@ -24222,13 +25617,13 @@ function reconstructSuggestion(value, schemaVersion) {
 async function readQueue(root) {
   const path = queuePath(root);
   try {
-    const parsed = JSON.parse(await readFile9(path, "utf8"));
+    const parsed = JSON.parse(await readFile15(path, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Queue must be an object.");
-    const queue = parsed;
-    if (!hasExactKeys(queue, ["schemaVersion", "suggestions"]) || ![1, 2, 3].includes(queue.schemaVersion) || !Array.isArray(queue.suggestions)) {
+    const queue2 = parsed;
+    if (!hasExactKeys(queue2, ["schemaVersion", "suggestions"]) || ![1, 2, 3].includes(queue2.schemaVersion) || !Array.isArray(queue2.suggestions)) {
       throw new Error("Queue schema is invalid.");
     }
-    return queue.suggestions.map((suggestion) => reconstructSuggestion(suggestion, queue.schemaVersion));
+    return queue2.suggestions.map((suggestion) => reconstructSuggestion(suggestion, queue2.schemaVersion));
   } catch (error2) {
     if (error2.code === "ENOENT") return [];
     await quarantineCorruptJson(path);
@@ -24288,7 +25683,7 @@ function reconstructApplication(value, schemaVersion) {
 async function readApplications(root) {
   const path = applicationPath(root);
   try {
-    const parsed = JSON.parse(await readFile9(path, "utf8"));
+    const parsed = JSON.parse(await readFile15(path, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Application store must be an object.");
     const store = parsed;
     if (!hasExactKeys(store, ["schemaVersion", "applications"]) || ![1, 2].includes(store.schemaVersion) || !Array.isArray(store.applications)) {
@@ -24306,11 +25701,11 @@ async function readApplications(root) {
   }
 }
 function targetFiles(root, application) {
-  const base2 = join8(resolve7(root), ".tokengraph", "knowledge");
+  const base2 = join10(resolve11(root), ".tokengraph", "knowledge");
   return [
-    ...application.affectedTargets.wikiPages.map((slug) => join8(base2, "wiki", ...slug.split("/"), `${application.suggestionId}.md`)),
-    ...application.affectedTargets.memories.map((id) => join8(base2, "memories", id, `${application.suggestionId}.md`)),
-    ...application.affectedTargets.skills.map((name) => join8(base2, "skills", name, `${application.suggestionId}.md`))
+    ...application.affectedTargets.wikiPages.map((slug) => join10(base2, "wiki", ...slug.split("/"), `${application.suggestionId}.md`)),
+    ...application.affectedTargets.memories.map((id) => join10(base2, "memories", id, `${application.suggestionId}.md`)),
+    ...application.affectedTargets.skills.map((name) => join10(base2, "skills", name, `${application.suggestionId}.md`))
   ];
 }
 function applicationMarkdown(application) {
@@ -24331,11 +25726,11 @@ async function writeApplication(root, applications, application) {
 }
 async function ensureApplicationTargets(root, application) {
   const expected = applicationMarkdown(application);
-  const logicalBase = join8(resolve7(root), ".tokengraph", "knowledge");
+  const logicalBase = join10(resolve11(root), ".tokengraph", "knowledge");
   for (const logicalPath of targetFiles(root, application)) {
-    const path = await resolveConfinedPath(root, join8(".tokengraph", "knowledge", relative4(logicalBase, logicalPath)), true);
+    const path = await resolveConfinedPath(root, join10(".tokengraph", "knowledge", relative6(logicalBase, logicalPath)), true);
     try {
-      const existing = await readFile9(path, "utf8");
+      const existing = await readFile15(path, "utf8");
       if (existing !== expected) throw new Error("Applied knowledge target differs from its reviewed payload.");
     } catch (error2) {
       if (error2.code !== "ENOENT") throw error2;
@@ -24354,18 +25749,18 @@ async function assertFreshForApproval(root, suggestion) {
     if (source.kind !== "path") continue;
     let content;
     try {
-      const canonicalRoot = await realpath2(resolve7(root));
-      const canonicalSource = await realpath2(join8(canonicalRoot, ...source.sourceId.split("/")));
-      const confined = relative4(canonicalRoot, canonicalSource);
-      if (!confined || confined.startsWith("..") || isAbsolute3(confined)) {
+      const canonicalRoot = await realpath3(resolve11(root));
+      const canonicalSource = await realpath3(join10(canonicalRoot, ...source.sourceId.split("/")));
+      const confined = relative6(canonicalRoot, canonicalSource);
+      if (!confined || confined.startsWith("..") || isAbsolute5(confined)) {
         throw new Error(`Knowledge source ${source.sourceId} resolves outside the trusted workspace.`);
       }
-      content = await readFile9(canonicalSource);
+      content = await readFile15(canonicalSource);
     } catch (error2) {
       if (error2.code === "ENOENT") throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} is missing.`);
       throw error2;
     }
-    const current = createHash6("sha256").update(content.toString("utf8").replace(/\r\n?/g, "\n")).digest("hex");
+    const current = createHash11("sha256").update(content.toString("utf8").replace(/\r\n?/g, "\n")).digest("hex");
     if (current !== source.fingerprint) throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} fingerprint changed.`);
   }
 }
@@ -24584,7 +25979,7 @@ function taskHost(value) {
   return "unknown";
 }
 function eventFingerprint(taskId, toolName, category, operation) {
-  return createHash7("sha256").update(JSON.stringify({ taskId, toolName, category, operation })).digest("hex");
+  return createHash12("sha256").update(JSON.stringify({ taskId, toolName, category, operation })).digest("hex");
 }
 async function recordCoreEvent(input) {
   const overheadTokens = input.overheadTokens ?? coreEventOverheadTokens(input.taskId, input.toolName, input.category);
@@ -24606,19 +26001,19 @@ function coreEventOverheadTokens(taskId, toolName, category) {
   return estimateTokens(compactJson({ taskId, toolName, category }));
 }
 function ownPluginRoot() {
-  return resolve8(dirname5(fileURLToPath(import.meta.url)), "..");
+  return resolve12(dirname8(fileURLToPath3(import.meta.url)), "..");
 }
 async function isPluginRoot(root) {
   try {
-    const [realRoot, realSelf] = await Promise.all([realpath3(root), realpath3(ownPluginRoot())]);
+    const [realRoot, realSelf] = await Promise.all([realpath4(root), realpath4(ownPluginRoot())]);
     if (realRoot !== realSelf) return false;
     const hasManifest = await Promise.any([
-      access(join9(root, ".codex-plugin", "plugin.json")),
-      access(join9(root, ".claude-plugin", "plugin.json"))
+      access5(join11(root, ".codex-plugin", "plugin.json")),
+      access5(join11(root, ".claude-plugin", "plugin.json"))
     ]).then(() => true, () => false);
     const hasMcpConfig = await Promise.any([
-      access(join9(root, ".mcp.json")),
-      access(join9(root, ".mcp.claude.json"))
+      access5(join11(root, ".mcp.json")),
+      access5(join11(root, ".mcp.claude.json"))
     ]).then(() => true, () => false);
     return hasManifest && hasMcpConfig;
   } catch {
@@ -24633,7 +26028,7 @@ async function resolveTrustedWorkspace(server) {
   try {
     const roots = await server.server.listRoots({}, { timeout: 1e3 });
     const fileRoot = roots.roots.find((root) => root.uri.startsWith("file://"));
-    return fileRoot ? { source: "mcp-roots", root: fileURLToPath(fileRoot.uri) } : void 0;
+    return fileRoot ? { source: "mcp-roots", root: fileURLToPath3(fileRoot.uri) } : void 0;
   } catch {
     return void 0;
   }
@@ -24644,7 +26039,7 @@ function detectedHost() {
   return "unknown";
 }
 async function inspectWorkspaceSetup(server, provider) {
-  const cwd = await realpath3(process4.cwd());
+  const cwd = await realpath4(process4.cwd());
   const pluginRootLaunch = await isPluginRoot(cwd);
   const injected = provider ? await provider() : void 0;
   const candidate = injected ? { source: "injected", root: injected } : await resolveTrustedWorkspace(server) ?? (!pluginRootLaunch ? { source: "process-cwd", root: cwd } : void 0);
@@ -24667,21 +26062,21 @@ async function inspectWorkspaceSetup(server, provider) {
   }
   let root;
   try {
-    root = await realpath3(candidate.root);
+    root = await realpath4(candidate.root);
   } catch {
     return {
       status: "blocked",
       host: detectedHost(),
-      trustedWorkspace: { ...candidate, root: resolve8(candidate.root) },
+      trustedWorkspace: { ...candidate, root: resolve12(candidate.root) },
       blockingReason: "unreadable-trusted-workspace",
       pluginRootLaunch,
       message: "The host-provided TokenGraph workspace does not exist or is not readable.",
       nextSteps
     };
   }
-  const home = await realpath3(homedir());
+  const home = await realpath4(homedir());
   const trustedWorkspace = { ...candidate, root };
-  if (root === parse3(root).root || root === home) {
+  if (root === parse4(root).root || root === home) {
     return {
       status: "blocked",
       host: detectedHost(),
@@ -24716,15 +26111,15 @@ function createWorkspaceResolver(server, provider) {
     }
     const allowedRoot = setup.trustedWorkspace?.root;
     if (!allowedRoot) throw new Error(setup.message);
-    const requested = inputRoot?.trim() ? resolve8(allowedRoot, inputRoot.trim()) : allowedRoot;
+    const requested = inputRoot?.trim() ? resolve12(allowedRoot, inputRoot.trim()) : allowedRoot;
     let resolvedRoot;
     try {
-      resolvedRoot = await realpath3(requested);
+      resolvedRoot = await realpath4(requested);
     } catch {
       throw new Error(`Requested workspace root does not exist or is not readable: ${requested}`);
     }
-    const relativeToAllowed = relative5(allowedRoot, resolvedRoot);
-    if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute4(relativeToAllowed))) {
+    const relativeToAllowed = relative7(allowedRoot, resolvedRoot);
+    if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute6(relativeToAllowed))) {
       throw new Error(`Requested root is outside the trusted workspace: ${resolvedRoot}`);
     }
     return resolvedRoot;
@@ -24752,8 +26147,26 @@ function okWithResourceLinks(output) {
   };
 }
 var projectWriteChains = /* @__PURE__ */ new Map();
+function projectIndexOptions(config2, control) {
+  return {
+    parserLimits: {
+      maxFileBytes: config2.parser.maxFileBytes,
+      maxTotalBytes: config2.parser.maxTotalBytes,
+      maxSymbols: config2.parser.maxSymbols,
+      maxNodes: config2.parser.maxNodes,
+      perFileTimeoutMs: config2.parser.perFileTimeoutMs,
+      wholeIndexTimeoutMs: config2.parser.wholeIndexTimeoutMs,
+      maxDepth: config2.parser.maxRecursionDepth,
+      maxGeneratedFiles: config2.parser.maxGeneratedFiles,
+      maxTsconfigChain: config2.parser.maxTsconfigChain,
+      maxAliases: config2.parser.maxAliases
+    },
+    // B7 stays dark until a complete B6 promotion report proves every gate.
+    polyglotEnabled: isValidatedPromotion(control.promotion) && control.promotion.enforcementEnabled
+  };
+}
 async function enqueueProjectWrite(root, operation) {
-  const key = resolve8(root);
+  const key = resolve12(root);
   const previous = projectWriteChains.get(key) ?? Promise.resolve();
   const current = previous.then(operation, operation);
   projectWriteChains.set(
@@ -24767,28 +26180,33 @@ async function enqueueProjectWrite(root, operation) {
 }
 async function ensureProject(root) {
   return enqueueProjectWrite(root, async () => {
-    const currentScanSignature = await scanProjectSignature(root);
+    const [config2, control] = await Promise.all([loadTokenGraphConfig(root), loadRoutingControl(root)]);
+    const options = projectIndexOptions(config2, control);
+    const currentScanSignature = await scanProjectSignature(root, options.parserLimits);
     const existing = await loadProjectIndex(root);
     if (existing && isSafeProjectIndex(root, existing)) {
       if (existing.scanSignature === currentScanSignature) {
         return existing;
       }
-      const updated = await updateProjectIndexIncremental(root, existing);
+      const updated = await updateProjectIndexIncremental(root, existing, options);
       const current = updated.index;
       if (isFreshProjectIndex(existing, current)) {
         await saveProjectIndex(root, current);
+        await enforceStorageClassQuotas(root, config2.storage);
         return current;
       }
       await saveProjectIndex(root, current);
+      await enforceStorageClassQuotas(root, config2.storage);
       return current;
     }
-    const indexed = await indexProject(root, { scanSignature: currentScanSignature });
+    const indexed = await indexProject(root, { ...options, scanSignature: currentScanSignature });
     await saveProjectIndex(root, indexed);
+    await enforceStorageClassQuotas(root, config2.storage);
     return indexed;
   });
 }
 function isSafeRelativePath(path) {
-  if (!path || isAbsolute4(path)) return false;
+  if (!path || isAbsolute6(path)) return false;
   const segments = path.split(/[\\/]+/);
   return segments.every((segment) => segment && segment !== "." && segment !== "..");
 }
@@ -24825,6 +26243,7 @@ function projectMap(project) {
       symbols: project.symbols.length,
       imports: project.imports.length,
       unsupportedLanguages: project.exclusions.filter((exclusion) => exclusion.reason === "unsupported").length,
+      unsupportedLanguageCounts: project.unsupportedLanguageCounts ?? {},
       tables: project.sql.tables.length,
       policies: project.sql.policies.length,
       constraints: project.sql.constraints.length,
@@ -24974,10 +26393,17 @@ function sqlSummary(project, query, limit) {
   ];
   return rows.filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
 }
+function recommendedExactRead(plan, project) {
+  const first = plan.recommendedFirstReads.find((candidate) => candidate.startLine !== void 0 && candidate.endLine !== void 0);
+  if (!first || first.startLine === void 0 || first.endLine === void 0) return void 0;
+  const file = project.files.find((candidate) => candidate.path === first.path);
+  if (!file) return void 0;
+  return { mode: "slice", file: first.path, startLine: first.startLine, endLine: first.endLine, contentHash: file.contentHash };
+}
 function createTokenGraphServer(options = {}) {
   const toolSurface = selectedToolSurface();
   const server = new McpServer(
-    { name: "tokengraph", version: "0.21.0" },
+    { name: "tokengraph", version: "0.21.1" },
     {
       instructions: "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. Call tokengraph_setup once and capture its trusted workspace root. Use tokengraph_prepare_context only when planning is needed; otherwise omit taskId from the first query, compress, recall, or analyze call and capture the returned taskId. Complete or pause with tokengraph_task_report. TokenGraph tools are task-scoped: never reuse a taskId across workspaces or merge unrelated tasks."
     }
@@ -25014,6 +26440,43 @@ function createTokenGraphServer(options = {}) {
       throw error2;
     }
   }
+  async function probeRoutingState(resolvedRoot) {
+    try {
+      const [status, config2, control] = await Promise.all([
+        getIndexStatus(resolvedRoot, { probeOnly: true }),
+        loadTokenGraphConfig(resolvedRoot),
+        loadRoutingControl(resolvedRoot)
+      ]);
+      return { status, config: config2, control };
+    } catch {
+      return void 0;
+    }
+  }
+  async function routeBeforeLedger(root, task, routingOverride) {
+    if (!task?.trim()) return void 0;
+    const resolvedRoot = await workspaceRoot(root);
+    const probe = await probeRoutingState(resolvedRoot);
+    if (!probe) return failOpenRouting();
+    return adviseRouting({
+      task,
+      routingOverride,
+      routingMode: probe.config.routingMode,
+      indexAvailable: probe.status.hasIndex,
+      cachedStatus: probe.status.state === "fresh" ? "fresh" : probe.status.state === "missing" ? "missing" : "stale",
+      killSwitch: probe.config.routingKillSwitch || probe.control.killSwitch,
+      promotion: probe.control.promotion
+    });
+  }
+  function directHostFallback(routing) {
+    return {
+      mode: "direct-host",
+      routing,
+      guidance: "This bounded task does not require TokenGraph context. Continue with the host tools directly; use routingOverride force-on for discovery when needed."
+    };
+  }
+  function shouldBypassHost(routing, routingOverride) {
+    return Boolean(routing && !routing.useTokenGraph && (routing.enforced || routingOverride === "force-bypass"));
+  }
   server.registerTool(
     "tokengraph_setup",
     {
@@ -25024,9 +26487,11 @@ function createTokenGraphServer(options = {}) {
     },
     async () => {
       const setup = await inspectWorkspaceSetup(server, options.trustedWorkspace);
+      const repositoryIdentity = setup.trustedWorkspace ? await getRepositoryIdentity(setup.trustedWorkspace.root) : null;
       return ok({
         ...setup,
-        repositoryIdentity: setup.trustedWorkspace ? await getRepositoryIdentity(setup.trustedWorkspace.root) : null,
+        repositoryIdentity,
+        warnings: setup.trustedWorkspace ? getRepositorySetupWarnings(setup.trustedWorkspace.root) : [],
         surface: toolSurface,
         capabilities: {
           taskScoped: true,
@@ -25046,17 +26511,36 @@ function createTokenGraphServer(options = {}) {
     },
     async ({ root, task, profile, maxTokens, allowRawReads, constraints, responseMode, refreshIndex, host, routingOverride, knownArtifacts }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const statusBefore = await getIndexStatus(resolvedRoot);
-      const existing = await loadProjectIndex(resolvedRoot);
-      const config2 = await loadTokenGraphConfig(resolvedRoot);
+      const probe = await probeRoutingState(resolvedRoot);
+      if (!probe) {
+        const routing2 = failOpenRouting();
+        const response2 = { mode: "direct-host", routing: routing2, guidance: "TokenGraph routing was unavailable, so this request is being left to the host tools. Retry discovery after the workspace state is repaired." };
+        return ok(responseMode === "verbose" ? { ...response2, root: resolvedRoot } : response2);
+      }
+      const { status: cachedStatus, config: config2, control } = probe;
+      const indexOptions = projectIndexOptions(config2, control);
+      await enforceStorageClassQuotas(resolvedRoot, config2.storage);
+      const identity = await getRepositoryIdentity(resolvedRoot);
       const routing = adviseRouting({
         task,
         knownArtifacts,
         routingOverride,
         routingMode: config2.routingMode,
-        indexAvailable: Boolean(existing),
-        cachedStatus: statusBefore.state === "fresh" ? "fresh" : statusBefore.state === "missing" ? "missing" : "stale"
+        indexAvailable: cachedStatus.hasIndex,
+        cachedStatus: cachedStatus.state === "fresh" ? "fresh" : cachedStatus.state === "missing" ? "missing" : "stale",
+        killSwitch: config2.routingKillSwitch || control.killSwitch,
+        promotion: control.promotion
       });
+      if (shouldBypassHost(routing, routingOverride)) {
+        const response2 = {
+          mode: "direct-host",
+          routing,
+          guidance: "This bounded task does not require TokenGraph context. Continue with the host tools directly; call tokengraph_prepare_context again for discovery, architecture, debugging, or migration work."
+        };
+        return ok(responseMode === "verbose" ? { ...response2, root: resolvedRoot } : response2);
+      }
+      const statusBefore = await getIndexStatus(resolvedRoot, { projectOptions: indexOptions });
+      const existing = await loadProjectIndex(resolvedRoot);
       let project;
       let indexingMode = "existing";
       let changes = { addedFiles: [], changedFiles: [], deletedFiles: [], parsedFiles: [] };
@@ -25065,7 +26549,7 @@ function createTokenGraphServer(options = {}) {
       } else if (!refreshIndex) {
         throw new Error("The TokenGraph index is missing or stale and refreshIndex is false.");
       } else if (existing && isSafeProjectIndex(resolvedRoot, existing)) {
-        const updated = await updateProjectIndexIncremental(resolvedRoot, existing);
+        const updated = await updateProjectIndexIncremental(resolvedRoot, existing, indexOptions);
         project = updated.index;
         indexingMode = updated.mode;
         changes = {
@@ -25075,18 +26559,21 @@ function createTokenGraphServer(options = {}) {
           parsedFiles: updated.parsedFiles
         };
         await saveProjectIndex(resolvedRoot, project);
+        await enforceStorageClassQuotas(resolvedRoot, config2.storage);
       } else {
-        project = await indexProject(resolvedRoot);
+        project = await indexProject(resolvedRoot, indexOptions);
         indexingMode = "full";
         changes.parsedFiles = project.files.map((file) => file.path);
         await saveProjectIndex(resolvedRoot, project);
+        await enforceStorageClassQuotas(resolvedRoot, config2.storage);
       }
+      const appliedKnowledge = await listAppliedKnowledge(resolvedRoot);
       if (indexingMode !== "existing" && config2.wikiGenerationEnabled) {
-        const wikiMemories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).list() : [];
-        await saveProjectWiki(resolvedRoot, buildProjectWiki(project, wikiMemories, await listAppliedKnowledge(resolvedRoot)));
+        const wikiMemories = config2.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list() : [];
+        await saveProjectWiki(resolvedRoot, buildProjectWiki(project, wikiMemories, appliedKnowledge));
       }
       const memoryLimit = config2.maxMemories;
-      const memories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(task, memoryLimit) : [];
+      const memories = config2.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(task, memoryLimit) : [];
       const plan = await buildContextPlan({
         root: resolvedRoot,
         task,
@@ -25098,9 +26585,73 @@ function createTokenGraphServer(options = {}) {
           allowRawReads
         }
       });
+      const projectBrief = buildAdaptiveProjectBrief({
+        repositoryId: identity.repositoryId,
+        sourceFingerprint: project.fingerprint,
+        sections: [
+          { id: "frameworks", text: project.frameworks.join(", ") },
+          { id: "first-reads", text: plan.recommendedFirstReads.map((file) => file.path).join("\n") }
+        ]
+      }, Math.max(150, Math.min(config2.memory.projectBriefTargetTokens, config2.memory.projectBriefMaxTokens)));
       const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost()) });
+      await updateTaskRoutingObservation(resolvedRoot, ledger.taskId, {
+        decision: routing.useTokenGraph ? "activate" : "bypass",
+        stage: routing.stage,
+        reason: routing.reason,
+        expectedOverheadTokens: routing.expectedOverheadTokens,
+        mode: config2.routingMode,
+        enforced: routing.enforced
+      });
+      const capsule = buildRetrievalCapsule(ledger.taskId, task, project, plan.recommendedFirstReads.map((file) => file.path), config2.parser.maxGraphDepth);
+      const capsuleStableArtifact = capsuleArtifact(capsule);
+      await saveStableArtifact(resolvedRoot, capsuleStableArtifact);
+      const memoryContext = composeMemoryContext({
+        repositoryId: identity.repositoryId,
+        worktreeId: identity.worktreeId,
+        sourceFingerprint: project.fingerprint,
+        projectBrief,
+        indexedFacts: project.files.slice(0, config2.maxFiles).map((file) => `${file.path}:${file.language}`),
+        capsules: [capsuleStableArtifact.hash],
+        reviewedDecisions: appliedKnowledge.map((entry) => `${entry.title}: ${entry.proposedContent}`),
+        maxTokens: config2.memory.maxRetrievalTokens,
+        outcomes: memories.filter((memory) => Boolean(memory.confirmedAt)).map((memory) => ({ id: memory.id, taskId: memory.id, summary: memory.title, status: "verified", evidence: memory.evidence, createdAt: memory.createdAt, sourceFingerprint: project.fingerprint }))
+      });
+      if (memories.length) {
+        const vaultNotes = projectToVault(memories.map((memory) => ({ id: memory.id, title: memory.title, body: memory.body, links: memory.linkedFiles, archived: memory.status !== "active", updatedAt: memory.updatedAt })));
+        const vaultManifest = `${JSON.stringify({ schemaVersion: 1, notes: vaultNotes.map(({ path, title, hash, backlinks, archived }) => ({ path, title, hash, backlinks, archived })) }, null, 2)}
+`;
+        const vaultBytes = vaultNotes.reduce((total, note) => total + Buffer.byteLength(note.body, "utf8"), Buffer.byteLength(vaultManifest, "utf8"));
+        await assertStorageReplacementAllowed(resolvedRoot, "vault", vaultBytes, config2.storage);
+        await saveVaultProjection(resolvedRoot, vaultNotes);
+      }
+      const readPolicy = escalateReadPolicy({ level: "L1", allowRawReads: false, reason: "capsule-first retrieval" }, plan.budget.allowRawReads ? "L3" : "L1");
+      await updateTaskReadPolicy(resolvedRoot, ledger.taskId, readPolicy);
+      const recommendedRead = readPolicy.allowRawReads ? recommendedExactRead(plan, project) : void 0;
       const projectedPlan = responseMode === "verbose" ? plan : compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
-      const statusAfter = await getIndexStatus(resolvedRoot);
+      const artifactContent = compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
+      const stableArtifact = createStableArtifact(
+        `context/${createHash12("sha256").update(task.trim().toLocaleLowerCase()).digest("hex")}`,
+        artifactContent,
+        1,
+        {
+          // The artifact remains repository-scoped through persistence and lookup
+          // validation, while the hash fingerprint is derived from the canonical
+          // indexed state so equivalent LF/CRLF checkouts produce the same artifact.
+          repositoryFingerprint: identity.repositoryFingerprint,
+          sourceFingerprint: project.fingerprint,
+          parserVersion: "tokengraph-index-v3",
+          normalizedIntent: task.trim().replace(/\s+/g, " ").toLocaleLowerCase(),
+          retrievalConfig: { profile: plan.profile, maxEstimatedTokens: plan.budget.maxEstimatedTokens, allowRawReads: plan.budget.allowRawReads },
+          memoryFingerprint: createHash12("sha256").update(JSON.stringify(memories.map((memory) => memory.id))).digest("hex"),
+          decisionFingerprint: createHash12("sha256").update(JSON.stringify(appliedKnowledge.map((entry) => ({ id: entry.suggestionId, fingerprint: entry.fingerprint })))).digest("hex")
+        }
+      );
+      await saveStableArtifact(resolvedRoot, stableArtifact);
+      const artifactDelivery = shouldSuppressArtifact(stableArtifact, knownArtifacts) ? { artifactReference: { id: stableArtifact.id, hash: stableArtifact.hash }, deliveredArtifacts: [] } : { artifact: stableArtifact, deliveredArtifacts: [artifactKey(stableArtifact)] };
+      if (artifactDelivery.deliveredArtifacts.length) {
+        await recordTaskArtifactDelivery(resolvedRoot, ledger.taskId, artifactDelivery.deliveredArtifacts);
+      }
+      const statusAfter = await getIndexStatus(resolvedRoot, { projectOptions: indexOptions });
       const wikiStatus = await getWikiStatus(resolvedRoot);
       const response = responseMode === "verbose" ? {
         root: resolvedRoot,
@@ -25108,19 +26659,39 @@ function createTokenGraphServer(options = {}) {
         index: { status: indexingMode === "existing" ? statusAfter.state : "refreshed", previousStatus: statusBefore.state, postStatus: statusAfter.state, indexingMode, changes },
         plan: projectedPlan,
         wikiStatus,
-        routing
+        routing,
+        retrieval: { capsuleHash: capsuleStableArtifact.hash, readPolicy, ...recommendedRead ? { recommendedRead } : {} },
+        memory: memoryContext,
+        unsupportedLanguageCounts: project.unsupportedLanguageCounts ?? {},
+        ...artifactDelivery
       } : compactPrepareEnvelope({
         root: resolvedRoot,
         taskId: ledger.taskId,
         plan: projectedPlan,
-        routing
+        routing,
+        retrieval: { capsuleHash: capsuleStableArtifact.hash, readPolicy, ...recommendedRead ? { recommendedRead } : {} },
+        unsupportedLanguageCounts: project.unsupportedLanguageCounts ?? {},
+        ...artifactDelivery,
+        deliveredArtifacts: artifactDelivery.deliveredArtifacts
       });
       await recordCoreEvent({
         root: resolvedRoot,
         taskId: ledger.taskId,
         toolName: "tokengraph_prepare_context",
         category: "context-routing",
-        operation: { taskHash: createHash7("sha256").update(task).digest("hex"), profile: plan.profile, indexingMode },
+        operation: {
+          taskHash: createHash12("sha256").update(task).digest("hex"),
+          profile: plan.profile,
+          indexingMode,
+          routingObservation: {
+            decision: routing.useTokenGraph ? "activate" : "bypass",
+            stage: routing.stage,
+            reason: routing.reason,
+            expectedOverheadTokens: routing.expectedOverheadTokens,
+            mode: config2.routingMode,
+            enforced: routing.enforced
+          }
+        },
         originalTokens: project.files.reduce((total, file) => total + file.estimatedTokens, 0),
         compactTokens: estimateTokens(compactJson(compactToolResultEnvelope(response)))
       });
@@ -25137,9 +26708,14 @@ function createTokenGraphServer(options = {}) {
     },
     async (input) => {
       const { taskId, root, mode, responseMode } = input;
+      const directRouting = await routeBeforeLedger(root, input.query ?? input.target, input.routingOverride);
+      if (!taskId && shouldBypassHost(directRouting, input.routingOverride)) {
+        const fallback = directHostFallback(directRouting);
+        return ok(responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
+      }
       return withTaskIntent(root, taskId, async (task) => {
         const resolvedRoot = task.root;
-        const project = mode === "wiki" ? void 0 : await ensureProject(resolvedRoot);
+        const project = ["wiki", "artifact", "run"].includes(mode) ? void 0 : await ensureProject(resolvedRoot);
         let result;
         if (mode === "overview") {
           result = projectMap(project);
@@ -25153,15 +26729,40 @@ function createTokenGraphServer(options = {}) {
           const { query, limit } = input;
           result = { query, sql: sqlSummary(project, query, limit ?? 10) };
         } else if (mode === "artifact") {
-          result = { artifactHash: input.artifactHash, status: "not-found", message: "Stable artifacts are not present in this workspace ledger." };
+          const artifact = await loadStableArtifact(resolvedRoot, input.artifactHash);
+          result = artifact ? { artifactHash: input.artifactHash, status: "found", artifact } : { artifactHash: input.artifactHash, status: "not-found", message: "The requested stable artifact is not present or failed validation." };
         } else if (mode === "run") {
-          const runs = await querySavedRuns(resolvedRoot, { test: input.test, file: input.file, errorClass: input.errorClass });
+          const selectedRun = await loadRun(resolvedRoot, input.runId);
+          const selector = input.test ? { test: input.test } : input.file ? { file: input.file } : { errorClass: input.errorClass };
+          const matchesSelector = selectedRun !== void 0 && Object.entries(selector).every(([key, value]) => selectedRun.metadata?.[key] === value);
           result = {
             runId: input.runId,
-            selector: input.test ? { test: input.test } : input.file ? { file: input.file } : { errorClass: input.errorClass },
-            status: runs.length ? "found" : "not-found",
-            runs
+            selector,
+            status: matchesSelector ? "found" : "not-found",
+            run: matchesSelector ? summarizeRun(selectedRun) : void 0
           };
+        } else if (mode === "slice") {
+          const file = project.files.find((candidate) => candidate.path === input.file);
+          if (!file || file.contentHash !== input.contentHash) throw new Error("The requested exact slice does not match the current indexed file hash.");
+          const [ledger, config2] = await Promise.all([loadTaskLedger(resolvedRoot, task.taskId), loadTokenGraphConfig(resolvedRoot)]);
+          if (!ledger) throw new Error(`Task ledger ${task.taskId} was not found or was corrupt.`);
+          const currentPolicy = startReadPolicyResponse(escalateReadPolicy(
+            ledger.readPolicy ?? { level: "L1", allowRawReads: false, reason: "capsule-first retrieval" },
+            "L3"
+          ));
+          const recommendation = recommendExactRead(currentPolicy, { reassessed: input.evidenceReassessed, evidenceGap: input.evidenceGap });
+          if (!recommendation.allowed) throw new Error(recommendation.reason);
+          const slice = await readExactSlice(
+            resolvedRoot,
+            input.file,
+            input.startLine,
+            input.endLine,
+            Math.min(config2.parser.maxFileBytes, 64 * 1024),
+            input.contentHash,
+            config2.parser.maxFileBytes
+          );
+          result = responseMode === "verbose" ? slice : compactSliceResponse(slice);
+          await updateTaskReadPolicy(resolvedRoot, task.taskId, recommendation.state);
         } else {
           const { slug, constraints, responseMode: responseMode2 } = input;
           const wiki = await loadProjectWiki(resolvedRoot);
@@ -25185,7 +26786,7 @@ function createTokenGraphServer(options = {}) {
           taskId: task.taskId,
           toolName: "tokengraph_query_context",
           category: `query-${mode}`,
-          operation: { mode, queryHash: createHash7("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
+          operation: { mode, queryHash: createHash12("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
           originalTokens,
           compactTokens
         });
@@ -25203,6 +26804,11 @@ function createTokenGraphServer(options = {}) {
     },
     async (input) => {
       const { taskId, root, mode } = input;
+      const directRouting = await routeBeforeLedger(root, input.task, input.routingOverride);
+      if (!taskId && shouldBypassHost(directRouting, input.routingOverride)) {
+        const fallback = directHostFallback(directRouting);
+        return ok(input.responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
+      }
       return withTaskIntent(root, taskId, async (task) => {
         const resolvedRoot = task.root;
         let result;
@@ -25215,7 +26821,7 @@ function createTokenGraphServer(options = {}) {
         } else {
           const { task: task2, contentKind, text, preserveRawReferences, constraints, responseMode } = input;
           const [project, config2, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
-          const memories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(`${task2}
+          const memories = config2.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(`${task2}
 ${text ?? ""}`, config2.maxMemories) : [];
           const compressed = await compressContext({
             root: resolvedRoot,
@@ -25250,7 +26856,7 @@ ${text ?? ""}`, config2.maxMemories) : [];
           taskId: task.taskId,
           toolName: "tokengraph_compress",
           category,
-          operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash7("sha256").update(`${"task" in input ? input.task : ""}
+          operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash12("sha256").update(`${"task" in input ? input.task : ""}
 ${input.text ?? ""}`).digest("hex") },
           originalTokens: estimates.original,
           compactTokens,
@@ -25268,10 +26874,15 @@ ${input.text ?? ""}`).digest("hex") },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: recallInputSchema
     },
-    async ({ taskId, root, mode, query, limit, audit, constraints, responseMode }) => {
+    async ({ taskId, root, mode, query, limit, audit, constraints, responseMode, routingOverride }) => {
+      const directRouting = await routeBeforeLedger(root, query, routingOverride);
+      if (!taskId && shouldBypassHost(directRouting, routingOverride)) {
+        const fallback = directHostFallback(directRouting);
+        return ok(responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
+      }
       return withTaskIntent(root, taskId, async (task) => {
         const resolvedRoot = task.root;
-        const store = new MemoryStore(memoryPath(resolvedRoot));
+        const store = new MemoryStore(await repositoryMemoryPath(resolvedRoot));
         const project = await ensureProject(resolvedRoot);
         const memories = await store.list({ includeDeprecated: audit === true, includeDeleted: audit === true });
         const terms2 = tokenize(query ?? "");
@@ -25285,7 +26896,7 @@ ${input.text ?? ""}`).digest("hex") },
           taskId: task.taskId,
           toolName: "tokengraph_recall",
           category: `memory-${mode}`,
-          operation: { mode, queryHash: createHash7("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
+          operation: { mode, queryHash: createHash12("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
           originalTokens: estimateTokens(compactJson(memories)),
           compactTokens
         });
@@ -25303,10 +26914,15 @@ ${input.text ?? ""}`).digest("hex") },
     },
     async (input) => {
       const { taskId, root, mode } = input;
+      const directRouting = await routeBeforeLedger(root, input.task ?? input.text, input.routingOverride);
+      if (!taskId && shouldBypassHost(directRouting, input.routingOverride)) {
+        const fallback = directHostFallback(directRouting);
+        return ok(input.responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
+      }
       return withTaskIntent(root, taskId, async (task) => {
         const resolvedRoot = task.root;
         const project = await ensureProject(resolvedRoot);
-        const store = new MemoryStore(memoryPath(resolvedRoot));
+        const store = new MemoryStore(await repositoryMemoryPath(resolvedRoot));
         let result;
         if (mode === "failure") {
           const { kind, text, task: task2 } = input;
@@ -25317,7 +26933,7 @@ ${text}`, 8);
 ${text}`) });
         } else if (mode === "risk") {
           const { changedFiles, diffSummary, task: task2 } = input;
-          const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+          const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
           const memories = await store.search(`${task2 ?? ""}
 ${diffSummary ?? ""}
 ${changedFiles.join("\n")}`, 8);
@@ -25325,7 +26941,7 @@ ${changedFiles.join("\n")}`, 8);
           result = input.responseMode === "verbose" ? verbose : compactRiskResponse(verbose, { constraints: input.constraints });
         } else {
           const { files } = input;
-          const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+          const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
           result = await checkArchitecture({ root: resolvedRoot, project, rules, files });
         }
         const response = input.responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
@@ -25335,7 +26951,7 @@ ${changedFiles.join("\n")}`, 8);
           taskId: task.taskId,
           toolName: "tokengraph_analyze",
           category: `analysis-${mode}`,
-          operation: { mode, inputHash: createHash7("sha256").update(JSON.stringify(input)).digest("hex") },
+          operation: { mode, inputHash: createHash12("sha256").update(JSON.stringify(input)).digest("hex") },
           originalTokens: Math.max(compactTokens, project.files.reduce((total, file) => total + file.estimatedTokens, 0)),
           compactTokens
         });
@@ -25378,7 +26994,7 @@ ${changedFiles.join("\n")}`, 8);
           const [project, existingWiki, memories, applications] = await Promise.all([
             loadProjectIndex(resolvedRoot),
             loadProjectWiki(resolvedRoot),
-            new MemoryStore(memoryPath(resolvedRoot)).list(),
+            new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list(),
             listAppliedKnowledge(resolvedRoot)
           ]);
           if (project && existingWiki) await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories, applications));
@@ -25390,7 +27006,7 @@ ${changedFiles.join("\n")}`, 8);
         taskId,
         toolName: "tokengraph_propose_knowledge",
         category: `knowledge-${action}`,
-        operation: action === "propose" ? { action, proposalHash: createHash7("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") } : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
+        operation: action === "propose" ? { action, proposalHash: createHash12("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") } : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
         originalTokens: compactTokens,
         compactTokens
       });
@@ -25454,9 +27070,11 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, fullReindex }) => {
         const resolvedRoot = await workspaceRoot(root);
+        const [config2, control] = await Promise.all([loadTokenGraphConfig(resolvedRoot), loadRoutingControl(resolvedRoot)]);
+        const indexOptions = projectIndexOptions(config2, control);
         const existing = fullReindex ? void 0 : await loadProjectIndex(resolvedRoot);
-        const result = existing && isSafeProjectIndex(resolvedRoot, existing) ? await updateProjectIndexIncremental(resolvedRoot, existing) : {
-          index: await indexProject(resolvedRoot),
+        const result = existing && isSafeProjectIndex(resolvedRoot, existing) ? await updateProjectIndexIncremental(resolvedRoot, existing, indexOptions) : {
+          index: await indexProject(resolvedRoot, indexOptions),
           mode: "full",
           addedFiles: [],
           changedFiles: [],
@@ -25465,13 +27083,14 @@ ${changedFiles.join("\n")}`, 8);
         };
         const project = result.index;
         await saveProjectIndex(resolvedRoot, project);
-        const config2 = await loadTokenGraphConfig(resolvedRoot);
+        await enforceStorageClassQuotas(resolvedRoot, config2.storage);
         let wikiRefreshed = false;
         let wikiWarning;
         if (config2.wikiGenerationEnabled) {
           try {
-            const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+            const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
             await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories, await listAppliedKnowledge(resolvedRoot)));
+            await enforceStorageClassQuotas(resolvedRoot, config2.storage);
             wikiRefreshed = true;
           } catch (error2) {
             wikiWarning = `Wiki refresh failed: ${error2.message}`;
@@ -25503,7 +27122,11 @@ ${changedFiles.join("\n")}`, 8);
           root: string2().optional().describe("Workspace root to check. Defaults to the MCP server current working directory.")
         })
       },
-      async ({ root }) => ok(await getIndexStatus(await workspaceRoot(root)))
+      async ({ root }) => {
+        const resolvedRoot = await workspaceRoot(root);
+        const [config2, control] = await Promise.all([loadTokenGraphConfig(resolvedRoot), loadRoutingControl(resolvedRoot)]);
+        return ok(await getIndexStatus(resolvedRoot, { projectOptions: projectIndexOptions(config2, control) }));
+      }
     );
     server.registerTool(
       "tokengraph_reset_project",
@@ -25568,7 +27191,22 @@ ${changedFiles.join("\n")}`, 8);
           rawReadWarningThreshold: number2().int().min(1).optional(),
           sqlIndexingEnabled: boolean2().optional(),
           memoryEnabled: boolean2().optional(),
-          wikiGenerationEnabled: boolean2().optional()
+          wikiGenerationEnabled: boolean2().optional(),
+          routingKillSwitch: boolean2().optional(),
+          routing: object({ mode: _enum(["shadow", "enforced", "always-activate", "always-advisory"]).optional(), killSwitch: boolean2().optional() }).optional(),
+          parser: object({ maxFileBytes: number2().int().min(1).optional(), maxTotalBytes: number2().int().min(1).optional(), maxSymbols: number2().int().min(1).optional(), maxNodes: number2().int().min(1).optional(), perFileTimeoutMs: number2().int().min(1).optional(), wholeIndexTimeoutMs: number2().int().min(1).optional(), maxRecursionDepth: number2().int().min(1).optional(), maxGraphDepth: number2().int().min(0).optional(), maxGeneratedFiles: number2().int().min(0).optional(), maxTsconfigChain: number2().int().min(1).optional(), maxAliases: number2().int().min(0).optional() }).optional(),
+          storage: object({
+            maxBytes: number2().int().min(1).optional(),
+            runsMaxBytes: number2().int().min(0).optional(),
+            cacheMaxBytes: number2().int().min(0).optional(),
+            vaultMaxBytes: number2().int().min(0).optional(),
+            durableMaxBytes: number2().int().min(0).optional(),
+            runRetentionDays: number2().int().min(0).optional(),
+            cacheRetentionDays: number2().int().min(0).optional()
+          }).optional(),
+          runner: object({ maxBytes: number2().int().min(256).optional(), timeoutMs: number2().int().min(1).optional(), terminateGraceMs: number2().int().min(1).optional() }).optional(),
+          memory: object({ projectBriefTargetTokens: number2().int().min(150).optional(), projectBriefMaxTokens: number2().int().min(1).optional(), maxRetrievalTokens: number2().int().min(1).optional() }).optional(),
+          responseFormat: object({ default: _enum(["json", "compact-tabular"]).optional() }).optional()
         })
       },
       async ({ root, ...update }) => ok({ status: "updated", config: await updateTokenGraphConfig(await workspaceRoot(root), update) })
@@ -25585,7 +27223,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root }) => {
         const resolvedRoot = await workspaceRoot(root);
-        return ok({ root: resolvedRoot, rules: await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list() });
+        return ok({ root: resolvedRoot, rules: await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list() });
       }
     );
     server.registerTool(
@@ -25601,7 +27239,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, ...input }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const rule = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).add(input);
+        const rule = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).add(input);
         return ok({ status: "added", root: resolvedRoot, rule });
       }
     );
@@ -25631,7 +27269,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, ...update }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const rule = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).update(id, update);
+        const rule = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).update(id, update);
         if (!rule) {
           throw new Error(`No architecture rule found for id ${id}.`);
         }
@@ -25651,7 +27289,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const deleted = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).delete(id);
+        const deleted = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).delete(id);
         if (!deleted) {
           throw new Error(`No architecture rule found for id ${id}.`);
         }
@@ -25672,7 +27310,7 @@ ${changedFiles.join("\n")}`, 8);
       async ({ root, files }) => {
         const resolvedRoot = await workspaceRoot(root);
         const project = await ensureProject(resolvedRoot);
-        const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+        const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
         return ok(await checkArchitecture({ root: resolvedRoot, project, rules, files }));
       }
     );
@@ -25693,7 +27331,7 @@ ${changedFiles.join("\n")}`, 8);
       async ({ root, kind, text, task, profile }) => {
         const resolvedRoot = await workspaceRoot(root);
         const project = await ensureProject(resolvedRoot);
-        const memories = await new MemoryStore(memoryPath(resolvedRoot)).search(`${task ?? ""}
+        const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(`${task ?? ""}
 ${text}`, 8);
         return ok(await traceFailure({ root: resolvedRoot, kind, text, task, profile, project, memories }));
       }
@@ -25715,8 +27353,8 @@ ${text}`, 8);
       async ({ root, changedFiles, diffSummary, task, profile }) => {
         const resolvedRoot = await workspaceRoot(root);
         const project = await ensureProject(resolvedRoot);
-        const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
-        const memories = await new MemoryStore(memoryPath(resolvedRoot)).search(`${task ?? ""}
+        const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
+        const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(`${task ?? ""}
 ${diffSummary ?? ""}
 ${changedFiles.join("\n")}`, 8);
         return ok(await assessChangeRisk({ root: resolvedRoot, changedFiles, diffSummary, task, profile, project, rules, memories }));
@@ -25733,7 +27371,7 @@ ${changedFiles.join("\n")}`, 8);
       async ({ root }) => {
         const resolvedRoot = await workspaceRoot(root);
         const project = await ensureProject(resolvedRoot);
-        const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+        const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
         const map = projectMap(project);
         map.counts.memories = memories.length;
         return ok(map);
@@ -25755,7 +27393,7 @@ ${changedFiles.join("\n")}`, 8);
         if (!project || !isSafeProjectIndex(resolvedRoot, project)) {
           throw new Error("No safe persisted TokenGraph index was found. Run tokengraph_index_project before tokengraph_generate_wiki.");
         }
-        const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+        const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
         const wiki = buildProjectWiki(project, memories, await listAppliedKnowledge(resolvedRoot));
         await saveProjectWiki(resolvedRoot, wiki);
         return ok({
@@ -25817,7 +27455,7 @@ ${changedFiles.join("\n")}`, 8);
         const resolvedRoot = await workspaceRoot(root);
         const config2 = await loadTokenGraphConfig(resolvedRoot);
         const project = await ensureProject(resolvedRoot);
-        const memory = new MemoryStore(memoryPath(resolvedRoot));
+        const memory = new MemoryStore(await repositoryMemoryPath(resolvedRoot));
         const memories = config2.memoryEnabled ? await memory.search(task, maxMemories ?? 20) : [];
         const plan = await buildContextPlan({
           root: resolvedRoot,
@@ -25913,7 +27551,7 @@ ${changedFiles.join("\n")}`, 8);
         const resolvedRoot = await workspaceRoot(root);
         const [project, config2, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
         const memoryQuery = [task, text ?? ""].join("\n");
-        const memories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(memoryQuery, config2.maxMemories) : [];
+        const memories = config2.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(memoryQuery, config2.maxMemories) : [];
         return ok(
           await compressContext({
             root: resolvedRoot,
@@ -25958,7 +27596,7 @@ ${changedFiles.join("\n")}`, 8);
           throw new Error("Important durable memories require explicit approval. Retry with approved: true only when the user requested or approved storing it.");
         }
         const resolvedRoot = await workspaceRoot(root);
-        const entry = await new MemoryStore(memoryPath(resolvedRoot)).add({
+        const entry = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).add({
           type,
           title,
           body,
@@ -26001,7 +27639,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, ...update }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const memory = await new MemoryStore(memoryPath(resolvedRoot)).update(id, update);
+        const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).update(id, update);
         if (!memory) {
           throw new Error(`No memory found for id ${id}.`);
         }
@@ -26022,7 +27660,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, hard }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const deleted = await new MemoryStore(memoryPath(resolvedRoot)).delete(id, { hard: hard === true });
+        const deleted = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).delete(id, { hard: hard === true });
         if (!deleted) {
           throw new Error(`No memory found for id ${id}.`);
         }
@@ -26044,7 +27682,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, supersededBy, evidence }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const memory = await new MemoryStore(memoryPath(resolvedRoot)).deprecate(id, supersededBy ?? [], evidence ?? []);
+        const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).deprecate(id, supersededBy ?? [], evidence ?? []);
         if (!memory) {
           throw new Error(`No memory found for id ${id}.`);
         }
@@ -26066,7 +27704,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, evidence, confidence }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const memory = await new MemoryStore(memoryPath(resolvedRoot)).confirm(id, evidence ?? [], confidence ?? "high");
+        const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).confirm(id, evidence ?? [], confidence ?? "high");
         if (!memory) {
           throw new Error(`No memory found for id ${id}.`);
         }
@@ -26094,7 +27732,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, query, candidate, limit }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const conflicts = await new MemoryStore(memoryPath(resolvedRoot)).findConflicts({ id, query, candidate, limit });
+        const conflicts = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).findConflicts({ id, query, candidate, limit });
         return ok({
           root: resolvedRoot,
           conflicts,
@@ -26121,7 +27759,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, ...links }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const memory = await new MemoryStore(memoryPath(resolvedRoot)).link(id, links);
+        const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).link(id, links);
         if (!memory) {
           throw new Error(`No memory found for id ${id}.`);
         }
@@ -26143,7 +27781,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, query, limit, auditMode }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const recall = await new MemoryStore(memoryPath(resolvedRoot)).recall(query ?? "", { limit, auditMode: auditMode === true });
+        const recall = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).recall(query ?? "", { limit, auditMode: auditMode === true });
         return ok({ root: resolvedRoot, ...recall });
       }
     );
@@ -26161,7 +27799,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, query, limit }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+        const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
         return ok(await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 }));
       }
     );

@@ -11,9 +11,12 @@ import {
   type TaskReport
 } from "./taskEstimator.js";
 import { canonicalPersistenceLockKey, withFileLock, writeJsonAtomic } from "./storage.js";
+import { getRepositoryIdentity } from "./repositoryIdentity.js";
+import type { RepositoryIdentity } from "./types.js";
+import type { ReadPolicyState } from "./retrieval.js";
 
 export const TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger" as const;
-export const TASK_LEDGER_SCHEMA_VERSION = 1 as const;
+export const TASK_LEDGER_SCHEMA_VERSION = 2 as const;
 export const TASK_LEDGER_RETENTION_DAYS = 30;
 
 export type TaskHost = "codex" | "claude" | "unknown";
@@ -51,9 +54,22 @@ export interface TaskLedger {
   pausedAt?: string;
   completedAt?: string;
   estimatorVersion: typeof TASK_ESTIMATOR_VERSION;
+  repositoryIdentity?: RepositoryIdentity;
+  routingObservation?: TaskRoutingObservation;
+  readPolicy?: ReadPolicyState;
+  deliveredArtifacts: string[];
   events: TaskEvent[];
   lastDisposition?: TaskDisposition;
   completedReport?: TaskReport;
+}
+
+export interface TaskRoutingObservation {
+  decision: "activate" | "bypass";
+  stage: number;
+  reason: string;
+  expectedOverheadTokens: number;
+  mode: "shadow" | "enforced" | "always-activate" | "always-advisory";
+  enforced: boolean;
 }
 
 export interface CreateTaskLedgerOptions {
@@ -159,9 +175,16 @@ function reconstructEvent(value: unknown): TaskEvent | undefined {
 function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedger | undefined {
   if (!isRecord(value) || !Array.isArray(value.events)) return undefined;
   const events = value.events.map(reconstructEvent);
+  const routingObservation = value.routingObservation === undefined ? undefined : reconstructRoutingObservation(value.routingObservation);
+  const readPolicy = value.readPolicy === undefined ? undefined : reconstructReadPolicy(value.readPolicy);
+  const deliveredArtifacts = value.deliveredArtifacts === undefined
+    ? []
+    : Array.isArray(value.deliveredArtifacts) && value.deliveredArtifacts.every((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 512)
+      ? [...new Set(value.deliveredArtifacts as string[])]
+      : undefined;
   if (
     value.schemaId !== TASK_LEDGER_SCHEMA_ID ||
-    value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION) ||
     value.taskId !== expectedTaskId ||
     !["codex", "claude", "unknown"].includes(String(value.host)) ||
     !["open", "paused", "completed", "quarantined"].includes(String(value.status)) ||
@@ -172,6 +195,10 @@ function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedg
     (value.pausedAt !== undefined && !isTimestamp(value.pausedAt)) ||
     (value.completedAt !== undefined && !isTimestamp(value.completedAt)) ||
     value.estimatorVersion !== TASK_ESTIMATOR_VERSION ||
+    (value.repositoryIdentity !== undefined && !isRepositoryIdentity(value.repositoryIdentity)) ||
+    (value.routingObservation !== undefined && routingObservation === undefined) ||
+    (value.readPolicy !== undefined && readPolicy === undefined) ||
+    deliveredArtifacts === undefined ||
     events.some((event) => event === undefined) ||
     (value.lastDisposition !== undefined && value.lastDisposition !== "pause" && value.lastDisposition !== "complete") ||
     Date.parse(value.updatedAt as string) < Date.parse(value.createdAt as string) ||
@@ -221,9 +248,63 @@ function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedg
     ...(value.pausedAt === undefined ? {} : { pausedAt: value.pausedAt }),
     ...(value.completedAt === undefined ? {} : { completedAt: value.completedAt }),
     estimatorVersion: TASK_ESTIMATOR_VERSION,
+    ...(value.repositoryIdentity === undefined ? {} : { repositoryIdentity: value.repositoryIdentity }),
+    ...(routingObservation === undefined ? {} : { routingObservation }),
+    ...(readPolicy === undefined ? {} : { readPolicy }),
+    deliveredArtifacts,
     events: events as TaskEvent[],
     ...(value.lastDisposition === undefined ? {} : { lastDisposition: value.lastDisposition }),
     ...(completedReport === undefined ? {} : { completedReport })
+  };
+}
+
+function isRepositoryIdentity(value: unknown): value is RepositoryIdentity {
+  if (!isRecord(value)) return false;
+  return ["repositoryId", "repositoryFingerprint", "workspaceId", "worktreeId", "branch", "headCommit"]
+    .every((key) => isIdentifier(value[key]));
+}
+
+function reconstructRoutingObservation(value: unknown): TaskRoutingObservation | undefined {
+  if (!isRecord(value)) return undefined;
+  if (
+    (value.decision !== "activate" && value.decision !== "bypass") ||
+    !Number.isInteger(value.stage) || (value.stage as number) < 0 ||
+    typeof value.reason !== "string" ||
+    typeof value.expectedOverheadTokens !== "number" || !Number.isFinite(value.expectedOverheadTokens) || value.expectedOverheadTokens < 0 ||
+    !["shadow", "enforced", "always-activate", "always-advisory"].includes(String(value.mode)) ||
+    typeof value.enforced !== "boolean"
+  ) return undefined;
+  return {
+    decision: value.decision,
+    stage: value.stage as number,
+    reason: value.reason,
+    expectedOverheadTokens: value.expectedOverheadTokens,
+    mode: value.mode as TaskRoutingObservation["mode"],
+    enforced: value.enforced
+  };
+}
+
+function reconstructReadPolicy(value: unknown): ReadPolicyState | undefined {
+  if (!isRecord(value)) return undefined;
+  if (
+    !["L0", "L1", "L2", "L3", "L4"].includes(String(value.level)) ||
+    typeof value.allowRawReads !== "boolean" ||
+    typeof value.reason !== "string" ||
+    (value.targetedReads !== undefined && (!Number.isInteger(value.targetedReads) || (value.targetedReads as number) < 0)) ||
+    (value.recommendedReadsThisResponse !== undefined && (!Number.isInteger(value.recommendedReadsThisResponse) || (value.recommendedReadsThisResponse as number) < 0)) ||
+    (value.requiresReassessment !== undefined && typeof value.requiresReassessment !== "boolean") ||
+    (value.hasReassessed !== undefined && typeof value.hasReassessed !== "boolean") ||
+    (value.evidenceGap !== undefined && typeof value.evidenceGap !== "string")
+  ) return undefined;
+  return {
+    level: value.level as ReadPolicyState["level"],
+    allowRawReads: value.allowRawReads,
+    reason: value.reason,
+    ...(value.targetedReads === undefined ? {} : { targetedReads: value.targetedReads as number }),
+    ...(value.recommendedReadsThisResponse === undefined ? {} : { recommendedReadsThisResponse: value.recommendedReadsThisResponse as number }),
+    ...(value.requiresReassessment === undefined ? {} : { requiresReassessment: value.requiresReassessment }),
+    ...(value.hasReassessed === undefined ? {} : { hasReassessed: value.hasReassessed }),
+    ...(value.evidenceGap === undefined ? {} : { evidenceGap: value.evidenceGap })
   };
 }
 
@@ -287,6 +368,7 @@ export async function createTaskLedger(root: string, options: CreateTaskLedgerOp
   if (options.turnId !== undefined && !isIdentifier(options.turnId)) throw new Error("Turn id must be non-empty.");
   const taskId = randomUUID();
   const now = new Date().toISOString();
+  const repositoryIdentity = await getRepositoryIdentity(root);
   const ledger: TaskLedger = {
     schemaId: TASK_LEDGER_SCHEMA_ID,
     schemaVersion: TASK_LEDGER_SCHEMA_VERSION,
@@ -298,6 +380,8 @@ export async function createTaskLedger(root: string, options: CreateTaskLedgerOp
     createdAt: now,
     updatedAt: now,
     estimatorVersion: TASK_ESTIMATOR_VERSION,
+    repositoryIdentity,
+    deliveredArtifacts: [],
     events: []
   };
   await enqueueLedgerOperation(root, taskId, async () => {
@@ -339,10 +423,18 @@ export async function loadTaskLedger(root: string, taskId: string): Promise<Task
   const path = taskLedgerPath(root, taskId);
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+    if (isRecord(parsed) && typeof parsed.schemaVersion === "number" && parsed.schemaVersion > TASK_LEDGER_SCHEMA_VERSION) {
+      throw new Error(`Task ledger schema ${parsed.schemaVersion} is newer than supported schema ${TASK_LEDGER_SCHEMA_VERSION}; refusing to modify it.`);
+    }
     const ledger = reconstructTaskLedger(parsed, taskId);
     if (!ledger) {
       await quarantine(path);
       return undefined;
+    }
+    if (!ledger.repositoryIdentity || (isRecord(parsed) && parsed.schemaVersion === 1)) {
+      ledger.repositoryIdentity = await getRepositoryIdentity(root);
+      ledger.schemaVersion = TASK_LEDGER_SCHEMA_VERSION;
+      await writeJsonAtomic(path, ledger);
     }
     return ledger;
   } catch (error) {
@@ -353,6 +445,44 @@ export async function loadTaskLedger(root: string, taskId: string): Promise<Task
     }
     throw error;
   }
+}
+
+export async function updateTaskRoutingObservation(root: string, taskId: string, observation: TaskRoutingObservation): Promise<TaskLedger> {
+  const sanitized = reconstructRoutingObservation(observation);
+  if (!sanitized) throw new Error("Routing observation is invalid.");
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
+    ledger.routingObservation = sanitized;
+    ledger.updatedAt = new Date().toISOString();
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    return ledger;
+  });
+}
+
+export async function updateTaskReadPolicy(root: string, taskId: string, state: ReadPolicyState): Promise<TaskLedger> {
+  const sanitized = reconstructReadPolicy(state);
+  if (!sanitized) throw new Error("Read policy state is invalid.");
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
+    ledger.readPolicy = sanitized;
+    ledger.updatedAt = new Date().toISOString();
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    return ledger;
+  });
+}
+
+export async function recordTaskArtifactDelivery(root: string, taskId: string, artifactKeys: string[]): Promise<TaskLedger> {
+  const sanitized = [...new Set(artifactKeys.map((entry) => entry.trim()).filter((entry) => entry.length > 0 && entry.length <= 512))];
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId);
+    assertPausedTaskIsTerminal(ledger);
+    ledger.deliveredArtifacts = [...new Set([...ledger.deliveredArtifacts, ...sanitized])];
+    ledger.updatedAt = new Date().toISOString();
+    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    return ledger;
+  });
 }
 
 export async function discardEmptyTaskLedger(root: string, taskId: string): Promise<boolean> {

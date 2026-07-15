@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   compactModeEnvelope,
+  compactSliceResponse,
   compactCompressionResponse,
   compactFailureResponse,
   compactPlanResponse,
@@ -14,6 +15,17 @@ import { estimateTokens } from "../src/core/token.js";
 const constraints = ["Must preserve this exact user constraint."];
 
 describe("compact MCP response projections", () => {
+  it("projects an exact slice without duplicating the validated source hash", () => {
+    expect(compactSliceResponse({
+      path: "src/a.ts",
+      startLine: 2,
+      endLine: 3,
+      text: "export const a = 1;",
+      hash: "slice-hash",
+      contentHash: "source-hash"
+    })).toEqual({ path: "src/a.ts", range: [2, 3], text: "export const a = 1;", verificationHash: "slice-hash" });
+  });
+
   it("keeps the requested mode in compact envelopes", () => {
     expect(compactModeEnvelope("overview", { files: [] })).toEqual({ mode: "overview", result: { files: [] } });
   });

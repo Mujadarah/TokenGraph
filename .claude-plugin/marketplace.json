@@ -10,7 +10,7 @@
     {
       "name": "tokengraph",
       "source": "./release/tokengraph",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "description": "Route coding agents through compact local code, SQL, memory, wiki, and log context.",
       "category": "Developer Tools",
       "tags": ["mcp", "code-intelligence", "local-first", "context"]

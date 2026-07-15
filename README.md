@@ -7,7 +7,7 @@ TokenGraph is a local-first plugin for Codex and Claude Code. It indexes a trust
 
 - No OpenAI or Anthropic API key required.
 - No cloud index, embeddings service, telemetry, or paid external service.
-- Current release: `0.21.0`.
+- Current release: `0.21.1`.
 - Runtime: Node.js 22 or newer.
 - Source-available under the repository [license](LICENSE).
 
@@ -57,15 +57,15 @@ Claude Code forwards `CLAUDE_PROJECT_DIR` to TokenGraph automatically.
 
 ## Install the release ZIP
 
-Download `tokengraph-0.21.0.zip` from the [latest GitHub release](https://github.com/Mujadarah/TokenGraph/releases/latest) and extract it. The extracted directory is a standalone marketplace root containing both host catalogs and the installable `tokengraph/` plugin.
+Download `tokengraph-0.21.1.zip` from the [latest GitHub release](https://github.com/Mujadarah/TokenGraph/releases/latest) and extract it. The extracted directory is a standalone marketplace root containing both host catalogs and the installable `tokengraph/` plugin.
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.21.0
+codex plugin marketplace add C:\path\to\tokengraph-0.21.1
 codex plugin add tokengraph@tokengraph
 ```
 
 ```bash
-claude plugin marketplace add /path/to/tokengraph-0.21.0
+claude plugin marketplace add /path/to/tokengraph-0.21.1
 claude plugin install tokengraph@tokengraph
 ```
 
@@ -102,11 +102,11 @@ TokenGraph exposes eight compact intent-level tools by default and 42 tools on t
 
 See the [source plugin guide](plugins/tokengraph/README.md) for the complete tool catalog.
 
-## v0.20 behavior and evidence
+## Current behavior and evidence
 
 Every measured task has one canonical completion footer backed by a task ledger. JSON-only MCP successes return one serialized JSON `TextContent` item; `tokengraph_export_project_map` remains the documented resource-link exception. Wiki and memory updates use source-linked review-before-apply proposals: listing and proposing do not mutate derived knowledge. Approval requires at least one workspace-relative path whose canonical LF-normalized SHA-256 fingerprint is revalidated; stable logical ids remain expiring, attested/unverifiable snapshots and never become current or high-confidence. ID-only and legacy bare-fingerprint proposals cannot be approved, and stale or expired proposals fail.
 
-The checked-in 30-task benchmark preserves 100% of critical constraints, has zero critical false negatives, and reaches 100% required-file recall. Its primary execution-inclusive metric, based on an already-minimal expert selection of recommended raw reads rather than a full index dump, is a median of -86.0 tokens after the actual recommended first-file reads are charged; the 25th percentile is -292.0 and 18 of 30 tasks are non-positive. The routing-lifecycle gate remains a diagnostic continuity metric at 20.0 tokens median after exact core-tool discovery plus setup are amortized across the session and after one intent call plus one compact report per task; its nearest-rank 25th percentile is -290.0 and 15 of 30 tasks are non-positive. SQL/security and release packaging are positive in every fixture task; debugging, compression, and memory/wiki are negative in every fixture task. Every category has fewer than 10 observations, so confidence remains low. These deterministic fixture estimates are not provider billing counts or universal quality proof; the skills advise skipping TokenGraph for tiny self-contained work with already-bounded raw context.
+The checked-in 30-task benchmark preserves 100% of critical constraints, has zero critical false negatives, and reaches 100% required-file recall. Two narrowly bounded code tasks bypass at Stage 0 and are not booked as savings. Across the 28 activated tasks, the primary execution-inclusive median is +196.5 estimated tokens, the nearest-rank p25 is +102.5, and 23 tasks (82.1%) are non-negative, so the frozen deterministic release gate passes. The baseline is category-appropriate: minimal expert raw reads for code, SQL, risk, memory, and release tasks, and real noisy runner captures for debugging and compression. Memory/wiki remains negative in three of four fixtures and change risk in two of four; negative tails are not hidden. Every category still has fewer than 10 observations, so calibration confidence remains low. These fixture estimates are not provider billing counts, autonomous-agent patch-quality evidence, or universal Codex/Claude proof; enforced routing still requires a complete passing B6 paired host evaluation.
 
 Lifecycle hooks are cooperative automation. Users must review and trust them; they can be disabled, and interrupts, process termination, StopFailure, or API failure do not run normal completion enforcement. Missing or corrupt hook state fails open with a warning.
 

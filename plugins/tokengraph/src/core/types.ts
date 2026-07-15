@@ -11,6 +11,33 @@ export interface RepositoryIdentity {
   remoteIdentity?: string;
 }
 
+export interface EvidenceStatement {
+  text: string;
+  evidenceClass: "indexed" | "capsule" | "exact-slice" | "runtime" | "heuristic" | "untrusted";
+  confidence: "low" | "medium" | "high";
+  source: string;
+  untrustedSourceText?: string;
+}
+
+export interface RoutingPromotionReport {
+  schemaVersion: number;
+  generatedAt: string;
+  enforcementEnabled: boolean;
+  gates: Record<string, boolean>;
+  categoryCounts: Record<string, number>;
+  falseBypassRate?: number;
+  falseActivationRate?: number;
+  executionInclusiveMedian?: number;
+  executionInclusiveP25?: number;
+  nonNegativeActivatedRate?: number;
+}
+
+export interface RoutingControl {
+  schemaVersion: number;
+  killSwitch: boolean;
+  promotion?: RoutingPromotionReport;
+}
+
 export interface TokenGraphConfig {
   tokenSavingProfile: TokenSavingProfile;
   routingMode: RoutingMode;
@@ -22,9 +49,40 @@ export interface TokenGraphConfig {
   sqlIndexingEnabled: boolean;
   memoryEnabled: boolean;
   wikiGenerationEnabled: boolean;
+  routingKillSwitch: boolean;
+  routing: { mode: RoutingMode; killSwitch: boolean };
+  parser: {
+    maxFileBytes: number;
+    maxTotalBytes: number;
+    maxSymbols: number;
+    maxNodes: number;
+    perFileTimeoutMs: number;
+    wholeIndexTimeoutMs: number;
+    maxRecursionDepth: number;
+    maxGraphDepth: number;
+    maxGeneratedFiles: number;
+    maxTsconfigChain: number;
+    maxAliases: number;
+  };
+  storage: {
+    maxBytes: number;
+    runsMaxBytes: number;
+    cacheMaxBytes: number;
+    vaultMaxBytes: number;
+    durableMaxBytes: number;
+    runRetentionDays: number;
+    cacheRetentionDays: number;
+  };
+  runner: { maxBytes: number; timeoutMs: number; terminateGraceMs: number };
+  memory: { projectBriefTargetTokens: number; projectBriefMaxTokens: number; maxRetrievalTokens: number };
+  responseFormat: { default: "json" | "compact-tabular" };
 }
 
-export type TokenGraphConfigUpdate = Partial<Omit<TokenGraphConfig, "tokenSavingProfile">> & {
+type ConfigUpdateShape<T> = {
+  [Key in keyof T]?: T[Key] extends object ? Partial<T[Key]> : T[Key];
+};
+
+export type TokenGraphConfigUpdate = ConfigUpdateShape<Omit<TokenGraphConfig, "tokenSavingProfile">> & {
   tokenSavingProfile?: TokenSavingProfile;
 };
 
@@ -56,6 +114,10 @@ export interface CodeSymbol {
   exported: boolean;
   startLine?: number;
   endLine?: number;
+  signature?: string;
+  summary?: string;
+  provenance?: "typescript" | "tree-sitter" | "heuristic";
+  parserVersion?: string;
 }
 
 export interface SymbolChunk {
@@ -66,6 +128,12 @@ export interface SymbolChunk {
   exported: boolean;
   startLine?: number;
   endLine?: number;
+  signature?: string;
+  summary?: string;
+  edges?: string[];
+  provenance?: "typescript" | "tree-sitter" | "heuristic";
+  contentHash?: string;
+  parserVersion?: string;
 }
 
 export interface ImportEdge {
@@ -211,6 +279,7 @@ export interface SqlGraph {
 
 export interface ProjectIndex extends CodeGraph {
   schemaVersion?: number;
+  repositoryIdentity?: RepositoryIdentity;
   scannedAt: string;
   fingerprint: string;
   scanSignature?: string;
@@ -218,6 +287,15 @@ export interface ProjectIndex extends CodeGraph {
   frameworks: string[];
   sql: SqlGraph;
   symbolChunks?: SymbolChunk[];
+  configuration?: ConfigurationEvidence[];
+  unsupportedLanguageCounts?: Record<string, number>;
+}
+
+export interface ConfigurationEvidence {
+  path: string;
+  status: "parsed" | "degraded";
+  contentHash: string;
+  reason?: string;
 }
 
 export interface WikiPage {

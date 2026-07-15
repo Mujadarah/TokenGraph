@@ -207,7 +207,7 @@ Status: complete
 - The default MCP surface is eight intent-level tools, with 42 tools on the opt-in full compatibility surface.
 - JSON-only success results use one serialized JSON text item, while project-map resource links keep their documented structured exception.
 - Source-linked wiki and memory proposals require review and explicit approval before application, rechecking provenance and expiry.
-- The routing-lifecycle evidence benchmark passes its strict gate with 100% constraint preservation, zero critical false negatives, 100% recall, and median net estimated savings of 31.7 tokens. Its p25 is -270.3 and 15/30 tasks are non-positive; the execution-inclusive median is -133.8 with 20/30 non-positive. Per-category confidence is low.
+- The v0.20 routing-lifecycle evidence benchmark preserved 100% constraint preservation, zero critical false negatives, and 100% recall; its historical fixture claims are retained as evidence rather than release eligibility.
 - Deterministic v0.20 release packaging includes nine skills, the MCP and hook bundles, both host manifests, and a standalone marketplace archive.
 
 ## v0.21 - TokenGraph Roadmap v4
@@ -220,10 +220,11 @@ Status: complete
 - Scoped project briefs, verified outcomes, deterministic Obsidian projection, supersession, archival, compaction, and injection-safe memory composition are implemented.
 - Paired host-trace evaluation reports counterbalanced bootstrap confidence intervals and keeps enforced routing disabled unless every promotion gate passes. JSON remains the default after the negative tabular-format experiment.
 - The standalone release packages `web-tree-sitter@0.26.11` with pinned Python, Go, Rust, and Java grammar WASM assets and asserts zero workspace execution.
-- v0.21.0 benchmark claims use the checked-in artifact: routing median overhead 20.0 tokens and execution-inclusive median net savings -86.0 tokens; these are measured results, not universal savings guarantees.
+- v0.21.0 benchmark claims use the checked-in artifact: routing median net savings 5.7 tokens and execution-inclusive median net savings -94.3 tokens, with 19/30 execution-inclusive tasks non-positive. The frozen execution-inclusive release gate failed; no corrective tag or publication was made, and these are measured fixture results rather than universal savings guarantees.
+- v0.21.1 repairs the audited production wiring and passes the deterministic release gate: 28 activated tasks, two unbooked Stage-0 bypasses, a +196.5-token execution-inclusive median, +102.5-token p25, 82.1% non-negative activated tasks, 100% constraint preservation and recall, and zero critical false negatives. Enforced routing and B7 activation remain conditional on a separate complete passing B6 host-trace promotion report.
 
 ## Later
 
 Ideas under consideration:
 
-- Additional language adapters and parser grammars beyond the v0.21.0 polyglot set.
+- Additional language adapters and parser grammars beyond the v0.21 polyglot set.

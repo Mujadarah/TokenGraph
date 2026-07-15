@@ -12,31 +12,33 @@ Independent task inputs, raw-baseline files, memories, and reproducible expected
 
 One benchmark session measures the actual eight core `tools/list` definitions and one `tokengraph_setup` request/result exactly once, then amortizes that cost across all 30 tasks. Built-in raw-reader schemas are excluded because the comparison assumes the same host and they cancel on both sides.
 
-Every task contains exactly one intent call and one `tokengraph_task_report` call. Planner tasks use `tokengraph_prepare_context`. Debugging and change-risk tasks use direct `tokengraph_analyze`; compression uses direct `tokengraph_compress`; memory/wiki uses one direct review-mode `tokengraph_recall`. Direct intents omit `taskId`, auto-start the ledger, and return the task id consumed by the report. Each JSON-RPC response contains exactly one serialized JSON `TextContent` item. The compact report contains `status`, `taskId`, `footer`, and `reportingStatus`; verbose report internals are not part of the default benchmark path.
+Every activated task contains exactly one intent call and one `tokengraph_task_report` call. Planner tasks use `tokengraph_prepare_context`. Debugging uses a real bounded CLI-runner capture followed by `tokengraph_analyze`; compression uses a runner capture followed by `tokengraph_compress`; change-risk uses direct `tokengraph_analyze`; memory/wiki uses one direct review-mode `tokengraph_recall`. Direct intents omit `taskId`, auto-start the ledger, and return the task id consumed by the report. Each JSON-RPC response contains exactly one serialized JSON `TextContent` item. The compact report contains `status`, `taskId`, `footer`, and `reportingStatus`; verbose report internals are not part of the default benchmark path.
 
 ## Accounting
 
-The primary baseline is an already-minimal expert selection of recommended raw reads for each task, not a full index dump. Each listed file contributes one explicit built-in `read_file` JSON-RPC request and one single-`TextContent` result. The routing-lifecycle net is:
+The primary baseline is category-appropriate acquisition, not a full index dump. Code, SQL, risk, memory, and release tasks use an already-minimal expert selection of raw reads. Each listed file contributes one explicit built-in `read_file` JSON-RPC request and one single-`TextContent` result. Debugging and compression instead compare a real noisy command capture with the runner-backed compact lifecycle. The net is:
 
 `raw file requests and results - core intent request/result - compact report request/result - amortized discovery/setup`
 
-This release gate deliberately measures whether TokenGraph can replace broad initial acquisition with focused routing. It excludes downstream source reads recommended by `firstReads`, so it is not a total-execution savings claim.
+The report publishes an execution-inclusive net as its primary savings metric. A recommended exact slice is not automatically executed: the benchmark charges a real hash-validated slice request/result only when the corpus explicitly declares an unresolved post-lifecycle evidence gap. This follows the production read-policy state machine and avoids fabricating unnecessary reads. A separate mutation test forces one slice and verifies its bytes against the indexed source. These remain fixture estimates, not provider billing. A full-index-dump token estimate is retained only as a diagnostic comparison.
 
-The report therefore publishes an execution-inclusive net as its primary savings metric. It subtracts the actual built-in request/result pairs for recommended `firstReads` when the task allows raw reads. This is still a fixture estimate, not provider billing, but it makes product overhead and negative tails visible. A full-index-dump token estimate is retained only as a diagnostic comparison.
+Stage-0 bypasses are reported separately and never booked as non-negative savings. Activated-task economics alone feed the execution median, p25, and non-negative-rate gates.
 
 For every task the harness also reports required-file recall, false positives, false negatives, exact critical-constraint preservation, recommended tests, estimated tokens, quality result, and explicit failure reasons. Constraint predicates normalize case, Unicode, whitespace, and punctuation without discarding words or polarity, so negation cannot pass through partial overlap.
 
 ## Release gate
 
-The deterministic routing-lifecycle gate passes only when:
+The frozen release gate uses execution-inclusive savings as the primary metric and passes only when:
 
 - the corpus has at least 30 tasks and four tasks in every category;
 - critical-constraint preservation is 100%;
 - critical false negatives are zero;
 - required-file recall does not regress below the checked-in baseline; and
-- median routing-lifecycle net savings is positive.
+- median execution-inclusive net savings is positive for activated tasks;
+- nearest-rank execution-inclusive p25 is non-negative; and
+- at least 80% of activated tasks have non-negative execution-inclusive savings.
 
-Task-level failures and both routing and execution-inclusive distributions remain visible even when the aggregate gate passes. The gate does not require the execution-inclusive median to be positive and must not be described as total task savings.
+Task-level failures, bypasses, and the full execution-inclusive distribution remain visible. The v0.21.1 fixture passes with a +196.5-token activated-task median, +102.5-token p25, and 82.1% non-negative activated tasks. This deterministic gate does not by itself enable enforced routing; B6 promotion still requires a complete host-trace manifest and every paired-evaluation gate.
 
 ## Calibration and claim boundary
 

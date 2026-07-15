@@ -28,10 +28,10 @@ claude plugin install tokengraph@tokengraph
 
 ## Install an extracted release bundle
 
-Extract `tokengraph-0.21.0.zip`, add the extracted bundle root, and install:
+Extract `tokengraph-0.21.1.zip`, add the extracted bundle root, and install:
 
 ```text
-/plugin marketplace add /path/to/tokengraph-0.21.0
+/plugin marketplace add /path/to/tokengraph-0.21.1
 /plugin install tokengraph@tokengraph
 /reload-plugins
 ```

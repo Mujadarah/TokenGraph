@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 // src/hooks.ts
-import { createHash } from "node:crypto";
-import { mkdir as mkdir2, open as open2, readFile as readFile3, readdir as readdir2, rm as rm3, stat as stat2 } from "node:fs/promises";
-import { dirname as dirname2, isAbsolute as isAbsolute2, join as join3, resolve as resolve3 } from "node:path";
+import { createHash as createHash2 } from "node:crypto";
+import { mkdir as mkdir2, open as open2, readFile as readFile4, readdir as readdir2, rm as rm3, stat as stat2 } from "node:fs/promises";
+import { dirname as dirname2, isAbsolute as isAbsolute2, join as join4, resolve as resolve4 } from "node:path";
 
 // src/core/taskEstimator.ts
 var TASK_ESTIMATOR_VERSION = "task-estimator-v1";
@@ -54,13 +54,13 @@ function formatTaskReportFooter(report) {
 }
 
 // src/core/taskLedger.ts
-import { readFile as readFile2, readdir, rename as rename2, rm as rm2 } from "node:fs/promises";
-import { join as join2, resolve as resolve2 } from "node:path";
+import { readFile as readFile3, readdir, rename as rename2, rm as rm2 } from "node:fs/promises";
+import { join as join3, resolve as resolve3 } from "node:path";
 
 // src/core/storage.ts
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 var FILE_LOCK_ATTEMPTS = 200;
 var FILE_LOCK_WAIT_MS = 10;
 var FILE_LOCK_STALE_MS = 3e4;
@@ -81,10 +81,12 @@ async function retryTransientWindowsFs(operation) {
   }
 }
 async function withFileLock(lockPath, operation) {
+  await assertNoSymbolicLinkComponents(lockPath);
   await mkdir(dirname(lockPath), { recursive: true });
+  await assertNoSymbolicLinkComponents(lockPath);
   for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
     try {
-      const handle = await open(lockPath, "wx");
+      const handle = await open(lockPath, "wx", 384);
       try {
         return await operation();
       } finally {
@@ -124,19 +126,166 @@ async function writeJsonAtomic(path, value) {
 }
 async function writeTextAtomic(path, content) {
   const directory = dirname(path);
-  await mkdir(directory, { recursive: true });
+  await assertNoSymbolicLinkComponents(path);
+  await mkdir(directory, { recursive: true, mode: 448 });
+  await assertNoSymbolicLinkComponents(path);
+  if (process.platform !== "win32") await chmod(directory, 448);
   const tempPath = join(directory, `.${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
   try {
-    await writeFile(tempPath, content);
+    await writeFile(tempPath, content, { mode: 384 });
     await rename(tempPath, path);
+    if (process.platform !== "win32") await chmod(path, 384);
   } finally {
     await rm(tempPath, { force: true });
   }
 }
+async function assertNoSymbolicLinkComponents(path) {
+  const absolute = resolve(path);
+  const parsed = parse(absolute);
+  let current = parsed.root;
+  const remainder = absolute.slice(parsed.root.length).split(/[\\/]+/).filter(Boolean);
+  for (const segment of remainder) {
+    current = join(current, segment);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) {
+        throw new Error(`State write cannot traverse symbolic-link or junction component: ${current}`);
+      }
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
+  }
+}
+
+// src/core/repositoryIdentity.ts
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { createHash } from "node:crypto";
+import { access, readFile as readFile2 } from "node:fs/promises";
+import { join as join2, resolve as resolve2 } from "node:path";
+var execFileAsync = promisify(execFile);
+var LOCAL_EXCLUDE_WARNING = "TokenGraph could not update .git/info/exclude; add this exact line manually: .tokengraph/";
+var setupWarnings = /* @__PURE__ */ new Map();
+async function git(root, ...args) {
+  try {
+    const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 });
+    const output = result.stdout.trim();
+    return output || void 0;
+  } catch {
+    return void 0;
+  }
+}
+async function ensureLocalExclude(root) {
+  const exclude = await git(root, "rev-parse", "--git-path", "info/exclude");
+  if (!exclude) return;
+  const path = resolve2(root, exclude);
+  try {
+    const lockKey = await canonicalPersistenceLockKey(path);
+    await withFileLock(`${lockKey}.lock`, async () => {
+      let existing = "";
+      try {
+        existing = await readFile2(path, "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      const lines = existing.split(/\r?\n/);
+      if (lines.some((line) => line.trim() === ".tokengraph/")) return;
+      const next = `${existing.replace(/[\r\n]*$/, "")}${existing ? "\n" : ""}.tokengraph/
+`;
+      await writeTextAtomic(path, next);
+    });
+    setupWarnings.delete(resolve2(root));
+  } catch {
+    setupWarnings.set(resolve2(root), [LOCAL_EXCLUDE_WARNING]);
+  }
+}
+function digest(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+async function remoteIdentity(root) {
+  const remotes = await git(root, "remote", "get-url", "--all", "origin");
+  return remotes?.split(/\r?\n/).map((value) => sanitizeRemote(value.trim())).filter(Boolean).sort().join("\n");
+}
+function sanitizeRemote(value) {
+  const scpStyle = value.match(/^[^@\/\s]+@([^:\/\s]+):(.+)$/);
+  if (scpStyle) return `ssh://${scpStyle[1]}/${scpStyle[2]}`;
+  try {
+    const parsed = new URL(value);
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return value.replace(/\/\/[^/@\s]+@/g, "//");
+  }
+}
+async function loadOrCreateRepositoryId(directory) {
+  const path = join2(directory, "identity.json");
+  try {
+    const parsed = JSON.parse(await readFile2(path, "utf8"));
+    if (parsed.schemaVersion === 1 && typeof parsed.repositoryId === "string" && parsed.repositoryId.length >= 16) return parsed.repositoryId;
+  } catch (error) {
+    if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+  }
+  const repositoryId = digest(`${directory}
+${Date.now()}
+${Math.random()}`);
+  const lockKey = await canonicalPersistenceLockKey(directory, "identity.json");
+  await withFileLock(`${lockKey}.lock`, async () => {
+    try {
+      const existing = JSON.parse(await readFile2(path, "utf8"));
+      if (existing.schemaVersion === 1 && typeof existing.repositoryId === "string" && existing.repositoryId.length >= 16) return;
+    } catch (error) {
+      if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+    }
+    await writeJsonAtomic(path, { schemaVersion: 1, repositoryId });
+  });
+  try {
+    const persisted = JSON.parse(await readFile2(path, "utf8"));
+    return typeof persisted.repositoryId === "string" ? persisted.repositoryId : repositoryId;
+  } catch {
+    return repositoryId;
+  }
+}
+async function getRepositoryIdentity(root) {
+  const workspaceRoot = resolve2(root);
+  return getRepositoryIdentityUncached(workspaceRoot);
+}
+async function getRepositoryIdentityUncached(workspaceRoot) {
+  const [topLevel, commonDir, gitDir, branch, headCommit, firstCommits, remote] = await Promise.all([
+    git(workspaceRoot, "rev-parse", "--show-toplevel"),
+    git(workspaceRoot, "rev-parse", "--git-common-dir"),
+    git(workspaceRoot, "rev-parse", "--git-dir"),
+    git(workspaceRoot, "symbolic-ref", "--quiet", "--short", "HEAD"),
+    git(workspaceRoot, "rev-parse", "HEAD"),
+    git(workspaceRoot, "rev-list", "--max-parents=0", "HEAD"),
+    remoteIdentity(workspaceRoot)
+  ]);
+  const normalizedRoot = resolve2(topLevel ?? workspaceRoot);
+  const normalizedCommon = commonDir ? resolve2(workspaceRoot, commonDir) : void 0;
+  const normalizedGitDir = gitDir ? resolve2(workspaceRoot, gitDir) : void 0;
+  if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
+  const repositoryState = repositoryStateDirectory(normalizedRoot, normalizedCommon);
+  const repositoryId = await loadOrCreateRepositoryId(repositoryState);
+  const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
+  const repositoryFingerprint = digest(`${repositoryId}
+${firstCommit}`);
+  return {
+    repositoryId,
+    repositoryFingerprint,
+    workspaceId: digest(normalizedRoot),
+    worktreeId: digest(normalizedGitDir ?? normalizedRoot),
+    branch: branch ?? "detached",
+    headCommit: headCommit ?? "unborn",
+    ...remote ? { remoteIdentity: remote } : {}
+  };
+}
+function repositoryStateDirectory(root, commonDirectory) {
+  return commonDirectory ? join2(commonDirectory, "tokengraph") : join2(resolve2(root), ".tokengraph", "repository");
+}
 
 // src/core/taskLedger.ts
 var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
-var TASK_LEDGER_SCHEMA_VERSION = 1;
+var TASK_LEDGER_SCHEMA_VERSION = 2;
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var taskLedgerWriteChains = /* @__PURE__ */ new Map();
 function assertTaskId(taskId) {
@@ -145,11 +294,11 @@ function assertTaskId(taskId) {
   }
 }
 function tasksDirectory(root) {
-  return join2(resolve2(root), ".tokengraph", "tasks");
+  return join3(resolve3(root), ".tokengraph", "tasks");
 }
 function taskLedgerPath(root, taskId) {
   assertTaskId(taskId);
-  return join2(tasksDirectory(root), `${taskId}.json`);
+  return join3(tasksDirectory(root), `${taskId}.json`);
 }
 function isRecord2(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -191,7 +340,10 @@ function reconstructEvent(value) {
 function reconstructTaskLedger(value, expectedTaskId) {
   if (!isRecord2(value) || !Array.isArray(value.events)) return void 0;
   const events = value.events.map(reconstructEvent);
-  if (value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId || !["codex", "claude", "unknown"].includes(String(value.host)) || !["open", "paused", "completed", "quarantined"].includes(String(value.status)) || !isOptionalIdentifier(value.sessionId) || !isOptionalIdentifier(value.turnId) || !isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt) || value.pausedAt !== void 0 && !isTimestamp(value.pausedAt) || value.completedAt !== void 0 && !isTimestamp(value.completedAt) || value.estimatorVersion !== TASK_ESTIMATOR_VERSION || events.some((event) => event === void 0) || value.lastDisposition !== void 0 && value.lastDisposition !== "pause" && value.lastDisposition !== "complete" || Date.parse(value.updatedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) > Date.parse(value.updatedAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) < Date.parse(value.createdAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) > Date.parse(value.updatedAt)) {
+  const routingObservation = value.routingObservation === void 0 ? void 0 : reconstructRoutingObservation(value.routingObservation);
+  const readPolicy = value.readPolicy === void 0 ? void 0 : reconstructReadPolicy(value.readPolicy);
+  const deliveredArtifacts = value.deliveredArtifacts === void 0 ? [] : Array.isArray(value.deliveredArtifacts) && value.deliveredArtifacts.every((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 512) ? [...new Set(value.deliveredArtifacts)] : void 0;
+  if (value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== 1 && value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId || !["codex", "claude", "unknown"].includes(String(value.host)) || !["open", "paused", "completed", "quarantined"].includes(String(value.status)) || !isOptionalIdentifier(value.sessionId) || !isOptionalIdentifier(value.turnId) || !isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt) || value.pausedAt !== void 0 && !isTimestamp(value.pausedAt) || value.completedAt !== void 0 && !isTimestamp(value.completedAt) || value.estimatorVersion !== TASK_ESTIMATOR_VERSION || value.repositoryIdentity !== void 0 && !isRepositoryIdentity(value.repositoryIdentity) || value.routingObservation !== void 0 && routingObservation === void 0 || value.readPolicy !== void 0 && readPolicy === void 0 || deliveredArtifacts === void 0 || events.some((event) => event === void 0) || value.lastDisposition !== void 0 && value.lastDisposition !== "pause" && value.lastDisposition !== "complete" || Date.parse(value.updatedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) > Date.parse(value.updatedAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) < Date.parse(value.createdAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) > Date.parse(value.updatedAt)) {
     return void 0;
   }
   const completedReport = value.completedReport === void 0 ? void 0 : reconstructTaskReport(value.completedReport, expectedTaskId, events.length);
@@ -218,9 +370,43 @@ function reconstructTaskLedger(value, expectedTaskId) {
     ...value.pausedAt === void 0 ? {} : { pausedAt: value.pausedAt },
     ...value.completedAt === void 0 ? {} : { completedAt: value.completedAt },
     estimatorVersion: TASK_ESTIMATOR_VERSION,
+    ...value.repositoryIdentity === void 0 ? {} : { repositoryIdentity: value.repositoryIdentity },
+    ...routingObservation === void 0 ? {} : { routingObservation },
+    ...readPolicy === void 0 ? {} : { readPolicy },
+    deliveredArtifacts,
     events,
     ...value.lastDisposition === void 0 ? {} : { lastDisposition: value.lastDisposition },
     ...completedReport === void 0 ? {} : { completedReport }
+  };
+}
+function isRepositoryIdentity(value) {
+  if (!isRecord2(value)) return false;
+  return ["repositoryId", "repositoryFingerprint", "workspaceId", "worktreeId", "branch", "headCommit"].every((key) => isIdentifier(value[key]));
+}
+function reconstructRoutingObservation(value) {
+  if (!isRecord2(value)) return void 0;
+  if (value.decision !== "activate" && value.decision !== "bypass" || !Number.isInteger(value.stage) || value.stage < 0 || typeof value.reason !== "string" || typeof value.expectedOverheadTokens !== "number" || !Number.isFinite(value.expectedOverheadTokens) || value.expectedOverheadTokens < 0 || !["shadow", "enforced", "always-activate", "always-advisory"].includes(String(value.mode)) || typeof value.enforced !== "boolean") return void 0;
+  return {
+    decision: value.decision,
+    stage: value.stage,
+    reason: value.reason,
+    expectedOverheadTokens: value.expectedOverheadTokens,
+    mode: value.mode,
+    enforced: value.enforced
+  };
+}
+function reconstructReadPolicy(value) {
+  if (!isRecord2(value)) return void 0;
+  if (!["L0", "L1", "L2", "L3", "L4"].includes(String(value.level)) || typeof value.allowRawReads !== "boolean" || typeof value.reason !== "string" || value.targetedReads !== void 0 && (!Number.isInteger(value.targetedReads) || value.targetedReads < 0) || value.recommendedReadsThisResponse !== void 0 && (!Number.isInteger(value.recommendedReadsThisResponse) || value.recommendedReadsThisResponse < 0) || value.requiresReassessment !== void 0 && typeof value.requiresReassessment !== "boolean" || value.hasReassessed !== void 0 && typeof value.hasReassessed !== "boolean" || value.evidenceGap !== void 0 && typeof value.evidenceGap !== "string") return void 0;
+  return {
+    level: value.level,
+    allowRawReads: value.allowRawReads,
+    reason: value.reason,
+    ...value.targetedReads === void 0 ? {} : { targetedReads: value.targetedReads },
+    ...value.recommendedReadsThisResponse === void 0 ? {} : { recommendedReadsThisResponse: value.recommendedReadsThisResponse },
+    ...value.requiresReassessment === void 0 ? {} : { requiresReassessment: value.requiresReassessment },
+    ...value.hasReassessed === void 0 ? {} : { hasReassessed: value.hasReassessed },
+    ...value.evidenceGap === void 0 ? {} : { evidenceGap: value.evidenceGap }
   };
 }
 async function quarantine(path, now = /* @__PURE__ */ new Date()) {
@@ -272,11 +458,19 @@ async function attachTaskHostContext(root, taskId, context) {
 async function loadTaskLedger(root, taskId) {
   const path = taskLedgerPath(root, taskId);
   try {
-    const parsed = JSON.parse(await readFile2(path, "utf8"));
+    const parsed = JSON.parse(await readFile3(path, "utf8"));
+    if (isRecord2(parsed) && typeof parsed.schemaVersion === "number" && parsed.schemaVersion > TASK_LEDGER_SCHEMA_VERSION) {
+      throw new Error(`Task ledger schema ${parsed.schemaVersion} is newer than supported schema ${TASK_LEDGER_SCHEMA_VERSION}; refusing to modify it.`);
+    }
     const ledger = reconstructTaskLedger(parsed, taskId);
     if (!ledger) {
       await quarantine(path);
       return void 0;
+    }
+    if (!ledger.repositoryIdentity || isRecord2(parsed) && parsed.schemaVersion === 1) {
+      ledger.repositoryIdentity = await getRepositoryIdentity(root);
+      ledger.schemaVersion = TASK_LEDGER_SCHEMA_VERSION;
+      await writeJsonAtomic(path, ledger);
     }
     return ledger;
   } catch (error) {
@@ -330,18 +524,18 @@ function isTimestamp2(value) {
   return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
 }
 function sessionHash(sessionId) {
-  return createHash("sha256").update(sessionId).digest("hex");
+  return createHash2("sha256").update(sessionId).digest("hex");
 }
 function dataRoot() {
   const value = process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
-  return isIdentifier2(value) ? resolve3(value) : void 0;
+  return isIdentifier2(value) ? resolve4(value) : void 0;
 }
 function sessionsDirectory(root) {
-  return join3(root, "sessions");
+  return join4(root, "sessions");
 }
 function pointerPath(root, hash) {
   if (!HASH_PATTERN.test(hash)) throw new Error("Invalid session hash.");
-  return join3(sessionsDirectory(root), `${hash}.json`);
+  return join4(sessionsDirectory(root), `${hash}.json`);
 }
 function reconstructPointer(value, expectedHash) {
   if (!isRecord3(value)) return void 0;
@@ -363,7 +557,7 @@ function reconstructPointer(value, expectedHash) {
 }
 async function loadPointer(root, hash) {
   try {
-    const parsed = JSON.parse(await readFile3(pointerPath(root, hash), "utf8"));
+    const parsed = JSON.parse(await readFile4(pointerPath(root, hash), "utf8"));
     const pointer = reconstructPointer(parsed, hash);
     return pointer ? { status: "valid", pointer } : { status: "corrupt" };
   } catch (error) {

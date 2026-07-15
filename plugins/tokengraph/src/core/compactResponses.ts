@@ -79,7 +79,7 @@ function compactWarnings(warnings: string[]): string[] {
   }));
 }
 
-function firstReadIndices(files: CompactFile[], paths: string[], limit = 2): number[] {
+function firstReadIndices(files: CompactFile[], paths: string[], limit = 1): number[] {
   return unique(paths).map((path) => files.findIndex((file) => file.path === path)).filter((index) => index >= 0).slice(0, limit);
 }
 
@@ -147,6 +147,22 @@ export function compactModeEnvelope<T>(mode: string, result: T): T & { mode: str
   return { mode, result } as T & { mode: string; result: T };
 }
 
+export function compactSliceResponse(slice: {
+  path: string;
+  startLine: number;
+  endLine: number;
+  text: string;
+  hash: string;
+  contentHash: string;
+}) {
+  return {
+    path: slice.path,
+    range: [slice.startLine, slice.endLine] as [number, number],
+    text: slice.text,
+    verificationHash: slice.hash
+  };
+}
+
 export function compactCompressionEnvelope<T>(mode: string, result: T, estimates?: { original: number; compact: number; overhead: number }) {
   return estimates ? { mode, result, estimates } : result;
 }
@@ -156,8 +172,28 @@ export function compactPrepareEnvelope<T>(input: {
   taskId: string;
   plan: T;
   routing?: unknown;
+  mode?: "tokengraph" | "direct-host";
+  artifact?: unknown;
+  artifactReference?: unknown;
+  deliveredArtifacts?: string[];
+  unsupportedLanguageCounts?: Record<string, number>;
+  retrieval?: {
+    capsuleHash: string;
+    readPolicy: { level: string; allowRawReads: boolean; reason: string };
+    recommendedRead?: { mode: "slice"; file: string; startLine: number; endLine: number; contentHash: string };
+  };
 }) {
-  return { taskId: input.taskId, plan: input.plan, ...(input.routing === undefined ? {} : { routing: input.routing }) };
+  return {
+    mode: input.mode ?? "tokengraph",
+    taskId: input.taskId,
+    plan: input.plan,
+    ...(input.routing === undefined ? {} : { routing: input.routing }),
+    ...(input.artifact === undefined ? {} : { artifact: input.artifact }),
+    ...(input.artifactReference === undefined ? {} : { artifactReference: input.artifactReference }),
+    deliveredArtifacts: input.deliveredArtifacts ?? [],
+    ...(input.unsupportedLanguageCounts && Object.keys(input.unsupportedLanguageCounts).length ? { unsupportedLanguageCounts: input.unsupportedLanguageCounts } : {}),
+    ...(input.retrieval ? { retrieval: input.retrieval } : {})
+  };
 }
 
 export function compactPlanResponse(plan: ContextPlan, options: CompactResponseOptions = {}): CompactCoreResponse {

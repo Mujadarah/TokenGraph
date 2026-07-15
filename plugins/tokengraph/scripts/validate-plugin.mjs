@@ -140,6 +140,8 @@ const claudeMcpPath = resolve(pluginRoot, ".mcp.claude.json");
 const skillsPath = resolve(pluginRoot, "skills");
 const distEntryPath = resolve(pluginRoot, "dist", "index.js");
 const distHooksPath = resolve(pluginRoot, "dist", "hooks.js");
+const distPolyglotWorkerPath = resolve(pluginRoot, "dist", "polyglot-worker.js");
+const distTypeScriptWorkerPath = resolve(pluginRoot, "dist", "typescript-worker.cjs");
 const hooksManifestPath = resolve(pluginRoot, "hooks", "hooks.json");
 const distServerPath = resolve(pluginRoot, "dist", "index.js");
 const distReviewPath = resolve(pluginRoot, "dist", "core", "review.js");
@@ -148,11 +150,14 @@ const releaseManifestPath = resolve(releaseRoot, ".codex-plugin", "plugin.json")
 const releaseMcpPath = resolve(releaseRoot, ".mcp.json");
 const releaseDistEntryPath = resolve(releaseRoot, "dist", "index.js");
 const releaseDistHooksPath = resolve(releaseRoot, "dist", "hooks.js");
+const releaseDistPolyglotWorkerPath = resolve(releaseRoot, "dist", "polyglot-worker.js");
+const releaseDistTypeScriptWorkerPath = resolve(releaseRoot, "dist", "typescript-worker.cjs");
 const releaseHooksManifestPath = resolve(releaseRoot, "hooks", "hooks.json");
 const releaseDistCorePath = resolve(releaseRoot, "dist", "core");
 const releaseSkillsPath = resolve(releaseRoot, "skills");
 const releasePackageJsonPath = resolve(releaseRoot, "package.json");
 const releaseReadmePath = resolve(releaseRoot, "README.md");
+const grammarAssets = ["web-tree-sitter.wasm", "tree-sitter-python.wasm", "tree-sitter-go.wasm", "tree-sitter-rust.wasm", "tree-sitter-java.wasm"];
 const rootReadmePath = resolve(repoRoot, "README.md");
 const sourceReadmePath = resolve(pluginRoot, "README.md");
 const smokeScriptPath = resolve(pluginRoot, "scripts", "smoke.mjs");
@@ -257,7 +262,7 @@ assert(distServer.includes("tokengraph_update_config"), "built MCP server must r
 assert(distServer.includes("fullReindex"), "built MCP server must expose v0.8 full reindex option");
 assert(distServer.includes("indexingMode"), "built MCP server must report v0.8 indexing mode");
 assert(distServer.includes("maxEstimatedTokens"), "built MCP server must expose v0.8 planner token budget input");
-assert(packageJson.version === "0.21.0", "package version must be 0.21.0 for this release");
+assert(packageJson.version === "0.21.1", "package version must be 0.21.1 for this release");
 assert(distServer.includes("tokengraph_setup_status"), "built MCP server must register setup diagnostics");
 assert(distServer.includes("tokengraph_generate_wiki"), "built MCP server must register v0.9 wiki generator");
 assert(distServer.includes("tokengraph_show_wiki_page"), "built MCP server must register v0.9 wiki page reader");
@@ -287,6 +292,8 @@ assert(distReview.includes("markdownFallback"), "built review helpers must inclu
 
 await assertFile(distEntryPath, "built MCP entry");
 await assertFile(distHooksPath, "built lifecycle hook entry");
+await assertFile(distPolyglotWorkerPath, "built standalone polyglot parser worker");
+await assertFile(distTypeScriptWorkerPath, "built standalone TypeScript parser worker");
 await assertFile(hooksManifestPath, "lifecycle hook manifest");
 await assertFile(distServerPath, "built MCP server");
 await assertFile(distReviewPath, "built review helpers");
@@ -310,11 +317,17 @@ await assertFile(releaseManifestPath, "release plugin manifest");
 await assertFile(releaseMcpPath, "release MCP config");
 await assertFile(releaseDistEntryPath, "release built MCP entry");
 await assertFile(releaseDistHooksPath, "release built lifecycle hook entry");
+await assertFile(releaseDistPolyglotWorkerPath, "release standalone polyglot parser worker");
+await assertFile(releaseDistTypeScriptWorkerPath, "release standalone TypeScript parser worker");
 await assertFile(releaseHooksManifestPath, "release lifecycle hook manifest");
 await assertMissing(releaseDistCorePath, "release dist/core directory");
 await assertMissing(resolve(releaseRoot, "dist", "server.js"), "release built MCP server");
 await assertFile(releaseReadmePath, "release README");
 await assertFile(releasePackageJsonPath, "release package metadata");
+for (const asset of grammarAssets) {
+  await assertFile(resolve(pluginRoot, "assets", "grammars", asset), `source grammar asset ${asset}`);
+  await assertFile(resolve(releaseRoot, "assets", "grammars", asset), `release grammar asset ${asset}`);
+}
 await assertFile(resolve(releaseRoot, "LICENSE"), "release license");
 const releaseSkillContract = await inspectSkillContract(releaseSkillsPath, "release plugin skills");
 assert(releaseSkillContract.forbiddenCoreTools.length === 0, `release plugin core skills reference non-core tools: ${releaseSkillContract.forbiddenCoreTools.join(", ")}`);

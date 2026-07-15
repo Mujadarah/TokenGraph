@@ -188,14 +188,13 @@
 
 - [x] Bump every version surface to 0.21.0 and regenerate normal/release packages.
 - [x] Run the complete gate plus direct release smoke and ZIP-aware contents/checksum validation.
-- [x] Create tag `v0.21.0`, verify the CI draft release asset against a local tag rebuild, then publish the release.
-- [x] Commit `release: publish TokenGraph v0.21.0` and record the final gate evidence.
+- [ ] Create tag `v0.21.0`, verify the CI draft release asset against a local tag rebuild, then publish the release. Not authorized after the frozen execution-inclusive gate failed.
+- [ ] Commit `release: publish TokenGraph v0.21.0`. The existing published tag remains immutable; remediation is tracked in `2026-07-15-tokengraph-audit-remediation.md`.
 
-Final evidence: the tag workflow passed all packaging gates in run `29443126944`; the
-published ZIP checksum is `8f7ff8c6589d6f61a56e61ea425fac80b6a7c710da1e2d7609ff3444a2e5298e`,
-matching a clean LF local tag rebuild. The final local gate reported 19 test files and
-320 passing tests, with direct release smoke, plugin validation, and ZIP contents checks
-passing.
+Historical evidence: the tag workflow and published ZIP checks above describe the
+immutable v0.21.0 publication. The current remediation keeps that tag unchanged; the
+fresh fixture run has 320 passing tests but fails the execution-inclusive eligibility gate
+with a median of -92.5 tokens, so no corrective tag or publication is created.
 
 ## Required verification command set
 

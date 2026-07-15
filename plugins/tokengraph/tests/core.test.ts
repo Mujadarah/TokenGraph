@@ -120,10 +120,31 @@ describe("TokenGraph local config", () => {
     const raw = JSON.parse(await readFile(configPath(root), "utf8"));
 
     expect(config.tokenSavingProfile).toBe("aggressive");
+    expect(JSON.parse(await readFile(`${configPath(root)}.bak`, "utf8"))).toMatchObject({ tokenSavingProfile: "aggressive" });
     expect(raw).toEqual({
       schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
       config
     });
+  });
+
+  it("migrates the legacy total storage quota into separate class caps", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    const legacy = JSON.parse(JSON.stringify(DEFAULT_TOKEN_GRAPH_CONFIG)) as Record<string, unknown> & { storage: Record<string, unknown> };
+    legacy.storage = { maxBytes: 1000, runRetentionDays: 14, cacheRetentionDays: 7 };
+    await writeFile(configPath(root), JSON.stringify({ schemaVersion: 1, config: legacy }));
+
+    const config = await loadTokenGraphConfig(root);
+
+    expect(config.storage).toMatchObject({
+      maxBytes: 1000,
+      runsMaxBytes: 250,
+      cacheMaxBytes: 500,
+      vaultMaxBytes: 125,
+      durableMaxBytes: 125
+    });
+    expect(JSON.parse(await readFile(`${configPath(root)}.bak`, "utf8"))).toMatchObject({ schemaVersion: 1 });
+    expect(JSON.parse(await readFile(configPath(root), "utf8"))).toMatchObject({ schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: { storage: config.storage } });
   });
 
   it("quarantines corrupt config instead of silently destroying it", async () => {
@@ -137,6 +158,13 @@ describe("TokenGraph local config", () => {
     expect(config).toEqual(DEFAULT_TOKEN_GRAPH_CONFIG);
     expect(files.some((file) => file.startsWith("config.json.corrupt-"))).toBe(true);
     expect(JSON.parse(await readFile(configPath(root), "utf8"))).toMatchObject({ schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION });
+  });
+
+  it("refuses to overwrite a config written by a newer version", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(configPath(root), JSON.stringify({ schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION + 1, config: DEFAULT_TOKEN_GRAPH_CONFIG }));
+    await expect(loadTokenGraphConfig(root)).rejects.toThrow(/newer.*refusing/i);
   });
 
   it("updates profile and explicit settings while preserving unspecified defaults", async () => {
@@ -223,13 +251,13 @@ describe("scanProject", () => {
     );
   });
 
-  it("reports unsupported-language exclusions instead of silently dropping them", async () => {
+  it("discovers supported polyglot source files instead of silently dropping them", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
-    await writeFile(join(root, "src", "diagram.py"), "print('not parsed by the TypeScript-first scanner')");
+    await writeFile(join(root, "src", "diagram.py"), "def render_diagram():\n    return True\n");
     const graph = await scanProject(root);
-    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/diagram.py", reason: "unsupported" }));
-    expect(graph.exclusions.filter((exclusion) => exclusion.reason === "unsupported")).toHaveLength(1);
+    expect(graph.files).toContainEqual(expect.objectContaining({ path: "src/diagram.py", language: "python" }));
+    expect(graph.exclusions.filter((exclusion) => exclusion.path === "src/diagram.py")).toHaveLength(0);
   });
 
   it("does not classify similarly named directories as tests", async () => {
@@ -979,6 +1007,11 @@ describe("index status and reset", () => {
     });
 
     await writeFile(join(root, "src", "patientSummary.ts"), "export const patientSummary = 'new';");
+    await expect(getIndexStatus(root, { probeOnly: true })).resolves.toMatchObject({
+      state: "fresh",
+      hasIndex: true,
+      currentScanSignature: project.scanSignature
+    });
     await expect(getIndexStatus(root)).resolves.toMatchObject({
       state: "stale",
       hasIndex: true,
@@ -2452,6 +2485,19 @@ describe("v0.7 review and export helpers", () => {
     expect(review.matches.map((match) => match.id)).toContain(unrelated.id);
     expect(review.policy).toMatch(/does not modify/i);
     await expect(store.list()).resolves.toHaveLength(2);
+  });
+
+  it("does not rank unrelated memories from query stopwords", async () => {
+    const memory = testMemory({
+      id: "memory-stopword",
+      type: "architecture",
+      title: "Patient route boundary",
+      body: "The route and service are kept separate for safety.",
+      tags: ["patients"],
+      createdAt: "2026-01-01T00:00:00.000Z"
+    });
+    const review = await reviewMemories({ memories: [memory], query: "the and for", limit: 5 });
+    expect(review.matches[0]).toMatchObject({ score: 0, matchedTerms: [], action: "review" });
   });
 
   it("exports a compact Mermaid project map without raw source content", async () => {

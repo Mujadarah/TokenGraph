@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.21.1 - 2026-07-16
+
+- Fixed routing shadow, kill-switch, force-bypass, promotion-evidence, and B7 activation semantics so advisory decisions cannot silently enforce or unlock later phases.
+- Fixed repository/worktree identity refresh, branch-safe index reuse, task-ledger migration and artifact delivery, symlink-safe writes, untrusted-source filtering, and class-specific storage quotas and purge behavior.
+- Wired bounded parser limits, worker isolation, exact hash-validated slices, task read-policy reassessment, saved-run selectors, retention, and the paired-routing evaluator into production paths.
+- Replaced synthetic debugging/compression accounting with real bounded runner captures and made failed benchmark gates return a failing process status.
+- Passed the frozen deterministic release gate with 100% constraint preservation and required-file recall, zero critical false negatives, a +196.5-token activated-task median, +102.5-token p25, and 82.1% non-negative activated tasks. Enforced routing still requires a separate complete passing B6 host evaluation.
+
 ## 0.21.0 - 2026-07-15
 
 - Added shadow-first routing decisions, canonical stable artifacts, exact known-artifact suppression, and task-aware routing overrides.
@@ -7,7 +15,7 @@
 - Added bounded configuration parsing, pinned TypeScript 5.9.3, source-free SymbolChunk records, deterministic BM25 capsules, graph expansion, exact slices, and handshake-safe deltas.
 - Added the bounded `tokengraph run -- <command> [args...]` CLI with redacted captures, timeouts, retention, and saved-run selectors.
 - Added scoped memory briefs/outcomes, deterministic Obsidian projection, gated paired router evaluation, a negative JSON/tabular experiment, and pinned standalone Tree-sitter WASM grammars.
-- The checked-in benchmark remains diagnostic: routing-lifecycle median 20.0 tokens and execution-inclusive median -86.0 tokens; JSON remains the default response format.
+- The checked-in benchmark remains diagnostic and fails the frozen execution-inclusive release gate: routing-lifecycle median 5.7 tokens and execution-inclusive median -94.3 tokens; JSON remains the default response format and enforcement stays disabled.
 
 ## 0.20.0 - 2026-07-13
 

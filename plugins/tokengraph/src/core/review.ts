@@ -21,9 +21,12 @@ function matchedTerms(memory: MemoryEntry, terms: string[]): string[] {
   return terms.filter((term) => haystack.some((part) => part.includes(term) || term.includes(part)));
 }
 
+const REVIEW_STOPWORDS = new Set(["a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "of", "on", "or", "the", "to", "use", "with"]);
+
 export async function reviewMemories({ memories, query = "", limit = 20 }: ReviewMemoriesInput): Promise<MemoryReview> {
   const normalizedLimit = Math.max(1, Math.min(limit, 100));
-  const terms = tokenize(query);
+  const terms = tokenize(query).filter((term) => term.length > 2 && !REVIEW_STOPWORDS.has(term));
+  const emptyQuery = query.trim().length === 0;
   const matches = memories
     .map((memory) => {
       const hits = matchedTerms(memory, terms);
@@ -37,11 +40,11 @@ export async function reviewMemories({ memories, query = "", limit = 20 }: Revie
         confidence: memory.confidence,
         score: hits.length,
         matchedTerms: hits,
-        action: hits.length > 0 || terms.length === 0 ? ("keep" as const) : ("review" as const),
+        action: hits.length > 0 || emptyQuery ? ("keep" as const) : ("review" as const),
         reason:
           hits.length > 0
             ? `Matched ${hits.length} review term${hits.length === 1 ? "" : "s"}: ${hits.join(", ")}.`
-            : terms.length === 0
+            : emptyQuery
               ? "Included because no review query was provided."
               : "No query terms matched; review whether this memory is still useful."
       };

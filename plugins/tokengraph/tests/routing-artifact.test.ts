@@ -36,6 +36,11 @@ describe("routing advisor", () => {
     expect(decision.stage).toBe(0);
     expect(decision.enforced).toBe(false);
     expect(decision.reason).toBe("bounded-task");
+    expect(adviseRouting({ task: "Find the patient detail route and PatientCard rendering component" })).toMatchObject({ useTokenGraph: false, stage: 0, reason: "bounded-task" });
+    expect(adviseRouting({ task: "Update auditEvent usage in patientService" })).toMatchObject({ useTokenGraph: false, stage: 0, reason: "bounded-task" });
+    expect(adviseRouting({ task: "Update patient service behavior" }).useTokenGraph).toBe(true);
+    expect(adviseRouting({ task: "Update auth across services" }).useTokenGraph).toBe(true);
+    expect(adviseRouting({ task: "Update the repository architecture and security boundary" }).useTokenGraph).toBe(true);
   });
 
   it("activates discovery work and escalates to Stage 1 with a fresh index", () => {
@@ -50,7 +55,35 @@ describe("routing advisor", () => {
   it("honors force overrides and configured routing modes", () => {
     expect(adviseRouting({ task: "Where is x?", routingOverride: "force-on" }).useTokenGraph).toBe(true);
     expect(adviseRouting({ task: "Trace architecture", routingOverride: "force-bypass" }).useTokenGraph).toBe(false);
-    expect(adviseRouting({ task: "Where is x?", routingMode: "always-activate" }).enforced).toBe(true);
+    expect(adviseRouting({ task: "Where is x?", routingMode: "always-activate" }).enforced).toBe(false);
+    expect(adviseRouting({ task: "Where is x?", routingMode: "always-activate", promotion: { enforcementEnabled: true } }).enforced).toBe(true);
     expect(adviseRouting({ task: "Trace architecture", routingMode: "always-advisory" }).enforced).toBe(false);
+    expect(adviseRouting({ task: "Trace architecture", killSwitch: true }).useTokenGraph).toBe(false);
+    expect(adviseRouting({ task: "Trace architecture", killSwitch: true }).reason).toBe("routing kill switch");
+  });
+
+  it("never enforces force-bypass and makes the kill switch a canonical Stage 0 advisory", () => {
+    expect(adviseRouting({
+      task: "Trace architecture",
+      routingMode: "enforced",
+      routingOverride: "force-bypass",
+      promotion: { enforcementEnabled: true }
+    })).toMatchObject({ useTokenGraph: false, enforced: false, reason: "routing override force-bypass" });
+
+    expect(adviseRouting({
+      task: "Trace architecture",
+      routingMode: "always-activate",
+      routingOverride: "force-on",
+      indexAvailable: true,
+      killSwitch: true,
+      promotion: { enforcementEnabled: true }
+    })).toEqual({
+      useTokenGraph: false,
+      stage: 0,
+      reason: "routing kill switch",
+      expectedOverheadTokens: 0,
+      expectedBenefit: 0,
+      enforced: false
+    });
   });
 });

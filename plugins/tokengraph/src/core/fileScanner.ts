@@ -7,18 +7,29 @@ import type { Ignore } from "ignore";
 
 import type { CodeFile, CodeGraph, CodeSymbol, Exclusion, FileKind, FileScanMetadata, ImportEdge } from "./types.js";
 import { estimateTokens } from "./token.js";
+import { parsePolyglotSource, type PolyglotLanguage } from "./polyglot.js";
+import { parseTypeScriptSource } from "./typescriptParser.js";
 
 const DEPENDENCY_DIRS = new Set(["node_modules", "vendor", "bower_components"]);
 const BUILD_DIRS = new Set([".next", "dist", "build", "out", "coverage", ".turbo", ".cache", ".parcel-cache"]);
-const SUPPORTED_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".sql", ".md", ".mdx"]);
-const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+const SUPPORTED_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".sql", ".md", ".mdx"]);
+const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java"]);
+const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+const CONFIGURATION_FILES = ["tsconfig.json", "jsconfig.json", ".eslintrc.json", ".prettierrc.json"];
 const SECRET_FILE_PATTERNS = [/^\.env($|\.)/i, /\.pem$/i, /\.key$/i, /\.p12$/i, /^id_rsa$/i, /^id_ed25519$/i];
 const MAX_INDEXED_BYTES = 512 * 1024;
 const DEFAULT_SCAN_BUDGET = {
   maxFiles: 5000,
   maxDirectories: 1000,
   maxDepth: 32,
-  maxTotalBytes: 50 * 1024 * 1024
+  maxTotalBytes: 50 * 1024 * 1024,
+  maxFileBytes: MAX_INDEXED_BYTES,
+  maxSymbols: 10_000,
+  maxNodes: 250_000,
+  maxGeneratedFiles: 200,
+  perFileTimeoutMs: 2_000,
+  wholeIndexTimeoutMs: 60_000,
+  polyglotEnabled: false
 };
 const createIgnore = (("default" in ignorePackage ? ignorePackage.default : ignorePackage) as unknown) as () => Ignore;
 export interface ScanBudget {
@@ -26,6 +37,13 @@ export interface ScanBudget {
   maxDirectories?: number;
   maxDepth?: number;
   maxTotalBytes?: number;
+  maxFileBytes?: number;
+  maxSymbols?: number;
+  maxNodes?: number;
+  maxGeneratedFiles?: number;
+  perFileTimeoutMs?: number;
+  wholeIndexTimeoutMs?: number;
+  polyglotEnabled?: boolean;
   onFileContent?: (file: { path: string; language: string; content: string }) => void;
 }
 
@@ -33,7 +51,9 @@ interface WalkState {
   budget: Required<Omit<ScanBudget, "onFileContent">>;
   directories: number;
   totalBytes: number;
+  generatedFiles: number;
   onFileContent?: (file: { path: string; language: string; content: string }) => void;
+  deadline: number;
 }
 
 interface IgnoreScope {
@@ -52,6 +72,7 @@ export interface ParsedProjectFile {
   imports: ImportEdge[];
   symbols: CodeSymbol[];
   content: string;
+  degradedReason?: string;
 }
 
 function normalizePath(path: string): string {
@@ -103,6 +124,14 @@ function languageForExtension(extension: string): string {
     case ".mjs":
     case ".cjs":
       return "javascript";
+    case ".py":
+      return "python";
+    case ".go":
+      return "go";
+    case ".rs":
+      return "rust";
+    case ".java":
+      return "java";
     case ".sql":
       return "sql";
     case ".md":
@@ -111,6 +140,36 @@ function languageForExtension(extension: string): string {
     default:
       return "text";
   }
+}
+
+function isGeneratedFile(path: string, content: string): boolean {
+  return /(?:^|\/)(?:generated|__generated__)(?:\/|$)|(?:\.generated\.|\.g\.)[A-Za-z0-9]+$/i.test(path) || /^(?:\/\/|#|\/\*)\s*@?generated\b/im.test(content.slice(0, 512));
+}
+
+function polyglotLanguage(extension: string): PolyglotLanguage | undefined {
+  return extension === ".py" ? "python" : extension === ".go" ? "go" : extension === ".rs" ? "rust" : extension === ".java" ? "java" : undefined;
+}
+
+async function extractPolyglotSymbols(filePath: string, extension: string, content: string, budget?: Pick<ScanBudget, "maxSymbols" | "maxNodes" | "perFileTimeoutMs">): Promise<{ symbols: CodeSymbol[]; degradedReason?: string }> {
+  const language = polyglotLanguage(extension);
+  if (!language) return { symbols: [] };
+  const parsed = await parsePolyglotSource(language, content, undefined, {
+    maxSymbols: budget?.maxSymbols,
+    maxNodes: budget?.maxNodes,
+    timeoutMs: budget?.perFileTimeoutMs
+  });
+  return { symbols: (parsed.symbolDetails ?? parsed.symbols.map((name) => ({ name, kind: "function" as const, startLine: 1, endLine: 1, signature: name }))).map((symbol) => ({
+    name: symbol.name,
+    kind: symbol.kind === "type" ? "type" : symbol.kind,
+    filePath,
+    exported: true,
+    startLine: symbol.startLine,
+    endLine: symbol.endLine,
+    signature: symbol.signature,
+    summary: `${symbol.kind} ${symbol.name}`,
+    provenance: parsed.parser,
+    parserVersion: `${parsed.runtime}/${parsed.grammarVersion}`
+  })), ...(parsed.degradedReason ? { degradedReason: parsed.degradedReason } : {}) };
 }
 
 function isTestPath(path: string): boolean {
@@ -287,6 +346,25 @@ function extractSymbols(filePath: string, content: string): CodeSymbol[] {
   return symbols;
 }
 
+async function extractTypeScriptSymbols(
+  filePath: string,
+  content: string,
+  budget: Pick<Required<Omit<ScanBudget, "onFileContent">>, "maxSymbols" | "maxNodes" | "perFileTimeoutMs">
+): Promise<{ symbols: CodeSymbol[]; degradedReason?: string }> {
+  try {
+    return await parseTypeScriptSource(filePath, content, {
+      maxSymbols: budget.maxSymbols,
+      maxNodes: budget.maxNodes,
+      timeoutMs: budget.perFileTimeoutMs
+    });
+  } catch (error) {
+    return {
+      symbols: extractSymbols(filePath, content).slice(0, budget.maxSymbols).map((symbol) => ({ ...symbol, provenance: "heuristic" as const, parserVersion: "regex-fallback-v1" })),
+      degradedReason: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 function candidateImportPaths(root: string, fromFile: string, source: string): string[] {
   const basePaths = source.startsWith("@/") || source.startsWith("~/")
     ? [source.slice(2), normalize(join("src", source.slice(2)))]
@@ -346,7 +424,14 @@ function budgetFromOptions(options?: ScanBudget): Required<Omit<ScanBudget, "onF
     maxFiles: options?.maxFiles ?? DEFAULT_SCAN_BUDGET.maxFiles,
     maxDirectories: options?.maxDirectories ?? DEFAULT_SCAN_BUDGET.maxDirectories,
     maxDepth: options?.maxDepth ?? DEFAULT_SCAN_BUDGET.maxDepth,
-    maxTotalBytes: options?.maxTotalBytes ?? DEFAULT_SCAN_BUDGET.maxTotalBytes
+    maxTotalBytes: options?.maxTotalBytes ?? DEFAULT_SCAN_BUDGET.maxTotalBytes,
+    maxFileBytes: options?.maxFileBytes ?? DEFAULT_SCAN_BUDGET.maxFileBytes,
+    maxSymbols: options?.maxSymbols ?? DEFAULT_SCAN_BUDGET.maxSymbols,
+    maxNodes: options?.maxNodes ?? DEFAULT_SCAN_BUDGET.maxNodes,
+    maxGeneratedFiles: options?.maxGeneratedFiles ?? DEFAULT_SCAN_BUDGET.maxGeneratedFiles,
+    perFileTimeoutMs: options?.perFileTimeoutMs ?? DEFAULT_SCAN_BUDGET.perFileTimeoutMs,
+    wholeIndexTimeoutMs: options?.wholeIndexTimeoutMs ?? DEFAULT_SCAN_BUDGET.wholeIndexTimeoutMs,
+    polyglotEnabled: options?.polyglotEnabled ?? DEFAULT_SCAN_BUDGET.polyglotEnabled
   };
 }
 
@@ -366,6 +451,10 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreScope
   entries.sort((a, b) => a.name.localeCompare(b.name));
 
   for (const entry of entries) {
+    if (Date.now() >= state.deadline) {
+      graph.exclusions.push({ path: normalizePath(relative(root, current)) || ".", reason: "budget" });
+      break;
+    }
     const absolute = join(current, entry.name);
     const relativePath = normalizePath(relative(root, absolute));
     if (entry.name === ".tokengraph") {
@@ -417,7 +506,7 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreScope
       graph.exclusions.push({ path: relativePath, reason: "budget" });
       continue;
     }
-    if (fileStat.size > MAX_INDEXED_BYTES) {
+    if (fileStat.size > state.budget.maxFileBytes) {
       graph.exclusions.push({ path: relativePath, reason: "large-file" });
       continue;
     }
@@ -431,6 +520,13 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreScope
     if (content.includes("\u0000")) {
       graph.exclusions.push({ path: relativePath, reason: "binary" });
       continue;
+    }
+    if (isGeneratedFile(relativePath, content)) {
+      if (state.generatedFiles >= state.budget.maxGeneratedFiles) {
+        graph.exclusions.push({ path: relativePath, reason: "budget" });
+        continue;
+      }
+      state.generatedFiles += 1;
     }
 
     const kind = detectFileKind(relativePath, extension, content);
@@ -450,7 +546,11 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreScope
 
     if (CODE_EXTENSIONS.has(extension)) {
       graph.imports.push(...extractImports(relativePath, content));
-      graph.symbols.push(...extractSymbols(relativePath, content));
+      if (TYPESCRIPT_EXTENSIONS.has(extension)) {
+        const extracted = await extractTypeScriptSymbols(relativePath, content, state.budget);
+        if (extracted.degradedReason) graph.exclusions.push({ path: relativePath, reason: "budget" });
+        graph.symbols.push(...extracted.symbols);
+      }
     }
   }
 }
@@ -464,7 +564,8 @@ export async function scanProject(root: string, options?: ScanBudget): Promise<C
     imports: [],
     exclusions: []
   };
-  await walk(root, root, graph, ignoreScopes, { budget: budgetFromOptions(options), directories: 0, totalBytes: 0, onFileContent: options?.onFileContent }, 0);
+  const budget = budgetFromOptions(options);
+  await walk(root, root, graph, ignoreScopes, { budget, directories: 0, totalBytes: 0, generatedFiles: 0, onFileContent: options?.onFileContent, deadline: Date.now() + budget.wholeIndexTimeoutMs }, 0);
   graph.files.sort((a, b) => a.path.localeCompare(b.path));
   resolveLocalImports(root, graph);
   graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name));
@@ -483,9 +584,11 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
   const files: FileScanMetadata[] = [];
   const exclusions: Exclusion[] = [];
   const budget = budgetFromOptions(options);
+  const deadline = Date.now() + budget.wholeIndexTimeoutMs;
   let directories = 0;
   let fileCount = 0;
   let totalBytes = 0;
+  let generatedFiles = 0;
 
   async function walkSignature(current: string, depth: number, inheritedScopes: IgnoreScope[]): Promise<void> {
     const currentScopes = current === root ? inheritedScopes : await loadIgnoreScopes(current, inheritedScopes);
@@ -498,6 +601,11 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
+      if (Date.now() >= deadline) {
+        rows.push({ path: normalizePath(relative(root, current)) || ".", reason: "budget" });
+        exclusions.push({ path: normalizePath(relative(root, current)) || ".", reason: "budget" });
+        break;
+      }
       const absolute = join(current, entry.name);
       const relativePath = normalizePath(relative(root, absolute));
       if (entry.name === ".tokengraph") continue;
@@ -553,7 +661,7 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
         exclusions.push({ path: relativePath, reason: "budget" });
         continue;
       }
-      if (size > MAX_INDEXED_BYTES) {
+      if (size > budget.maxFileBytes) {
         rows.push({ path: relativePath, reason: "large-file" });
         exclusions.push({ path: relativePath, reason: "large-file" });
         continue;
@@ -570,6 +678,14 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
         rows.push({ path: relativePath, reason: "binary" });
         exclusions.push({ path: relativePath, reason: "binary" });
         continue;
+      }
+      if (isGeneratedFile(relativePath, content)) {
+        if (generatedFiles >= budget.maxGeneratedFiles) {
+          rows.push({ path: relativePath, reason: "budget" });
+          exclusions.push({ path: relativePath, reason: "budget" });
+          continue;
+        }
+        generatedFiles += 1;
       }
       const metadata = {
         path: relativePath,
@@ -592,10 +708,18 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
   await walkSignature(root, 0, ignoreScopes);
   files.sort((a, b) => a.path.localeCompare(b.path));
   exclusions.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, exclusions, scanSignature: hashText(JSON.stringify(rows)) };
+  const configurationRows: Array<{ path: string; contentHash: string }> = [];
+  for (const path of CONFIGURATION_FILES) {
+    try {
+      configurationRows.push({ path, contentHash: hashText(await readFile(join(root, path), "utf8")) });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") configurationRows.push({ path, contentHash: "unreadable" });
+    }
+  }
+  return { files, exclusions, scanSignature: hashText(JSON.stringify({ rows, configurationRows })) };
 }
 
-export async function scanProjectFile(root: string, metadata: FileScanMetadata): Promise<ParsedProjectFile | undefined> {
+export async function scanProjectFile(root: string, metadata: FileScanMetadata, options: ScanBudget = {}): Promise<ParsedProjectFile | undefined> {
   let content;
   try {
     content = await readFile(join(root, metadata.path), "utf8");
@@ -615,11 +739,21 @@ export async function scanProjectFile(root: string, metadata: FileScanMetadata):
     route: metadata.route,
     isTest: metadata.isTest
   };
+  const limits = budgetFromOptions(options);
+  const parsed = TYPESCRIPT_EXTENSIONS.has(metadata.extension)
+    ? await extractTypeScriptSymbols(metadata.path, content, limits)
+    : options.polyglotEnabled
+      ? await extractPolyglotSymbols(metadata.path, metadata.extension, content, options)
+      : { symbols: [] as CodeSymbol[] };
+  const selectedSymbols = parsed.symbols.slice(0, limits.maxSymbols);
   return {
     file,
     imports: CODE_EXTENSIONS.has(metadata.extension) ? extractImports(metadata.path, content) : [],
-    symbols: CODE_EXTENSIONS.has(metadata.extension) ? extractSymbols(metadata.path, content) : [],
-    content
+    symbols: selectedSymbols,
+    content,
+    ...((parsed.degradedReason || parsed.symbols.length > limits.maxSymbols)
+      ? { degradedReason: parsed.degradedReason ?? "symbol limit exceeded" }
+      : {})
   };
 }
 

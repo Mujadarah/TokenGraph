@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -219,10 +219,12 @@ describe("tokengraph benchmark harness and trust docs", () => {
       criticalConstraintPreservationRate: 1,
       criticalFalseNegativeCount: 0,
       requiredFileRecall: 1,
-      medianNetSavings: 19.96666666666667,
-      taskFailures: expect.arrayContaining(["memory-wiki-01"])
+      medianNetSavings: 196.53333333333333,
+      executionInclusiveP25: 102.53333333333333,
+      nonNegativeActivatedRate: expect.any(Number),
+      taskFailures: []
     });
-    expect(report.releaseGate).toEqual({ passed: true, failureReasons: [] });
+    expect(report.releaseGate).toMatchObject({ passed: true, failureReasons: [] });
     for (const task of report.tasks) {
       expect(task.metrics).toMatchObject({
         requiredFileRecall: expect.any(Number),
@@ -247,8 +249,8 @@ describe("tokengraph benchmark harness and trust docs", () => {
       await expect(access(resolve(repoRoot, "docs", "benchmarks", file))).resolves.toBeUndefined();
     }
     const benchmarkResults = await readFile(resolve(repoRoot, "docs", "benchmarks", "results-current.md"), "utf8");
-    expect(benchmarkResults).toMatch(/15 of 30 tasks are non-positive/i);
-    expect(benchmarkResults).toMatch(/execution-inclusive median.*-86\.0/i);
+    expect(benchmarkResults).toMatch(/23 of 28 activated tasks are non-negative/i);
+    expect(benchmarkResults).toMatch(/execution-inclusive median.*\+196\.5/i);
     expect(benchmarkResults).toMatch(/low-confidence/i);
 
     const trustFiles = ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"];
@@ -292,7 +294,7 @@ describe("tokengraph focused skills", () => {
 });
 
 describe("tokengraph release package command", () => {
-  it("uses v0.21.0 across every active source and marketplace version contract", async () => {
+  it("uses v0.21.1 across every active source and marketplace version contract", async () => {
     const repoRoot = resolve("..", "..");
     const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8"));
     const codexManifest = JSON.parse(await readFile(resolve(".codex-plugin", "plugin.json"), "utf8"));
@@ -305,11 +307,11 @@ describe("tokengraph release package command", () => {
     const firstUse = rootReadme.split("## First use")[1]?.split("## What agents can use")[0] ?? "";
     const troubleshooting = rootReadme.split("## Troubleshooting")[1]?.split("## Maintainer workflow")[0] ?? "";
 
-    expect(packageJson.version).toBe("0.21.0");
-    expect(codexManifest.version).toBe("0.21.0");
-    expect(claudeManifest.version).toBe("0.21.0");
-    expect(claudeMarketplace.plugins[0].version).toBe("0.21.0");
-    expect(serverSource).toContain('version: "0.21.0"');
+    expect(packageJson.version).toBe("0.21.1");
+    expect(codexManifest.version).toBe("0.21.1");
+    expect(claudeManifest.version).toBe("0.21.1");
+    expect(claudeMarketplace.plugins[0].version).toBe("0.21.1");
+    expect(serverSource).toContain('version: "0.21.1"');
     expect(validatorSource).not.toContain("STALE_RELEASE_HOOK_TRANSITION_SHA256");
     expect(limitations).not.toMatch(/Phase 5.*remove this transition allowance/i);
     expect(firstUse).toMatch(/tokengraph_setup[\s\S]*tokengraph_prepare_context[\s\S]*task id/i);
@@ -412,11 +414,11 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.21.0"
+      version: "0.21.1"
     });
-    expect(report.bundleDir).toBe(resolve(outRoot, "tokengraph-0.21.0"));
+    expect(report.bundleDir).toBe(resolve(outRoot, "tokengraph-0.21.1"));
     expect(report.packageDir).toBe(resolve(report.bundleDir, "tokengraph"));
-    expect(report.archivePath).toBe(resolve(outRoot, "tokengraph-0.21.0.zip"));
+    expect(report.archivePath).toBe(resolve(outRoot, "tokengraph-0.21.1.zip"));
     expect(report.codexMarketplacePath).toBe(resolve(report.bundleDir, ".agents", "plugins", "marketplace.json"));
     expect(report.claudeMarketplacePath).toBe(resolve(report.bundleDir, ".claude-plugin", "marketplace.json"));
     expect(report.files).toEqual(
@@ -427,6 +429,8 @@ describe("tokengraph release package command", () => {
         ".mcp.claude.json",
         "dist/hooks.js",
         "dist/index.js",
+        "dist/polyglot-worker.js",
+        "dist/typescript-worker.cjs",
         "hooks/hooks.json",
         "skills/tokengraph/SKILL.md",
         "README.md",
@@ -436,7 +440,7 @@ describe("tokengraph release package command", () => {
     );
     const generatedReadme = await readFile(resolve(report.packageDir, "README.md"), "utf8");
     expect(generatedReadme.match(/The default surface exposes eight compact tools/g)).toHaveLength(1);
-    expect(generatedReadme.match(/The checked-in routing-lifecycle benchmark passes its strict gate/g)).toHaveLength(1);
+    expect(generatedReadme.match(/\+196\.5-token execution-inclusive median/g)).toHaveLength(1);
     await expect(access(resolve(report.packageDir, "src"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "tests"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "node_modules"))).rejects.toThrow();
@@ -468,7 +472,9 @@ describe("tokengraph release package command", () => {
       ".claude-plugin/marketplace.json",
       "tokengraph/dist/hooks.js",
       "tokengraph/hooks/hooks.json",
-      "tokengraph/dist/index.js"
+      "tokengraph/dist/index.js",
+      "tokengraph/dist/polyglot-worker.js",
+      "tokengraph/dist/typescript-worker.cjs"
     ]));
     expect(archiveListing.join("\n")).not.toMatch(/tokengraph\/(src|tests|node_modules)\//);
   });
@@ -501,6 +507,9 @@ describe("tokengraph release package command", () => {
       filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts"].includes(source.split(/[\\/]/).at(-1) ?? "")
     });
     const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+    const copiedReleaseDist = join(repoCopy, "release", "tokengraph", "dist");
+    await copyFile(join(copiedPlugin, "dist", "polyglot-worker.js"), join(copiedReleaseDist, "polyglot-worker.js"));
+    await copyFile(join(copiedPlugin, "dist", "typescript-worker.cjs"), join(copiedReleaseDist, "typescript-worker.cjs"));
     const driftedSkill = join(repoCopy, "release", "tokengraph", "skills", "tokengraph", "SKILL.md");
     await writeFile(driftedSkill, `${await readFile(driftedSkill, "utf8")}\nDrifted release copy.\n`);
 
@@ -526,7 +535,7 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.21.0",
+      version: "0.21.1",
       releaseDir: releaseRoot
     });
     expect(report.files).toEqual(
@@ -537,6 +546,8 @@ describe("tokengraph release package command", () => {
         ".mcp.claude.json",
         "dist/hooks.js",
         "dist/index.js",
+        "dist/polyglot-worker.js",
+        "dist/typescript-worker.cjs",
         "hooks/hooks.json",
         "skills/tokengraph/SKILL.md",
         "README.md",
