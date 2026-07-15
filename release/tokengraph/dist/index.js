@@ -19432,7 +19432,7 @@ function toError(value) {
 
 // src/server.ts
 import process4 from "node:process";
-import { createHash as createHash6, randomUUID as randomUUID6 } from "node:crypto";
+import { createHash as createHash7, randomUUID as randomUUID6 } from "node:crypto";
 import { access, realpath as realpath3 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname as dirname5, isAbsolute as isAbsolute4, join as join9, parse as parse3, relative as relative5, resolve as resolve8 } from "node:path";
@@ -21782,7 +21782,7 @@ async function scanProjectFile(root, metadata) {
 }
 
 // src/core/projectIndexer.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 
 // src/core/sqlParser.ts
 function normalizeSqlName(name) {
@@ -22300,10 +22300,34 @@ function mergeSqlGraphs(graphs) {
   return merged;
 }
 
+// src/core/symbolChunks.ts
+import { createHash as createHash3 } from "node:crypto";
+function idFor(symbol) {
+  return createHash3("sha256").update(JSON.stringify([
+    symbol.filePath,
+    symbol.name,
+    symbol.kind,
+    symbol.exported,
+    symbol.startLine ?? null,
+    symbol.endLine ?? null
+  ])).digest("hex");
+}
+function buildSymbolChunks(project) {
+  return project.symbols.map((symbol) => ({
+    id: idFor(symbol),
+    filePath: symbol.filePath,
+    symbolName: symbol.name,
+    kind: symbol.kind,
+    exported: symbol.exported,
+    ...symbol.startLine === void 0 ? {} : { startLine: symbol.startLine },
+    ...symbol.endLine === void 0 ? {} : { endLine: symbol.endLine }
+  })).sort((a, b) => a.filePath.localeCompare(b.filePath) || a.symbolName.localeCompare(b.symbolName) || a.id.localeCompare(b.id));
+}
+
 // src/core/projectIndexer.ts
 var CURRENT_INDEX_SCHEMA_VERSION = 3;
 function fingerprintPayload(value) {
-  return createHash3("sha256").update(JSON.stringify(value)).digest("hex");
+  return createHash4("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function detectFrameworks(files) {
   const frameworks = /* @__PURE__ */ new Set();
@@ -22387,7 +22411,8 @@ function buildProjectIndex(root, graph, sql, scanSignature, scanMetadata) {
     scanSignature,
     scanMetadata,
     frameworks: detectFrameworks(graph.files),
-    sql
+    sql,
+    symbolChunks: buildSymbolChunks(graph)
   };
 }
 async function indexProject(root, options = {}) {
@@ -23468,7 +23493,7 @@ function formatTaskReportFooter(report) {
 }
 
 // src/core/wiki.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import { posix } from "node:path";
 var CURRENT_WIKI_SCHEMA_VERSION = 1;
 var LIST_LIMIT = 20;
@@ -23488,7 +23513,7 @@ function pageSourceFingerprints(index, draft, applications) {
   const reviewed = applications.flatMap(
     (application) => application.sources.map((source) => `${source.kind}:${source.sourceId}:${source.fingerprint}`)
   );
-  const indexedFingerprint = indexed.length ? [`index:${createHash4("sha256").update(JSON.stringify(indexed.sort())).digest("hex")}`] : [];
+  const indexedFingerprint = indexed.length ? [`index:${createHash5("sha256").update(JSON.stringify(indexed.sort())).digest("hex")}`] : [];
   return Array.from(/* @__PURE__ */ new Set([...indexedFingerprint, ...reviewed])).sort();
 }
 function sourceIsStale(index, application) {
@@ -23940,7 +23965,7 @@ async function setTaskDisposition(root, taskId, disposition, turnId, calibration
 }
 
 // src/core/knowledgeReviewQueue.ts
-import { createHash as createHash5, randomUUID as randomUUID5 } from "node:crypto";
+import { createHash as createHash6, randomUUID as randomUUID5 } from "node:crypto";
 import { readFile as readFile8, realpath as realpath2 } from "node:fs/promises";
 import { isAbsolute as isAbsolute3, join as join8, relative as relative4, resolve as resolve7, win32 } from "node:path";
 var REVIEW_QUEUE_SCHEMA_VERSION = 3;
@@ -24050,7 +24075,7 @@ function normalizeAffectedTargets(value, type, legacyIdentifiers) {
   return result;
 }
 function suggestionFingerprint(input) {
-  return createHash5("sha256").update(JSON.stringify({
+  return createHash6("sha256").update(JSON.stringify({
     type: input.type,
     title: input.title,
     rationale: input.rationale,
@@ -24115,7 +24140,7 @@ function reconstructSuggestion(value, schemaVersion) {
     } : {}
   });
   if (persistedSources) proposal.sources = persistedSources;
-  const expectedFingerprint = schemaVersion === 1 ? createHash5("sha256").update(JSON.stringify({
+  const expectedFingerprint = schemaVersion === 1 ? createHash6("sha256").update(JSON.stringify({
     type: proposal.type,
     title: proposal.title,
     proposedContent: proposal.proposedContent,
@@ -24283,7 +24308,7 @@ async function assertFreshForApproval(root, suggestion) {
       if (error2.code === "ENOENT") throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} is missing.`);
       throw error2;
     }
-    const current = createHash5("sha256").update(content.toString("utf8").replace(/\r\n?/g, "\n")).digest("hex");
+    const current = createHash6("sha256").update(content.toString("utf8").replace(/\r\n?/g, "\n")).digest("hex");
     if (current !== source.fingerprint) throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} fingerprint changed.`);
   }
 }
@@ -24502,7 +24527,7 @@ function taskHost(value) {
   return "unknown";
 }
 function eventFingerprint(taskId, toolName, category, operation) {
-  return createHash6("sha256").update(JSON.stringify({ taskId, toolName, category, operation })).digest("hex");
+  return createHash7("sha256").update(JSON.stringify({ taskId, toolName, category, operation })).digest("hex");
 }
 async function recordCoreEvent(input) {
   const overheadTokens = input.overheadTokens ?? coreEventOverheadTokens(input.taskId, input.toolName, input.category);
@@ -25037,7 +25062,7 @@ function createTokenGraphServer(options = {}) {
         taskId: ledger.taskId,
         toolName: "tokengraph_prepare_context",
         category: "context-routing",
-        operation: { taskHash: createHash6("sha256").update(task).digest("hex"), profile: plan.profile, indexingMode },
+        operation: { taskHash: createHash7("sha256").update(task).digest("hex"), profile: plan.profile, indexingMode },
         originalTokens: project.files.reduce((total, file) => total + file.estimatedTokens, 0),
         compactTokens: estimateTokens(compactJson(compactToolResultEnvelope(response)))
       });
@@ -25101,7 +25126,7 @@ function createTokenGraphServer(options = {}) {
           taskId: task.taskId,
           toolName: "tokengraph_query_context",
           category: `query-${mode}`,
-          operation: { mode, queryHash: createHash6("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
+          operation: { mode, queryHash: createHash7("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
           originalTokens,
           compactTokens
         });
@@ -25166,7 +25191,7 @@ ${text ?? ""}`, config2.maxMemories) : [];
           taskId: task.taskId,
           toolName: "tokengraph_compress",
           category,
-          operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash6("sha256").update(`${"task" in input ? input.task : ""}
+          operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash7("sha256").update(`${"task" in input ? input.task : ""}
 ${input.text ?? ""}`).digest("hex") },
           originalTokens: estimates.original,
           compactTokens,
@@ -25201,7 +25226,7 @@ ${input.text ?? ""}`).digest("hex") },
           taskId: task.taskId,
           toolName: "tokengraph_recall",
           category: `memory-${mode}`,
-          operation: { mode, queryHash: createHash6("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
+          operation: { mode, queryHash: createHash7("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
           originalTokens: estimateTokens(compactJson(memories)),
           compactTokens
         });
@@ -25251,7 +25276,7 @@ ${changedFiles.join("\n")}`, 8);
           taskId: task.taskId,
           toolName: "tokengraph_analyze",
           category: `analysis-${mode}`,
-          operation: { mode, inputHash: createHash6("sha256").update(JSON.stringify(input)).digest("hex") },
+          operation: { mode, inputHash: createHash7("sha256").update(JSON.stringify(input)).digest("hex") },
           originalTokens: Math.max(compactTokens, project.files.reduce((total, file) => total + file.estimatedTokens, 0)),
           compactTokens
         });
@@ -25306,7 +25331,7 @@ ${changedFiles.join("\n")}`, 8);
         taskId,
         toolName: "tokengraph_propose_knowledge",
         category: `knowledge-${action}`,
-        operation: action === "propose" ? { action, proposalHash: createHash6("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") } : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
+        operation: action === "propose" ? { action, proposalHash: createHash7("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") } : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
         originalTokens: compactTokens,
         compactTokens
       });
