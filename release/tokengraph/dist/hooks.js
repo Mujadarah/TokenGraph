@@ -10,8 +10,8 @@ var TASK_ESTIMATOR_VERSION = "task-estimator-v1";
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function isNonNegativeFiniteNumber(value) {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
 }
 function isConfidence(value) {
   return value === "low" || value === "medium" || value === "high";
@@ -26,7 +26,7 @@ function reconstructTaskReport(value, expectedTaskId, expectedEventCount) {
   const range = value.estimate.range;
   const basis = value.estimate.basis;
   const checks = value.quality.checks;
-  if (value.taskId !== expectedTaskId || value.eventCount !== expectedEventCount || !Number.isInteger(value.eventCount) || !isNonNegativeFiniteNumber(range.low) || !isNonNegativeFiniteNumber(range.likely) || !isNonNegativeFiniteNumber(range.high) || range.low > range.likely || range.likely > range.high || range.unit !== "estimated_tokens" || !isConfidence(value.estimate.confidence) || !Array.isArray(basis) || !basis.every((item) => typeof item === "string") || !isNonNegativeFiniteNumber(value.estimate.overhead) || value.estimate.estimatorVersion !== TASK_ESTIMATOR_VERSION || !isQualityStatus(value.quality.status) || !Array.isArray(checks) || !checks.every((item) => typeof item === "string")) {
+  if (value.taskId !== expectedTaskId || value.eventCount !== expectedEventCount || !Number.isInteger(value.eventCount) || !isFiniteNumber(range.low) || !isFiniteNumber(range.likely) || !isFiniteNumber(range.high) || range.low > range.likely || range.likely > range.high || range.unit !== "estimated_tokens" || !isConfidence(value.estimate.confidence) || !Array.isArray(basis) || !basis.every((item) => typeof item === "string") || !isFiniteNumber(value.estimate.overhead) || value.estimate.estimatorVersion !== TASK_ESTIMATOR_VERSION || !isQualityStatus(value.quality.status) || !Array.isArray(checks) || !checks.every((item) => typeof item === "string")) {
     return void 0;
   }
   return {
@@ -47,7 +47,8 @@ function formatTaskReportFooter(report) {
     return "TokenGraph: savings not measured (no qualifying task events).";
   }
   const { low, high } = report.estimate.range;
-  const savings = low === high ? `${low}` : `${low}-${high}`;
+  const formatValue = (value) => Number.isInteger(value) ? `${value}` : `${Number(value.toFixed(1))}`;
+  const savings = low === high ? formatValue(low) : low < 0 && high >= 0 ? `${formatValue(low)} to ${formatValue(high)}` : `${formatValue(low)}-${formatValue(high)}`;
   const quality = report.quality.status === "not_evaluated" ? "not evaluated" : report.quality.status;
   return `TokenGraph: ~${savings} tokens saved (estimated, ${report.estimate.confidence} confidence); quality ${quality}.`;
 }

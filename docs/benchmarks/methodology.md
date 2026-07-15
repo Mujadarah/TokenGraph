@@ -16,13 +16,13 @@ Every task contains exactly one intent call and one `tokengraph_task_report` cal
 
 ## Accounting
 
-The raw routing baseline uses only each task's independent listed files. Each file contributes one explicit built-in `read_file` JSON-RPC request and one single-`TextContent` result. The routing-lifecycle net is:
+The primary baseline is an already-minimal expert selection of recommended raw reads for each task, not a full index dump. Each listed file contributes one explicit built-in `read_file` JSON-RPC request and one single-`TextContent` result. The routing-lifecycle net is:
 
 `raw file requests and results - core intent request/result - compact report request/result - amortized discovery/setup`
 
 This release gate deliberately measures whether TokenGraph can replace broad initial acquisition with focused routing. It excludes downstream source reads recommended by `firstReads`, so it is not a total-execution savings claim.
 
-The report therefore publishes a second execution-inclusive net. It subtracts the actual built-in request/result pairs for recommended `firstReads` when the task allows raw reads. This is still a fixture estimate, not provider billing, but it makes product overhead and negative tails visible.
+The report therefore publishes an execution-inclusive net as its primary savings metric. It subtracts the actual built-in request/result pairs for recommended `firstReads` when the task allows raw reads. This is still a fixture estimate, not provider billing, but it makes product overhead and negative tails visible. A full-index-dump token estimate is retained only as a diagnostic comparison.
 
 For every task the harness also reports required-file recall, false positives, false negatives, exact critical-constraint preservation, recommended tests, estimated tokens, quality result, and explicit failure reasons. Constraint predicates normalize case, Unicode, whitespace, and punctuation without discarding words or polarity, so negation cannot pass through partial overlap.
 

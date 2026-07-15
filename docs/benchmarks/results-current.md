@@ -14,8 +14,9 @@ The current deterministic `evidence-v1` corpus produces:
 - Critical false negatives: 0.
 - Required-file recall: 100% against the checked-in 0.85 baseline.
 - Forbidden false positives: 0; missing expected-test recommendations: 0.
+- Baseline: an already-minimal expert selection of recommended raw reads per task (not a full index dump).
+- Execution-inclusive median after recommended first-file reads: -134.8 tokens; nearest-rank 25th percentile: -457.3; minimum: -522.3; 20 of 30 tasks are non-positive. This is the primary savings metric.
 - Routing-lifecycle median: 31.7 tokens; nearest-rank 25th percentile: -270.3; minimum: -457.3; 15 of 30 tasks are non-positive.
-- Execution-inclusive median after recommended first-file reads: -133.8 tokens; nearest-rank 25th percentile: -457.3; minimum: -522.3; 20 of 30 tasks are non-positive.
 - Deterministic routing-lifecycle release gate: pass.
 
 Routing-lifecycle category results:
@@ -30,6 +31,6 @@ Routing-lifecycle category results:
 | Memory/wiki | -209.8 | 3/4 |
 | Release packaging | 217.7 | 0/4 |
 
-The routing gate excludes downstream recommended source reads and is not a total-execution savings claim. The execution-inclusive metric exposes that cost separately. The negative categories show that tiny, bounded raw inputs should bypass TokenGraph; use it where focused routing can avoid broader reads or preserve constraints.
+The deterministic release gate still checks routing-lifecycle savings for continuity, while the execution-inclusive metric is the primary product metric and includes downstream recommended source reads. The negative categories show that tiny, bounded raw inputs should bypass TokenGraph; use it where focused routing can avoid broader reads or preserve constraints.
 
 Every category remains low-confidence and does not activate calibration. These are repeatable fixture estimates, not exact billed tokens, autonomous-agent patch-quality evidence, or universal Codex/Claude results.

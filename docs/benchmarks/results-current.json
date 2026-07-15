@@ -1,0 +1,23 @@
+{
+  "schemaId": "tokengraph-published-benchmark-results",
+  "schemaVersion": 1,
+  "corpusVersion": "evidence-v1",
+  "evidenceVersion": "fixture-evidence-v2",
+  "aggregate": {
+    "taskCount": 30,
+    "categoryCounts": {
+      "change-risk": 4,
+      "code-routing": 5,
+      "compression": 4,
+      "debugging": 4,
+      "memory-wiki": 4,
+      "release-packaging": 4,
+      "sql-security": 5
+    },
+    "medianNetSavings": 31.7,
+    "medianExecutionInclusiveNetSavings": -134.8,
+    "primarySavingsMetric": "execution-inclusive",
+    "primaryMedianNetSavings": -134.8,
+    "baselineLabel": "recommended-raw-reads"
+  }
+}

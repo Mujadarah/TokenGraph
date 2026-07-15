@@ -102,6 +102,13 @@ export interface TaskMetrics {
   failureReasons: string[];
 }
 
+export interface BenchmarkBaselineArtifact {
+  label: "recommended-raw-reads";
+  files: string[];
+  tokens: number;
+  fullIndexDumpTokens: number;
+}
+
 interface GateInput {
   taskCount: number;
   categoryCounts: Record<string, number>;
@@ -548,6 +555,12 @@ async function evaluateTask(
       rawBaselineCalls,
       rawBaselineContentTokens: baseline.tokens,
       rawBaselineTokens,
+      baseline: {
+        label: "recommended-raw-reads",
+        files: [...evidence.rawFiles],
+        tokens: rawBaselineTokens,
+        fullIndexDumpTokens: estimateTokens(JSON.stringify(project))
+      } satisfies BenchmarkBaselineArtifact,
       targetedReadsIncluded: false,
       targetedReadCalls,
       amortizedDiscoverySetupTokens,
@@ -618,6 +631,9 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     categoryCounts,
     medianNetSavings: median(tasks.map((task) => task.metrics.netEstimatedSavings)),
     medianExecutionInclusiveNetSavings: median(tasks.map((task) => task.metrics.executionInclusiveNetSavings)),
+    primarySavingsMetric: "execution-inclusive" as const,
+    primaryMedianNetSavings: median(tasks.map((task) => task.metrics.executionInclusiveNetSavings)),
+    baselineLabel: "recommended-raw-reads" as const,
     criticalFalseNegativeCount: falseNegativeTotal,
     criticalConstraintPreservationRate: constraintTotal ? preservedTotal / constraintTotal : 1,
     requiredFileRecall: requiredTotal ? (requiredTotal - falseNegativeTotal) / requiredTotal : 1,

@@ -23256,8 +23256,8 @@ var TASK_ESTIMATOR_VERSION = "task-estimator-v1";
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function isNonNegativeFiniteNumber(value) {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
 }
 function isConfidence(value) {
   return value === "low" || value === "medium" || value === "high";
@@ -23272,7 +23272,7 @@ function reconstructTaskReport(value, expectedTaskId, expectedEventCount) {
   const range = value.estimate.range;
   const basis = value.estimate.basis;
   const checks = value.quality.checks;
-  if (value.taskId !== expectedTaskId || value.eventCount !== expectedEventCount || !Number.isInteger(value.eventCount) || !isNonNegativeFiniteNumber(range.low) || !isNonNegativeFiniteNumber(range.likely) || !isNonNegativeFiniteNumber(range.high) || range.low > range.likely || range.likely > range.high || range.unit !== "estimated_tokens" || !isConfidence(value.estimate.confidence) || !Array.isArray(basis) || !basis.every((item) => typeof item === "string") || !isNonNegativeFiniteNumber(value.estimate.overhead) || value.estimate.estimatorVersion !== TASK_ESTIMATOR_VERSION || !isQualityStatus(value.quality.status) || !Array.isArray(checks) || !checks.every((item) => typeof item === "string")) {
+  if (value.taskId !== expectedTaskId || value.eventCount !== expectedEventCount || !Number.isInteger(value.eventCount) || !isFiniteNumber(range.low) || !isFiniteNumber(range.likely) || !isFiniteNumber(range.high) || range.low > range.likely || range.likely > range.high || range.unit !== "estimated_tokens" || !isConfidence(value.estimate.confidence) || !Array.isArray(basis) || !basis.every((item) => typeof item === "string") || !isFiniteNumber(value.estimate.overhead) || value.estimate.estimatorVersion !== TASK_ESTIMATOR_VERSION || !isQualityStatus(value.quality.status) || !Array.isArray(checks) || !checks.every((item) => typeof item === "string")) {
     return void 0;
   }
   return {
@@ -23305,21 +23305,22 @@ function buildTaskReport(ledger, calibration = {}, reportOverheadTokens = 0) {
     const original = Math.max(0, finite(event.originalTokens));
     const compact = Math.max(0, finite(event.compactTokens));
     const eventOverhead = Math.max(0, finite(event.overheadTokens));
-    const net = Math.max(0, original - compact - eventOverhead);
-    const gross = Math.max(0, original - compact);
+    const net = original - compact - eventOverhead;
+    const gross = original - compact;
     const categoryCalibration = calibration[event.category];
     const isCalibrated = Boolean(categoryCalibration && categoryCalibration.observations >= 10);
     likely += net;
     overhead += eventOverhead;
     if (isCalibrated && categoryCalibration) {
-      low += Math.max(0, net + finite(categoryCalibration.lowResidual));
+      low += net + finite(categoryCalibration.lowResidual);
       high += Math.max(net, gross, net + finite(categoryCalibration.highResidual));
       basis.add(`${event.category}:calibrated:${categoryCalibration.observations}`);
       if (confidenceRank[event.confidence] < confidenceRank[confidence]) {
         confidence = event.confidence;
       }
     } else {
-      high += gross;
+      if (net < 0) low += net;
+      high += Math.max(0, gross);
       confidence = "low";
       basis.add(`${event.category}:uncalibrated`);
     }
@@ -23331,11 +23332,15 @@ function buildTaskReport(ledger, calibration = {}, reportOverheadTokens = 0) {
     }
   }
   const reportOverhead = Math.max(0, finite(reportOverheadTokens));
-  low = Math.min(Math.max(0, low), likely);
+  const hasNegativeEvent = ledger.events.some((event) => event.originalTokens - event.compactTokens - event.overheadTokens < 0);
+  if (!hasNegativeEvent) low = Math.max(0, low);
+  low = Math.min(low, likely);
   high = Math.max(likely, high);
-  low = Math.max(0, low - reportOverhead);
-  likely = Math.max(low, likely - reportOverhead);
+  low -= reportOverhead;
+  likely -= reportOverhead;
   high = Math.max(likely, high - reportOverhead);
+  if (!hasNegativeEvent) low = Math.max(0, low);
+  low = Math.min(low, likely);
   overhead += reportOverhead;
   return {
     taskId: ledger.taskId,
@@ -23358,7 +23363,8 @@ function formatTaskReportFooter(report) {
     return "TokenGraph: savings not measured (no qualifying task events).";
   }
   const { low, high } = report.estimate.range;
-  const savings = low === high ? `${low}` : `${low}-${high}`;
+  const formatValue = (value) => Number.isInteger(value) ? `${value}` : `${Number(value.toFixed(1))}`;
+  const savings = low === high ? formatValue(low) : low < 0 && high >= 0 ? `${formatValue(low)} to ${formatValue(high)}` : `${formatValue(low)}-${formatValue(high)}`;
   const quality = report.quality.status === "not_evaluated" ? "not evaluated" : report.quality.status;
   return `TokenGraph: ~${savings} tokens saved (estimated, ${report.estimate.confidence} confidence); quality ${quality}.`;
 }
@@ -23711,7 +23717,7 @@ function sanitizeEvent(event) {
   };
 }
 function netEstimate(event) {
-  return Math.max(0, event.originalTokens - event.compactTokens - event.overheadTokens);
+  return event.originalTokens - event.compactTokens - event.overheadTokens;
 }
 async function enqueueLedgerOperation(root, taskId, operation) {
   const key = await canonicalPersistenceLockKey(root, ".tokengraph", "tasks", `${taskId}.json`);

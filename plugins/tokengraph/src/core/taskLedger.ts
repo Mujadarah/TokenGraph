@@ -258,7 +258,7 @@ function sanitizeEvent(event: TaskEvent): TaskEvent {
 }
 
 function netEstimate(event: TaskEvent): number {
-  return Math.max(0, event.originalTokens - event.compactTokens - event.overheadTokens);
+  return event.originalTokens - event.compactTokens - event.overheadTokens;
 }
 
 async function enqueueLedgerOperation<T>(root: string, taskId: string, operation: () => Promise<T>): Promise<T> {

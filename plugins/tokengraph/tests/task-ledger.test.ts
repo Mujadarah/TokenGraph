@@ -301,7 +301,7 @@ describe("task ledger persistence", () => {
     expect(await loadTaskLedger(root, ledger.taskId)).toBeUndefined();
   });
 
-  it("deduplicates by fingerprint and retains the largest non-negative net estimate", async () => {
+  it("deduplicates by fingerprint and preserves a negative net estimate", async () => {
     const root = await makeRoot();
     const ledger = await createTaskLedger(root, { host: "unknown" });
     await recordTaskEvent(root, ledger.taskId, event({ fingerprint: "same", originalTokens: 100 }));
@@ -311,6 +311,13 @@ describe("task ledger persistence", () => {
     const stored = await loadTaskLedger(root, ledger.taskId);
     expect(stored?.events).toHaveLength(1);
     expect(stored?.events[0]?.originalTokens).toBe(150);
+  });
+
+  it("keeps execution overhead in a negative task total instead of clamping it to zero", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "unknown" });
+    const stored = await recordTaskEvent(root, ledger.taskId, event({ originalTokens: 10, compactTokens: 40, overheadTokens: 5 }));
+    expect(buildTaskReport(stored).estimate.range.likely).toBe(-35);
   });
 
   it("treats a paused task id as terminal for events, host attachment, and dispositions", async () => {
@@ -368,7 +375,7 @@ describe("task savings estimator", () => {
       overhead: 30
     });
     expect(buildTaskReport(stored, {}, 80).estimate).toMatchObject({
-      range: { low: 0, likely: 0, high: 0 },
+      range: { low: -30, likely: -30, high: -20 },
       overhead: 90
     });
   });
@@ -386,7 +393,7 @@ describe("task savings estimator", () => {
     expect(buildTaskReport(stored)).toMatchObject({
       eventCount: 2,
       estimate: {
-        range: { low: 0, likely: 50, high: 60, unit: "estimated_tokens" },
+        range: { low: -15, likely: 35, high: 60, unit: "estimated_tokens" },
         confidence: "low",
         overhead: 15,
         estimatorVersion: "task-estimator-v1"
