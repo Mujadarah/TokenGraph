@@ -50,7 +50,7 @@ jobs:
         run: pnpm validate:plugin
 
       - name: Build release package
-        run: pnpm package:plugin -- --release --json > release-package.json
+        run: pnpm --silent package:plugin -- --release --json > release-package.json
 
       - name: Verify generated release and create checksum
         id: artifact
