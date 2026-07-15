@@ -10,7 +10,8 @@
   },
   "packageManager": "pnpm@10.14.0",
   "bin": {
-    "tokengraph-mcp": "./dist/index.js"
+    "tokengraph-mcp": "./dist/index.js",
+    "tokengraph": "./dist/cli.js"
   },
   "scripts": {
     "build": "node scripts/build.mjs",

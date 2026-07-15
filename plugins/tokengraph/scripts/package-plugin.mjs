@@ -81,7 +81,7 @@ function buildReleaseReadme(version) {
 
 This folder is the installable TokenGraph ${version} plugin for Codex and Claude Code users.
 
-It includes the self-contained Node.js 22 MCP runtime at \`dist/index.js\`, the cross-host lifecycle adapter at \`dist/hooks.js\`, hook and host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
+It includes the self-contained Node.js 22 MCP runtime at \`dist/index.js\`, the bounded command runner at \`dist/cli.js\`, the cross-host lifecycle adapter at \`dist/hooks.js\`, hook and host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
 
 ## Install
 
@@ -115,6 +115,9 @@ The MCP server starts with:
 
 \`\`\`text
 node ./dist/index.js
+
+# bounded saved-run capture
+node ./dist/cli.js run -- <command> [args...]
 \`\`\`
 
 The server is local-first. It indexes the selected workspace locally and stores project state under \`.tokengraph/\` in that workspace.
@@ -169,11 +172,13 @@ async function copyInstallablePlugin(packageDir, packageJson, version) {
   await mkdir(resolve(packageDir, "dist"), { recursive: true });
   await copyRequiredPath(resolve(pluginRoot, "dist", "index.js"), resolve(packageDir, "dist", "index.js"));
   await copyRequiredPath(resolve(pluginRoot, "dist", "hooks.js"), resolve(packageDir, "dist", "hooks.js"));
+  await copyRequiredPath(resolve(pluginRoot, "dist", "cli.js"), resolve(packageDir, "dist", "cli.js"));
   // The build marks the source bundle executable, but release installs launch it
   // with "node", and a copied executable bit flips the committed file mode on
   // filemode-aware systems, breaking the CI reproducibility check.
   await chmod(resolve(packageDir, "dist", "index.js"), 0o644);
   await chmod(resolve(packageDir, "dist", "hooks.js"), 0o644);
+  await chmod(resolve(packageDir, "dist", "cli.js"), 0o644);
   await copyRequiredPath(resolve(pluginRoot, "hooks"), resolve(packageDir, "hooks"));
   await copyRequiredPath(resolve(pluginRoot, "skills"), resolve(packageDir, "skills"));
   await copyRequiredPath(resolve(pluginRoot, ".mcp.json"), resolve(packageDir, ".mcp.json"));
@@ -265,6 +270,7 @@ async function runPackage() {
 
   await assertReadable(resolve(pluginRoot, "dist", "index.js"), "built MCP entry");
   await assertReadable(resolve(pluginRoot, "dist", "hooks.js"), "built lifecycle hook entry");
+  await assertReadable(resolve(pluginRoot, "dist", "cli.js"), "built runner entry");
   await assertReadable(resolve(pluginRoot, "hooks", "hooks.json"), "lifecycle hook manifest");
 
   if (args.release) {
