@@ -20885,8 +20885,8 @@ function base(options, input) {
   if (conflicts.length) response.conflicts = conflicts;
   return response;
 }
-function compactModeEnvelope(_mode, result) {
-  return result;
+function compactModeEnvelope(mode, result) {
+  return { mode, result };
 }
 function compactCompressionEnvelope(mode, result, estimates) {
   return estimates ? { mode, result, estimates } : result;
@@ -24644,6 +24644,7 @@ function projectMap(project) {
       files: project.files.length,
       symbols: project.symbols.length,
       imports: project.imports.length,
+      unsupportedLanguages: project.exclusions.filter((exclusion) => exclusion.reason === "unsupported").length,
       tables: project.sql.tables.length,
       policies: project.sql.policies.length,
       constraints: project.sql.constraints.length,

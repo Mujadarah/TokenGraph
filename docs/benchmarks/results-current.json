@@ -15,9 +15,9 @@
       "sql-security": 5
     },
     "medianNetSavings": 31.7,
-    "medianExecutionInclusiveNetSavings": -134.8,
+    "medianExecutionInclusiveNetSavings": -74.3,
     "primarySavingsMetric": "execution-inclusive",
-    "primaryMedianNetSavings": -134.8,
+    "primaryMedianNetSavings": -74.3,
     "baselineLabel": "recommended-raw-reads"
   }
 }

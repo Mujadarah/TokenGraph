@@ -303,7 +303,7 @@ describe("TokenGraph MCP stdio server", () => {
     const compactWikiCall = await request(9053, "tools/call", {
       name: "tokengraph_query_context", arguments: { root: "first", taskId: prepared.taskId, mode: "wiki", slug: "overview", responseMode: "compact" }
     });
-    expect(compactWikiCall.structuredContent).toMatchObject({ pages: [expect.objectContaining({ slug: "overview" })] });
+    expect(compactWikiCall.structuredContent).toMatchObject({ mode: "wiki", result: { pages: [expect.objectContaining({ slug: "overview" })] } });
     expect(JSON.stringify(compactWikiCall.structuredContent)).not.toContain('"body"');
     const verboseWikiCall = await request(9054, "tools/call", {
       name: "tokengraph_query_context", arguments: { root: "first", taskId: prepared.taskId, mode: "wiki", slug: "overview", responseMode: "verbose" }
@@ -322,19 +322,19 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_recall",
       arguments: { root: "first", taskId: prepared.taskId, mode: "recall", query: "audit-only" }
     });
-    expect(normalRecallCall.structuredContent).toMatchObject({ memories: [] });
+    expect(normalRecallCall.structuredContent).toMatchObject({ mode: "recall", result: { memories: [] } });
     const auditRecallCall = await request(9049, "tools/call", {
       name: "tokengraph_recall",
       arguments: { root: "first", taskId: prepared.taskId, mode: "recall", query: "audit-only", audit: true }
     });
-    expect(auditRecallCall.structuredContent).toMatchObject({ memories: [expect.objectContaining({ id: remembered.memory.id })] });
+    expect(auditRecallCall.structuredContent).toMatchObject({ mode: "recall", result: { memories: [expect.objectContaining({ id: remembered.memory.id })] } });
 
     const overviewCall = await request(9033, "tools/call", {
       name: "tokengraph_query_context",
       arguments: { root: "first", taskId: prepared.taskId, mode: "overview" }
     });
-    expect(overviewCall.structuredContent).toEqual(expect.any(Object));
-    expect(overviewCall.structuredContent).not.toHaveProperty("mode");
+    expect(overviewCall.structuredContent).toMatchObject({ mode: "overview", result: expect.any(Object) });
+    expect(overviewCall.structuredContent).toHaveProperty("mode", "overview");
     await request(9034, "tools/call", {
       name: "tokengraph_query_context",
       arguments: { root: "first", taskId: prepared.taskId, mode: "overview" }
@@ -343,7 +343,7 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_query_context",
       arguments: { root: "first", taskId: prepared.taskId, mode: "search", query: "patient summary", limit: 5 }
     });
-    expect(searchCall.structuredContent).toMatchObject({ query: "patient summary", results: expect.any(Array) });
+    expect(searchCall.structuredContent).toMatchObject({ mode: "search", result: { query: "patient summary", results: expect.any(Array) } });
     const invalidSymbol = await request(9036, "tools/call", {
       name: "tokengraph_query_context",
       arguments: { root: "first", taskId: prepared.taskId, mode: "symbol" }
@@ -377,13 +377,13 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_recall",
       arguments: { root: "first", taskId: prepared.taskId, mode: "recall", query: "patient", limit: 5 }
     });
-    expect(recallCall.structuredContent).toMatchObject({ memories: expect.any(Array) });
+    expect(recallCall.structuredContent).toMatchObject({ mode: "recall", result: { memories: expect.any(Array) } });
     const analyzeCall = await request(9040, "tools/call", {
       name: "tokengraph_analyze",
       arguments: { root: "first", taskId: prepared.taskId, mode: "architecture", files: ["src/patientSummary.ts"] }
     });
     expect(analyzeCall.structuredContent).toEqual(expect.any(Object));
-    expect(analyzeCall.structuredContent).not.toHaveProperty("mode");
+    expect(analyzeCall.structuredContent).toMatchObject({ mode: "architecture", result: expect.any(Object) });
 
     const invalidProposal = await request(9056, "tools/call", {
       name: "tokengraph_propose_knowledge",
