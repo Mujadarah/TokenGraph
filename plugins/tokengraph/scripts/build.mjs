@@ -46,6 +46,17 @@ await build({
   logLevel: "silent"
 });
 
+await build({
+  entryPoints: [resolve(pluginRoot, "src", "cli.ts")],
+  outfile: resolve(pluginRoot, "dist", "cli.js"),
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node22",
+  logLevel: "silent"
+});
+
 // Release entry points are executable on POSIX hosts; Windows ignores this mode.
 await chmod(resolve(pluginRoot, "dist", "index.js"), 0o755);
 await chmod(resolve(pluginRoot, "dist", "hooks.js"), 0o755);
+await chmod(resolve(pluginRoot, "dist", "cli.js"), 0o755);

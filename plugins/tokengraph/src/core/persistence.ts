@@ -41,6 +41,14 @@ export function benchmarkRunsPath(root: string): string {
   return join(stateDir(root), "benchmark-runs.json");
 }
 
+export function runsDir(root: string): string {
+  return join(stateDir(root), "runs");
+}
+
+export function runPath(root: string, runId: string): string {
+  return join(runsDir(root), `${runId}.json`);
+}
+
 export function wikiDir(root: string): string {
   return join(stateDir(root), "wiki");
 }

@@ -20038,6 +20038,12 @@ function configPath(root) {
 function rulesPath(root) {
   return join4(stateDir(root), "rules.json");
 }
+function runsDir(root) {
+  return join4(stateDir(root), "runs");
+}
+function runPath(root, runId) {
+  return join4(runsDir(root), `${runId}.json`);
+}
 function wikiDir(root) {
   return join4(stateDir(root), "wiki");
 }
@@ -21272,10 +21278,31 @@ function rankFilesBm25(index, query, limit = 10) {
   return scored.slice(0, Math.max(0, limit)).map((entry, index2) => ({ ...entry, rank: index2 + 1 }));
 }
 
+// src/core/runner.ts
+import { readFile as readFile5, readdir, rm as rm4 } from "node:fs/promises";
+async function loadRun(root, runId) {
+  try {
+    const parsed = JSON.parse(await readFile5(runPath(root, runId), "utf8"));
+    return parsed && parsed.runId === runId && parsed.root === root ? parsed : void 0;
+  } catch (error2) {
+    if (error2.code === "ENOENT") return void 0;
+    if (error2 instanceof SyntaxError) {
+      await quarantineCorruptJson(runPath(root, runId));
+      return void 0;
+    }
+    throw error2;
+  }
+}
+async function querySavedRuns(root, selector = {}) {
+  const entries = await readdir(runsDir(root)).catch((error2) => error2.code === "ENOENT" ? [] : Promise.reject(error2));
+  const runs = await Promise.all(entries.filter((entry) => entry.endsWith(".json")).map((entry) => loadRun(root, entry.slice(0, -5))));
+  return runs.filter((run) => Boolean(run) && Object.entries(selector).every(([key, value]) => run?.metadata?.[key] === value)).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
 // src/core/fileScanner.ts
 var ignorePackage = __toESM(require_ignore(), 1);
 import { createHash as createHash2 } from "node:crypto";
-import { readdir, readFile as readFile5, stat as stat2 } from "node:fs/promises";
+import { readdir as readdir2, readFile as readFile6, stat as stat2 } from "node:fs/promises";
 import { basename, dirname as dirname3, extname, join as join5, normalize, relative as relative3, sep } from "node:path";
 var DEPENDENCY_DIRS = /* @__PURE__ */ new Set(["node_modules", "vendor", "bower_components"]);
 var BUILD_DIRS = /* @__PURE__ */ new Set([".next", "dist", "build", "out", "coverage", ".turbo", ".cache", ".parcel-cache"]);
@@ -21305,7 +21332,7 @@ function exclusionForName(name) {
 async function loadIgnoreScopes(base2, inherited = []) {
   let content;
   try {
-    content = await readFile5(join5(base2, ".gitignore"), "utf8");
+    content = await readFile6(join5(base2, ".gitignore"), "utf8");
   } catch (error2) {
     if (error2.code !== "ENOENT") {
       throw error2;
@@ -21556,7 +21583,7 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
   const currentScopes = current === root ? ignoreScopes : await loadIgnoreScopes(current, ignoreScopes);
   let entries;
   try {
-    entries = await readdir(current, { withFileTypes: true });
+    entries = await readdir2(current, { withFileTypes: true });
   } catch {
     addUnreadable(graph, normalizePath(relative3(root, current)));
     return;
@@ -21619,7 +21646,7 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
     }
     let content;
     try {
-      content = await readFile5(absolute, "utf8");
+      content = await readFile6(absolute, "utf8");
     } catch {
       addUnreadable(graph, relativePath);
       continue;
@@ -21681,7 +21708,7 @@ async function scanProjectFileMetadata(root, options) {
     const currentScopes = current === root ? inheritedScopes : await loadIgnoreScopes(current, inheritedScopes);
     let entries;
     try {
-      entries = await readdir(current, { withFileTypes: true });
+      entries = await readdir2(current, { withFileTypes: true });
     } catch {
       rows.push({ path: normalizePath(relative3(root, current)), reason: "unreadable" });
       return;
@@ -21750,7 +21777,7 @@ async function scanProjectFileMetadata(root, options) {
       }
       let content;
       try {
-        content = await readFile5(absolute, "utf8");
+        content = await readFile6(absolute, "utf8");
       } catch {
         rows.push({ path: relativePath, reason: "unreadable" });
         exclusions.push({ path: relativePath, reason: "unreadable" });
@@ -21786,7 +21813,7 @@ async function scanProjectFileMetadata(root, options) {
 async function scanProjectFile(root, metadata) {
   let content;
   try {
-    content = await readFile5(join5(root, metadata.path), "utf8");
+    content = await readFile6(join5(root, metadata.path), "utf8");
   } catch {
     return void 0;
   }
@@ -22777,7 +22804,7 @@ ${input.text}`, plan.relevantSql);
 
 // src/core/memoryStore.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { mkdir as mkdir3, readFile as readFile6, rename as rename3, rm as rm4, writeFile as writeFile3 } from "node:fs/promises";
+import { mkdir as mkdir3, readFile as readFile7, rename as rename3, rm as rm5, writeFile as writeFile3 } from "node:fs/promises";
 import { dirname as dirname4, join as join6, resolve as resolve5 } from "node:path";
 var DEFAULT_SOURCE = "manual";
 var CURRENT_MEMORY_SCHEMA_VERSION = 1;
@@ -23034,7 +23061,7 @@ var MemoryStore = class _MemoryStore {
   }
   async readAll() {
     try {
-      const raw = await readFile6(this.filePath, "utf8");
+      const raw = await readFile7(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
       const records = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.memories) ? parsed.memories : [];
       return records.map(normalizeMemory).filter((memory) => Boolean(memory));
@@ -23084,7 +23111,7 @@ var MemoryStore = class _MemoryStore {
       );
       await rename3(tempPath, this.filePath);
     } finally {
-      await rm4(tempPath, { force: true });
+      await rm5(tempPath, { force: true });
     }
   }
   async quarantineCorruptFile() {
@@ -23754,7 +23781,7 @@ function buildProjectWiki(index, memories, applications = []) {
 
 // src/core/taskLedger.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { readFile as readFile7, readdir as readdir2, rename as rename4, rm as rm5 } from "node:fs/promises";
+import { readFile as readFile8, readdir as readdir3, rename as rename4, rm as rm6 } from "node:fs/promises";
 import { join as join7, resolve as resolve6 } from "node:path";
 var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
 var TASK_LEDGER_SCHEMA_VERSION = 1;
@@ -23913,7 +23940,7 @@ async function createTaskLedger(root, options) {
 async function loadTaskLedger(root, taskId) {
   const path = taskLedgerPath(root, taskId);
   try {
-    const parsed = JSON.parse(await readFile7(path, "utf8"));
+    const parsed = JSON.parse(await readFile8(path, "utf8"));
     const ledger = reconstructTaskLedger(parsed, taskId);
     if (!ledger) {
       await quarantine(path);
@@ -23933,7 +23960,7 @@ async function discardEmptyTaskLedger(root, taskId) {
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await loadTaskLedger(root, taskId);
     if (!ledger || ledger.status !== "open" || ledger.events.length !== 0) return false;
-    await rm5(taskLedgerPath(root, taskId), { force: true });
+    await rm6(taskLedgerPath(root, taskId), { force: true });
     return true;
   });
 }
@@ -23996,7 +24023,7 @@ async function setTaskDisposition(root, taskId, disposition, turnId, calibration
 
 // src/core/knowledgeReviewQueue.ts
 import { createHash as createHash6, randomUUID as randomUUID5 } from "node:crypto";
-import { readFile as readFile8, realpath as realpath2 } from "node:fs/promises";
+import { readFile as readFile9, realpath as realpath2 } from "node:fs/promises";
 import { isAbsolute as isAbsolute3, join as join8, relative as relative4, resolve as resolve7, win32 } from "node:path";
 var REVIEW_QUEUE_SCHEMA_VERSION = 3;
 var APPLICATION_SCHEMA_VERSION = 2;
@@ -24195,7 +24222,7 @@ function reconstructSuggestion(value, schemaVersion) {
 async function readQueue(root) {
   const path = queuePath(root);
   try {
-    const parsed = JSON.parse(await readFile8(path, "utf8"));
+    const parsed = JSON.parse(await readFile9(path, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Queue must be an object.");
     const queue = parsed;
     if (!hasExactKeys(queue, ["schemaVersion", "suggestions"]) || ![1, 2, 3].includes(queue.schemaVersion) || !Array.isArray(queue.suggestions)) {
@@ -24261,7 +24288,7 @@ function reconstructApplication(value, schemaVersion) {
 async function readApplications(root) {
   const path = applicationPath(root);
   try {
-    const parsed = JSON.parse(await readFile8(path, "utf8"));
+    const parsed = JSON.parse(await readFile9(path, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Application store must be an object.");
     const store = parsed;
     if (!hasExactKeys(store, ["schemaVersion", "applications"]) || ![1, 2].includes(store.schemaVersion) || !Array.isArray(store.applications)) {
@@ -24308,7 +24335,7 @@ async function ensureApplicationTargets(root, application) {
   for (const logicalPath of targetFiles(root, application)) {
     const path = await resolveConfinedPath(root, join8(".tokengraph", "knowledge", relative4(logicalBase, logicalPath)), true);
     try {
-      const existing = await readFile8(path, "utf8");
+      const existing = await readFile9(path, "utf8");
       if (existing !== expected) throw new Error("Applied knowledge target differs from its reviewed payload.");
     } catch (error2) {
       if (error2.code !== "ENOENT") throw error2;
@@ -24333,7 +24360,7 @@ async function assertFreshForApproval(root, suggestion) {
       if (!confined || confined.startsWith("..") || isAbsolute3(confined)) {
         throw new Error(`Knowledge source ${source.sourceId} resolves outside the trusted workspace.`);
       }
-      content = await readFile8(canonicalSource);
+      content = await readFile9(canonicalSource);
     } catch (error2) {
       if (error2.code === "ENOENT") throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} is missing.`);
       throw error2;
@@ -25128,11 +25155,12 @@ function createTokenGraphServer(options = {}) {
         } else if (mode === "artifact") {
           result = { artifactHash: input.artifactHash, status: "not-found", message: "Stable artifacts are not present in this workspace ledger." };
         } else if (mode === "run") {
+          const runs = await querySavedRuns(resolvedRoot, { test: input.test, file: input.file, errorClass: input.errorClass });
           result = {
             runId: input.runId,
             selector: input.test ? { test: input.test } : input.file ? { file: input.file } : { errorClass: input.errorClass },
-            status: "not-found",
-            message: "Saved runner captures are not present in this workspace ledger."
+            status: runs.length ? "found" : "not-found",
+            runs
           };
         } else {
           const { slug, constraints, responseMode: responseMode2 } = input;

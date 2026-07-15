@@ -2,7 +2,7 @@
 
 This folder is the installable TokenGraph 0.20.0 plugin for Codex and Claude Code users.
 
-It includes the self-contained Node.js 22 MCP runtime at `dist/index.js`, the cross-host lifecycle adapter at `dist/hooks.js`, hook and host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
+It includes the self-contained Node.js 22 MCP runtime at `dist/index.js`, the bounded command runner at `dist/cli.js`, the cross-host lifecycle adapter at `dist/hooks.js`, hook and host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
 
 ## Install
 
@@ -36,6 +36,9 @@ The MCP server starts with:
 
 ```text
 node ./dist/index.js
+
+# bounded saved-run capture
+node ./dist/cli.js run -- <command> [args...]
 ```
 
 The server is local-first. It indexes the selected workspace locally and stores project state under `.tokengraph/` in that workspace.

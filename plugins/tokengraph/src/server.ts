@@ -38,6 +38,7 @@ import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } f
 import { adviseRouting } from "./core/routingAdvisor.js";
 import { getRepositoryIdentity } from "./core/repositoryIdentity.js";
 import { rankFilesBm25 } from "./core/retrieval.js";
+import { querySavedRuns } from "./core/runner.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
 import { traceFailure } from "./core/failureTracer.js";
@@ -776,11 +777,12 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       } else if (mode === "artifact") {
         result = { artifactHash: input.artifactHash, status: "not-found", message: "Stable artifacts are not present in this workspace ledger." };
       } else if (mode === "run") {
+        const runs = await querySavedRuns(resolvedRoot, { test: input.test, file: input.file, errorClass: input.errorClass });
         result = {
           runId: input.runId,
           selector: input.test ? { test: input.test } : input.file ? { file: input.file } : { errorClass: input.errorClass },
-          status: "not-found",
-          message: "Saved runner captures are not present in this workspace ledger."
+          status: runs.length ? "found" : "not-found",
+          runs
         };
       } else {
         const { slug, constraints, responseMode } = input;

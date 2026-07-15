@@ -15,7 +15,7 @@ pnpm package:plugin -- --json
 pnpm package:plugin -- --release --json
 ```
 
-`pnpm build` produces self-contained Node.js 22 entries at `dist/index.js` for MCP and `dist/hooks.js` for lifecycle hooks. `pnpm package:plugin` creates a standalone Codex/Claude marketplace directory and deterministic ZIP under the repository `artifacts/` directory. `pnpm package:plugin -- --release` regenerates the committed `release/tokengraph/` plugin.
+`pnpm build` produces self-contained Node.js 22 entries at `dist/index.js` for MCP, `dist/cli.js` for bounded saved-run capture, and `dist/hooks.js` for lifecycle hooks. Run `node ./dist/cli.js run -- <command> [args...]` to capture a redacted, bounded command result. `pnpm package:plugin` creates a standalone Codex/Claude marketplace directory and deterministic ZIP under the repository `artifacts/` directory. `pnpm package:plugin -- --release` regenerates the committed `release/tokengraph/` plugin.
 
 ## Workspace trust
 
@@ -106,7 +106,7 @@ Legacy architecture and review:
 
 ## Packaging contract
 
-The installable plugin contains host manifests, MCP configuration, `hooks/hooks.json`, the bundled `dist/index.js` and `dist/hooks.js` entries, skills, README, package metadata, and license. It excludes source, tests, scripts, development dependencies, local state, `dist/server.js`, and `dist/core/`.
+The installable plugin contains host manifests, MCP configuration, `hooks/hooks.json`, the bundled `dist/index.js`, `dist/cli.js`, and `dist/hooks.js` entries, skills, README, package metadata, and license. It excludes source, tests, scripts, development dependencies, local state, `dist/server.js`, and `dist/core/`.
 
 ## Lifecycle hooks
 
