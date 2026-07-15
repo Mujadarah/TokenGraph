@@ -7,11 +7,13 @@ import type { Ignore } from "ignore";
 
 import type { CodeFile, CodeGraph, CodeSymbol, Exclusion, FileKind, FileScanMetadata, ImportEdge } from "./types.js";
 import { estimateTokens } from "./token.js";
+import { parsePolyglotSource, type PolyglotLanguage } from "./polyglot.js";
 
 const DEPENDENCY_DIRS = new Set(["node_modules", "vendor", "bower_components"]);
 const BUILD_DIRS = new Set([".next", "dist", "build", "out", "coverage", ".turbo", ".cache", ".parcel-cache"]);
-const SUPPORTED_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".sql", ".md", ".mdx"]);
-const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+const SUPPORTED_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".sql", ".md", ".mdx"]);
+const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java"]);
+const CONFIGURATION_FILES = ["tsconfig.json", "jsconfig.json", ".eslintrc.json", ".prettierrc.json"];
 const SECRET_FILE_PATTERNS = [/^\.env($|\.)/i, /\.pem$/i, /\.key$/i, /\.p12$/i, /^id_rsa$/i, /^id_ed25519$/i];
 const MAX_INDEXED_BYTES = 512 * 1024;
 const DEFAULT_SCAN_BUDGET = {
@@ -103,6 +105,14 @@ function languageForExtension(extension: string): string {
     case ".mjs":
     case ".cjs":
       return "javascript";
+    case ".py":
+      return "python";
+    case ".go":
+      return "go";
+    case ".rs":
+      return "rust";
+    case ".java":
+      return "java";
     case ".sql":
       return "sql";
     case ".md":
@@ -111,6 +121,28 @@ function languageForExtension(extension: string): string {
     default:
       return "text";
   }
+}
+
+function polyglotLanguage(extension: string): PolyglotLanguage | undefined {
+  return extension === ".py" ? "python" : extension === ".go" ? "go" : extension === ".rs" ? "rust" : extension === ".java" ? "java" : undefined;
+}
+
+async function extractPolyglotSymbols(filePath: string, extension: string, content: string): Promise<CodeSymbol[]> {
+  const language = polyglotLanguage(extension);
+  if (!language) return [];
+  const parsed = await parsePolyglotSource(language, content);
+  return (parsed.symbolDetails ?? parsed.symbols.map((name) => ({ name, kind: "function" as const, startLine: 1, endLine: 1, signature: name }))).map((symbol) => ({
+    name: symbol.name,
+    kind: symbol.kind === "type" ? "type" : symbol.kind,
+    filePath,
+    exported: true,
+    startLine: symbol.startLine,
+    endLine: symbol.endLine,
+    signature: symbol.signature,
+    summary: `${symbol.kind} ${symbol.name}`,
+    provenance: parsed.parser,
+    parserVersion: `${parsed.runtime}/${parsed.grammarVersion}`
+  }));
 }
 
 function isTestPath(path: string): boolean {
@@ -592,7 +624,15 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
   await walkSignature(root, 0, ignoreScopes);
   files.sort((a, b) => a.path.localeCompare(b.path));
   exclusions.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, exclusions, scanSignature: hashText(JSON.stringify(rows)) };
+  const configurationRows: Array<{ path: string; contentHash: string }> = [];
+  for (const path of CONFIGURATION_FILES) {
+    try {
+      configurationRows.push({ path, contentHash: hashText(await readFile(join(root, path), "utf8")) });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") configurationRows.push({ path, contentHash: "unreadable" });
+    }
+  }
+  return { files, exclusions, scanSignature: hashText(JSON.stringify({ rows, configurationRows })) };
 }
 
 export async function scanProjectFile(root: string, metadata: FileScanMetadata): Promise<ParsedProjectFile | undefined> {
@@ -615,10 +655,11 @@ export async function scanProjectFile(root: string, metadata: FileScanMetadata):
     route: metadata.route,
     isTest: metadata.isTest
   };
+  const polyglotSymbols = await extractPolyglotSymbols(metadata.path, metadata.extension, content);
   return {
     file,
     imports: CODE_EXTENSIONS.has(metadata.extension) ? extractImports(metadata.path, content) : [],
-    symbols: CODE_EXTENSIONS.has(metadata.extension) ? extractSymbols(metadata.path, content) : [],
+    symbols: polyglotSymbols.length ? polyglotSymbols : CODE_EXTENSIONS.has(metadata.extension) ? extractSymbols(metadata.path, content) : [],
     content
   };
 }

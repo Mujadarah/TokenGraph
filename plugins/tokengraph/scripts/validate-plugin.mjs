@@ -153,6 +153,7 @@ const releaseDistCorePath = resolve(releaseRoot, "dist", "core");
 const releaseSkillsPath = resolve(releaseRoot, "skills");
 const releasePackageJsonPath = resolve(releaseRoot, "package.json");
 const releaseReadmePath = resolve(releaseRoot, "README.md");
+const grammarAssets = ["web-tree-sitter.wasm", "tree-sitter-python.wasm", "tree-sitter-go.wasm", "tree-sitter-rust.wasm", "tree-sitter-java.wasm"];
 const rootReadmePath = resolve(repoRoot, "README.md");
 const sourceReadmePath = resolve(pluginRoot, "README.md");
 const smokeScriptPath = resolve(pluginRoot, "scripts", "smoke.mjs");
@@ -315,6 +316,10 @@ await assertMissing(releaseDistCorePath, "release dist/core directory");
 await assertMissing(resolve(releaseRoot, "dist", "server.js"), "release built MCP server");
 await assertFile(releaseReadmePath, "release README");
 await assertFile(releasePackageJsonPath, "release package metadata");
+for (const asset of grammarAssets) {
+  await assertFile(resolve(pluginRoot, "assets", "grammars", asset), `source grammar asset ${asset}`);
+  await assertFile(resolve(releaseRoot, "assets", "grammars", asset), `release grammar asset ${asset}`);
+}
 await assertFile(resolve(releaseRoot, "LICENSE"), "release license");
 const releaseSkillContract = await inspectSkillContract(releaseSkillsPath, "release plugin skills");
 assert(releaseSkillContract.forbiddenCoreTools.length === 0, `release plugin core skills reference non-core tools: ${releaseSkillContract.forbiddenCoreTools.join(", ")}`);

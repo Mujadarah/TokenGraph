@@ -116,6 +116,7 @@ interface GateInput {
   criticalFalseNegativeCount: number;
   requiredFileRecall: number;
   medianNetSavings: number;
+  executionInclusiveMedian: number;
   baselineRequiredFileRecall: number;
 }
 
@@ -230,6 +231,7 @@ export function evaluateReleaseGate(input: GateInput): { passed: boolean; failur
   if (input.criticalFalseNegativeCount !== 0) failureReasons.push("Critical false negatives must be zero.");
   if (input.requiredFileRecall < input.baselineRequiredFileRecall) failureReasons.push("Required-file recall regressed below the checked-in baseline.");
   if (input.medianNetSavings <= 0) failureReasons.push("Median net savings must be positive after tool and footer overhead.");
+  if (input.executionInclusiveMedian <= 0) failureReasons.push("Execution-inclusive median net savings must be positive after targeted reads.");
   return { passed: failureReasons.length === 0, failureReasons };
 }
 
@@ -559,7 +561,7 @@ async function evaluateTask(
         label: "recommended-raw-reads",
         files: [...evidence.rawFiles],
         tokens: rawBaselineTokens,
-        fullIndexDumpTokens: estimateTokens(JSON.stringify(project))
+        fullIndexDumpTokens: estimateTokens(JSON.stringify(stableProjectDump(project)))
       } satisfies BenchmarkBaselineArtifact,
       targetedReadsIncluded: false,
       targetedReadCalls,
@@ -633,6 +635,7 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     medianExecutionInclusiveNetSavings: median(tasks.map((task) => task.metrics.executionInclusiveNetSavings)),
     primarySavingsMetric: "execution-inclusive" as const,
     primaryMedianNetSavings: median(tasks.map((task) => task.metrics.executionInclusiveNetSavings)),
+    executionInclusiveMedian: median(tasks.map((task) => task.metrics.executionInclusiveNetSavings)),
     baselineLabel: "recommended-raw-reads" as const,
     criticalFalseNegativeCount: falseNegativeTotal,
     criticalConstraintPreservationRate: constraintTotal ? preservedTotal / constraintTotal : 1,
@@ -667,6 +670,24 @@ function sortJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJson);
   if (!isRecord(value)) return value;
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortJson(value[key])]));
+}
+
+function stableProjectDump(project: ProjectIndex): unknown {
+  return {
+    ...project,
+    scannedAt: undefined,
+    scanMetadata: {
+      files: Object.fromEntries(Object.entries(project.scanMetadata?.files ?? {}).map(([path, file]) => [path, {
+        path: file.path,
+        size: file.size,
+        contentHash: file.contentHash,
+        language: file.language,
+        extension: file.extension,
+        route: file.route,
+        isTest: file.isTest
+      }]))
+    }
+  };
 }
 
 export function stableBenchmarkJson(report: unknown): string {

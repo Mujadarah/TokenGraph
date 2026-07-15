@@ -50,7 +50,10 @@ describe("routing advisor", () => {
   it("honors force overrides and configured routing modes", () => {
     expect(adviseRouting({ task: "Where is x?", routingOverride: "force-on" }).useTokenGraph).toBe(true);
     expect(adviseRouting({ task: "Trace architecture", routingOverride: "force-bypass" }).useTokenGraph).toBe(false);
-    expect(adviseRouting({ task: "Where is x?", routingMode: "always-activate" }).enforced).toBe(true);
+    expect(adviseRouting({ task: "Where is x?", routingMode: "always-activate" }).enforced).toBe(false);
+    expect(adviseRouting({ task: "Where is x?", routingMode: "always-activate", promotion: { enforcementEnabled: true } }).enforced).toBe(true);
     expect(adviseRouting({ task: "Trace architecture", routingMode: "always-advisory" }).enforced).toBe(false);
+    expect(adviseRouting({ task: "Trace architecture", killSwitch: true }).useTokenGraph).toBe(false);
+    expect(adviseRouting({ task: "Trace architecture", killSwitch: true }).reason).toBe("routing kill switch");
   });
 });

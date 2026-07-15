@@ -3,10 +3,12 @@
 // src/core/runner.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { spawn } from "node:child_process";
+import { readFile as readFile2, readdir, rm as rm2 } from "node:fs/promises";
+import { join as join3 } from "node:path";
 
 // src/core/storage.ts
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 var FILE_LOCK_ATTEMPTS = 200;
 var FILE_LOCK_WAIT_MS = 10;
@@ -31,7 +33,7 @@ async function withFileLock(lockPath, operation) {
   await mkdir(dirname(lockPath), { recursive: true });
   for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
     try {
-      const handle = await open(lockPath, "wx");
+      const handle = await open(lockPath, "wx", 384);
       try {
         return await operation();
       } finally {
@@ -71,13 +73,25 @@ async function writeJsonAtomic(path, value) {
 }
 async function writeTextAtomic(path, content) {
   const directory = dirname(path);
-  await mkdir(directory, { recursive: true });
+  await mkdir(directory, { recursive: true, mode: 448 });
+  if (process.platform !== "win32") await chmod(directory, 448);
   const tempPath = join(directory, `.${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
   try {
-    await writeFile(tempPath, content);
+    await writeFile(tempPath, content, { mode: 384 });
     await rename(tempPath, path);
+    if (process.platform !== "win32") await chmod(path, 384);
   } finally {
     await rm(tempPath, { force: true });
+  }
+}
+async function quarantineCorruptJson(path) {
+  const corruptPath = `${path}.corrupt-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  try {
+    await rename(path, corruptPath);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
   }
 }
 
@@ -123,14 +137,39 @@ function compactRepeatedLines(value) {
   }
   return output.join("\n");
 }
-function boundedCapture(chunks, maxBytes) {
-  const raw = redact(compactRepeatedLines(chunks.join("").replace(ANSI_PATTERN, "")));
-  const bytes = Buffer.byteLength(raw, "utf8");
-  if (bytes <= maxBytes) return { text: raw, truncated: false };
-  const buffer = Buffer.from(raw, "utf8");
-  return { text: `${buffer.subarray(0, Math.max(0, maxBytes - 32)).toString("utf8")}
+var StreamCapture = class {
+  constructor(maxBytes) {
+    this.maxBytes = maxBytes;
+  }
+  maxBytes;
+  chunks = [];
+  bytes = 0;
+  truncated = false;
+  binary = false;
+  append(chunk) {
+    if (chunk.includes(0)) this.binary = true;
+    if (this.bytes >= this.maxBytes) {
+      this.truncated = true;
+      return;
+    }
+    const remaining = this.maxBytes - this.bytes;
+    const selected = chunk.subarray(0, remaining);
+    this.chunks.push(Buffer.from(selected));
+    this.bytes += selected.length;
+    if (selected.length < chunk.length) this.truncated = true;
+  }
+  get hasBinary() {
+    return this.binary;
+  }
+  finish() {
+    const raw = redact(compactRepeatedLines(Buffer.concat(this.chunks).toString("utf8").replace(ANSI_PATTERN, "")));
+    const bytes = Buffer.byteLength(raw, "utf8");
+    if (bytes <= this.maxBytes && !this.truncated) return { text: raw, truncated: false };
+    const buffer = Buffer.from(raw, "utf8");
+    return { text: `${buffer.subarray(0, Math.max(0, this.maxBytes - 32)).toString("utf8")}
 [truncated]`, truncated: true };
-}
+  }
+};
 function validateCommand(command, interactive) {
   if (!command.trim()) throw new Error("Runner command is required.");
   if (!interactive && INTERACTIVE_COMMANDS.has(command.split(/[\\/]/).at(-1).toLowerCase().replace(/\.exe$/, ""))) {
@@ -146,16 +185,28 @@ async function executeRun(options, signal) {
   if (interactive) throw new Error("Interactive runner mode is not supported by the bounded capture interface.");
   const maxBytes = Math.max(256, Math.min(options.maxBytes ?? 64 * 1024, 1024 * 1024));
   const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? 12e4, 15 * 6e4));
+  const terminateGraceMs = Math.max(100, Math.min(options.terminateGraceMs ?? 2e3, 15e3));
   const startedAt = /* @__PURE__ */ new Date();
-  const stdout = [];
-  const stderr = [];
+  const stdout = new StreamCapture(maxBytes);
+  const stderr = new StreamCapture(maxBytes);
   const child = spawn(options.command, options.args ?? [], { cwd: options.root, env: options.env ? { ...process.env, ...options.env } : process.env, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-  child.stdout.on("data", (chunk) => stdout.push(chunk.toString("utf8")));
-  child.stderr.on("data", (chunk) => stderr.push(chunk.toString("utf8")));
+  let binaryOutput = false;
+  child.stdout.on("data", (chunk) => stdout.append(chunk));
+  child.stderr.on("data", (chunk) => stderr.append(chunk));
   let timedOut = false;
   let cancelled = false;
+  let escalationTimer;
   const terminate = () => {
-    if (!child.killed) child.kill("SIGTERM");
+    if (child.exitCode !== null || child.killed) return;
+    child.kill("SIGTERM");
+    escalationTimer = setTimeout(() => {
+      if (child.exitCode !== null) return;
+      if (process.platform === "win32" && child.pid) {
+        spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+      } else {
+        child.kill("SIGKILL");
+      }
+    }, terminateGraceMs);
   };
   const timer = setTimeout(() => {
     timedOut = true;
@@ -171,10 +222,14 @@ async function executeRun(options, signal) {
     child.once("close", (code, childSignal) => resolve3({ code, signal: childSignal }));
   }).finally(() => {
     clearTimeout(timer);
+    if (escalationTimer) clearTimeout(escalationTimer);
     signal?.removeEventListener("abort", abort);
   });
-  const stdoutCapture = boundedCapture(stdout, maxBytes);
-  const stderrCapture = boundedCapture(stderr, maxBytes);
+  const stdoutCapture = stdout.finish();
+  const stderrCapture = stderr.finish();
+  binaryOutput = stdout.hasBinary || stderr.hasBinary;
+  if (binaryOutput) stderrCapture.text = `${stderrCapture.text}
+[binary output refused]`;
   return {
     runId: randomUUID2(),
     root: options.root,
@@ -182,7 +237,7 @@ async function executeRun(options, signal) {
     args: redactRunnerArguments(options.args ?? []),
     startedAt: startedAt.toISOString(),
     finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    status: cancelled ? "cancelled" : timedOut ? "timed-out" : result.code === 0 ? "completed" : "failed",
+    status: cancelled ? "cancelled" : timedOut ? "timed-out" : binaryOutput ? "failed" : result.code === 0 ? "completed" : "failed",
     exitCode: result.code,
     signal: result.signal,
     timedOut,
@@ -190,12 +245,61 @@ async function executeRun(options, signal) {
     stderr: stderrCapture.text,
     stdoutTruncated: stdoutCapture.truncated,
     stderrTruncated: stderrCapture.truncated,
+    ...binaryOutput ? { binaryOutput: true } : {},
     ...options.metadata ? { metadata: options.metadata } : {}
   };
 }
 async function saveRun(root, run) {
   const key = await canonicalPersistenceLockKey(root, ".tokengraph", "runs", `${run.runId}.json`);
   await withFileLock(`${key}.lock`, () => writeJsonAtomic(runPath(root, run.runId), run));
+}
+async function loadRun(root, runId) {
+  try {
+    const parsed = JSON.parse(await readFile2(runPath(root, runId), "utf8"));
+    return parsed && parsed.runId === runId && parsed.root === root ? parsed : void 0;
+  } catch (error) {
+    if (error.code === "ENOENT") return void 0;
+    if (error instanceof SyntaxError) {
+      await quarantineCorruptJson(runPath(root, runId));
+      return void 0;
+    }
+    throw error;
+  }
+}
+function summarizeRun(run) {
+  const combined = `${run.stderr}
+${run.stdout}`;
+  const lines = combined.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const firstError = lines.find((line) => /\b(error|failed|failure|exception)\b/i.test(line));
+  const tests = lines.filter((line) => /(?:test|spec)\b|\b(pass|fail)ed\b/i.test(line)).slice(0, 20);
+  const stackFrames = lines.filter((line) => /^\s*at\s+|\bat\s+.+:\d+:\d+/.test(line)).slice(0, 20);
+  const locations = lines.map((line) => line.match(/[^\s:()]+:\d+(?::\d+)?/)?.[0]).filter((value) => Boolean(value)).slice(0, 20);
+  const repeatCount = lines.length - new Set(lines).size;
+  return {
+    runId: run.runId,
+    status: run.status,
+    exitCode: run.exitCode,
+    signal: run.signal,
+    timedOut: run.timedOut,
+    ...firstError ? { firstError } : {},
+    repeatCount,
+    tests,
+    stackFrames,
+    locations
+  };
+}
+async function purgeRuns(root, before) {
+  const entries = await readdir(runsDir(root)).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error));
+  const removed = [];
+  for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
+    const runId = entry.slice(0, -5);
+    const run = await loadRun(root, runId);
+    if (run && (!before || new Date(run.finishedAt) < before)) {
+      await rm2(join3(runsDir(root), entry), { force: true });
+      removed.push(runId);
+    }
+  }
+  return removed;
 }
 
 // src/cli.ts
@@ -213,7 +317,8 @@ async function main(argv) {
   const maxBytes = Number(optionValue(argv.slice(1, separator), "--max-bytes") ?? 64 * 1024);
   const run = await executeRun({ root, command: commandArgs[0], args: commandArgs.slice(1), timeoutMs, maxBytes });
   await saveRun(root, run);
-  process.stdout.write(`${JSON.stringify(run)}
+  await purgeRuns(root, new Date(Date.now() - 14 * 24 * 60 * 60 * 1e3));
+  process.stdout.write(`${JSON.stringify({ ...summarizeRun(run), stdoutTruncated: run.stdoutTruncated, stderrTruncated: run.stderrTruncated })}
 `);
   if (run.status !== "completed") process.exitCode = run.status === "timed-out" ? 124 : 1;
 }

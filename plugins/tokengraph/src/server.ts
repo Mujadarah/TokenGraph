@@ -9,6 +9,8 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import { ArchitectureRuleStore, checkArchitecture } from "./core/architectureRules.js";
+import { artifactKey, createStableArtifact, loadStableArtifact, saveStableArtifact, shouldSuppressArtifact, type RoutingDecision } from "./core/artifact.js";
+import { buildAdaptiveProjectBrief, composeMemoryContext } from "./core/memoryCore.js";
 import { compressContext } from "./core/contextCompressor.js";
 import { compressOutput } from "./core/compressor.js";
 import {
@@ -35,10 +37,12 @@ import {
   taskReportInputSchema
 } from "./core/toolContracts.js";
 import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } from "./core/config.js";
-import { adviseRouting } from "./core/routingAdvisor.js";
+import { adviseRouting, failOpenRouting } from "./core/routingAdvisor.js";
+import { loadRoutingControl } from "./core/routingControl.js";
 import { getRepositoryIdentity } from "./core/repositoryIdentity.js";
-import { rankFilesBm25 } from "./core/retrieval.js";
-import { querySavedRuns } from "./core/runner.js";
+import { buildRetrievalCapsule, capsuleArtifact, escalateReadPolicy, rankFilesBm25, readExactSlice } from "./core/retrieval.js";
+import { loadRun, summarizeRun } from "./core/runner.js";
+import { enforceStorageQuota } from "./core/storagePolicy.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
 import { traceFailure } from "./core/failureTracer.js";
@@ -52,8 +56,9 @@ import {
   getWikiStatus,
   loadProjectIndex,
   loadProjectWiki,
-  memoryPath,
-  rulesPath,
+  repositoryMemoryPath,
+  saveVaultProjection,
+  repositoryRulesPath,
   saveProjectIndex,
   saveProjectWiki
 } from "./core/persistence.js";
@@ -62,6 +67,7 @@ import { estimateTokens, tokenize } from "./core/token.js";
 import { buildTaskReport, formatTaskReportFooter } from "./core/taskEstimator.js";
 import type { ProjectIndex, RankedSqlObject } from "./core/types.js";
 import { buildProjectWiki } from "./core/wiki.js";
+import { projectToVault } from "./core/vaultProjection.js";
 import { createTaskLedger, discardEmptyTaskLedger, loadTaskLedger, recordTaskEvent, setTaskDisposition, type TaskHost } from "./core/taskLedger.js";
 import { listAppliedKnowledge, listKnowledgeSuggestions, proposeKnowledgeChange, reviewKnowledgeSuggestion } from "./core/knowledgeReviewQueue.js";
 
@@ -422,6 +428,7 @@ function projectMap(project: ProjectIndex) {
       symbols: project.symbols.length,
       imports: project.imports.length,
       unsupportedLanguages: project.exclusions.filter((exclusion) => exclusion.reason === "unsupported").length,
+      unsupportedLanguageCounts: project.unsupportedLanguageCounts ?? {},
       tables: project.sql.tables.length,
       policies: project.sql.policies.length,
       constraints: project.sql.constraints.length,
@@ -636,6 +643,43 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     }
   }
 
+  async function probeRoutingState(resolvedRoot: string) {
+    try {
+      const [status, config, control] = await Promise.all([
+        getIndexStatus(resolvedRoot, { probeOnly: true }),
+        loadTokenGraphConfig(resolvedRoot),
+        loadRoutingControl(resolvedRoot)
+      ]);
+      return { status, config, control };
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function routeBeforeLedger(root: string | undefined, task: string | undefined, routingOverride: "auto" | "force-on" | "force-bypass" | undefined): Promise<RoutingDecision | undefined> {
+    if (!task?.trim()) return undefined;
+    const resolvedRoot = await workspaceRoot(root);
+    const probe = await probeRoutingState(resolvedRoot);
+    if (!probe) return failOpenRouting();
+    return adviseRouting({
+      task,
+      routingOverride,
+      routingMode: probe.config.routingMode,
+      indexAvailable: probe.status.hasIndex,
+      cachedStatus: probe.status.state === "fresh" ? "fresh" : probe.status.state === "missing" ? "missing" : "stale",
+      killSwitch: probe.config.routingKillSwitch || probe.control.killSwitch,
+      promotion: probe.control.promotion
+    });
+  }
+
+  function directHostFallback(routing: RoutingDecision): object {
+    return {
+      mode: "direct-host",
+      routing,
+      guidance: "This bounded task does not require TokenGraph context. Continue with the host tools directly; use routingOverride force-on for discovery when needed."
+    };
+  }
+
   server.registerTool(
     "tokengraph_setup",
     {
@@ -669,17 +713,34 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, task, profile, maxTokens, allowRawReads, constraints, responseMode, refreshIndex, host, routingOverride, knownArtifacts }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const statusBefore = await getIndexStatus(resolvedRoot);
-      const existing = await loadProjectIndex(resolvedRoot);
-      const config = await loadTokenGraphConfig(resolvedRoot);
+      const probe = await probeRoutingState(resolvedRoot);
+      if (!probe) {
+        const routing = failOpenRouting();
+        const response = { mode: "direct-host" as const, routing, guidance: "TokenGraph routing was unavailable, so this request is being left to the host tools. Retry discovery after the workspace state is repaired." };
+        return ok(responseMode === "verbose" ? { ...response, root: resolvedRoot } : response);
+      }
+      const { status: statusBefore, config, control } = probe;
+      await enforceStorageQuota(resolvedRoot, { maxBytes: config.storage.maxBytes });
+      const identity = await getRepositoryIdentity(resolvedRoot);
       const routing = adviseRouting({
         task,
         knownArtifacts,
         routingOverride,
         routingMode: config.routingMode,
-        indexAvailable: Boolean(existing),
-        cachedStatus: statusBefore.state === "fresh" ? "fresh" : statusBefore.state === "missing" ? "missing" : "stale"
+        indexAvailable: statusBefore.hasIndex,
+        cachedStatus: statusBefore.state === "fresh" ? "fresh" : statusBefore.state === "missing" ? "missing" : "stale",
+        killSwitch: config.routingKillSwitch || control.killSwitch,
+        promotion: control.promotion
       });
+      if (!routing.useTokenGraph) {
+        const response = {
+          mode: "direct-host" as const,
+          routing,
+          guidance: "This bounded task does not require TokenGraph context. Continue with the host tools directly; call tokengraph_prepare_context again for discovery, architecture, debugging, or migration work."
+        };
+        return ok(responseMode === "verbose" ? { ...response, root: resolvedRoot } : response);
+      }
+      const existing = await loadProjectIndex(resolvedRoot);
       let project: ProjectIndex;
       let indexingMode: "existing" | "full" | "incremental" = "existing";
       let changes = { addedFiles: [] as string[], changedFiles: [] as string[], deletedFiles: [] as string[], parsedFiles: [] as string[] };
@@ -700,18 +761,19 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         };
         await saveProjectIndex(resolvedRoot, project);
       } else {
-        project = await indexProject(resolvedRoot);
+        project = await indexProject(resolvedRoot, { parserLimits: { maxBytes: config.parser.maxFileBytes, maxDepth: config.parser.maxRecursionDepth, maxNodes: config.parser.maxNodes, timeoutMs: config.parser.perFileTimeoutMs } });
         indexingMode = "full";
         changes.parsedFiles = project.files.map((file) => file.path);
         await saveProjectIndex(resolvedRoot, project);
       }
 
+      const appliedKnowledge = await listAppliedKnowledge(resolvedRoot);
       if (indexingMode !== "existing" && config.wikiGenerationEnabled) {
-        const wikiMemories = config.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).list() : [];
-        await saveProjectWiki(resolvedRoot, buildProjectWiki(project, wikiMemories, await listAppliedKnowledge(resolvedRoot)));
+        const wikiMemories = config.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list() : [];
+        await saveProjectWiki(resolvedRoot, buildProjectWiki(project, wikiMemories, appliedKnowledge));
       }
       const memoryLimit = config.maxMemories;
-      const memories = config.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(task, memoryLimit) : [];
+      const memories = config.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(task, memoryLimit) : [];
       const plan = await buildContextPlan({
         root: resolvedRoot,
         task,
@@ -723,18 +785,66 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
           allowRawReads
         }
       });
+      const projectBrief = buildAdaptiveProjectBrief({
+        repositoryId: identity.repositoryId,
+        sourceFingerprint: project.fingerprint,
+        sections: [
+          { id: "frameworks", text: project.frameworks.join(", ") },
+          { id: "first-reads", text: plan.recommendedFirstReads.map((file) => file.path).join("\n") }
+        ]
+      }, Math.max(150, Math.min(config.memory.projectBriefTargetTokens, config.memory.projectBriefMaxTokens)));
       const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost()) });
+      const capsule = buildRetrievalCapsule(ledger.taskId, task, project, plan.recommendedFirstReads.map((file) => file.path));
+      const capsuleStableArtifact = capsuleArtifact(capsule);
+      await saveStableArtifact(resolvedRoot, capsuleStableArtifact);
+      const memoryContext = composeMemoryContext({
+        repositoryId: identity.repositoryId,
+        worktreeId: identity.worktreeId,
+        sourceFingerprint: project.fingerprint,
+        projectBrief,
+        indexedFacts: project.files.slice(0, config.maxFiles).map((file) => `${file.path}:${file.language}`),
+        capsules: [capsuleStableArtifact.hash],
+        reviewedDecisions: appliedKnowledge.map((entry) => `${entry.title}: ${entry.proposedContent}`),
+        maxTokens: config.memory.maxRetrievalTokens,
+        outcomes: memories.filter((memory) => Boolean(memory.confirmedAt)).map((memory) => ({ id: memory.id, taskId: memory.id, summary: memory.title, status: "verified" as const, evidence: memory.evidence, createdAt: memory.createdAt, sourceFingerprint: project.fingerprint }))
+      });
+      if (memories.length) {
+        await saveVaultProjection(resolvedRoot, projectToVault(memories.map((memory) => ({ id: memory.id, title: memory.title, body: memory.body, links: memory.linkedFiles, archived: memory.status !== "active", updatedAt: memory.updatedAt })), { maxBytes: config.storage.maxBytes }));
+      }
+      const readPolicy = escalateReadPolicy({ level: "L1", allowRawReads: false, reason: "capsule-first retrieval" }, plan.budget.allowRawReads ? "L3" : "L1");
       const projectedPlan = responseMode === "verbose" ? plan : compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
+      const artifactContent = compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
+      const stableArtifact = createStableArtifact(
+        `context/${createHash("sha256").update(task.trim().toLocaleLowerCase()).digest("hex")}`,
+        artifactContent,
+        1,
+        {
+          // The artifact remains repository-scoped through persistence and lookup
+          // validation, while the hash fingerprint is derived from the canonical
+          // indexed state so equivalent LF/CRLF checkouts produce the same artifact.
+          repositoryFingerprint: identity.repositoryFingerprint,
+          sourceFingerprint: project.fingerprint,
+          parserVersion: "tokengraph-index-v3",
+          normalizedIntent: task.trim().replace(/\s+/g, " ").toLocaleLowerCase(),
+          retrievalConfig: { profile: plan.profile, maxEstimatedTokens: plan.budget.maxEstimatedTokens, allowRawReads: plan.budget.allowRawReads },
+          memoryFingerprint: createHash("sha256").update(JSON.stringify(memories.map((memory) => memory.id))).digest("hex"),
+          decisionFingerprint: createHash("sha256").update(JSON.stringify(appliedKnowledge.map((entry) => ({ id: entry.suggestionId, fingerprint: entry.fingerprint })))).digest("hex")
+        }
+      );
+      await saveStableArtifact(resolvedRoot, stableArtifact);
+      const artifactDelivery = shouldSuppressArtifact(stableArtifact, knownArtifacts)
+        ? { artifactReference: { id: stableArtifact.id, hash: stableArtifact.hash }, deliveredArtifacts: [] as string[] }
+        : { artifact: stableArtifact, deliveredArtifacts: [artifactKey(stableArtifact)] };
       const statusAfter = await getIndexStatus(resolvedRoot);
       const wikiStatus = await getWikiStatus(resolvedRoot);
       const response = responseMode === "verbose"
         ? {
             root: resolvedRoot, taskId: ledger.taskId,
             index: { status: indexingMode === "existing" ? statusAfter.state : "refreshed", previousStatus: statusBefore.state, postStatus: statusAfter.state, indexingMode, changes },
-            plan: projectedPlan, wikiStatus, routing
+            plan: projectedPlan, wikiStatus, routing, retrieval: { capsuleHash: capsuleStableArtifact.hash, readPolicy }, memory: memoryContext, unsupportedLanguageCounts: project.unsupportedLanguageCounts ?? {}, ...artifactDelivery
           }
         : compactPrepareEnvelope({
-            root: resolvedRoot, taskId: ledger.taskId, plan: projectedPlan, routing
+            root: resolvedRoot, taskId: ledger.taskId, plan: projectedPlan, routing, retrieval: { capsuleHash: capsuleStableArtifact.hash, readPolicy }, unsupportedLanguageCounts: project.unsupportedLanguageCounts ?? {}, ...artifactDelivery, deliveredArtifacts: artifactDelivery.deliveredArtifacts
           });
       await recordCoreEvent({
         root: resolvedRoot,
@@ -759,9 +869,14 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async (input) => {
       const { taskId, root, mode, responseMode } = input;
+      const directRouting = await routeBeforeLedger(root, input.query ?? input.target, input.routingOverride);
+      if (!taskId && directRouting && !directRouting.useTokenGraph) {
+        const fallback = directHostFallback(directRouting);
+        return ok(responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
+      }
       return withTaskIntent(root, taskId, async (task) => {
       const resolvedRoot = task.root;
-      const project = mode === "wiki" ? undefined : await ensureProject(resolvedRoot);
+      const project = ["wiki", "artifact", "run"].includes(mode) ? undefined : await ensureProject(resolvedRoot);
       let result: object;
       if (mode === "overview") {
         result = projectMap(project!);
@@ -775,15 +890,24 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         const { query, limit } = input;
         result = { query, sql: sqlSummary(project!, query!, limit ?? 10) };
       } else if (mode === "artifact") {
-        result = { artifactHash: input.artifactHash, status: "not-found", message: "Stable artifacts are not present in this workspace ledger." };
+        const artifact = await loadStableArtifact(resolvedRoot, input.artifactHash!);
+        result = artifact
+          ? { artifactHash: input.artifactHash, status: "found", artifact }
+          : { artifactHash: input.artifactHash, status: "not-found", message: "The requested stable artifact is not present or failed validation." };
       } else if (mode === "run") {
-        const runs = await querySavedRuns(resolvedRoot, { test: input.test, file: input.file, errorClass: input.errorClass });
+        const selectedRun = await loadRun(resolvedRoot, input.runId!);
+        const selector = input.test ? { test: input.test } : input.file ? { file: input.file } : { errorClass: input.errorClass! };
+        const matchesSelector = selectedRun !== undefined && Object.entries(selector).every(([key, value]) => selectedRun.metadata?.[key as keyof NonNullable<typeof selectedRun.metadata>] === value);
         result = {
           runId: input.runId,
-          selector: input.test ? { test: input.test } : input.file ? { file: input.file } : { errorClass: input.errorClass },
-          status: runs.length ? "found" : "not-found",
-          runs
+          selector,
+          status: matchesSelector ? "found" : "not-found",
+          run: matchesSelector ? summarizeRun(selectedRun!) : undefined
         };
+      } else if (mode === "slice") {
+        const file = project!.files.find((candidate) => candidate.path === input.file);
+        if (!file || file.contentHash !== input.contentHash) throw new Error("The requested exact slice does not match the current indexed file hash.");
+        result = await readExactSlice(resolvedRoot, input.file!, input.startLine!, input.endLine!);
       } else {
         const { slug, constraints, responseMode } = input;
         const wiki = await loadProjectWiki(resolvedRoot);
@@ -822,6 +946,11 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async (input) => {
       const { taskId, root, mode } = input;
+      const directRouting = await routeBeforeLedger(root, input.task, input.routingOverride);
+      if (!taskId && directRouting && !directRouting.useTokenGraph) {
+        const fallback = directHostFallback(directRouting);
+        return ok(input.responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
+      }
       return withTaskIntent(root, taskId, async (task) => {
       const resolvedRoot = task.root;
       let result: object;
@@ -834,7 +963,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       } else {
         const { task, contentKind, text, preserveRawReferences, constraints, responseMode } = input;
         const [project, config, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
-        const memories = config.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(`${task}\n${text ?? ""}`, config.maxMemories) : [];
+        const memories = config.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(`${task}\n${text ?? ""}`, config.maxMemories) : [];
         const compressed = await compressContext({
           root: resolvedRoot, task: task!, contentKind: contentKind!, text, profile: config.tokenSavingProfile,
           preserveRawReferences, project, memories, wiki
@@ -874,10 +1003,15 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: recallInputSchema
     },
-    async ({ taskId, root, mode, query, limit, audit, constraints, responseMode }) => {
+    async ({ taskId, root, mode, query, limit, audit, constraints, responseMode, routingOverride }) => {
+      const directRouting = await routeBeforeLedger(root, query, routingOverride);
+      if (!taskId && directRouting && !directRouting.useTokenGraph) {
+        const fallback = directHostFallback(directRouting);
+        return ok(responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
+      }
       return withTaskIntent(root, taskId, async (task) => {
       const resolvedRoot = task.root;
-      const store = new MemoryStore(memoryPath(resolvedRoot));
+      const store = new MemoryStore(await repositoryMemoryPath(resolvedRoot));
       const project = await ensureProject(resolvedRoot);
       const memories = await store.list({ includeDeprecated: audit === true, includeDeleted: audit === true });
       const terms = tokenize(query ?? "");
@@ -914,10 +1048,15 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async (input) => {
       const { taskId, root, mode } = input;
+      const directRouting = await routeBeforeLedger(root, input.task ?? input.text, input.routingOverride);
+      if (!taskId && directRouting && !directRouting.useTokenGraph) {
+        const fallback = directHostFallback(directRouting);
+        return ok(input.responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
+      }
       return withTaskIntent(root, taskId, async (task) => {
       const resolvedRoot = task.root;
       const project = await ensureProject(resolvedRoot);
-      const store = new MemoryStore(memoryPath(resolvedRoot));
+      const store = new MemoryStore(await repositoryMemoryPath(resolvedRoot));
       let result: object;
       if (mode === "failure") {
         const { kind, text, task } = input;
@@ -926,13 +1065,13 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         result = input.responseMode === "verbose" ? verbose : compactFailureResponse(verbose, { constraints: input.constraints, includeSql: hasSqlIntent(`${task ?? ""}\n${text}`) });
       } else if (mode === "risk") {
         const { changedFiles, diffSummary, task } = input;
-        const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+        const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
         const memories = await store.search(`${task ?? ""}\n${diffSummary ?? ""}\n${changedFiles!.join("\n")}`, 8);
         const verbose = await assessChangeRisk({ root: resolvedRoot, changedFiles: changedFiles!, diffSummary, task, project, rules, memories });
         result = input.responseMode === "verbose" ? verbose : compactRiskResponse(verbose, { constraints: input.constraints });
       } else {
         const { files } = input;
-        const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+        const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
         result = await checkArchitecture({ root: resolvedRoot, project, rules, files });
       }
       const response = input.responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
@@ -975,7 +1114,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         if (action === "approve") {
           const [project, existingWiki, memories, applications] = await Promise.all([
             loadProjectIndex(resolvedRoot), loadProjectWiki(resolvedRoot),
-            new MemoryStore(memoryPath(resolvedRoot)).list(), listAppliedKnowledge(resolvedRoot)
+            new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list(), listAppliedKnowledge(resolvedRoot)
           ]);
           if (project && existingWiki) await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories, applications));
         }
@@ -1074,7 +1213,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       let wikiWarning: string | undefined;
       if (config.wikiGenerationEnabled) {
         try {
-          const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+          const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
           await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories, await listAppliedKnowledge(resolvedRoot)));
           wikiRefreshed = true;
         } catch (error) {
@@ -1177,7 +1316,14 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         rawReadWarningThreshold: z.number().int().min(1).optional(),
         sqlIndexingEnabled: z.boolean().optional(),
         memoryEnabled: z.boolean().optional(),
-        wikiGenerationEnabled: z.boolean().optional()
+        wikiGenerationEnabled: z.boolean().optional(),
+        routingKillSwitch: z.boolean().optional(),
+        routing: z.object({ mode: z.enum(["shadow", "enforced", "always-activate", "always-advisory"]).optional(), killSwitch: z.boolean().optional() }).optional(),
+        parser: z.object({ maxFileBytes: z.number().int().min(1).optional(), maxTotalBytes: z.number().int().min(1).optional(), maxSymbols: z.number().int().min(1).optional(), maxNodes: z.number().int().min(1).optional(), perFileTimeoutMs: z.number().int().min(1).optional(), wholeIndexTimeoutMs: z.number().int().min(1).optional(), maxRecursionDepth: z.number().int().min(1).optional(), maxGraphDepth: z.number().int().min(0).optional(), maxGeneratedFiles: z.number().int().min(0).optional(), maxTsconfigChain: z.number().int().min(1).optional(), maxAliases: z.number().int().min(0).optional(), typescriptSource: z.enum(["bundled", "project-opt-in"]).optional() }).optional(),
+        storage: z.object({ maxBytes: z.number().int().min(1).optional(), runRetentionDays: z.number().int().min(0).optional(), cacheRetentionDays: z.number().int().min(0).optional() }).optional(),
+        runner: z.object({ maxBytes: z.number().int().min(256).optional(), timeoutMs: z.number().int().min(1).optional(), terminateGraceMs: z.number().int().min(1).optional() }).optional(),
+        memory: z.object({ projectBriefTargetTokens: z.number().int().min(150).optional(), projectBriefMaxTokens: z.number().int().min(1).optional(), maxRetrievalTokens: z.number().int().min(1).optional() }).optional(),
+        responseFormat: z.object({ default: z.enum(["json", "compact-tabular"]).optional() }).optional()
       })
     },
     async ({ root, ...update }) => ok({ status: "updated", config: await updateTokenGraphConfig(await workspaceRoot(root), update) })
@@ -1195,7 +1341,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root }) => {
       const resolvedRoot = await workspaceRoot(root);
-      return ok({ root: resolvedRoot, rules: await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list() });
+      return ok({ root: resolvedRoot, rules: await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list() });
     }
   );
 
@@ -1212,7 +1358,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, ...input }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const rule = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).add(input);
+      const rule = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).add(input);
       return ok({ status: "added", root: resolvedRoot, rule });
     }
   );
@@ -1243,7 +1389,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, id, ...update }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const rule = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).update(id, update);
+      const rule = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).update(id, update);
       if (!rule) {
         throw new Error(`No architecture rule found for id ${id}.`);
       }
@@ -1264,7 +1410,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, id }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const deleted = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).delete(id);
+      const deleted = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).delete(id);
       if (!deleted) {
         throw new Error(`No architecture rule found for id ${id}.`);
       }
@@ -1286,7 +1432,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     async ({ root, files }) => {
       const resolvedRoot = await workspaceRoot(root);
       const project = await ensureProject(resolvedRoot);
-      const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
+      const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
       return ok(await checkArchitecture({ root: resolvedRoot, project, rules, files }));
     }
   );
@@ -1308,7 +1454,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     async ({ root, kind, text, task, profile }) => {
       const resolvedRoot = await workspaceRoot(root);
       const project = await ensureProject(resolvedRoot);
-      const memories = await new MemoryStore(memoryPath(resolvedRoot)).search(`${task ?? ""}\n${text}`, 8);
+      const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(`${task ?? ""}\n${text}`, 8);
       return ok(await traceFailure({ root: resolvedRoot, kind, text, task, profile, project, memories }));
     }
   );
@@ -1330,8 +1476,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     async ({ root, changedFiles, diffSummary, task, profile }) => {
       const resolvedRoot = await workspaceRoot(root);
       const project = await ensureProject(resolvedRoot);
-      const rules = await new ArchitectureRuleStore(rulesPath(resolvedRoot)).list();
-      const memories = await new MemoryStore(memoryPath(resolvedRoot)).search(`${task ?? ""}\n${diffSummary ?? ""}\n${changedFiles.join("\n")}`, 8);
+      const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
+      const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(`${task ?? ""}\n${diffSummary ?? ""}\n${changedFiles.join("\n")}`, 8);
       return ok(await assessChangeRisk({ root: resolvedRoot, changedFiles, diffSummary, task, profile, project, rules, memories }));
     }
   );
@@ -1347,7 +1493,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     async ({ root }) => {
       const resolvedRoot = await workspaceRoot(root);
       const project = await ensureProject(resolvedRoot);
-      const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+      const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
       const map = projectMap(project);
       map.counts.memories = memories.length;
       return ok(map);
@@ -1371,7 +1517,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       if (!project || !isSafeProjectIndex(resolvedRoot, project)) {
         throw new Error("No safe persisted TokenGraph index was found. Run tokengraph_index_project before tokengraph_generate_wiki.");
       }
-      const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+      const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
       const wiki = buildProjectWiki(project, memories, await listAppliedKnowledge(resolvedRoot));
       await saveProjectWiki(resolvedRoot, wiki);
       return ok({
@@ -1436,7 +1582,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const resolvedRoot = await workspaceRoot(root);
       const config = await loadTokenGraphConfig(resolvedRoot);
       const project = await ensureProject(resolvedRoot);
-      const memory = new MemoryStore(memoryPath(resolvedRoot));
+      const memory = new MemoryStore(await repositoryMemoryPath(resolvedRoot));
       const memories = config.memoryEnabled ? await memory.search(task, maxMemories ?? 20) : [];
       const plan = await buildContextPlan({
         root: resolvedRoot,
@@ -1538,7 +1684,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const resolvedRoot = await workspaceRoot(root);
       const [project, config, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
       const memoryQuery = [task, text ?? ""].join("\n");
-      const memories = config.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).search(memoryQuery, config.maxMemories) : [];
+      const memories = config.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(memoryQuery, config.maxMemories) : [];
       return ok(
         await compressContext({
           root: resolvedRoot,
@@ -1584,7 +1730,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         throw new Error("Important durable memories require explicit approval. Retry with approved: true only when the user requested or approved storing it.");
       }
       const resolvedRoot = await workspaceRoot(root);
-      const entry = await new MemoryStore(memoryPath(resolvedRoot)).add({
+      const entry = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).add({
         type,
         title,
         body,
@@ -1628,7 +1774,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, id, ...update }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const memory = await new MemoryStore(memoryPath(resolvedRoot)).update(id, update);
+      const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).update(id, update);
       if (!memory) {
         throw new Error(`No memory found for id ${id}.`);
       }
@@ -1650,7 +1796,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, id, hard }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const deleted = await new MemoryStore(memoryPath(resolvedRoot)).delete(id, { hard: hard === true });
+      const deleted = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).delete(id, { hard: hard === true });
       if (!deleted) {
         throw new Error(`No memory found for id ${id}.`);
       }
@@ -1673,7 +1819,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, id, supersededBy, evidence }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const memory = await new MemoryStore(memoryPath(resolvedRoot)).deprecate(id, supersededBy ?? [], evidence ?? []);
+      const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).deprecate(id, supersededBy ?? [], evidence ?? []);
       if (!memory) {
         throw new Error(`No memory found for id ${id}.`);
       }
@@ -1696,7 +1842,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, id, evidence, confidence }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const memory = await new MemoryStore(memoryPath(resolvedRoot)).confirm(id, evidence ?? [], confidence ?? "high");
+      const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).confirm(id, evidence ?? [], confidence ?? "high");
       if (!memory) {
         throw new Error(`No memory found for id ${id}.`);
       }
@@ -1727,7 +1873,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, id, query, candidate, limit }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const conflicts = await new MemoryStore(memoryPath(resolvedRoot)).findConflicts({ id, query, candidate, limit });
+      const conflicts = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).findConflicts({ id, query, candidate, limit });
       return ok({
         root: resolvedRoot,
         conflicts,
@@ -1755,7 +1901,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, id, ...links }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const memory = await new MemoryStore(memoryPath(resolvedRoot)).link(id, links);
+      const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).link(id, links);
       if (!memory) {
         throw new Error(`No memory found for id ${id}.`);
       }
@@ -1778,7 +1924,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, query, limit, auditMode }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const recall = await new MemoryStore(memoryPath(resolvedRoot)).recall(query ?? "", { limit, auditMode: auditMode === true });
+      const recall = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).recall(query ?? "", { limit, auditMode: auditMode === true });
       return ok({ root: resolvedRoot, ...recall });
     }
   );
@@ -1797,7 +1943,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, query, limit }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const memories = await new MemoryStore(memoryPath(resolvedRoot)).list();
+      const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
       return ok(await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 }));
     }
   );

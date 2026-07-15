@@ -42,6 +42,9 @@ export interface MemoryContextInput {
   preferences?: ScopedPreference[];
   outcomes?: TaskOutcome[];
   projectBrief?: ProjectBrief;
+  indexedFacts?: string[];
+  capsules?: string[];
+  reviewedDecisions?: string[];
   maxTokens?: number;
 }
 
@@ -80,13 +83,19 @@ export function buildAdaptiveProjectBrief(input: { repositoryId: string; sourceF
   return { repositoryId: input.repositoryId, sourceFingerprint: input.sourceFingerprint, generatedAt: input.generatedAt ?? new Date().toISOString(), sections: selected, estimatedTokens: used };
 }
 
-export function composeMemoryContext(input: MemoryContextInput): { preferences: ScopedPreference[]; outcomes: TaskOutcome[]; projectBrief?: ProjectBrief; estimatedTokens: number; contextId: string } {
+export function composeMemoryContext(input: MemoryContextInput): { preferences: ScopedPreference[]; indexedFacts: string[]; capsules: string[]; reviewedDecisions: string[]; outcomes: TaskOutcome[]; projectBrief?: ProjectBrief; estimatedTokens: number; contextId: string } {
   const preferences = filterScopedPreferences(input.preferences ?? [], input);
   const outcomes = verifiedOutcomes(input.outcomes ?? [], input.sourceFingerprint);
   const projectBrief = input.projectBrief && (!input.sourceFingerprint || input.projectBrief.sourceFingerprint === input.sourceFingerprint) ? input.projectBrief : undefined;
+  const indexedFacts = Array.from(new Set((input.indexedFacts ?? []).filter((value) => value.trim()))).slice(0, 50);
+  const capsules = Array.from(new Set((input.capsules ?? []).filter((value) => value.trim()))).slice(0, 20);
+  const reviewedDecisions = Array.from(new Set((input.reviewedDecisions ?? []).filter((value) => value.trim()))).slice(0, 50);
   const maxTokens = input.maxTokens ?? 1200;
-  const result = { preferences, outcomes, ...(projectBrief ? { projectBrief } : {}) };
+  const result = { preferences, indexedFacts, capsules, reviewedDecisions, outcomes, ...(projectBrief ? { projectBrief } : {}) };
   let contextId = idFor(result);
+  while (estimateTokens(JSON.stringify(result)) > maxTokens && result.indexedFacts.length) { result.indexedFacts.pop(); contextId = idFor(result); }
+  while (estimateTokens(JSON.stringify(result)) > maxTokens && result.reviewedDecisions.length) { result.reviewedDecisions.pop(); contextId = idFor(result); }
+  while (estimateTokens(JSON.stringify(result)) > maxTokens && result.capsules.length) { result.capsules.pop(); contextId = idFor(result); }
   while (estimateTokens(JSON.stringify(result)) > maxTokens && result.outcomes.length) { result.outcomes.pop(); contextId = idFor(result); }
   while (estimateTokens(JSON.stringify(result)) > maxTokens && result.preferences.length) { result.preferences.pop(); contextId = idFor(result); }
   if (estimateTokens(JSON.stringify(result)) > maxTokens) delete result.projectBrief;

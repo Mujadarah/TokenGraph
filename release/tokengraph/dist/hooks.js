@@ -59,7 +59,7 @@ import { join as join2, resolve as resolve2 } from "node:path";
 
 // src/core/storage.ts
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 var FILE_LOCK_ATTEMPTS = 200;
 var FILE_LOCK_WAIT_MS = 10;
@@ -84,7 +84,7 @@ async function withFileLock(lockPath, operation) {
   await mkdir(dirname(lockPath), { recursive: true });
   for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
     try {
-      const handle = await open(lockPath, "wx");
+      const handle = await open(lockPath, "wx", 384);
       try {
         return await operation();
       } finally {
@@ -124,11 +124,13 @@ async function writeJsonAtomic(path, value) {
 }
 async function writeTextAtomic(path, content) {
   const directory = dirname(path);
-  await mkdir(directory, { recursive: true });
+  await mkdir(directory, { recursive: true, mode: 448 });
+  if (process.platform !== "win32") await chmod(directory, 448);
   const tempPath = join(directory, `.${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
   try {
-    await writeFile(tempPath, content);
+    await writeFile(tempPath, content, { mode: 384 });
     await rename(tempPath, path);
+    if (process.platform !== "win32") await chmod(path, 384);
   } finally {
     await rm(tempPath, { force: true });
   }

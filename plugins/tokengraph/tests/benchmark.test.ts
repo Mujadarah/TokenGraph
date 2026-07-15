@@ -238,9 +238,12 @@ describe("evidence benchmark", () => {
     expect(report.aggregate.medianExecutionInclusiveNetSavings).toBeLessThanOrEqual(report.aggregate.medianNetSavings);
   });
 
-  it("keeps a serialization margin above the release threshold", async () => {
+  it("records the execution-inclusive release gate honestly", async () => {
     const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "evidence-project"));
-    expect(report.aggregate.medianNetSavings).toBeGreaterThanOrEqual(15);
+    expect(report.aggregate.medianNetSavings).toBeGreaterThan(0);
+    expect(report.aggregate.medianExecutionInclusiveNetSavings).toBeLessThan(0);
+    expect(report.releaseGate).toMatchObject({ passed: false });
+    expect(report.releaseGate.failureReasons).toEqual(expect.arrayContaining([expect.stringMatching(/execution-inclusive/i)]));
   });
 
   it("matches the checked-in published benchmark result artifact", async () => {
@@ -255,6 +258,7 @@ describe("evidence benchmark", () => {
         medianNetSavings: number;
         primarySavingsMetric: string;
         baselineLabel: string;
+        executionInclusiveMedian?: number;
       };
     };
     expect(published).toMatchObject({
@@ -271,6 +275,7 @@ describe("evidence benchmark", () => {
     });
     expect(published.aggregate.medianExecutionInclusiveNetSavings).toBeCloseTo(report.aggregate.medianExecutionInclusiveNetSavings, 6);
     expect(published.aggregate.medianNetSavings).toBeCloseTo(report.aggregate.medianNetSavings, 6);
+    expect(published.aggregate.executionInclusiveMedian).toBeCloseTo(report.aggregate.primaryMedianNetSavings, 6);
   });
 
   it("charges inflated compact payloads instead of rewarding them", () => {
@@ -289,11 +294,12 @@ describe("evidence benchmark", () => {
       criticalFalseNegativeCount: 0,
       requiredFileRecall: 1,
       medianNetSavings: 1,
+      executionInclusiveMedian: 1,
       baselineRequiredFileRecall: 0.9
     };
 
     expect(evaluateReleaseGate(passing)).toEqual({ passed: true, failureReasons: [] });
-    expect(evaluateReleaseGate({ ...passing, medianNetSavings: 0, criticalFalseNegativeCount: 1 })).toEqual({
+    expect(evaluateReleaseGate({ ...passing, medianNetSavings: 0, executionInclusiveMedian: 0, criticalFalseNegativeCount: 1 })).toEqual({
       passed: false,
       failureReasons: expect.arrayContaining([
         expect.stringMatching(/median net savings/i),

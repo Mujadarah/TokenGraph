@@ -479,6 +479,22 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { root: "first", taskId: prepared.taskId, disposition: "complete", responseMode: "verbose" }
     });
     expect(repeatedReportCall.structuredContent).toEqual(reportCall.structuredContent);
+  }, 15000);
+
+  it("bypasses bounded direct-host work before creating a ledger or refreshing an index", async () => {
+    const root = await makeRoot();
+    await stopServer();
+    startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
+    await request(90300, "initialize", {
+      protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "tokengraph-routing-bypass-test", version: "0.21.0" }
+    });
+    send({ method: "notifications/initialized" });
+    const result = await request(90301, "tools/call", {
+      name: "tokengraph_prepare_context", arguments: { task: "Where is the login handler?" }
+    });
+    expect(result.structuredContent).toMatchObject({ mode: "direct-host", routing: { useTokenGraph: false, stage: 0, enforced: false } });
+    await expect(access(join(root, ".tokengraph", "tasks"))).rejects.toThrow();
+    await expect(access(join(root, ".tokengraph", "repository", "index.json"))).rejects.toThrow();
   });
 
   it("atomically starts each direct intent tool and ends it with one compact canonical report", async () => {

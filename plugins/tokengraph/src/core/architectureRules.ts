@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import type { ArchitectureCheckReport, ArchitectureFinding, ArchitectureRule, ArchitectureRuleInput, ArchitectureRuleSeverity, ProjectIndex } from "./types.js";
@@ -134,7 +134,8 @@ export class ArchitectureRuleStore {
 
   private async writeAtomic(rules: ArchitectureRule[]): Promise<void> {
     const directory = dirname(this.filePath);
-    await mkdir(directory, { recursive: true });
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32") await chmod(directory, 0o700);
     const tempPath = join(directory, `.rules-${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
     try {
       await writeFile(
@@ -146,9 +147,11 @@ export class ArchitectureRuleStore {
           },
           null,
           2
-        )}\n`
+        )}\n`,
+        { mode: 0o600 }
       );
       await rename(tempPath, this.filePath);
+      if (process.platform !== "win32") await chmod(this.filePath, 0o600);
     } finally {
       await rm(tempPath, { force: true });
     }

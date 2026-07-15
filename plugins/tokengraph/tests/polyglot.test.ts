@@ -7,8 +7,8 @@ describe("standalone polyglot parser contract", () => {
     expect(PINNED_GRAMMARS).toMatchObject({ python: { version: "v0.25.0" }, go: { version: "v0.25.0" }, rust: { version: "v0.24.2" }, java: { version: "v0.23.5" } });
   });
 
-  it("normalizes source hashes and refuses workspace execution", () => {
-    expect(parsePolyglotSource("python", "def sample():\r\n  return True\n")).toMatchObject({ runtime: TREE_SITTER_RUNTIME, grammarVersion: "v0.25.0", symbols: ["sample"], workspaceExecution: false });
+  it("normalizes source hashes and refuses workspace execution", async () => {
+    await expect(parsePolyglotSource("python", "def sample():\r\n  return True\n")).resolves.toMatchObject({ runtime: TREE_SITTER_RUNTIME, grammarVersion: "v0.25.0", symbols: ["sample"], workspaceExecution: false, parser: "tree-sitter" });
     expect(() => assertStandalonePolyglot({ workspaceExecution: true })).toThrow(/standalone|workspace/i);
   });
 });

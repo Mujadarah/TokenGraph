@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { tokenize } from "./token.js";
@@ -364,7 +364,8 @@ export class MemoryStore {
 
   private async writeAtomic(memories: MemoryEntry[]): Promise<void> {
     const directory = dirname(this.filePath);
-    await mkdir(directory, { recursive: true });
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32") await chmod(directory, 0o700);
     const tempPath = join(directory, `.memory-${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
     try {
       await writeFile(
@@ -376,9 +377,11 @@ export class MemoryStore {
           },
           null,
           2
-        )}\n`
+        )}\n`,
+        { mode: 0o600 }
       );
       await rename(tempPath, this.filePath);
+      if (process.platform !== "win32") await chmod(this.filePath, 0o600);
     } finally {
       await rm(tempPath, { force: true });
     }

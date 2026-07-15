@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
+import { access, readFile } from "node:fs/promises";
+import { extname } from "node:path";
 import { resolveProjectImports, scanProject, scanProjectFile, scanProjectFileMetadata } from "./fileScanner.js";
 import { mergeSqlGraphs, parsePostgresMigration } from "./sqlParser.js";
 import type { CodeGraph, FileScanMetadata, ProjectIndex, ProjectScanMetadata, SqlGraph } from "./types.js";
 import { buildSymbolChunks } from "./symbolChunks.js";
+import { parseConfigurationDataBounded, type ConfigurationLimits } from "./configData.js";
 
 export const CURRENT_INDEX_SCHEMA_VERSION = 3;
 
@@ -35,6 +38,16 @@ function detectFrameworks(files: { path: string }[]): string[] {
     frameworks.add("TypeScript");
   }
   return Array.from(frameworks).sort();
+}
+
+function unsupportedLanguageCounts(graph: CodeGraph): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const exclusion of graph.exclusions) {
+    if (exclusion.reason !== "unsupported") continue;
+    const extension = extname(exclusion.path).toLowerCase() || "<extensionless>";
+    counts[extension] = (counts[extension] ?? 0) + 1;
+  }
+  return Object.fromEntries(Object.entries(counts).sort(([left], [right]) => left.localeCompare(right)));
 }
 
 function scanMetadataFromFiles(files: FileScanMetadata[]): ProjectScanMetadata {
@@ -92,13 +105,38 @@ function sortGraph(graph: CodeGraph): void {
   graph.exclusions.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-function buildProjectIndex(root: string, graph: CodeGraph, sql: SqlGraph, scanSignature: string, scanMetadata: ProjectScanMetadata): ProjectIndex {
+async function configurationEvidence(root: string, limits?: ConfigurationLimits): Promise<NonNullable<ProjectIndex["configuration"]>> {
+  const candidates = ["tsconfig.json", "jsconfig.json", ".eslintrc.json", ".prettierrc.json"];
+  const evidence: NonNullable<ProjectIndex["configuration"]> = [];
+  for (const path of candidates) {
+    const absolute = `${root}/${path}`;
+    try {
+      await access(absolute);
+      const source = await readFile(absolute, "utf8");
+      const contentHash = createHash("sha256").update(source.replace(/\r\n?/g, "\n")).digest("hex");
+      try {
+        await parseConfigurationDataBounded(source, limits);
+        evidence.push({ path, status: "parsed", contentHash });
+      } catch (error) {
+        evidence.push({ path, status: "degraded", contentHash, reason: error instanceof Error ? error.message : String(error) });
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") evidence.push({ path, status: "degraded", contentHash: "", reason: "unreadable" });
+    }
+  }
+  return evidence;
+}
+
+async function buildProjectIndex(root: string, graph: CodeGraph, sql: SqlGraph, scanSignature: string, scanMetadata: ProjectScanMetadata, parserLimits?: ConfigurationLimits): Promise<ProjectIndex> {
+  const configuration = await configurationEvidence(root, parserLimits);
   const fingerprint = fingerprintPayload({
     files: graph.files,
     symbols: graph.symbols,
     imports: graph.imports,
     exclusions: graph.exclusions,
-    sql
+    sql,
+    configuration,
+    unsupportedLanguageCounts: unsupportedLanguageCounts(graph)
   });
 
   return {
@@ -110,11 +148,13 @@ function buildProjectIndex(root: string, graph: CodeGraph, sql: SqlGraph, scanSi
     scanMetadata,
     frameworks: detectFrameworks(graph.files),
     sql,
-    symbolChunks: buildSymbolChunks(graph)
+    symbolChunks: buildSymbolChunks(graph),
+    unsupportedLanguageCounts: unsupportedLanguageCounts(graph),
+    ...(configuration.length ? { configuration } : {})
   };
 }
 
-export async function indexProject(root: string, options: { scanSignature?: string } = {}): Promise<ProjectIndex> {
+export async function indexProject(root: string, options: { scanSignature?: string; parserLimits?: ConfigurationLimits } = {}): Promise<ProjectIndex> {
   const metadata = await scanProjectFileMetadata(root);
   const sqlContents = new Map<string, string>();
   const graph = await scanProject(root, {
@@ -124,6 +164,11 @@ export async function indexProject(root: string, options: { scanSignature?: stri
       }
     }
   });
+  for (const file of metadata.files.filter((candidate) => [".py", ".go", ".rs", ".java"].includes(candidate.extension))) {
+    const parsed = await scanProjectFile(root, file);
+    if (parsed) graph.symbols.push(...parsed.symbols);
+  }
+  graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name) || (a.startLine ?? 0) - (b.startLine ?? 0));
   const sqlGraphs = [];
   for (const file of graph.files.filter((candidate) => candidate.language === "sql").sort((a, b) => a.path.localeCompare(b.path))) {
     const sql = sqlContents.get(file.path);
@@ -133,7 +178,7 @@ export async function indexProject(root: string, options: { scanSignature?: stri
     sqlGraphs.push(parsePostgresMigration(file.path, sql));
   }
 
-  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), options.scanSignature ?? metadata.scanSignature, scanMetadataFromFiles(metadata.files));
+  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), options.scanSignature ?? metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits);
 }
 
 function metadataChanged(previous: FileScanMetadata | undefined, current: FileScanMetadata): boolean {
@@ -223,7 +268,7 @@ export async function updateProjectIndexIncremental(root: string, existingIndex:
     ...parsedSqlGraphs
   ]);
   return {
-    index: buildProjectIndex(root, graph, sql, metadata.scanSignature, scanMetadataFromFiles(metadata.files)),
+    index: await buildProjectIndex(root, graph, sql, metadata.scanSignature, scanMetadataFromFiles(metadata.files)),
     mode: "incremental",
     addedFiles,
     changedFiles,

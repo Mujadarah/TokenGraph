@@ -38,4 +38,19 @@ describe("source-free SymbolChunk records", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("parses configuration as bounded data and preserves file-local degradation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-config-indexing-"));
+    try {
+      await writeFile(join(root, "tsconfig.json"), '{ "compilerOptions": { "strict": true } }');
+      await writeFile(join(root, "jsconfig.json"), '{ "compilerOptions": { "extends": "./missing", ' + '"x": ' + '"'.padEnd(600000, "x") + '" } }');
+      const index = await indexProject(root);
+      expect(index.configuration).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: "tsconfig.json", status: "parsed" }),
+        expect.objectContaining({ path: "jsconfig.json", status: "degraded" })
+      ]));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

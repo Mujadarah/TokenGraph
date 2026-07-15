@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { chmod } from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,6 +22,11 @@ function run(command, args) {
       rejectPromise(new Error(`${command} ${args.join(" ")} failed with ${signal ?? `exit code ${code}`}`));
     });
   });
+}
+
+async function normalizeBundle(path) {
+  const text = await readFile(path, "utf8");
+  await writeFile(path, text.replace(/[ \t]+$/gm, ""));
 }
 
 await run(process.execPath, [resolve(pluginRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"]);
@@ -55,6 +60,12 @@ await build({
   target: "node22",
   logLevel: "silent"
 });
+
+await Promise.all([
+  normalizeBundle(resolve(pluginRoot, "dist", "index.js")),
+  normalizeBundle(resolve(pluginRoot, "dist", "hooks.js")),
+  normalizeBundle(resolve(pluginRoot, "dist", "cli.js"))
+]);
 
 // Release entry points are executable on POSIX hosts; Windows ignores this mode.
 await chmod(resolve(pluginRoot, "dist", "index.js"), 0o755);

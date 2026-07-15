@@ -28,15 +28,15 @@ For every task the harness also reports required-file recall, false positives, f
 
 ## Release gate
 
-The deterministic routing-lifecycle gate passes only when:
+The frozen release gate uses execution-inclusive savings as the primary metric and passes only when:
 
 - the corpus has at least 30 tasks and four tasks in every category;
 - critical-constraint preservation is 100%;
 - critical false negatives are zero;
 - required-file recall does not regress below the checked-in baseline; and
-- median routing-lifecycle net savings is positive.
+- median execution-inclusive net savings is positive after recommended first-file reads.
 
-Task-level failures and both routing and execution-inclusive distributions remain visible even when the aggregate gate passes. The gate does not require the execution-inclusive median to be positive and must not be described as total task savings.
+Task-level failures and both routing and execution-inclusive distributions remain visible when the gate fails. The current v0.21.0 fixture fails this gate because its execution-inclusive median is negative; no enforcement or corrective publication follows from a failed result.
 
 ## Calibration and claim boundary
 

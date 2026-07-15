@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Language, Parser, type Node } from "web-tree-sitter";
 
 export const TREE_SITTER_RUNTIME = "web-tree-sitter@0.26.11" as const;
 
@@ -20,6 +22,9 @@ export interface PolyglotParseResult {
   sourceHash: string;
   symbols: string[];
   workspaceExecution: false;
+  parser: "tree-sitter" | "heuristic";
+  errorNodeCount?: number;
+  symbolDetails?: Array<{ name: string; kind: "function" | "class" | "type"; startLine: number; endLine: number; signature: string }>;
 }
 
 export function assertStandalonePolyglot(options: { workspaceExecution?: boolean } = {}): void {
@@ -37,9 +42,71 @@ export async function loadGrammarAsset(assetRoot: string, language: PolyglotLang
   return content;
 }
 
-export function parsePolyglotSource(language: PolyglotLanguage, source: string): PolyglotParseResult {
+async function defaultAssetRoot(): Promise<string> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [resolve(here, "../../assets/grammars"), resolve(here, "../assets/grammars")];
+  for (const candidate of candidates) {
+    try {
+      await access(join(candidate, PINNED_GRAMMARS.python.asset));
+      return candidate;
+    } catch {
+      // Try the next self-contained package layout.
+    }
+  }
+  throw new Error("No bundled Tree-sitter grammar assets were found.");
+}
+
+let runtimeReady: Promise<void> | undefined;
+async function ensureRuntime(assetRoot: string): Promise<void> {
+  runtimeReady ??= Parser.init({ locateFile: (file: string) => join(assetRoot, file) });
+  await runtimeReady;
+}
+
+function heuristicSymbols(language: PolyglotLanguage, source: string): string[] {
+  const keyword = language === "python" ? "def|class" : language === "go" ? "func|type" : language === "rust" ? "fn|struct|enum|trait" : "class|interface|enum|record|public\\s+class";
+  return [...source.matchAll(new RegExp(`\\b(?:${keyword})\\s+([A-Za-z_][A-Za-z0-9_]*)`, "g"))].map((match) => match[1]!).sort();
+}
+
+function symbolNodes(language: PolyglotLanguage): string[] {
+  if (language === "python") return ["function_definition", "class_definition"];
+  if (language === "go") return ["function_declaration", "method_declaration", "type_declaration"];
+  if (language === "rust") return ["function_item", "struct_item", "enum_item", "trait_item"];
+  return ["class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "method_declaration", "constructor_declaration"];
+}
+
+function nodeName(node: Node): string | undefined {
+  return node.childForFieldName("name")?.text ?? node.childForFieldName("declarator")?.childForFieldName("name")?.text;
+}
+
+function nodeKind(language: PolyglotLanguage, node: Node): "function" | "class" | "type" {
+  if (language === "python") return node.type === "class_definition" ? "class" : "function";
+  if (language === "go") return node.type.includes("function") || node.type.includes("method") ? "function" : "type";
+  if (language === "rust") return node.type === "function_item" ? "function" : node.type === "struct_item" ? "class" : "type";
+  return node.type.includes("method") || node.type.includes("constructor") ? "function" : node.type.includes("class") ? "class" : "type";
+}
+
+export async function parsePolyglotSource(language: PolyglotLanguage, source: string, assetRoot?: string): Promise<PolyglotParseResult> {
   assertStandalonePolyglot();
   const grammar = PINNED_GRAMMARS[language];
-  const symbols = [...source.matchAll(/\b(?:class|function|fn|func|def|public\s+class)\s+([A-Za-z_][A-Za-z0-9_]*)/g)].map((match) => match[1]!).sort();
-  return { language, runtime: TREE_SITTER_RUNTIME, grammarVersion: grammar.version, sourceHash: createHash("sha256").update(source.replace(/\r\n?/g, "\n")).digest("hex"), symbols, workspaceExecution: false };
+  const normalized = source.replace(/\r\n?/g, "\n");
+  const root = assetRoot ?? await defaultAssetRoot();
+  try {
+    await ensureRuntime(root);
+    const languageParser = await Language.load(await loadGrammarAsset(root, language));
+    const parser = new Parser();
+    parser.setLanguage(languageParser);
+    const tree = parser.parse(normalized);
+    const nodes = tree?.rootNode.descendantsOfType(symbolNodes(language)) ?? [];
+    const symbolDetails = nodes.map((node) => {
+      const name = nodeName(node);
+      return name ? { name, kind: nodeKind(language, node), startLine: node.startPosition.row + 1, endLine: node.endPosition.row + 1, signature: node.text.split(/\r?\n/, 1)[0]?.trim() ?? name } : undefined;
+    }).filter((value): value is NonNullable<typeof value> => Boolean(value)).sort((a, b) => a.name.localeCompare(b.name) || a.startLine - b.startLine);
+    const symbols = symbolDetails.map((symbol) => symbol.name);
+    const errorNodeCount = tree?.rootNode.descendantCount ? tree.rootNode.descendantsOfType("ERROR").length : 0;
+    tree?.delete();
+    parser.delete();
+    return { language, runtime: TREE_SITTER_RUNTIME, grammarVersion: grammar.version, sourceHash: createHash("sha256").update(normalized).digest("hex"), symbols, workspaceExecution: false, parser: "tree-sitter", symbolDetails, ...(errorNodeCount ? { errorNodeCount } : {}) };
+  } catch {
+    return { language, runtime: TREE_SITTER_RUNTIME, grammarVersion: grammar.version, sourceHash: createHash("sha256").update(normalized).digest("hex"), symbols: heuristicSymbols(language, normalized), workspaceExecution: false, parser: "heuristic" };
+  }
 }

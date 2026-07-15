@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export interface JsonTokenGraphStoreOptions {
@@ -36,7 +36,7 @@ export async function withFileLock<T>(lockPath: string, operation: () => Promise
   await mkdir(dirname(lockPath), { recursive: true });
   for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
     try {
-      const handle = await open(lockPath, "wx");
+      const handle = await open(lockPath, "wx", 0o600);
       try {
         return await operation();
       } finally {
@@ -78,11 +78,13 @@ export async function writeJsonAtomic(path: string, value: unknown): Promise<voi
 
 export async function writeTextAtomic(path: string, content: string): Promise<void> {
   const directory = dirname(path);
-  await mkdir(directory, { recursive: true });
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") await chmod(directory, 0o700);
   const tempPath = join(directory, `.${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
   try {
-    await writeFile(tempPath, content);
+    await writeFile(tempPath, content, { mode: 0o600 });
     await rename(tempPath, path);
+    if (process.platform !== "win32") await chmod(path, 0o600);
   } finally {
     await rm(tempPath, { force: true });
   }

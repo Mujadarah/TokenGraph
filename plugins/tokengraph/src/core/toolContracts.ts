@@ -26,9 +26,10 @@ export const prepareContextInputSchema = z.object({
 });
 
 export const queryContextInputSchema = z.object({
-  taskId: taskIdSchema.optional(), root: z.string().optional(), mode: z.enum(["overview", "search", "symbol", "sql", "wiki", "artifact", "run"]),
+  taskId: taskIdSchema.optional(), root: z.string().optional(), mode: z.enum(["overview", "search", "symbol", "sql", "wiki", "artifact", "run", "slice"]),
   query: z.string().min(1).optional(), target: z.string().min(1).optional(), slug: z.string().min(1).optional(), artifactHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   runId: taskIdSchema.optional(), test: z.string().min(1).optional(), file: z.string().min(1).optional(), errorClass: z.string().min(1).optional(),
+  startLine: z.number().int().min(1).optional(), endLine: z.number().int().min(1).optional(), contentHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   limit: z.number().int().min(1).max(50).optional(), ...compactResponseFields
 }).superRefine((input, context) => {
   if ((input.mode === "search" || input.mode === "sql") && !input.query) context.addIssue({ code: "custom", message: `${input.mode} mode requires query.` });
@@ -39,6 +40,9 @@ export const queryContextInputSchema = z.object({
     if ([input.test, input.file, input.errorClass].filter((value) => value !== undefined).length !== 1) {
       context.addIssue({ code: "custom", message: "run mode requires exactly one of test, file, or errorClass." });
     }
+  }
+  if (input.mode === "slice" && (!input.file || input.startLine === undefined || input.endLine === undefined || !input.contentHash)) {
+    context.addIssue({ code: "custom", message: "slice mode requires file, startLine, endLine, and contentHash." });
   }
 });
 

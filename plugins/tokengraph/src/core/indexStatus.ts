@@ -19,7 +19,7 @@ export function isFreshProjectIndex(stored: ProjectIndex, current: ProjectIndex)
   return stored.fingerprint === current.fingerprint && JSON.stringify(comparableIndex(stored)) === JSON.stringify(comparableIndex(current));
 }
 
-export async function getIndexStatus(root: string): Promise<IndexStatus> {
+export async function getIndexStatus(root: string, options: { probeOnly?: boolean } = {}): Promise<IndexStatus> {
   const currentScanSignature = await scanProjectSignature(root);
   const stored = await loadProjectIndex(root);
 
@@ -37,7 +37,20 @@ export async function getIndexStatus(root: string): Promise<IndexStatus> {
   const storedFingerprint = typeof stored.fingerprint === "string" ? stored.fingerprint : undefined;
   const storedScanSignature = stored.scanSignature;
   const signatureFresh = storedScanSignature !== undefined && storedScanSignature === currentScanSignature;
-  const current = signatureFresh ? undefined : await indexProject(root, { scanSignature: currentScanSignature });
+  const current = signatureFresh || options.probeOnly ? undefined : await indexProject(root, { scanSignature: currentScanSignature });
+  if (options.probeOnly && !signatureFresh) {
+    return {
+      root,
+      state: "stale",
+      hasIndex: true,
+      storedScannedAt: stored.scannedAt,
+      currentScannedAt: new Date().toISOString(),
+      storedFingerprint,
+      currentFingerprint: stored.fingerprint,
+      storedScanSignature,
+      currentScanSignature
+    };
+  }
   const state = signatureFresh || (current && isFreshProjectIndex(stored, current)) ? "fresh" : "stale";
 
   return {

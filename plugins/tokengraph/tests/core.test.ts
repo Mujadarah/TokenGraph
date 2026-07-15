@@ -120,6 +120,7 @@ describe("TokenGraph local config", () => {
     const raw = JSON.parse(await readFile(configPath(root), "utf8"));
 
     expect(config.tokenSavingProfile).toBe("aggressive");
+    expect(JSON.parse(await readFile(`${configPath(root)}.bak`, "utf8"))).toMatchObject({ tokenSavingProfile: "aggressive" });
     expect(raw).toEqual({
       schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
       config
@@ -137,6 +138,13 @@ describe("TokenGraph local config", () => {
     expect(config).toEqual(DEFAULT_TOKEN_GRAPH_CONFIG);
     expect(files.some((file) => file.startsWith("config.json.corrupt-"))).toBe(true);
     expect(JSON.parse(await readFile(configPath(root), "utf8"))).toMatchObject({ schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION });
+  });
+
+  it("refuses to overwrite a config written by a newer version", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(configPath(root), JSON.stringify({ schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION + 1, config: DEFAULT_TOKEN_GRAPH_CONFIG }));
+    await expect(loadTokenGraphConfig(root)).rejects.toThrow(/newer.*refusing/i);
   });
 
   it("updates profile and explicit settings while preserving unspecified defaults", async () => {
@@ -223,13 +231,13 @@ describe("scanProject", () => {
     );
   });
 
-  it("reports unsupported-language exclusions instead of silently dropping them", async () => {
+  it("discovers supported polyglot source files instead of silently dropping them", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
-    await writeFile(join(root, "src", "diagram.py"), "print('not parsed by the TypeScript-first scanner')");
+    await writeFile(join(root, "src", "diagram.py"), "def render_diagram():\n    return True\n");
     const graph = await scanProject(root);
-    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/diagram.py", reason: "unsupported" }));
-    expect(graph.exclusions.filter((exclusion) => exclusion.reason === "unsupported")).toHaveLength(1);
+    expect(graph.files).toContainEqual(expect.objectContaining({ path: "src/diagram.py", language: "python" }));
+    expect(graph.exclusions.filter((exclusion) => exclusion.path === "src/diagram.py")).toHaveLength(0);
   });
 
   it("does not classify similarly named directories as tests", async () => {

@@ -156,8 +156,24 @@ export function compactPrepareEnvelope<T>(input: {
   taskId: string;
   plan: T;
   routing?: unknown;
+  mode?: "tokengraph" | "direct-host";
+  artifact?: unknown;
+  artifactReference?: unknown;
+  deliveredArtifacts?: string[];
+  unsupportedLanguageCounts?: Record<string, number>;
+  retrieval?: { capsuleHash: string; readPolicy: { level: string; allowRawReads: boolean; reason: string } };
 }) {
-  return { taskId: input.taskId, plan: input.plan, ...(input.routing === undefined ? {} : { routing: input.routing }) };
+  return {
+    mode: input.mode ?? "tokengraph",
+    taskId: input.taskId,
+    plan: input.plan,
+    ...(input.routing === undefined ? {} : { routing: input.routing }),
+    ...(input.artifact === undefined ? {} : { artifact: input.artifact }),
+    ...(input.artifactReference === undefined ? {} : { artifactReference: input.artifactReference }),
+    deliveredArtifacts: input.deliveredArtifacts ?? [],
+    ...(input.unsupportedLanguageCounts && Object.keys(input.unsupportedLanguageCounts).length ? { unsupportedLanguageCounts: input.unsupportedLanguageCounts } : {}),
+    ...(input.retrieval ? { retrieval: input.retrieval } : {})
+  };
 }
 
 export function compactPlanResponse(plan: ContextPlan, options: CompactResponseOptions = {}): CompactCoreResponse {

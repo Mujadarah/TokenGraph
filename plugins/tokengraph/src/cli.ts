@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { executeRun, saveRun } from "./core/runner.js";
+import { executeRun, purgeRuns, saveRun, summarizeRun } from "./core/runner.js";
 
 function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -16,7 +16,8 @@ async function main(argv: string[]): Promise<void> {
   const maxBytes = Number(optionValue(argv.slice(1, separator), "--max-bytes") ?? 64 * 1024);
   const run = await executeRun({ root, command: commandArgs[0]!, args: commandArgs.slice(1), timeoutMs, maxBytes });
   await saveRun(root, run);
-  process.stdout.write(`${JSON.stringify(run)}\n`);
+  await purgeRuns(root, new Date(Date.now() - 14 * 24 * 60 * 60 * 1000));
+  process.stdout.write(`${JSON.stringify({ ...summarizeRun(run), stdoutTruncated: run.stdoutTruncated, stderrTruncated: run.stderrTruncated })}\n`);
   if (run.status !== "completed") process.exitCode = run.status === "timed-out" ? 124 : 1;
 }
 

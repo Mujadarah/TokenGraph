@@ -10,6 +10,12 @@ export interface RoutingInput {
   routingMode?: RoutingMode;
   indexAvailable?: boolean;
   cachedStatus?: "fresh" | "stale" | "missing";
+  killSwitch?: boolean;
+  promotion?: { enforcementEnabled: boolean };
+}
+
+export function failOpenRouting(reason = "routing-unavailable"): RoutingDecision {
+  return { useTokenGraph: false, stage: 0, reason, expectedOverheadTokens: 0, expectedBenefit: 0, enforced: false };
 }
 
 function boundedTask(task: string): boolean {
@@ -23,13 +29,16 @@ export function adviseRouting(input: RoutingInput): RoutingDecision {
   const mode = input.routingMode ?? "shadow";
   const forcedOn = input.routingOverride === "force-on";
   const forcedBypass = input.routingOverride === "force-bypass";
-  const bypass = forcedBypass || (mode !== "always-activate" && !forcedOn && boundedTask(input.task));
-  const useTokenGraph = mode === "always-activate" || forcedOn || !bypass;
-  const stage: 0 | 1 = input.indexAvailable && (input.cachedStatus ?? "fresh") === "fresh" ? 1 : 0;
+  const killSwitch = input.killSwitch === true;
+  const bypass = killSwitch || forcedBypass || (mode !== "always-activate" && !forcedOn && boundedTask(input.task));
+  const useTokenGraph = !bypass && (mode === "always-activate" || forcedOn || !boundedTask(input.task));
+  const stage: 0 | 1 = input.indexAvailable ? 1 : 0;
   const reason = forcedOn
     ? "routing override force-on"
     : forcedBypass
       ? "routing override force-bypass"
+      : killSwitch
+        ? "routing kill switch"
       : bypass
         ? "bounded-task"
         : stage === 1 ? "indexed-discovery" : "context-discovery";
@@ -39,6 +48,6 @@ export function adviseRouting(input: RoutingInput): RoutingDecision {
     reason,
     expectedOverheadTokens: useTokenGraph ? stage === 1 ? 25 : 80 : 0,
     expectedBenefit: useTokenGraph ? stage === 1 ? 160 : 120 : 0,
-    enforced: mode === "enforced" || mode === "always-activate" || forcedOn || forcedBypass
+    enforced: !killSwitch && Boolean(input.promotion?.enforcementEnabled) && (mode === "enforced" || mode === "always-activate" || forcedOn)
   };
 }

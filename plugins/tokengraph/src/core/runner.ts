@@ -14,6 +14,7 @@ export interface RunnerOptions {
   maxBytes?: number;
   interactive?: boolean;
   env?: NodeJS.ProcessEnv;
+  terminateGraceMs?: number;
   metadata?: { test?: string; file?: string; errorClass?: string };
 }
 
@@ -32,7 +33,21 @@ export interface SavedRun {
   stderr: string;
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
+  binaryOutput?: boolean;
   metadata?: RunnerOptions["metadata"];
+}
+
+export interface SavedRunSummary {
+  runId: string;
+  status: SavedRun["status"];
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+  firstError?: string;
+  repeatCount: number;
+  tests: string[];
+  stackFrames: string[];
+  locations: string[];
 }
 
 const ANSI_PATTERN = /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g;
@@ -60,12 +75,36 @@ function compactRepeatedLines(value: string): string {
   return output.join("\n");
 }
 
-function boundedCapture(chunks: string[], maxBytes: number): { text: string; truncated: boolean } {
-  const raw = redact(compactRepeatedLines(chunks.join("").replace(ANSI_PATTERN, "")));
+class StreamCapture {
+  private readonly chunks: Buffer[] = [];
+  private bytes = 0;
+  private truncated = false;
+  private binary = false;
+
+  constructor(private readonly maxBytes: number) {}
+
+  append(chunk: Buffer): void {
+    if (chunk.includes(0)) this.binary = true;
+    if (this.bytes >= this.maxBytes) {
+      this.truncated = true;
+      return;
+    }
+    const remaining = this.maxBytes - this.bytes;
+    const selected = chunk.subarray(0, remaining);
+    this.chunks.push(Buffer.from(selected));
+    this.bytes += selected.length;
+    if (selected.length < chunk.length) this.truncated = true;
+  }
+
+  get hasBinary(): boolean { return this.binary; }
+
+  finish(): { text: string; truncated: boolean } {
+    const raw = redact(compactRepeatedLines(Buffer.concat(this.chunks).toString("utf8").replace(ANSI_PATTERN, "")));
   const bytes = Buffer.byteLength(raw, "utf8");
-  if (bytes <= maxBytes) return { text: raw, truncated: false };
+    if (bytes <= this.maxBytes && !this.truncated) return { text: raw, truncated: false };
   const buffer = Buffer.from(raw, "utf8");
-  return { text: `${buffer.subarray(0, Math.max(0, maxBytes - 32)).toString("utf8")}\n[truncated]`, truncated: true };
+    return { text: `${buffer.subarray(0, Math.max(0, this.maxBytes - 32)).toString("utf8")}\n[truncated]`, truncated: true };
+  }
 }
 
 function validateCommand(command: string, interactive: boolean): void {
@@ -85,16 +124,28 @@ export async function executeRun(options: RunnerOptions, signal?: AbortSignal): 
   if (interactive) throw new Error("Interactive runner mode is not supported by the bounded capture interface.");
   const maxBytes = Math.max(256, Math.min(options.maxBytes ?? 64 * 1024, 1024 * 1024));
   const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? 120_000, 15 * 60_000));
+  const terminateGraceMs = Math.max(100, Math.min(options.terminateGraceMs ?? 2_000, 15_000));
   const startedAt = new Date();
-  const stdout: string[] = [];
-  const stderr: string[] = [];
+  const stdout = new StreamCapture(maxBytes);
+  const stderr = new StreamCapture(maxBytes);
   const child = spawn(options.command, options.args ?? [], { cwd: options.root, env: options.env ? { ...process.env, ...options.env } : process.env, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-  child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk.toString("utf8")));
-  child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk.toString("utf8")));
+  let binaryOutput = false;
+  child.stdout.on("data", (chunk: Buffer) => stdout.append(chunk));
+  child.stderr.on("data", (chunk: Buffer) => stderr.append(chunk));
   let timedOut = false;
   let cancelled = false;
+  let escalationTimer: NodeJS.Timeout | undefined;
   const terminate = () => {
-    if (!child.killed) child.kill("SIGTERM");
+    if (child.exitCode !== null || child.killed) return;
+    child.kill("SIGTERM");
+    escalationTimer = setTimeout(() => {
+      if (child.exitCode !== null) return;
+      if (process.platform === "win32" && child.pid) {
+        spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+      } else {
+        child.kill("SIGKILL");
+      }
+    }, terminateGraceMs);
   };
   const timer = setTimeout(() => { timedOut = true; terminate(); }, timeoutMs);
   const abort = () => { cancelled = true; terminate(); };
@@ -104,16 +155,20 @@ export async function executeRun(options: RunnerOptions, signal?: AbortSignal): 
     child.once("close", (code, childSignal) => resolve({ code, signal: childSignal }));
   }).finally(() => {
     clearTimeout(timer);
+    if (escalationTimer) clearTimeout(escalationTimer);
     signal?.removeEventListener("abort", abort);
   });
-  const stdoutCapture = boundedCapture(stdout, maxBytes);
-  const stderrCapture = boundedCapture(stderr, maxBytes);
+  const stdoutCapture = stdout.finish();
+  const stderrCapture = stderr.finish();
+  binaryOutput = stdout.hasBinary || stderr.hasBinary;
+  if (binaryOutput) stderrCapture.text = `${stderrCapture.text}\n[binary output refused]`;
   return {
     runId: randomUUID(), root: options.root, command: options.command, args: redactRunnerArguments(options.args ?? []),
     startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(),
-    status: cancelled ? "cancelled" : timedOut ? "timed-out" : result.code === 0 ? "completed" : "failed",
+    status: cancelled ? "cancelled" : timedOut ? "timed-out" : binaryOutput ? "failed" : result.code === 0 ? "completed" : "failed",
     exitCode: result.code, signal: result.signal, timedOut,
     stdout: stdoutCapture.text, stderr: stderrCapture.text, stdoutTruncated: stdoutCapture.truncated, stderrTruncated: stderrCapture.truncated,
+    ...(binaryOutput ? { binaryOutput: true } : {}),
     ...(options.metadata ? { metadata: options.metadata } : {})
   };
 }
@@ -132,6 +187,28 @@ export async function loadRun(root: string, runId: string): Promise<SavedRun | u
     if (error instanceof SyntaxError) { await quarantineCorruptJson(runPath(root, runId)); return undefined; }
     throw error;
   }
+}
+
+export function summarizeRun(run: SavedRun): SavedRunSummary {
+  const combined = `${run.stderr}\n${run.stdout}`;
+  const lines = combined.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const firstError = lines.find((line) => /\b(error|failed|failure|exception)\b/i.test(line));
+  const tests = lines.filter((line) => /(?:test|spec)\b|\b(pass|fail)ed\b/i.test(line)).slice(0, 20);
+  const stackFrames = lines.filter((line) => /^\s*at\s+|\bat\s+.+:\d+:\d+/.test(line)).slice(0, 20);
+  const locations = lines.map((line) => line.match(/[^\s:()]+:\d+(?::\d+)?/)?.[0]).filter((value): value is string => Boolean(value)).slice(0, 20);
+  const repeatCount = lines.length - new Set(lines).size;
+  return {
+    runId: run.runId,
+    status: run.status,
+    exitCode: run.exitCode,
+    signal: run.signal,
+    timedOut: run.timedOut,
+    ...(firstError ? { firstError } : {}),
+    repeatCount,
+    tests,
+    stackFrames,
+    locations
+  };
 }
 
 export async function querySavedRuns(root: string, selector: { test?: string; file?: string; errorClass?: string } = {}): Promise<SavedRun[]> {

@@ -219,10 +219,10 @@ describe("tokengraph benchmark harness and trust docs", () => {
       criticalConstraintPreservationRate: 1,
       criticalFalseNegativeCount: 0,
       requiredFileRecall: 1,
-      medianNetSavings: 19.96666666666667,
+      medianNetSavings: 5.733333333333334,
       taskFailures: expect.arrayContaining(["memory-wiki-01"])
     });
-    expect(report.releaseGate).toEqual({ passed: true, failureReasons: [] });
+    expect(report.releaseGate).toMatchObject({ passed: false, failureReasons: expect.arrayContaining([expect.stringMatching(/execution-inclusive/i)]) });
     for (const task of report.tasks) {
       expect(task.metrics).toMatchObject({
         requiredFileRecall: expect.any(Number),
@@ -248,7 +248,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
     }
     const benchmarkResults = await readFile(resolve(repoRoot, "docs", "benchmarks", "results-current.md"), "utf8");
     expect(benchmarkResults).toMatch(/15 of 30 tasks are non-positive/i);
-    expect(benchmarkResults).toMatch(/execution-inclusive median.*-86\.0/i);
+    expect(benchmarkResults).toMatch(/execution-inclusive median.*-94\.3/i);
     expect(benchmarkResults).toMatch(/low-confidence/i);
 
     const trustFiles = ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"];
@@ -436,7 +436,7 @@ describe("tokengraph release package command", () => {
     );
     const generatedReadme = await readFile(resolve(report.packageDir, "README.md"), "utf8");
     expect(generatedReadme.match(/The default surface exposes eight compact tools/g)).toHaveLength(1);
-    expect(generatedReadme.match(/The checked-in routing-lifecycle benchmark passes its strict gate/g)).toHaveLength(1);
+    expect(generatedReadme.match(/execution-inclusive release gate fails honestly/g)).toHaveLength(1);
     await expect(access(resolve(report.packageDir, "src"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "tests"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "node_modules"))).rejects.toThrow();
