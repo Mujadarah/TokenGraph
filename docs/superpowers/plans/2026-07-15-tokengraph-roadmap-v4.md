@@ -188,8 +188,14 @@
 
 - [x] Bump every version surface to 0.21.0 and regenerate normal/release packages.
 - [x] Run the complete gate plus direct release smoke and ZIP-aware contents/checksum validation.
-- [ ] Create tag `v0.21.0`, verify the CI draft release asset against a local tag rebuild, then publish the release.
-- [ ] Commit `release: publish TokenGraph v0.21.0` and record the final gate evidence.
+- [x] Create tag `v0.21.0`, verify the CI draft release asset against a local tag rebuild, then publish the release.
+- [x] Commit `release: publish TokenGraph v0.21.0` and record the final gate evidence.
+
+Final evidence: the tag workflow passed all packaging gates in run `29443126944`; the
+published ZIP checksum is `8f7ff8c6589d6f61a56e61ea425fac80b6a7c710da1e2d7609ff3444a2e5298e`,
+matching a clean LF local tag rebuild. The final local gate reported 19 test files and
+320 passing tests, with direct release smoke, plugin validation, and ZIP contents checks
+passing.
 
 ## Required verification command set
 
