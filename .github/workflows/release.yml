@@ -52,12 +52,15 @@ jobs:
       - name: Build release package
         run: pnpm --silent package:plugin -- --release --json > release-package.json
 
+      - name: Build standalone release archive
+        run: pnpm --silent package:plugin -- --json > bundle-package.json
+
       - name: Verify generated release and create checksum
         id: artifact
         shell: bash
         run: |
           set -euo pipefail
-          archive=$(node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync("release-package.json", "utf8")); if (!value.archivePath) throw new Error("release package did not report archivePath"); process.stdout.write(value.archivePath);')
+          archive=$(node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync("bundle-package.json", "utf8")); if (!value.archivePath) throw new Error("bundle package did not report archivePath"); process.stdout.write(value.archivePath);')
           checksum="${archive}.sha256"
           sha256sum "$archive" | tee "$checksum"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
