@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/tokengraph
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: plugins/tokengraph/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Smoke test
+        run: pnpm smoke -- --root . --json
+
+      - name: Validate plugin
+        run: pnpm validate:plugin
+
+      - name: Build release package
+        run: pnpm package:plugin -- --release --json > release-package.json
+
+      - name: Verify generated release and create checksum
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=$(node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync("release-package.json", "utf8")); if (!value.archivePath) throw new Error("release package did not report archivePath"); process.stdout.write(value.archivePath);')
+          checksum="${archive}.sha256"
+          sha256sum "$archive" | tee "$checksum"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        working-directory: .
+        run: |
+          set -euo pipefail
+          gh release create "$TAG_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --draft \
+            --title "TokenGraph $TAG_NAME" \
+            --notes "Automated release built from the tagged commit. The attached ZIP and SHA-256 checksum were produced by CI." \
+            "plugins/tokengraph/${{ steps.artifact.outputs.archive }}" \
+            "plugins/tokengraph/${{ steps.artifact.outputs.checksum }}"
