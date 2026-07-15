@@ -2,17 +2,37 @@
   "schemaVersion": 1,
   "generatedAt": "2026-07-15T00:00:00.000Z",
   "seed": "fixture-seed",
+  "model": { "identifier": "fixture-model", "versionOrDate": "2026-07-15" },
+  "reasoningLevel": "fixture",
+  "host": { "name": "vitest", "version": "3.2.6" },
+  "plugin": { "version": "0.21.0", "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  "repositoryCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "promptTemplate": "paired-eval-fixture-v1",
+  "toolConfiguration": { "surface": "core" },
+  "cacheState": "empty",
+  "indexState": "cold",
+  "protocol": {
+    "runsPerTask": 1,
+    "minimumPerCategorySamples": 10,
+    "qualityNonInferiorityMargin": 0.02,
+    "tokenSuperiorityMinimum": 1,
+    "resourceLimit": 2,
+    "routerRateMaximum": 0.1,
+    "executionMedianMinimum": 0,
+    "executionP25Minimum": 0,
+    "nonNegativeActivatedMinimum": 0.8
+  },
   "tasks": [
     { "taskId": "fixture-code-1", "category": "code" },
     { "taskId": "fixture-code-2", "category": "code" },
     { "taskId": "fixture-code-3", "category": "code" }
   ],
   "traces": [
-    { "taskId": "fixture-code-1", "category": "code", "condition": "on", "tokens": 100, "executionInclusiveTokens": 125, "quality": 1, "timedOut": false, "failed": false, "resourceUnits": 1 },
+    { "taskId": "fixture-code-1", "category": "code", "condition": "on", "tokens": 100, "executionInclusiveTokens": 125, "quality": 1, "timedOut": false, "failed": false, "resourceUnits": 1, "routing": { "mode": "shadow", "decision": "activate", "stage": 0, "reason": "context-discovery", "expectedOverheadTokens": 80, "falseBypass": false, "falseActivation": false } },
     { "taskId": "fixture-code-1", "category": "code", "condition": "off", "tokens": 120, "executionInclusiveTokens": 120, "quality": 1, "timedOut": false, "failed": false, "resourceUnits": 1 },
-    { "taskId": "fixture-code-2", "category": "code", "condition": "on", "tokens": 110, "executionInclusiveTokens": 110, "quality": 1, "timedOut": false, "failed": false, "resourceUnits": 1 },
+    { "taskId": "fixture-code-2", "category": "code", "condition": "on", "tokens": 110, "executionInclusiveTokens": 110, "quality": 1, "timedOut": false, "failed": false, "resourceUnits": 1, "routing": { "mode": "shadow", "decision": "activate", "stage": 0, "reason": "context-discovery", "expectedOverheadTokens": 80, "falseBypass": false, "falseActivation": false } },
     { "taskId": "fixture-code-2", "category": "code", "condition": "off", "tokens": 120, "executionInclusiveTokens": 120, "quality": 1, "timedOut": false, "failed": false, "resourceUnits": 1 },
-    { "taskId": "fixture-code-3", "category": "code", "condition": "on", "tokens": 100, "executionInclusiveTokens": 100, "quality": 1, "timedOut": true, "failed": true, "resourceUnits": 1 },
+    { "taskId": "fixture-code-3", "category": "code", "condition": "on", "tokens": 100, "executionInclusiveTokens": 100, "quality": 1, "timedOut": true, "failed": true, "resourceUnits": 1, "routing": { "mode": "shadow", "decision": "activate", "stage": 0, "reason": "context-discovery", "expectedOverheadTokens": 80, "falseBypass": false, "falseActivation": false } },
     { "taskId": "fixture-code-3", "category": "code", "condition": "off", "tokens": 120, "executionInclusiveTokens": 120, "quality": 1, "timedOut": false, "failed": false, "resourceUnits": 1 }
   ]
 }

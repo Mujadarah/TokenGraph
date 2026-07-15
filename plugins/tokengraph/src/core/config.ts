@@ -4,7 +4,7 @@ import { configPath, stateDir } from "./persistence.js";
 import { canonicalPersistenceLockKey, quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
 import type { RoutingMode, TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
 
-export const CURRENT_CONFIG_SCHEMA_VERSION = 1;
+export const CURRENT_CONFIG_SCHEMA_VERSION = 2;
 
 export const PROFILE_DEFAULTS = {
   conservative: {
@@ -64,10 +64,17 @@ export const DEFAULT_TOKEN_GRAPH_CONFIG: TokenGraphConfig = {
     maxGraphDepth: 3,
     maxGeneratedFiles: 200,
     maxTsconfigChain: 8,
-    maxAliases: 500,
-    typescriptSource: "bundled"
+    maxAliases: 500
   },
-  storage: { maxBytes: 64 * 1024 * 1024, runRetentionDays: 14, cacheRetentionDays: 7 },
+  storage: {
+    maxBytes: 64 * 1024 * 1024,
+    runsMaxBytes: 16 * 1024 * 1024,
+    cacheMaxBytes: 32 * 1024 * 1024,
+    vaultMaxBytes: 8 * 1024 * 1024,
+    durableMaxBytes: 8 * 1024 * 1024,
+    runRetentionDays: 14,
+    cacheRetentionDays: 7
+  },
   runner: { maxBytes: 64 * 1024, timeoutMs: 120_000, terminateGraceMs: 2_000 },
   memory: { projectBriefTargetTokens: 220, projectBriefMaxTokens: 600, maxRetrievalTokens: 1_200 },
   responseFormat: { default: "json" }
@@ -85,6 +92,13 @@ function sanitizeNumber(value: unknown, fallback: number, min = 0): number {
   return Number.isInteger(value) && (value as number) >= min ? (value as number) : fallback;
 }
 
+function legacyStorageClassCaps(maxBytes: number): Pick<TokenGraphConfig["storage"], "runsMaxBytes" | "cacheMaxBytes" | "vaultMaxBytes" | "durableMaxBytes"> {
+  const runsMaxBytes = Math.floor(maxBytes * 0.25);
+  const cacheMaxBytes = Math.floor(maxBytes * 0.5);
+  const vaultMaxBytes = Math.floor(maxBytes * 0.125);
+  return { runsMaxBytes, cacheMaxBytes, vaultMaxBytes, durableMaxBytes: maxBytes - runsMaxBytes - cacheMaxBytes - vaultMaxBytes };
+}
+
 function normalizeConfig(value: unknown, applyEnvironment = true): TokenGraphConfig {
   const candidate = value && typeof value === "object" ? (value as Partial<TokenGraphConfig>) : {};
   const nestedRouting = candidate.routing && typeof candidate.routing === "object" ? candidate.routing : {};
@@ -93,6 +107,8 @@ function normalizeConfig(value: unknown, applyEnvironment = true): TokenGraphCon
   const nestedRunner = candidate.runner && typeof candidate.runner === "object" ? candidate.runner : {};
   const nestedMemory = candidate.memory && typeof candidate.memory === "object" ? candidate.memory : {};
   const nestedResponse = candidate.responseFormat && typeof candidate.responseFormat === "object" ? candidate.responseFormat : {};
+  const storageMaxBytes = sanitizeNumber((nestedStorage as { maxBytes?: unknown }).maxBytes, DEFAULT_TOKEN_GRAPH_CONFIG.storage.maxBytes, 1);
+  const legacyStorageCaps = legacyStorageClassCaps(storageMaxBytes);
   const routingMode = applyEnvironment && isRoutingMode(process.env.TOKENGRAPH_ROUTING_MODE)
     ? process.env.TOKENGRAPH_ROUTING_MODE
     : isRoutingMode(candidate.routingMode) ? candidate.routingMode : isRoutingMode((nestedRouting as { mode?: unknown }).mode) ? (nestedRouting as { mode: RoutingMode }).mode : DEFAULT_TOKEN_GRAPH_CONFIG.routingMode;
@@ -122,11 +138,14 @@ function normalizeConfig(value: unknown, applyEnvironment = true): TokenGraphCon
       maxGraphDepth: integer(nestedParser, "maxGraphDepth", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxGraphDepth, 0),
       maxGeneratedFiles: integer(nestedParser, "maxGeneratedFiles", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxGeneratedFiles, 0),
       maxTsconfigChain: integer(nestedParser, "maxTsconfigChain", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxTsconfigChain, 1),
-      maxAliases: integer(nestedParser, "maxAliases", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxAliases, 0),
-      typescriptSource: (nestedParser as { typescriptSource?: unknown }).typescriptSource === "project-opt-in" ? "project-opt-in" : "bundled"
+      maxAliases: integer(nestedParser, "maxAliases", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxAliases, 0)
     },
     storage: {
-      maxBytes: integer(nestedStorage, "maxBytes", DEFAULT_TOKEN_GRAPH_CONFIG.storage.maxBytes, 1),
+      maxBytes: storageMaxBytes,
+      runsMaxBytes: integer(nestedStorage, "runsMaxBytes", legacyStorageCaps.runsMaxBytes, 0),
+      cacheMaxBytes: integer(nestedStorage, "cacheMaxBytes", legacyStorageCaps.cacheMaxBytes, 0),
+      vaultMaxBytes: integer(nestedStorage, "vaultMaxBytes", legacyStorageCaps.vaultMaxBytes, 0),
+      durableMaxBytes: integer(nestedStorage, "durableMaxBytes", legacyStorageCaps.durableMaxBytes, 0),
       runRetentionDays: integer(nestedStorage, "runRetentionDays", DEFAULT_TOKEN_GRAPH_CONFIG.storage.runRetentionDays, 0),
       cacheRetentionDays: integer(nestedStorage, "cacheRetentionDays", DEFAULT_TOKEN_GRAPH_CONFIG.storage.cacheRetentionDays, 0)
     },

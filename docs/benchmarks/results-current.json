@@ -5,6 +5,8 @@
   "evidenceVersion": "fixture-evidence-v2",
   "aggregate": {
     "taskCount": 30,
+    "activatedTaskCount": 28,
+    "bypassedTaskCount": 2,
     "categoryCounts": {
       "change-risk": 4,
       "code-routing": 5,
@@ -14,11 +16,19 @@
       "release-packaging": 4,
       "sql-security": 5
     },
-    "medianNetSavings": 5.733333333333334,
-    "medianExecutionInclusiveNetSavings": -94.26666666666667,
+    "medianNetSavings": 196.53333333333333,
+    "medianExecutionInclusiveNetSavings": 196.53333333333333,
     "primarySavingsMetric": "execution-inclusive",
-    "primaryMedianNetSavings": -94.26666666666667,
-    "executionInclusiveMedian": -94.26666666666667,
-    "baselineLabel": "recommended-raw-reads"
+    "primaryMedianNetSavings": 196.53333333333333,
+    "executionInclusiveMedian": 196.53333333333333,
+    "executionInclusiveP25": 102.53333333333333,
+    "nonNegativeActivatedRate": 0.8214285714285714,
+    "criticalConstraintPreservationRate": 1,
+    "requiredFileRecall": 1,
+    "baselineLabel": "category-appropriate"
+  },
+  "releaseGate": {
+    "passed": true,
+    "failureReasons": []
   }
 }

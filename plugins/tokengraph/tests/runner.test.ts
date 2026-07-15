@@ -34,4 +34,21 @@ describe("bounded runner", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("infers exact selectors for failed CLI-style captures", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-runner-"));
+    try {
+      const run = await executeRun({
+        root,
+        command: process.execPath,
+        args: ["-e", "console.error('TypeError: boom at src/example.ts:7:3'); process.exit(1)"]
+      });
+      expect(run.metadata).toEqual({ file: "src/example.ts", errorClass: "TypeError" });
+      await saveRun(root, run);
+      expect(await querySavedRuns(root, { file: "src/example.ts" })).toHaveLength(1);
+      expect(await querySavedRuns(root, { errorClass: "TypeError" })).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

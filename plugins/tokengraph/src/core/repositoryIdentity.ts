@@ -9,7 +9,8 @@ import { canonicalPersistenceLockKey, withFileLock, writeJsonAtomic, writeTextAt
 
 const execFileAsync = promisify(execFile);
 
-const identityCache = new Map<string, Promise<RepositoryIdentity>>();
+export const LOCAL_EXCLUDE_WARNING = "TokenGraph could not update .git/info/exclude; add this exact line manually: .tokengraph/";
+const setupWarnings = new Map<string, string[]>();
 
 async function git(root: string, ...args: string[]): Promise<string | undefined> {
   try {
@@ -25,19 +26,28 @@ async function ensureLocalExclude(root: string): Promise<void> {
   const exclude = await git(root, "rev-parse", "--git-path", "info/exclude");
   if (!exclude) return;
   const path = resolve(root, exclude);
-  const lockKey = await canonicalPersistenceLockKey(path);
-  await withFileLock(`${lockKey}.lock`, async () => {
-    let existing = "";
-    try {
-      existing = await readFile(path, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    const lines = existing.split(/\r?\n/);
-    if (lines.some((line) => line.trim() === ".tokengraph/")) return;
-    const next = `${existing.replace(/[\r\n]*$/, "")}${existing ? "\n" : ""}.tokengraph/\n`;
-    await writeTextAtomic(path, next);
-  });
+  try {
+    const lockKey = await canonicalPersistenceLockKey(path);
+    await withFileLock(`${lockKey}.lock`, async () => {
+      let existing = "";
+      try {
+        existing = await readFile(path, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const lines = existing.split(/\r?\n/);
+      if (lines.some((line) => line.trim() === ".tokengraph/")) return;
+      const next = `${existing.replace(/[\r\n]*$/, "")}${existing ? "\n" : ""}.tokengraph/\n`;
+      await writeTextAtomic(path, next);
+    });
+    setupWarnings.delete(resolve(root));
+  } catch {
+    setupWarnings.set(resolve(root), [LOCAL_EXCLUDE_WARNING]);
+  }
+}
+
+export function getRepositorySetupWarnings(root: string): string[] {
+  return [...(setupWarnings.get(resolve(root)) ?? [])];
 }
 
 function digest(value: string): string {
@@ -96,25 +106,20 @@ async function loadOrCreateRepositoryId(directory: string): Promise<string> {
 
 export async function getRepositoryIdentity(root: string): Promise<RepositoryIdentity> {
   const workspaceRoot = resolve(root);
-  const cached = identityCache.get(workspaceRoot);
-  if (cached) return cached;
-  const pending = getRepositoryIdentityUncached(workspaceRoot);
-  identityCache.set(workspaceRoot, pending);
-  try {
-    return await pending;
-  } catch (error) {
-    identityCache.delete(workspaceRoot);
-    throw error;
-  }
+  // Branch and HEAD are intentionally refreshed on every call. Repository-id
+  // persistence is cheap, while caching this full value silently cross-applies
+  // branch-specific state after a checkout or commit.
+  return getRepositoryIdentityUncached(workspaceRoot);
 }
 
 async function getRepositoryIdentityUncached(workspaceRoot: string): Promise<RepositoryIdentity> {
-  const [topLevel, commonDir, gitDir, branch, headCommit, remote] = await Promise.all([
+  const [topLevel, commonDir, gitDir, branch, headCommit, firstCommits, remote] = await Promise.all([
     git(workspaceRoot, "rev-parse", "--show-toplevel"),
     git(workspaceRoot, "rev-parse", "--git-common-dir"),
     git(workspaceRoot, "rev-parse", "--git-dir"),
     git(workspaceRoot, "symbolic-ref", "--quiet", "--short", "HEAD"),
     git(workspaceRoot, "rev-parse", "HEAD"),
+    git(workspaceRoot, "rev-list", "--max-parents=0", "HEAD"),
     remoteIdentity(workspaceRoot)
   ]);
   const normalizedRoot = resolve(topLevel ?? workspaceRoot);
@@ -123,8 +128,8 @@ async function getRepositoryIdentityUncached(workspaceRoot: string): Promise<Rep
   if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
   const repositoryState = repositoryStateDirectory(normalizedRoot, normalizedCommon);
   const repositoryId = await loadOrCreateRepositoryId(repositoryState);
-  const repositoryKey = normalizedCommon ?? normalizedRoot;
-  const repositoryFingerprint = digest(`${repositoryId}\n${repositoryKey}\n${headCommit ?? "unborn"}`);
+  const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
+  const repositoryFingerprint = digest(`${repositoryId}\n${firstCommit}`);
   return {
     repositoryId,
     repositoryFingerprint,

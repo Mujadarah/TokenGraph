@@ -21,6 +21,7 @@ import {
   compactPlanResponse,
   compactRecallResponse,
   compactRiskResponse,
+  compactSliceResponse,
   compactWikiResponse
 } from "./core/compactResponses.js";
 import {
@@ -38,17 +39,17 @@ import {
 } from "./core/toolContracts.js";
 import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } from "./core/config.js";
 import { adviseRouting, failOpenRouting } from "./core/routingAdvisor.js";
-import { loadRoutingControl } from "./core/routingControl.js";
-import { getRepositoryIdentity } from "./core/repositoryIdentity.js";
-import { buildRetrievalCapsule, capsuleArtifact, escalateReadPolicy, rankFilesBm25, readExactSlice } from "./core/retrieval.js";
+import { isValidatedPromotion, loadRoutingControl } from "./core/routingControl.js";
+import { getRepositoryIdentity, getRepositorySetupWarnings } from "./core/repositoryIdentity.js";
+import { buildRetrievalCapsule, capsuleArtifact, escalateReadPolicy, rankFilesBm25, readExactSlice, recommendExactRead, startReadPolicyResponse } from "./core/retrieval.js";
 import { loadRun, summarizeRun } from "./core/runner.js";
-import { enforceStorageQuota } from "./core/storagePolicy.js";
+import { assertStorageReplacementAllowed, enforceStorageClassQuotas } from "./core/storagePolicy.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
 import { traceFailure } from "./core/failureTracer.js";
 import { MemoryStore } from "./core/memoryStore.js";
 import { buildContextPlan } from "./core/planner.js";
-import { indexProject, updateProjectIndexIncremental } from "./core/projectIndexer.js";
+import { indexProject, updateProjectIndexIncremental, type ProjectIndexOptions } from "./core/projectIndexer.js";
 import { assessChangeRisk } from "./core/regressionRisk.js";
 import {
   clearProjectIndex,
@@ -65,10 +66,10 @@ import {
 import { exportProjectMap, reviewMemories } from "./core/review.js";
 import { estimateTokens, tokenize } from "./core/token.js";
 import { buildTaskReport, formatTaskReportFooter } from "./core/taskEstimator.js";
-import type { ProjectIndex, RankedSqlObject } from "./core/types.js";
+import type { ContextPlan, ProjectIndex, RankedSqlObject } from "./core/types.js";
 import { buildProjectWiki } from "./core/wiki.js";
 import { projectToVault } from "./core/vaultProjection.js";
-import { createTaskLedger, discardEmptyTaskLedger, loadTaskLedger, recordTaskEvent, setTaskDisposition, type TaskHost } from "./core/taskLedger.js";
+import { createTaskLedger, discardEmptyTaskLedger, loadTaskLedger, recordTaskArtifactDelivery, recordTaskEvent, setTaskDisposition, updateTaskReadPolicy, updateTaskRoutingObservation, type TaskHost } from "./core/taskLedger.js";
 import { listAppliedKnowledge, listKnowledgeSuggestions, proposeKnowledgeChange, reviewKnowledgeSuggestion } from "./core/knowledgeReviewQueue.js";
 
 const architectureRuleTypeSchema = z.enum([
@@ -351,6 +352,28 @@ function okWithResourceLinks<T extends { resourceLinks?: Array<{ label: string; 
 
 const projectWriteChains = new Map<string, Promise<void>>();
 
+function projectIndexOptions(
+  config: Awaited<ReturnType<typeof loadTokenGraphConfig>>,
+  control: Awaited<ReturnType<typeof loadRoutingControl>>
+): ProjectIndexOptions {
+  return {
+    parserLimits: {
+      maxFileBytes: config.parser.maxFileBytes,
+      maxTotalBytes: config.parser.maxTotalBytes,
+      maxSymbols: config.parser.maxSymbols,
+      maxNodes: config.parser.maxNodes,
+      perFileTimeoutMs: config.parser.perFileTimeoutMs,
+      wholeIndexTimeoutMs: config.parser.wholeIndexTimeoutMs,
+      maxDepth: config.parser.maxRecursionDepth,
+      maxGeneratedFiles: config.parser.maxGeneratedFiles,
+      maxTsconfigChain: config.parser.maxTsconfigChain,
+      maxAliases: config.parser.maxAliases
+    },
+    // B7 stays dark until a complete B6 promotion report proves every gate.
+    polyglotEnabled: isValidatedPromotion(control.promotion) && control.promotion.enforcementEnabled
+  };
+}
+
 async function enqueueProjectWrite<T>(root: string, operation: () => Promise<T>): Promise<T> {
   const key = resolve(root);
   const previous = projectWriteChains.get(key) ?? Promise.resolve();
@@ -367,23 +390,28 @@ async function enqueueProjectWrite<T>(root: string, operation: () => Promise<T>)
 
 async function ensureProject(root: string): Promise<ProjectIndex> {
   return enqueueProjectWrite(root, async () => {
-    const currentScanSignature = await scanProjectSignature(root);
+    const [config, control] = await Promise.all([loadTokenGraphConfig(root), loadRoutingControl(root)]);
+    const options = projectIndexOptions(config, control);
+    const currentScanSignature = await scanProjectSignature(root, options.parserLimits);
     const existing = await loadProjectIndex(root);
     if (existing && isSafeProjectIndex(root, existing)) {
       if (existing.scanSignature === currentScanSignature) {
         return existing;
       }
-      const updated = await updateProjectIndexIncremental(root, existing);
+      const updated = await updateProjectIndexIncremental(root, existing, options);
       const current = updated.index;
       if (isFreshProjectIndex(existing, current)) {
         await saveProjectIndex(root, current);
+        await enforceStorageClassQuotas(root, config.storage);
         return current;
       }
       await saveProjectIndex(root, current);
+      await enforceStorageClassQuotas(root, config.storage);
       return current;
     }
-    const indexed = await indexProject(root, { scanSignature: currentScanSignature });
+    const indexed = await indexProject(root, { ...options, scanSignature: currentScanSignature });
     await saveProjectIndex(root, indexed);
+    await enforceStorageClassQuotas(root, config.storage);
     return indexed;
   });
 }
@@ -592,10 +620,18 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
   return rows.filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
+function recommendedExactRead(plan: ContextPlan, project: ProjectIndex) {
+  const first = plan.recommendedFirstReads.find((candidate) => candidate.startLine !== undefined && candidate.endLine !== undefined);
+  if (!first || first.startLine === undefined || first.endLine === undefined) return undefined;
+  const file = project.files.find((candidate) => candidate.path === first.path);
+  if (!file) return undefined;
+  return { mode: "slice" as const, file: first.path, startLine: first.startLine, endLine: first.endLine, contentHash: file.contentHash };
+}
+
 export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWorkspaceProvider } = {}): McpServer {
   const toolSurface = selectedToolSurface();
   const server = new McpServer(
-    { name: "tokengraph", version: "0.21.0" },
+    { name: "tokengraph", version: "0.21.1" },
     {
       instructions:
         "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. " +
@@ -680,6 +716,10 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     };
   }
 
+  function shouldBypassHost(routing: RoutingDecision | undefined, routingOverride: "auto" | "force-on" | "force-bypass" | undefined): boolean {
+    return Boolean(routing && !routing.useTokenGraph && (routing.enforced || routingOverride === "force-bypass"));
+  }
+
   server.registerTool(
     "tokengraph_setup",
     {
@@ -690,9 +730,11 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async () => {
       const setup = await inspectWorkspaceSetup(server, options.trustedWorkspace);
+      const repositoryIdentity = setup.trustedWorkspace ? await getRepositoryIdentity(setup.trustedWorkspace.root) : null;
       return ok({
       ...setup,
-      repositoryIdentity: setup.trustedWorkspace ? await getRepositoryIdentity(setup.trustedWorkspace.root) : null,
+      repositoryIdentity,
+      warnings: setup.trustedWorkspace ? getRepositorySetupWarnings(setup.trustedWorkspace.root) : [],
       surface: toolSurface,
       capabilities: {
         taskScoped: true,
@@ -719,20 +761,21 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         const response = { mode: "direct-host" as const, routing, guidance: "TokenGraph routing was unavailable, so this request is being left to the host tools. Retry discovery after the workspace state is repaired." };
         return ok(responseMode === "verbose" ? { ...response, root: resolvedRoot } : response);
       }
-      const { status: statusBefore, config, control } = probe;
-      await enforceStorageQuota(resolvedRoot, { maxBytes: config.storage.maxBytes });
+      const { status: cachedStatus, config, control } = probe;
+      const indexOptions = projectIndexOptions(config, control);
+      await enforceStorageClassQuotas(resolvedRoot, config.storage);
       const identity = await getRepositoryIdentity(resolvedRoot);
       const routing = adviseRouting({
         task,
         knownArtifacts,
         routingOverride,
         routingMode: config.routingMode,
-        indexAvailable: statusBefore.hasIndex,
-        cachedStatus: statusBefore.state === "fresh" ? "fresh" : statusBefore.state === "missing" ? "missing" : "stale",
+        indexAvailable: cachedStatus.hasIndex,
+        cachedStatus: cachedStatus.state === "fresh" ? "fresh" : cachedStatus.state === "missing" ? "missing" : "stale",
         killSwitch: config.routingKillSwitch || control.killSwitch,
         promotion: control.promotion
       });
-      if (!routing.useTokenGraph) {
+      if (shouldBypassHost(routing, routingOverride)) {
         const response = {
           mode: "direct-host" as const,
           routing,
@@ -740,6 +783,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         };
         return ok(responseMode === "verbose" ? { ...response, root: resolvedRoot } : response);
       }
+      const statusBefore = await getIndexStatus(resolvedRoot, { projectOptions: indexOptions });
       const existing = await loadProjectIndex(resolvedRoot);
       let project: ProjectIndex;
       let indexingMode: "existing" | "full" | "incremental" = "existing";
@@ -750,7 +794,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       } else if (!refreshIndex) {
         throw new Error("The TokenGraph index is missing or stale and refreshIndex is false.");
       } else if (existing && isSafeProjectIndex(resolvedRoot, existing)) {
-        const updated = await updateProjectIndexIncremental(resolvedRoot, existing);
+        const updated = await updateProjectIndexIncremental(resolvedRoot, existing, indexOptions);
         project = updated.index;
         indexingMode = updated.mode;
         changes = {
@@ -760,11 +804,13 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
           parsedFiles: updated.parsedFiles
         };
         await saveProjectIndex(resolvedRoot, project);
+        await enforceStorageClassQuotas(resolvedRoot, config.storage);
       } else {
-        project = await indexProject(resolvedRoot, { parserLimits: { maxBytes: config.parser.maxFileBytes, maxDepth: config.parser.maxRecursionDepth, maxNodes: config.parser.maxNodes, timeoutMs: config.parser.perFileTimeoutMs } });
+        project = await indexProject(resolvedRoot, indexOptions);
         indexingMode = "full";
         changes.parsedFiles = project.files.map((file) => file.path);
         await saveProjectIndex(resolvedRoot, project);
+        await enforceStorageClassQuotas(resolvedRoot, config.storage);
       }
 
       const appliedKnowledge = await listAppliedKnowledge(resolvedRoot);
@@ -794,7 +840,15 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         ]
       }, Math.max(150, Math.min(config.memory.projectBriefTargetTokens, config.memory.projectBriefMaxTokens)));
       const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost()) });
-      const capsule = buildRetrievalCapsule(ledger.taskId, task, project, plan.recommendedFirstReads.map((file) => file.path));
+      await updateTaskRoutingObservation(resolvedRoot, ledger.taskId, {
+        decision: routing.useTokenGraph ? "activate" : "bypass",
+        stage: routing.stage,
+        reason: routing.reason,
+        expectedOverheadTokens: routing.expectedOverheadTokens,
+        mode: config.routingMode,
+        enforced: routing.enforced
+      });
+      const capsule = buildRetrievalCapsule(ledger.taskId, task, project, plan.recommendedFirstReads.map((file) => file.path), config.parser.maxGraphDepth);
       const capsuleStableArtifact = capsuleArtifact(capsule);
       await saveStableArtifact(resolvedRoot, capsuleStableArtifact);
       const memoryContext = composeMemoryContext({
@@ -809,9 +863,15 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         outcomes: memories.filter((memory) => Boolean(memory.confirmedAt)).map((memory) => ({ id: memory.id, taskId: memory.id, summary: memory.title, status: "verified" as const, evidence: memory.evidence, createdAt: memory.createdAt, sourceFingerprint: project.fingerprint }))
       });
       if (memories.length) {
-        await saveVaultProjection(resolvedRoot, projectToVault(memories.map((memory) => ({ id: memory.id, title: memory.title, body: memory.body, links: memory.linkedFiles, archived: memory.status !== "active", updatedAt: memory.updatedAt })), { maxBytes: config.storage.maxBytes }));
+        const vaultNotes = projectToVault(memories.map((memory) => ({ id: memory.id, title: memory.title, body: memory.body, links: memory.linkedFiles, archived: memory.status !== "active", updatedAt: memory.updatedAt })));
+        const vaultManifest = `${JSON.stringify({ schemaVersion: 1, notes: vaultNotes.map(({ path, title, hash, backlinks, archived }) => ({ path, title, hash, backlinks, archived })) }, null, 2)}\n`;
+        const vaultBytes = vaultNotes.reduce((total, note) => total + Buffer.byteLength(note.body, "utf8"), Buffer.byteLength(vaultManifest, "utf8"));
+        await assertStorageReplacementAllowed(resolvedRoot, "vault", vaultBytes, config.storage);
+        await saveVaultProjection(resolvedRoot, vaultNotes);
       }
       const readPolicy = escalateReadPolicy({ level: "L1", allowRawReads: false, reason: "capsule-first retrieval" }, plan.budget.allowRawReads ? "L3" : "L1");
+      await updateTaskReadPolicy(resolvedRoot, ledger.taskId, readPolicy);
+      const recommendedRead = readPolicy.allowRawReads ? recommendedExactRead(plan, project) : undefined;
       const projectedPlan = responseMode === "verbose" ? plan : compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
       const artifactContent = compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
       const stableArtifact = createStableArtifact(
@@ -835,23 +895,38 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const artifactDelivery = shouldSuppressArtifact(stableArtifact, knownArtifacts)
         ? { artifactReference: { id: stableArtifact.id, hash: stableArtifact.hash }, deliveredArtifacts: [] as string[] }
         : { artifact: stableArtifact, deliveredArtifacts: [artifactKey(stableArtifact)] };
-      const statusAfter = await getIndexStatus(resolvedRoot);
+      if (artifactDelivery.deliveredArtifacts.length) {
+        await recordTaskArtifactDelivery(resolvedRoot, ledger.taskId, artifactDelivery.deliveredArtifacts);
+      }
+      const statusAfter = await getIndexStatus(resolvedRoot, { projectOptions: indexOptions });
       const wikiStatus = await getWikiStatus(resolvedRoot);
       const response = responseMode === "verbose"
         ? {
             root: resolvedRoot, taskId: ledger.taskId,
             index: { status: indexingMode === "existing" ? statusAfter.state : "refreshed", previousStatus: statusBefore.state, postStatus: statusAfter.state, indexingMode, changes },
-            plan: projectedPlan, wikiStatus, routing, retrieval: { capsuleHash: capsuleStableArtifact.hash, readPolicy }, memory: memoryContext, unsupportedLanguageCounts: project.unsupportedLanguageCounts ?? {}, ...artifactDelivery
+            plan: projectedPlan, wikiStatus, routing, retrieval: { capsuleHash: capsuleStableArtifact.hash, readPolicy, ...(recommendedRead ? { recommendedRead } : {}) }, memory: memoryContext, unsupportedLanguageCounts: project.unsupportedLanguageCounts ?? {}, ...artifactDelivery
           }
         : compactPrepareEnvelope({
-            root: resolvedRoot, taskId: ledger.taskId, plan: projectedPlan, routing, retrieval: { capsuleHash: capsuleStableArtifact.hash, readPolicy }, unsupportedLanguageCounts: project.unsupportedLanguageCounts ?? {}, ...artifactDelivery, deliveredArtifacts: artifactDelivery.deliveredArtifacts
+            root: resolvedRoot, taskId: ledger.taskId, plan: projectedPlan, routing, retrieval: { capsuleHash: capsuleStableArtifact.hash, readPolicy, ...(recommendedRead ? { recommendedRead } : {}) }, unsupportedLanguageCounts: project.unsupportedLanguageCounts ?? {}, ...artifactDelivery, deliveredArtifacts: artifactDelivery.deliveredArtifacts
           });
       await recordCoreEvent({
         root: resolvedRoot,
         taskId: ledger.taskId,
         toolName: "tokengraph_prepare_context",
         category: "context-routing",
-        operation: { taskHash: createHash("sha256").update(task).digest("hex"), profile: plan.profile, indexingMode },
+        operation: {
+          taskHash: createHash("sha256").update(task).digest("hex"),
+          profile: plan.profile,
+          indexingMode,
+          routingObservation: {
+            decision: routing.useTokenGraph ? "activate" : "bypass",
+            stage: routing.stage,
+            reason: routing.reason,
+            expectedOverheadTokens: routing.expectedOverheadTokens,
+            mode: config.routingMode,
+            enforced: routing.enforced
+          }
+        },
         originalTokens: project.files.reduce((total, file) => total + file.estimatedTokens, 0),
         compactTokens: estimateTokens(compactJson(compactToolResultEnvelope(response)))
       });
@@ -870,8 +945,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     async (input) => {
       const { taskId, root, mode, responseMode } = input;
       const directRouting = await routeBeforeLedger(root, input.query ?? input.target, input.routingOverride);
-      if (!taskId && directRouting && !directRouting.useTokenGraph) {
-        const fallback = directHostFallback(directRouting);
+      if (!taskId && shouldBypassHost(directRouting, input.routingOverride)) {
+        const fallback = directHostFallback(directRouting!);
         return ok(responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
       }
       return withTaskIntent(root, taskId, async (task) => {
@@ -907,7 +982,25 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       } else if (mode === "slice") {
         const file = project!.files.find((candidate) => candidate.path === input.file);
         if (!file || file.contentHash !== input.contentHash) throw new Error("The requested exact slice does not match the current indexed file hash.");
-        result = await readExactSlice(resolvedRoot, input.file!, input.startLine!, input.endLine!);
+        const [ledger, config] = await Promise.all([loadTaskLedger(resolvedRoot, task.taskId), loadTokenGraphConfig(resolvedRoot)]);
+        if (!ledger) throw new Error(`Task ledger ${task.taskId} was not found or was corrupt.`);
+        const currentPolicy = startReadPolicyResponse(escalateReadPolicy(
+          ledger.readPolicy ?? { level: "L1", allowRawReads: false, reason: "capsule-first retrieval" },
+          "L3"
+        ));
+        const recommendation = recommendExactRead(currentPolicy, { reassessed: input.evidenceReassessed, evidenceGap: input.evidenceGap });
+        if (!recommendation.allowed) throw new Error(recommendation.reason);
+        const slice = await readExactSlice(
+          resolvedRoot,
+          input.file!,
+          input.startLine!,
+          input.endLine!,
+          Math.min(config.parser.maxFileBytes, 64 * 1024),
+          input.contentHash,
+          config.parser.maxFileBytes
+        );
+        result = responseMode === "verbose" ? slice : compactSliceResponse(slice);
+        await updateTaskReadPolicy(resolvedRoot, task.taskId, recommendation.state);
       } else {
         const { slug, constraints, responseMode } = input;
         const wiki = await loadProjectWiki(resolvedRoot);
@@ -947,8 +1040,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     async (input) => {
       const { taskId, root, mode } = input;
       const directRouting = await routeBeforeLedger(root, input.task, input.routingOverride);
-      if (!taskId && directRouting && !directRouting.useTokenGraph) {
-        const fallback = directHostFallback(directRouting);
+      if (!taskId && shouldBypassHost(directRouting, input.routingOverride)) {
+        const fallback = directHostFallback(directRouting!);
         return ok(input.responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
       }
       return withTaskIntent(root, taskId, async (task) => {
@@ -1005,8 +1098,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ taskId, root, mode, query, limit, audit, constraints, responseMode, routingOverride }) => {
       const directRouting = await routeBeforeLedger(root, query, routingOverride);
-      if (!taskId && directRouting && !directRouting.useTokenGraph) {
-        const fallback = directHostFallback(directRouting);
+      if (!taskId && shouldBypassHost(directRouting, routingOverride)) {
+        const fallback = directHostFallback(directRouting!);
         return ok(responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
       }
       return withTaskIntent(root, taskId, async (task) => {
@@ -1049,8 +1142,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     async (input) => {
       const { taskId, root, mode } = input;
       const directRouting = await routeBeforeLedger(root, input.task ?? input.text, input.routingOverride);
-      if (!taskId && directRouting && !directRouting.useTokenGraph) {
-        const fallback = directHostFallback(directRouting);
+      if (!taskId && shouldBypassHost(directRouting, input.routingOverride)) {
+        const fallback = directHostFallback(directRouting!);
         return ok(input.responseMode === "verbose" ? { ...fallback, root: await workspaceRoot(root) } : fallback);
       }
       return withTaskIntent(root, taskId, async (task) => {
@@ -1195,11 +1288,13 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, fullReindex }) => {
       const resolvedRoot = await workspaceRoot(root);
+      const [config, control] = await Promise.all([loadTokenGraphConfig(resolvedRoot), loadRoutingControl(resolvedRoot)]);
+      const indexOptions = projectIndexOptions(config, control);
       const existing = fullReindex ? undefined : await loadProjectIndex(resolvedRoot);
       const result = existing && isSafeProjectIndex(resolvedRoot, existing)
-        ? await updateProjectIndexIncremental(resolvedRoot, existing)
+        ? await updateProjectIndexIncremental(resolvedRoot, existing, indexOptions)
         : {
-            index: await indexProject(resolvedRoot),
+            index: await indexProject(resolvedRoot, indexOptions),
             mode: "full" as const,
             addedFiles: [],
             changedFiles: [],
@@ -1208,13 +1303,14 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
           };
       const project = result.index;
       await saveProjectIndex(resolvedRoot, project);
-      const config = await loadTokenGraphConfig(resolvedRoot);
+      await enforceStorageClassQuotas(resolvedRoot, config.storage);
       let wikiRefreshed = false;
       let wikiWarning: string | undefined;
       if (config.wikiGenerationEnabled) {
         try {
           const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
           await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories, await listAppliedKnowledge(resolvedRoot)));
+          await enforceStorageClassQuotas(resolvedRoot, config.storage);
           wikiRefreshed = true;
         } catch (error) {
           wikiWarning = `Wiki refresh failed: ${(error as Error).message}`;
@@ -1247,7 +1343,11 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         root: z.string().optional().describe("Workspace root to check. Defaults to the MCP server current working directory.")
       })
     },
-    async ({ root }) => ok(await getIndexStatus(await workspaceRoot(root)))
+    async ({ root }) => {
+      const resolvedRoot = await workspaceRoot(root);
+      const [config, control] = await Promise.all([loadTokenGraphConfig(resolvedRoot), loadRoutingControl(resolvedRoot)]);
+      return ok(await getIndexStatus(resolvedRoot, { projectOptions: projectIndexOptions(config, control) }));
+    }
   );
 
   server.registerTool(
@@ -1319,8 +1419,16 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         wikiGenerationEnabled: z.boolean().optional(),
         routingKillSwitch: z.boolean().optional(),
         routing: z.object({ mode: z.enum(["shadow", "enforced", "always-activate", "always-advisory"]).optional(), killSwitch: z.boolean().optional() }).optional(),
-        parser: z.object({ maxFileBytes: z.number().int().min(1).optional(), maxTotalBytes: z.number().int().min(1).optional(), maxSymbols: z.number().int().min(1).optional(), maxNodes: z.number().int().min(1).optional(), perFileTimeoutMs: z.number().int().min(1).optional(), wholeIndexTimeoutMs: z.number().int().min(1).optional(), maxRecursionDepth: z.number().int().min(1).optional(), maxGraphDepth: z.number().int().min(0).optional(), maxGeneratedFiles: z.number().int().min(0).optional(), maxTsconfigChain: z.number().int().min(1).optional(), maxAliases: z.number().int().min(0).optional(), typescriptSource: z.enum(["bundled", "project-opt-in"]).optional() }).optional(),
-        storage: z.object({ maxBytes: z.number().int().min(1).optional(), runRetentionDays: z.number().int().min(0).optional(), cacheRetentionDays: z.number().int().min(0).optional() }).optional(),
+        parser: z.object({ maxFileBytes: z.number().int().min(1).optional(), maxTotalBytes: z.number().int().min(1).optional(), maxSymbols: z.number().int().min(1).optional(), maxNodes: z.number().int().min(1).optional(), perFileTimeoutMs: z.number().int().min(1).optional(), wholeIndexTimeoutMs: z.number().int().min(1).optional(), maxRecursionDepth: z.number().int().min(1).optional(), maxGraphDepth: z.number().int().min(0).optional(), maxGeneratedFiles: z.number().int().min(0).optional(), maxTsconfigChain: z.number().int().min(1).optional(), maxAliases: z.number().int().min(0).optional() }).optional(),
+        storage: z.object({
+          maxBytes: z.number().int().min(1).optional(),
+          runsMaxBytes: z.number().int().min(0).optional(),
+          cacheMaxBytes: z.number().int().min(0).optional(),
+          vaultMaxBytes: z.number().int().min(0).optional(),
+          durableMaxBytes: z.number().int().min(0).optional(),
+          runRetentionDays: z.number().int().min(0).optional(),
+          cacheRetentionDays: z.number().int().min(0).optional()
+        }).optional(),
         runner: z.object({ maxBytes: z.number().int().min(256).optional(), timeoutMs: z.number().int().min(1).optional(), terminateGraceMs: z.number().int().min(1).optional() }).optional(),
         memory: z.object({ projectBriefTargetTokens: z.number().int().min(150).optional(), projectBriefMaxTokens: z.number().int().min(1).optional(), maxRetrievalTokens: z.number().int().min(1).optional() }).optional(),
         responseFormat: z.object({ default: z.enum(["json", "compact-tabular"]).optional() }).optional()

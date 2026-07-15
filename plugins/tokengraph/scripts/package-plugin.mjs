@@ -81,7 +81,7 @@ function buildReleaseReadme(version) {
 
 This folder is the installable TokenGraph ${version} plugin for Codex and Claude Code users.
 
-It includes the self-contained Node.js 22 MCP runtime at \`dist/index.js\`, the bounded command runner at \`dist/cli.js\`, the cross-host lifecycle adapter at \`dist/hooks.js\`, hook and host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
+It includes the self-contained Node.js 22 MCP runtime at \`dist/index.js\`, bundled parser workers at \`dist/typescript-worker.cjs\` and \`dist/polyglot-worker.js\`, the bounded command runner at \`dist/cli.js\`, the cross-host lifecycle adapter at \`dist/hooks.js\`, hook and host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
 
 ## Install
 
@@ -128,7 +128,7 @@ The default surface exposes eight compact tools; the opt-in full surface exposes
 
 Use \`tokengraph_prepare_context\` when planning is needed. Direct query, compress, recall, and analyze calls may omit \`taskId\`; they start a ledger and return the new id. Reuse that id, then end verified work with compact \`tokengraph_task_report({ taskId })\`. Explicit pause is for unfinished work, and verbose reporting is diagnostic only.
 
-The checked-in routing-lifecycle benchmark preserves 100% of critical constraints and recall with zero critical false negatives, but its execution-inclusive release gate fails honestly: the routing-lifecycle median is 5.7 tokens and the execution-inclusive median is -94.3 tokens (19 of 30 tasks non-positive). Every category remains low-confidence, and these fixture estimates are not provider billing counts. JSON remains the default response format because the tabular experiment did not improve both token usage and quality.
+The checked-in deterministic benchmark preserves 100% of critical constraints and recall with zero critical false negatives. Its 28 activated tasks have a +196.5-token execution-inclusive median, +102.5-token p25, and 82.1% non-negative rate; two bounded Stage-0 bypasses are not booked as savings. Every category remains low-confidence, and these fixture estimates are not provider billing counts or autonomous-agent quality proof. JSON remains the default response format because the tabular experiment did not improve both token usage and quality.
 
 The PostToolUse/Stop hook stores only a schema-versioned session hash, task id, trusted root, turn id, and timestamp in the host-provided plugin data directory. It never stores prompts, transcripts, or tool payloads. Normal Stop can request one pause-or-complete report or the exact canonical footer; interrupts and API failures are not completion events. Review and trust the hook definition before enabling it, or disable host hooks and call \`tokengraph_task_report\` explicitly.
 
@@ -173,12 +173,16 @@ async function copyInstallablePlugin(packageDir, packageJson, version) {
   await copyRequiredPath(resolve(pluginRoot, "dist", "index.js"), resolve(packageDir, "dist", "index.js"));
   await copyRequiredPath(resolve(pluginRoot, "dist", "hooks.js"), resolve(packageDir, "dist", "hooks.js"));
   await copyRequiredPath(resolve(pluginRoot, "dist", "cli.js"), resolve(packageDir, "dist", "cli.js"));
+  await copyRequiredPath(resolve(pluginRoot, "dist", "polyglot-worker.js"), resolve(packageDir, "dist", "polyglot-worker.js"));
+  await copyRequiredPath(resolve(pluginRoot, "dist", "typescript-worker.cjs"), resolve(packageDir, "dist", "typescript-worker.cjs"));
   // The build marks the source bundle executable, but release installs launch it
   // with "node", and a copied executable bit flips the committed file mode on
   // filemode-aware systems, breaking the CI reproducibility check.
   await chmod(resolve(packageDir, "dist", "index.js"), 0o644);
   await chmod(resolve(packageDir, "dist", "hooks.js"), 0o644);
   await chmod(resolve(packageDir, "dist", "cli.js"), 0o644);
+  await chmod(resolve(packageDir, "dist", "polyglot-worker.js"), 0o644);
+  await chmod(resolve(packageDir, "dist", "typescript-worker.cjs"), 0o644);
   await copyRequiredPath(resolve(pluginRoot, "hooks"), resolve(packageDir, "hooks"));
   await copyRequiredPath(resolve(pluginRoot, "assets"), resolve(packageDir, "assets"));
   await copyRequiredPath(resolve(pluginRoot, "skills"), resolve(packageDir, "skills"));
@@ -276,6 +280,8 @@ async function runPackage() {
   await assertReadable(resolve(pluginRoot, "dist", "index.js"), "built MCP entry");
   await assertReadable(resolve(pluginRoot, "dist", "hooks.js"), "built lifecycle hook entry");
   await assertReadable(resolve(pluginRoot, "dist", "cli.js"), "built runner entry");
+  await assertReadable(resolve(pluginRoot, "dist", "polyglot-worker.js"), "built polyglot parser worker");
+  await assertReadable(resolve(pluginRoot, "dist", "typescript-worker.cjs"), "built TypeScript parser worker");
   await assertReadable(resolve(pluginRoot, "hooks", "hooks.json"), "lifecycle hook manifest");
 
   if (args.release) {

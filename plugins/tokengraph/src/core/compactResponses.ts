@@ -79,7 +79,7 @@ function compactWarnings(warnings: string[]): string[] {
   }));
 }
 
-function firstReadIndices(files: CompactFile[], paths: string[], limit = 2): number[] {
+function firstReadIndices(files: CompactFile[], paths: string[], limit = 1): number[] {
   return unique(paths).map((path) => files.findIndex((file) => file.path === path)).filter((index) => index >= 0).slice(0, limit);
 }
 
@@ -147,6 +147,22 @@ export function compactModeEnvelope<T>(mode: string, result: T): T & { mode: str
   return { mode, result } as T & { mode: string; result: T };
 }
 
+export function compactSliceResponse(slice: {
+  path: string;
+  startLine: number;
+  endLine: number;
+  text: string;
+  hash: string;
+  contentHash: string;
+}) {
+  return {
+    path: slice.path,
+    range: [slice.startLine, slice.endLine] as [number, number],
+    text: slice.text,
+    verificationHash: slice.hash
+  };
+}
+
 export function compactCompressionEnvelope<T>(mode: string, result: T, estimates?: { original: number; compact: number; overhead: number }) {
   return estimates ? { mode, result, estimates } : result;
 }
@@ -161,7 +177,11 @@ export function compactPrepareEnvelope<T>(input: {
   artifactReference?: unknown;
   deliveredArtifacts?: string[];
   unsupportedLanguageCounts?: Record<string, number>;
-  retrieval?: { capsuleHash: string; readPolicy: { level: string; allowRawReads: boolean; reason: string } };
+  retrieval?: {
+    capsuleHash: string;
+    readPolicy: { level: string; allowRawReads: boolean; reason: string };
+    recommendedRead?: { mode: "slice"; file: string; startLine: number; endLine: number; contentHash: string };
+  };
 }) {
   return {
     mode: input.mode ?? "tokengraph",

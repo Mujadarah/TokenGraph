@@ -118,6 +118,15 @@ export function redactRunnerArguments(args: string[]): string[] {
   return args.map((arg) => redact(arg));
 }
 
+function inferRunMetadata(stdout: string, stderr: string): NonNullable<SavedRun["metadata"]> | undefined {
+  const combined = `${stderr}\n${stdout}`;
+  const errorClass = combined.match(/\b([A-Z][A-Za-z0-9_$]*(?:Error|Exception))\b/)?.[1];
+  const file = combined.match(/((?:[A-Za-z]:[\\/])?(?:[A-Za-z0-9_.@-]+[\\/])+[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+):\d+(?::\d+)?/)?.[1]?.replaceAll("\\", "/");
+  const test = combined.split(/\r?\n/).map((line) => line.trim()).find((line) => /^(?:FAIL|FAILED)\s+\S/i.test(line))?.replace(/^(?:FAIL|FAILED)\s+/i, "");
+  const metadata = { ...(test ? { test } : {}), ...(file ? { file } : {}), ...(errorClass ? { errorClass } : {}) };
+  return Object.keys(metadata).length ? metadata : undefined;
+}
+
 export async function executeRun(options: RunnerOptions, signal?: AbortSignal): Promise<SavedRun> {
   const interactive = options.interactive === true;
   validateCommand(options.command, interactive);
@@ -162,6 +171,8 @@ export async function executeRun(options: RunnerOptions, signal?: AbortSignal): 
   const stderrCapture = stderr.finish();
   binaryOutput = stdout.hasBinary || stderr.hasBinary;
   if (binaryOutput) stderrCapture.text = `${stderrCapture.text}\n[binary output refused]`;
+  const inferredMetadata = inferRunMetadata(stdoutCapture.text, stderrCapture.text);
+  const metadata = inferredMetadata || options.metadata ? { ...(inferredMetadata ?? {}), ...(options.metadata ?? {}) } : undefined;
   return {
     runId: randomUUID(), root: options.root, command: options.command, args: redactRunnerArguments(options.args ?? []),
     startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(),
@@ -169,7 +180,7 @@ export async function executeRun(options: RunnerOptions, signal?: AbortSignal): 
     exitCode: result.code, signal: result.signal, timedOut,
     stdout: stdoutCapture.text, stderr: stderrCapture.text, stdoutTruncated: stdoutCapture.truncated, stderrTruncated: stderrCapture.truncated,
     ...(binaryOutput ? { binaryOutput: true } : {}),
-    ...(options.metadata ? { metadata: options.metadata } : {})
+    ...(metadata ? { metadata } : {})
   };
 }
 

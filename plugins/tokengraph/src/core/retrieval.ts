@@ -1,12 +1,12 @@
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { open } from "node:fs/promises";
 
-import { artifactKey, createStableArtifact, type StableArtifact } from "./artifact.js";
+import { artifactKey, createStableArtifact, shouldSuppressArtifact, type StableArtifact } from "./artifact.js";
 import { canonicalHash } from "./canonical.js";
 import { resolveConfinedPath } from "./storage.js";
 import type { CodeFile, CodeSymbol, ProjectIndex } from "./types.js";
 
 export interface RetrievalCapsule {
-  taskId: string;
   query: string;
   files: Array<Pick<CodeFile, "path" | "kind" | "language" | "estimatedTokens" | "contentHash">>;
   symbols: Array<Pick<CodeSymbol, "name" | "kind" | "filePath" | "exported" | "startLine" | "endLine">>;
@@ -26,6 +26,11 @@ export interface ReadPolicyState {
   level: RetrievalLevel;
   allowRawReads: boolean;
   reason: string;
+  targetedReads?: number;
+  recommendedReadsThisResponse?: number;
+  requiresReassessment?: boolean;
+  hasReassessed?: boolean;
+  evidenceGap?: string;
 }
 
 export interface DeltaHandshake {
@@ -37,6 +42,13 @@ export interface DeltaHandshake {
 export interface ArtifactDelta<T> {
   handshake: DeltaHandshake;
   artifacts: Array<StableArtifact<T>>;
+  artifactReferences: Array<{ id: string; hash: string }>;
+}
+
+export interface ExactReadRecommendation {
+  allowed: boolean;
+  reason: string;
+  state: ReadPolicyState;
 }
 
 function terms(value: string): string[] {
@@ -84,27 +96,42 @@ export function expandGraph(index: ProjectIndex, paths: string[], depth = 1): st
   return [...selected].sort();
 }
 
-export function buildRetrievalCapsule(taskId: string, query: string, index: ProjectIndex, paths: string[] = []): RetrievalCapsule {
+export function buildRetrievalCapsule(_taskId: string, query: string, index: ProjectIndex, paths: string[] = [], graphDepth = 1): RetrievalCapsule {
   const selectedPaths = new Set(paths.length ? paths : rankFilesBm25(index, query, 8).map((entry) => entry.path));
   const files = index.files.filter((file) => selectedPaths.has(file.path)).map(({ path, kind, language, estimatedTokens, contentHash }) => ({ path, kind, language, estimatedTokens, contentHash }));
   const symbols = index.symbols.filter((symbol) => selectedPaths.has(symbol.filePath)).map(({ name, kind, filePath, exported, startLine, endLine }) => ({ name, kind, filePath, exported, ...(startLine === undefined ? {} : { startLine }), ...(endLine === undefined ? {} : { endLine }) }));
-  const references = expandGraph(index, [...selectedPaths]);
-  const content = { taskId, query, files, symbols, references };
+  const references = expandGraph(index, [...selectedPaths], graphDepth);
+  const content = { query, files, symbols, references };
   return { ...content, hash: canonicalHash(content) };
 }
 
 export function capsuleArtifact(capsule: RetrievalCapsule): StableArtifact<RetrievalCapsule> {
-  return createStableArtifact(`capsule/${capsule.taskId}`, capsule);
+  return createStableArtifact("capsule/retrieval", capsule, 2);
 }
 
-export async function readExactSlice(root: string, path: string, startLine: number, endLine: number, maxBytes = 64 * 1024): Promise<{ path: string; startLine: number; endLine: number; text: string; hash: string }> {
+export async function readExactSlice(root: string, path: string, startLine: number, endLine: number, maxBytes = 64 * 1024, expectedContentHash?: string, maxSourceBytes = 512 * 1024): Promise<{ path: string; startLine: number; endLine: number; text: string; hash: string; contentHash: string }> {
   if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine - startLine > 500) throw new Error("Exact slice line bounds are invalid.");
+  if (!Number.isInteger(maxSourceBytes) || maxSourceBytes < 1) throw new Error("Exact slice source byte limit is invalid.");
   const filePath = await resolveConfinedPath(root, path);
-  const text = await readFile(filePath, "utf8");
-  const lines = text.split(/\r?\n/).slice(startLine - 1, endLine);
+  const handle = await open(filePath, "r");
+  let text: string;
+  try {
+    const buffer = Buffer.alloc(maxSourceBytes + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > maxSourceBytes) throw new Error("Exact slice source file exceeds the configured byte limit.");
+    text = buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+  const normalizedText = text.replace(/\r\n?/g, "\n");
+  const contentHash = createHash("sha256").update(normalizedText).digest("hex");
+  if (expectedContentHash !== undefined && contentHash !== expectedContentHash) {
+    throw new Error("The requested exact slice does not match the current source hash after reading the file.");
+  }
+  const lines = normalizedText.split("\n").slice(startLine - 1, endLine);
   const slice = lines.join("\n");
   if (Buffer.byteLength(slice, "utf8") > maxBytes) throw new Error("Exact slice exceeds the configured byte limit.");
-  return { path, startLine, endLine: startLine + lines.length - 1, text: slice, hash: canonicalHash({ path, startLine, endLine, text: slice }) };
+  return { path, startLine, endLine: startLine + lines.length - 1, text: slice, hash: canonicalHash({ path, startLine, endLine, text: slice }), contentHash };
 }
 
 export function escalateReadPolicy(current: ReadPolicyState, requested: RetrievalLevel): ReadPolicyState {
@@ -113,13 +140,57 @@ export function escalateReadPolicy(current: ReadPolicyState, requested: Retrieva
   return {
     level: next,
     allowRawReads: current.allowRawReads || next === "L3" || next === "L4",
-    reason: next === current.level ? current.reason : `escalated to ${next} for validated task evidence`
+    reason: next === current.level ? current.reason : `escalated to ${next} for validated task evidence`,
+    targetedReads: current.targetedReads ?? 0,
+    recommendedReadsThisResponse: current.recommendedReadsThisResponse ?? 0,
+    requiresReassessment: current.requiresReassessment ?? false,
+    hasReassessed: current.hasReassessed ?? false,
+    ...(current.evidenceGap ? { evidenceGap: current.evidenceGap } : {})
   };
 }
 
-export function deliverDelta<T>(expected: DeltaHandshake, actual: DeltaHandshake, artifacts: Array<StableArtifact<T>>): ArtifactDelta<T> {
+export function startReadPolicyResponse(current: ReadPolicyState): ReadPolicyState {
+  return { ...current, recommendedReadsThisResponse: 0 };
+}
+
+export function recommendExactRead(current: ReadPolicyState, options: { reassessed?: boolean; evidenceGap?: string } = {}): ExactReadRecommendation {
+  const targetedReads = current.targetedReads ?? 0;
+  const recommendedReadsThisResponse = current.recommendedReadsThisResponse ?? 0;
+  const evidenceGap = options.evidenceGap?.trim();
+  const hasReassessed = current.hasReassessed === true || options.reassessed === true;
+  const state = {
+    ...current,
+    targetedReads,
+    recommendedReadsThisResponse,
+    requiresReassessment: current.requiresReassessment ?? false,
+    hasReassessed
+  };
+  if (!current.allowRawReads) return { allowed: false, reason: "Exact reads require an evidence-backed L3 or L4 escalation.", state };
+  if (recommendedReadsThisResponse >= 1) return { allowed: false, reason: "At most one exact read may be recommended per response.", state };
+  if (targetedReads >= 3 && !hasReassessed) return { allowed: false, reason: "Evidence sufficiency reassessment is required after three targeted reads.", state: { ...state, requiresReassessment: true } };
+  if (targetedReads >= 3 && !evidenceGap) return { allowed: false, reason: "Further exact reads require an explicit evidence gap.", state };
+  const nextReads = targetedReads + 1;
+  return {
+    allowed: true,
+    reason: evidenceGap ? `Exact read justified by evidence gap: ${evidenceGap}` : "Exact read is within the targeted-read budget.",
+    state: {
+      ...state,
+      targetedReads: nextReads,
+      recommendedReadsThisResponse: 1,
+      requiresReassessment: nextReads >= 3 && !hasReassessed,
+      ...(evidenceGap ? { evidenceGap } : {})
+    }
+  };
+}
+
+export function deliverDelta<T>(expected: DeltaHandshake, actual: DeltaHandshake, artifacts: Array<StableArtifact<T>>, knownArtifacts?: string[]): ArtifactDelta<T> {
   if (expected.handshakeId !== actual.handshakeId || expected.hostContextId !== actual.hostContextId || actual.sequence !== expected.sequence + 1) {
     throw new Error("Host context handshake mismatch; refusing delta delivery.");
   }
-  return { handshake: actual, artifacts: artifacts.filter((artifact, index, all) => all.findIndex((candidate) => artifactKey(candidate) === artifactKey(artifact)) === index) };
+  const unique = artifacts.filter((artifact, index, all) => all.findIndex((candidate) => artifactKey(candidate) === artifactKey(artifact)) === index);
+  return {
+    handshake: actual,
+    artifacts: unique.filter((artifact) => !shouldSuppressArtifact(artifact, knownArtifacts)),
+    artifactReferences: unique.filter((artifact) => shouldSuppressArtifact(artifact, knownArtifacts)).map(({ id, hash }) => ({ id, hash }))
+  };
 }

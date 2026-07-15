@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 
 export interface JsonTokenGraphStoreOptions {
   schemaVersion: number;
@@ -33,7 +33,9 @@ async function retryTransientWindowsFs<T>(operation: () => Promise<T>): Promise<
 }
 
 export async function withFileLock<T>(lockPath: string, operation: () => Promise<T>): Promise<T> {
+  await assertNoSymbolicLinkComponents(lockPath);
   await mkdir(dirname(lockPath), { recursive: true });
+  await assertNoSymbolicLinkComponents(lockPath);
   for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
     try {
       const handle = await open(lockPath, "wx", 0o600);
@@ -78,7 +80,9 @@ export async function writeJsonAtomic(path: string, value: unknown): Promise<voi
 
 export async function writeTextAtomic(path: string, content: string): Promise<void> {
   const directory = dirname(path);
+  await assertNoSymbolicLinkComponents(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  await assertNoSymbolicLinkComponents(path);
   if (process.platform !== "win32") await chmod(directory, 0o700);
   const tempPath = join(directory, `.${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
   try {
@@ -87,6 +91,24 @@ export async function writeTextAtomic(path: string, content: string): Promise<vo
     if (process.platform !== "win32") await chmod(path, 0o600);
   } finally {
     await rm(tempPath, { force: true });
+  }
+}
+
+async function assertNoSymbolicLinkComponents(path: string): Promise<void> {
+  const absolute = resolve(path);
+  const parsed = parse(absolute);
+  let current = parsed.root;
+  const remainder = absolute.slice(parsed.root.length).split(/[\\/]+/).filter(Boolean);
+  for (const segment of remainder) {
+    current = join(current, segment);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) {
+        throw new Error(`State write cannot traverse symbolic-link or junction component: ${current}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
   }
 }
 

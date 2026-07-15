@@ -63,9 +63,16 @@ export interface TokenGraphConfig {
     maxGeneratedFiles: number;
     maxTsconfigChain: number;
     maxAliases: number;
-    typescriptSource: "bundled" | "project-opt-in";
   };
-  storage: { maxBytes: number; runRetentionDays: number; cacheRetentionDays: number };
+  storage: {
+    maxBytes: number;
+    runsMaxBytes: number;
+    cacheMaxBytes: number;
+    vaultMaxBytes: number;
+    durableMaxBytes: number;
+    runRetentionDays: number;
+    cacheRetentionDays: number;
+  };
   runner: { maxBytes: number; timeoutMs: number; terminateGraceMs: number };
   memory: { projectBriefTargetTokens: number; projectBriefMaxTokens: number; maxRetrievalTokens: number };
   responseFormat: { default: "json" | "compact-tabular" };
@@ -109,7 +116,7 @@ export interface CodeSymbol {
   endLine?: number;
   signature?: string;
   summary?: string;
-  provenance?: "tree-sitter" | "heuristic";
+  provenance?: "typescript" | "tree-sitter" | "heuristic";
   parserVersion?: string;
 }
 
@@ -124,7 +131,7 @@ export interface SymbolChunk {
   signature?: string;
   summary?: string;
   edges?: string[];
-  provenance?: "tree-sitter" | "heuristic";
+  provenance?: "typescript" | "tree-sitter" | "heuristic";
   contentHash?: string;
   parserVersion?: string;
 }
@@ -272,6 +279,7 @@ export interface SqlGraph {
 
 export interface ProjectIndex extends CodeGraph {
   schemaVersion?: number;
+  repositoryIdentity?: RepositoryIdentity;
   scannedAt: string;
   fingerprint: string;
   scanSignature?: string;

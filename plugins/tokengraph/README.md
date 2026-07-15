@@ -1,6 +1,6 @@
 # TokenGraph Source Plugin
 
-This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.21.0. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
+This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.21.1. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
 
 ## Development
 
@@ -15,7 +15,7 @@ pnpm package:plugin -- --json
 pnpm package:plugin -- --release --json
 ```
 
-`pnpm build` produces self-contained Node.js 22 entries at `dist/index.js` for MCP, `dist/cli.js` for bounded saved-run capture, and `dist/hooks.js` for lifecycle hooks. Run `node ./dist/cli.js run -- <command> [args...]` to capture a redacted, bounded command result. `pnpm package:plugin` creates a standalone Codex/Claude marketplace directory and deterministic ZIP under the repository `artifacts/` directory. `pnpm package:plugin -- --release` regenerates the committed `release/tokengraph/` plugin.
+`pnpm build` produces self-contained Node.js 22 entries at `dist/index.js` for MCP, `dist/typescript-worker.cjs` and `dist/polyglot-worker.js` for isolated bundled parsing, `dist/cli.js` for bounded saved-run capture, and `dist/hooks.js` for lifecycle hooks. Run `node ./dist/cli.js run -- <command> [args...]` to capture a redacted, bounded command result. `pnpm package:plugin` creates a standalone Codex/Claude marketplace directory and deterministic ZIP under the repository `artifacts/` directory. `pnpm package:plugin -- --release` regenerates the committed `release/tokengraph/` plugin.
 
 ## Workspace trust
 

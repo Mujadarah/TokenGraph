@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildRetrievalCapsule, deliverDelta, escalateReadPolicy, expandGraph, rankFilesBm25, readExactSlice } from "../src/core/retrieval.js";
+import { buildRetrievalCapsule, capsuleArtifact, deliverDelta, escalateReadPolicy, expandGraph, rankFilesBm25, readExactSlice, recommendExactRead, startReadPolicyResponse } from "../src/core/retrieval.js";
 import type { ProjectIndex } from "../src/core/types.js";
 
 function index(): ProjectIndex {
@@ -23,11 +23,17 @@ describe("deterministic retrieval", () => {
     const project = index();
     expect(rankFilesBm25(project, "authenticate", 2)[0]).toMatchObject({ path: "src/auth.ts", rank: 1 });
     expect(expandGraph(project, ["src/user.ts"], 1)).toEqual(["src/auth.ts", "src/user.ts"]);
+    expect(buildRetrievalCapsule("task-1", "user", project, ["src/user.ts"], 0).references).toEqual(["src/user.ts"]);
     const first = buildRetrievalCapsule("task-1", "authenticate", project);
     const second = buildRetrievalCapsule("task-1", "authenticate", project);
     expect(first).toEqual(second);
     expect(first.hash).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(first)).not.toContain("source text");
+
+    const otherTask = buildRetrievalCapsule("task-2", "authenticate", project);
+    expect(otherTask).toEqual(first);
+    expect(capsuleArtifact(otherTask)).toEqual(capsuleArtifact(first));
+    expect(JSON.stringify(capsuleArtifact(first))).not.toContain("task-1");
   });
 
   it("reads only confined exact slices and escalates monotonically", async () => {
@@ -35,8 +41,13 @@ describe("deterministic retrieval", () => {
     try {
       await mkdir(join(root, "src"), { recursive: true });
       await writeFile(join(root, "src", "a.ts"), "one\ntwo\nthree\n");
-      const slice = await readExactSlice(root, "src/a.ts", 2, 3);
+      const currentContentHash = "b6285c57e8797db5d4c51c80d6f11938afda9b11c6a003549709189e9b4b92a2";
+      const slice = await readExactSlice(root, "src/a.ts", 2, 3, 64 * 1024, currentContentHash);
       expect(slice.text).toBe("two\nthree");
+      expect(slice.contentHash).toBe(currentContentHash);
+      await writeFile(join(root, "src", "a.ts"), "one\nchanged\nthree\n");
+      await expect(readExactSlice(root, "src/a.ts", 2, 3, 64 * 1024, currentContentHash)).rejects.toThrow(/current source hash/i);
+      await expect(readExactSlice(root, "src/a.ts", 1, 1, 64 * 1024, undefined, 1)).rejects.toThrow(/source file.*byte limit/i);
       await expect(readExactSlice(root, "../outside.ts", 1, 1)).rejects.toThrow(/confined|relative/i);
       const policy = escalateReadPolicy({ level: "L1", allowRawReads: false, reason: "capsule" }, "L3");
       expect(policy).toMatchObject({ level: "L3", allowRawReads: true });
@@ -47,7 +58,25 @@ describe("deterministic retrieval", () => {
 
   it("requires a matching host handshake for delta delivery", () => {
     const artifact = { id: "a", hash: "h", artifactSchemaVersion: 1, content: { value: 1 } };
-    expect(deliverDelta({ handshakeId: "h", hostContextId: "c", sequence: 0 }, { handshakeId: "h", hostContextId: "c", sequence: 1 }, [artifact])).toMatchObject({ handshake: { sequence: 1 }, artifacts: [artifact] });
+    expect(deliverDelta({ handshakeId: "h", hostContextId: "c", sequence: 0 }, { handshakeId: "h", hostContextId: "c", sequence: 1 }, [artifact])).toMatchObject({ handshake: { sequence: 1 }, artifacts: [artifact], artifactReferences: [] });
+    expect(deliverDelta({ handshakeId: "h", hostContextId: "c", sequence: 0 }, { handshakeId: "h", hostContextId: "c", sequence: 1 }, [artifact], ["a@h"])).toMatchObject({ artifacts: [], artifactReferences: [{ id: "a", hash: "h" }] });
+    expect(deliverDelta({ handshakeId: "h", hostContextId: "c", sequence: 0 }, { handshakeId: "h", hostContextId: "c", sequence: 1 }, [artifact], ["other@h"])).toMatchObject({ artifacts: [artifact], artifactReferences: [] });
     expect(() => deliverDelta({ handshakeId: "h", hostContextId: "c", sequence: 0 }, { handshakeId: "h", hostContextId: "other", sequence: 1 }, [artifact])).toThrow(/handshake/i);
+  });
+
+  it("limits exact-read advice to one per response and forces reassessment after three reads", () => {
+    let state = escalateReadPolicy({ level: "L1", allowRawReads: false, reason: "capsule" }, "L3");
+    for (let read = 0; read < 3; read += 1) {
+      state = startReadPolicyResponse(state);
+      const recommendation = recommendExactRead(state);
+      expect(recommendation.allowed).toBe(true);
+      state = recommendation.state;
+      expect(recommendExactRead(state)).toMatchObject({ allowed: false, reason: expect.stringMatching(/one exact read/i) });
+    }
+    expect(state.requiresReassessment).toBe(true);
+    state = startReadPolicyResponse(state);
+    expect(recommendExactRead(state)).toMatchObject({ allowed: false, reason: expect.stringMatching(/reassessment/i) });
+    expect(recommendExactRead(state, { reassessed: true })).toMatchObject({ allowed: false, reason: expect.stringMatching(/evidence gap/i) });
+    expect(recommendExactRead(state, { reassessed: true, evidenceGap: "Need the concrete generic constraint." })).toMatchObject({ allowed: true, state: { targetedReads: 4, requiresReassessment: false } });
   });
 });

@@ -11,8 +11,11 @@ import {
   discardEmptyTaskLedger,
   loadTaskLedger,
   pruneTaskLedgers,
+  recordTaskArtifactDelivery,
   recordTaskEvent,
-  setTaskDisposition
+  setTaskDisposition,
+  updateTaskReadPolicy,
+  updateTaskRoutingObservation
 } from "../src/core/taskLedger.js";
 import type { TaskEvent } from "../src/core/taskLedger.js";
 
@@ -56,7 +59,7 @@ describe("task ledger persistence", () => {
 
     expect(ledger).toMatchObject({
       schemaId: "tokengraph-task-ledger",
-      schemaVersion: 1,
+      schemaVersion: 2,
       host: "codex",
       sessionId: "session-1",
       turnId: "turn-1",
@@ -66,6 +69,32 @@ describe("task ledger persistence", () => {
     });
     expect(ledger.taskId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     expect(JSON.parse(await readFile(join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`), "utf8"))).toEqual(ledger);
+  });
+
+  it("persists routing observations and read-policy state and migrates v1 ledgers", async () => {
+    const root = await makeRoot();
+    const created = await createTaskLedger(root, { host: "codex" });
+    const legacy = structuredClone(created) as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 1;
+    delete legacy.repositoryIdentity;
+    await writeFile(ledgerPath(root, created.taskId), JSON.stringify(legacy));
+
+    const migrated = await loadTaskLedger(root, created.taskId);
+    expect(migrated).toMatchObject({ schemaVersion: 2, repositoryIdentity: expect.objectContaining({ repositoryId: expect.any(String) }) });
+    expect(JSON.parse(await readFile(ledgerPath(root, created.taskId), "utf8"))).toMatchObject({ schemaVersion: 2, repositoryIdentity: expect.any(Object) });
+
+    await updateTaskRoutingObservation(root, created.taskId, {
+      decision: "activate", stage: 2, reason: "shadow candidate", expectedOverheadTokens: 24, mode: "shadow", enforced: false
+    });
+    const updated = await updateTaskReadPolicy(root, created.taskId, {
+      level: "L3", allowRawReads: true, reason: "evidence gap", targetedReads: 2, recommendedReadsThisResponse: 1
+    });
+    expect(updated.routingObservation).toMatchObject({ decision: "activate", mode: "shadow", enforced: false });
+    expect(updated.readPolicy).toMatchObject({ level: "L3", targetedReads: 2 });
+    expect(await loadTaskLedger(root, created.taskId)).toMatchObject({ routingObservation: updated.routingObservation, readPolicy: updated.readPolicy });
+    await recordTaskArtifactDelivery(root, created.taskId, ["capsule:a", "capsule:a", "brief:b"]);
+    await recordTaskArtifactDelivery(root, created.taskId, ["brief:b", "wiki:c"]);
+    expect((await loadTaskLedger(root, created.taskId))?.deliveredArtifacts).toEqual(["capsule:a", "brief:b", "wiki:c"]);
   });
 
   it("rejects non-UUID task ids before path construction", async () => {

@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { readFile, rename } from "node:fs/promises";
+import { resolve } from "node:path";
 
+import { filterUntrustedSourceText } from "./storagePolicy.js";
 import { tokenize } from "./token.js";
-import { withFileLock } from "./storage.js";
+import { withFileLock, writeJsonAtomic } from "./storage.js";
 import type { MemoryConflict, MemoryEntry, MemoryInput, MemoryRecall, MemoryStatus, MemoryUpdateInput } from "./types.js";
 
 interface MemoryListOptions {
@@ -25,6 +26,20 @@ function nowIso(): string {
 
 function unique(values: string[] | undefined): string[] {
   return Array.from(new Set((values ?? []).filter((value) => typeof value === "string" && value.trim().length > 0).map((value) => value.trim())));
+}
+
+function isRepositorySource(source: string | undefined): boolean {
+  return /(?:repository|workspace|indexed|untrusted|source[-_ ]?(?:text|prose)|file[-_ ]?content)/i.test(source ?? "");
+}
+
+function sanitizeRepositoryMemory<T extends Pick<MemoryEntry, "title" | "body" | "source" | "evidence">>(memory: T): T {
+  if (!isRepositorySource(memory.source)) return memory;
+  return {
+    ...memory,
+    title: filterUntrustedSourceText(memory.title),
+    body: filterUntrustedSourceText(memory.body),
+    evidence: memory.evidence.map(filterUntrustedSourceText).filter(Boolean)
+  };
 }
 
 function scoreMemory(memory: MemoryEntry, terms: string[]): number {
@@ -59,7 +74,7 @@ function normalizeMemory(value: unknown): MemoryEntry | undefined {
   }
   const status: MemoryStatus = candidate.status === "deprecated" || candidate.status === "deleted" ? candidate.status : "active";
   const createdAt = candidate.createdAt;
-  return {
+  return sanitizeRepositoryMemory<MemoryEntry>({
     type: candidate.type,
     title: candidate.title,
     body: candidate.body,
@@ -79,12 +94,12 @@ function normalizeMemory(value: unknown): MemoryEntry | undefined {
     supersededBy: unique(candidate.supersededBy),
     source: typeof candidate.source === "string" && candidate.source.trim() ? candidate.source : DEFAULT_SOURCE,
     evidence: unique(candidate.evidence)
-  };
+  });
 }
 
 function createMemory(input: MemoryInput): MemoryEntry {
   const timestamp = nowIso();
-  return {
+  return sanitizeRepositoryMemory<MemoryEntry>({
     type: input.type,
     title: input.title,
     body: input.body,
@@ -102,11 +117,11 @@ function createMemory(input: MemoryInput): MemoryEntry {
     supersededBy: unique(input.supersededBy),
     source: input.source?.trim() || DEFAULT_SOURCE,
     evidence: unique(input.evidence)
-  };
+  });
 }
 
 function mergeMemory(memory: MemoryEntry, update: MemoryUpdateInput): MemoryEntry {
-  return {
+  return sanitizeRepositoryMemory<MemoryEntry>({
     ...memory,
     ...update,
     tags: update.tags ? unique(update.tags) : memory.tags,
@@ -123,7 +138,7 @@ function mergeMemory(memory: MemoryEntry, update: MemoryUpdateInput): MemoryEntr
     confidence: update.confidence ?? memory.confidence,
     source: update.source?.trim() || memory.source,
     updatedAt: nowIso()
-  };
+  });
 }
 
 function filterByStatus(memories: MemoryEntry[], options: MemoryListOptions): MemoryEntry[] {
@@ -363,28 +378,10 @@ export class MemoryStore {
   }
 
   private async writeAtomic(memories: MemoryEntry[]): Promise<void> {
-    const directory = dirname(this.filePath);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    if (process.platform !== "win32") await chmod(directory, 0o700);
-    const tempPath = join(directory, `.memory-${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
-    try {
-      await writeFile(
-        tempPath,
-        `${JSON.stringify(
-          {
-            schemaVersion: CURRENT_MEMORY_SCHEMA_VERSION,
-            memories
-          },
-          null,
-          2
-        )}\n`,
-        { mode: 0o600 }
-      );
-      await rename(tempPath, this.filePath);
-      if (process.platform !== "win32") await chmod(this.filePath, 0o600);
-    } finally {
-      await rm(tempPath, { force: true });
-    }
+    await writeJsonAtomic(this.filePath, {
+      schemaVersion: CURRENT_MEMORY_SCHEMA_VERSION,
+      memories
+    });
   }
 
   private async quarantineCorruptFile(): Promise<void> {

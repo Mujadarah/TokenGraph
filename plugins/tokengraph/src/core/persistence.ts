@@ -2,7 +2,7 @@ import { readFile, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { canonicalPersistenceLockKey, quarantineCorruptJson, resolveConfinedPath, withFileLock, writeJsonAtomic, writeTextAtomic, writeTextAtomicConfined, SAFE_WIKI_SLUG_PATTERN } from "./storage.js";
-import { isGitWorkspace, resolveRepositoryStateDirectory } from "./repositoryIdentity.js";
+import { getRepositoryIdentity, resolveRepositoryStateDirectory } from "./repositoryIdentity.js";
 import type { ProjectIndex, ProjectWiki, WikiPage } from "./types.js";
 import type { VaultNote } from "./vaultProjection.js";
 
@@ -122,13 +122,12 @@ export async function saveProjectIndex(root: string, index: ProjectIndex): Promi
   if (typeof index.schemaVersion === "number" && index.schemaVersion > 3) {
     throw new Error(`Unsupported newer TokenGraph index schema version ${index.schemaVersion}; refusing to overwrite it.`);
   }
-  const repositoryPath = await repositoryIndexPath(root);
-  const repositoryKey = await canonicalPersistenceLockKey(repositoryPath);
-  await withFileLock(`${repositoryKey}.lock`, async () => {
-    await writeJsonAtomic(repositoryPath, index);
-    // Non-git workspaces retain the legacy local path; git repositories keep the
-    // authoritative index only in the common repository state directory.
-    if (!(await isGitWorkspace(root))) await writeJsonAtomic(indexPath(root), index);
+  const worktreePath = indexPath(root);
+  const worktreeKey = await canonicalPersistenceLockKey(worktreePath);
+  await withFileLock(`${worktreeKey}.lock`, async () => {
+    // Index snapshots are derived caches and remain worktree-scoped. Repository
+    // knowledge uses the git-common store, but branch/HEAD snapshots must not.
+    await writeJsonAtomic(worktreePath, index);
   });
 }
 
@@ -167,11 +166,23 @@ function isProjectIndex(value: unknown): value is ProjectIndex {
 }
 
 export async function loadProjectIndex(root: string): Promise<ProjectIndex | undefined> {
-  const paths = [await repositoryIndexPath(root), indexPath(root)];
+  const paths = [indexPath(root), await repositoryIndexPath(root)];
+  const currentIdentity = await getRepositoryIdentity(root);
   for (const path of paths.filter((candidate, index, all) => all.indexOf(candidate) === index)) {
     try {
       const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
-      if (isProjectIndex(parsed)) return parsed;
+      if (isProjectIndex(parsed)) {
+        if (resolve(parsed.root) !== resolve(root)) continue;
+        const storedIdentity = parsed.repositoryIdentity;
+        if (storedIdentity && (
+          storedIdentity.repositoryId !== currentIdentity.repositoryId ||
+          storedIdentity.repositoryFingerprint !== currentIdentity.repositoryFingerprint ||
+          storedIdentity.worktreeId !== currentIdentity.worktreeId ||
+          storedIdentity.branch !== currentIdentity.branch ||
+          storedIdentity.headCommit !== currentIdentity.headCommit
+        )) continue;
+        return parsed;
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       if (error instanceof SyntaxError) {

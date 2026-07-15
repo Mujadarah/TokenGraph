@@ -7,6 +7,9 @@ import { buildContextPlan } from "../src/core/planner.js";
 import { indexProject } from "../src/core/projectIndexer.js";
 import { assessChangeRisk } from "../src/core/regressionRisk.js";
 import { reviewMemories } from "../src/core/review.js";
+import { executeRun, summarizeRun, type SavedRunSummary } from "../src/core/runner.js";
+import { readExactSlice } from "../src/core/retrieval.js";
+import { adviseRouting } from "../src/core/routingAdvisor.js";
 import { TASK_ESTIMATOR_VERSION, type TaskCalibration } from "../src/core/taskEstimator.js";
 import { estimateTokens } from "../src/core/token.js";
 import { buildTaskReport, formatTaskReportFooter } from "../src/core/taskEstimator.js";
@@ -25,7 +28,8 @@ import {
   NO_RAW_READ_GUIDANCE,
   compactPlanResponse,
   compactRecallResponse,
-  compactRiskResponse
+  compactRiskResponse,
+  compactSliceResponse
 } from "../src/core/compactResponses.js";
 import type { MemoryEntry, ProjectIndex } from "../src/core/types.js";
 
@@ -53,6 +57,7 @@ export interface BenchmarkTask {
   expectedTests: string[];
   allowRawReads?: boolean;
   targetedRawReadsAllowed: boolean;
+  requiresExactSlice?: boolean;
 }
 
 export interface BenchmarkCorpus {
@@ -78,6 +83,13 @@ interface TaskEvidence {
   expectedCompactReference: string;
 }
 
+interface RunnerFixture {
+  rawOutput: string;
+  summary: SavedRunSummary;
+  summaryText: string;
+  logicalCommand: string;
+}
+
 interface BenchmarkEvidence {
   schemaId: "tokengraph-benchmark-evidence";
   schemaVersion: 1;
@@ -98,12 +110,13 @@ export interface TaskMetrics {
   netEstimatedSavings: number;
   executionInclusiveNetSavings: number;
   calibrationResidual: number;
+  economicsResult: "positive" | "non-positive";
   qualityResult: "passed" | "failed";
   failureReasons: string[];
 }
 
 export interface BenchmarkBaselineArtifact {
-  label: "recommended-raw-reads";
+  label: "recommended-raw-reads" | "raw-run-output";
   files: string[];
   tokens: number;
   fullIndexDumpTokens: number;
@@ -117,6 +130,8 @@ interface GateInput {
   requiredFileRecall: number;
   medianNetSavings: number;
   executionInclusiveMedian: number;
+  executionInclusiveP25: number;
+  nonNegativeActivatedRate: number;
   baselineRequiredFileRecall: number;
 }
 
@@ -166,6 +181,7 @@ export function validateCorpus(value: unknown): { tasks: BenchmarkTask[]; errors
       !Array.isArray(candidate.expectedTests) ||
       !candidate.expectedTests.every((entry) => typeof entry === "string") ||
       (candidate.allowRawReads !== undefined && typeof candidate.allowRawReads !== "boolean") ||
+      (candidate.requiresExactSlice !== undefined && typeof candidate.requiresExactSlice !== "boolean") ||
       typeof candidate.targetedRawReadsAllowed !== "boolean"
     ) {
       errors.push(`Task at index ${index} is malformed.`);
@@ -232,6 +248,8 @@ export function evaluateReleaseGate(input: GateInput): { passed: boolean; failur
   if (input.requiredFileRecall < input.baselineRequiredFileRecall) failureReasons.push("Required-file recall regressed below the checked-in baseline.");
   if (input.medianNetSavings <= 0) failureReasons.push("Median net savings must be positive after tool and footer overhead.");
   if (input.executionInclusiveMedian <= 0) failureReasons.push("Execution-inclusive median net savings must be positive after targeted reads.");
+  if (input.executionInclusiveP25 < 0) failureReasons.push("Execution-inclusive p25 net savings must be non-negative after targeted reads.");
+  if (input.nonNegativeActivatedRate < 0.8) failureReasons.push("At least 80 percent of activated tasks must have non-negative execution-inclusive savings.");
   return { passed: failureReasons.length === 0, failureReasons };
 }
 
@@ -273,6 +291,30 @@ async function rawBaseline(root: string, files: string[]): Promise<{
   }
   const text = parts.map((part) => part.text).join("\n");
   return { text, tokens: estimateTokens(text), files: parts };
+}
+
+async function executeRunnerFixture(task: BenchmarkTask, root: string): Promise<RunnerFixture> {
+  const error = `Error: ${task.criticalConstraints.join(" ")}`;
+  const tests = task.expectedTests.map((path) => `FAIL ${path}`);
+  const frames = task.requiredFiles.map((path, index) => `    at benchmarkFrame${index + 1} (${path}:1:1)`);
+  const noise = Array.from({ length: 80 }, () => "debug trace: retrying deterministic fixture step with unchanged intermediate state");
+  const rawOutput = canonicalBenchmarkText([error, ...tests, ...frames, ...noise, ""].join("\n"));
+  const encoded = Buffer.from(rawOutput, "utf8").toString("base64");
+  const run = await executeRun({
+    root,
+    command: process.execPath,
+    args: ["-e", `process.stderr.write(Buffer.from(${JSON.stringify(encoded)}, "base64")); process.exitCode = 1;`],
+    timeoutMs: 10_000,
+    maxBytes: 64 * 1024,
+    metadata: { ...(task.expectedTests[0] ? { test: task.expectedTests[0] } : {}), ...(task.requiredFiles[0] ? { file: task.requiredFiles[0] } : {}), errorClass: "Error" }
+  });
+  const summary = { ...summarizeRun(run), runId: `benchmark-${task.id}` };
+  return {
+    rawOutput,
+    summary,
+    summaryText: JSON.stringify({ ...summary, stdoutTruncated: run.stdoutTruncated, stderrTruncated: run.stderrTruncated }),
+    logicalCommand: `tokengraph run -- benchmark-fixture ${task.id}`
+  };
 }
 
 function changedFiles(evidence: TaskEvidence, project: ProjectIndex): string[] {
@@ -391,7 +433,7 @@ function firstReadPaths(wire: { content: Array<{ type: "text"; text: string }> }
   return [...new Set(candidate.firstReads
     .filter((index): index is number => Number.isInteger(index) && index >= 0)
     .map((index) => files[index]?.path)
-    .filter((path): path is string => typeof path === "string"))];
+    .filter((path): path is string => typeof path === "string"))].slice(0, 1);
 }
 
 function normalizePredicate(text: string): string {
@@ -426,8 +468,13 @@ async function evaluateTask(
   amortizedDiscoverySetupTokens: number
 ) {
   const flow = FLOW_BY_CATEGORY[task.category];
-  const baseline = await rawBaseline(root, evidence.rawFiles);
-  const result = await runFlow({ flow, task, evidence, rawText: baseline.text, root, project, memories });
+  const usesRunner = flow === "tracer" || flow === "compressor";
+  const runnerFixture = usesRunner ? await executeRunnerFixture(task, root) : undefined;
+  const baseline = runnerFixture
+    ? { text: runnerFixture.rawOutput, tokens: estimateTokens(runnerFixture.rawOutput), files: [] as Array<{ path: string; text: string }> }
+    : await rawBaseline(root, evidence.rawFiles);
+  const flowInputText = runnerFixture?.summaryText ?? baseline.text;
+  const result = await runFlow({ flow, task, evidence, rawText: flowInputText, root, project, memories });
   const selected = new Set(result.selectedFiles);
   const recommendedTests = [...new Set(result.recommendedTests)].sort();
   const falseNegatives = task.requiredFiles.filter((path) => !selected.has(path)).sort();
@@ -440,7 +487,13 @@ async function evaluateTask(
   const taskId = `00000000-0000-4000-8000-${String(taskOrdinal + 1).padStart(12, "0")}`;
   const logicalRoot = "tests/fixtures/evidence-project";
   const request = (id: number, tool: string, arguments_: object) => ({ jsonrpc: "2.0", id, method: "tools/call", params: { name: tool, arguments: arguments_ } });
-  const rawBaselineCalls = baseline.files.map((file, index) => {
+  const rawBaselineCalls = runnerFixture ? [{
+    tool: "shell_command",
+    request: request(taskOrdinal * 100 + 1, "shell_command", { command: runnerFixture.logicalCommand }),
+    response: { content: [{ type: "text" as const, text: runnerFixture.rawOutput }] },
+    requestTokens: estimateTokens(JSON.stringify(request(taskOrdinal * 100 + 1, "shell_command", { command: runnerFixture.logicalCommand }))),
+    responseTokens: estimateTokens(JSON.stringify({ content: [{ type: "text" as const, text: runnerFixture.rawOutput }] }))
+  }] : baseline.files.map((file, index) => {
     const rawRequest = request(taskOrdinal * 100 + index + 1, "read_file", { path: file.path });
     const response = { content: [{ type: "text" as const, text: file.text }] };
     return {
@@ -454,15 +507,27 @@ async function evaluateTask(
   const rawBaselineTokens = rawBaselineCalls.reduce((total, call) => total + call.requestTokens + call.responseTokens, 0);
   const intentResponse = lifecycleWire(result.serializedOutputs[0], taskId);
   const indexedPaths = new Set(project.files.map((file) => file.path));
-  const targetedReadCalls = task.allowRawReads === false ? [] : await Promise.all(firstReadPaths(intentResponse)
+  const targetedReadCalls = task.allowRawReads === false || task.requiresExactSlice !== true ? [] : await Promise.all(firstReadPaths(intentResponse)
     .filter((path) => indexedPaths.has(path))
     .map(async (path, index) => {
-      const targetedRequest = request(taskOrdinal * 100 + 50 + index, "read_file", { path });
-      const response = {
-        content: [{ type: "text" as const, text: canonicalBenchmarkText(await readFile(resolve(root, path), "utf8")) }]
-      };
+      const indexedFile = project.files.find((file) => file.path === path)!;
+      const symbol = project.symbols
+        .filter((candidate) => candidate.filePath === path && Number.isInteger(candidate.startLine) && Number.isInteger(candidate.endLine))
+        .sort((left, right) => left.startLine! - right.startLine! || left.endLine! - right.endLine!)[0];
+      const startLine = symbol?.startLine ?? 1;
+      const endLine = symbol?.endLine ?? startLine;
+      const slice = await readExactSlice(root, path, startLine, endLine, 64 * 1024, indexedFile.contentHash);
+      const targetedRequest = request(taskOrdinal * 100 + 50 + index, "tokengraph_query_context", {
+        taskId,
+        mode: "slice",
+        file: path,
+        startLine,
+        endLine,
+        contentHash: indexedFile.contentHash
+      });
+      const response = compactToolResultEnvelope(compactModeEnvelope("slice", compactSliceResponse(slice)));
       return {
-        tool: "read_file",
+        tool: "tokengraph_query_context",
         request: targetedRequest,
         response,
         requestTokens: estimateTokens(JSON.stringify(targetedRequest)),
@@ -479,13 +544,13 @@ async function evaluateTask(
     };
   } else if (flow === "tracer") {
     intentTool = "tokengraph_analyze";
-    intentArguments = { mode: "failure", kind: "test", text: baseline.text, task: task.query, constraints: task.constraints };
+    intentArguments = { mode: "failure", kind: "test", text: flowInputText, task: task.query, constraints: task.constraints };
   } else if (flow === "risk") {
     intentTool = "tokengraph_analyze";
     intentArguments = { mode: "risk", changedFiles: changedFiles(evidence, project), task: task.query, constraints: task.constraints };
   } else if (flow === "compressor") {
     intentTool = "tokengraph_compress";
-    intentArguments = { mode: "context", task: task.query, contentKind: task.category === "sql-security" ? "sql" : "mixed", text: baseline.text, preserveRawReferences: true, constraints: task.constraints };
+    intentArguments = { mode: "context", task: task.query, contentKind: task.category === "sql-security" ? "sql" : "mixed", text: flowInputText, preserveRawReferences: true, constraints: task.constraints };
   } else {
     intentTool = "tokengraph_recall";
     intentArguments = { mode: "review", query: task.query, limit: 4, constraints: task.constraints };
@@ -494,9 +559,9 @@ async function evaluateTask(
   const intentRequestTokens = estimateTokens(JSON.stringify(intentRequest));
   const intentResponseTokens = estimateTokens(JSON.stringify(intentResponse));
   const measuredLedger: TaskLedger = {
-    schemaId: "tokengraph-task-ledger", schemaVersion: 1, taskId, host: "unknown", status: "completed",
+    schemaId: "tokengraph-task-ledger", schemaVersion: 2, taskId, host: "unknown", status: "completed",
     createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", completedAt: "2026-01-01T00:00:00.000Z",
-    estimatorVersion: TASK_ESTIMATOR_VERSION,
+    estimatorVersion: TASK_ESTIMATOR_VERSION, deliveredArtifacts: [],
     events: [{
       id: `10000000-0000-4000-8000-${String(taskOrdinal + 1).padStart(12, "0")}`,
       fingerprint: `benchmark-${task.id}`, category: flow, toolName: intentTool,
@@ -507,11 +572,17 @@ async function evaluateTask(
     }]
   };
   const footer = formatTaskReportFooter(buildTaskReport(measuredLedger));
-  const calls: Array<{ tool: string; request: ReturnType<typeof request>; response: { content: Array<{ type: "text"; text: string }> } }> = [{
+  const calls: Array<{ tool: string; request: ReturnType<typeof request>; response: { content: Array<{ type: "text"; text: string }> } }> = [];
+  if (runnerFixture) calls.push({
+    tool: "shell_command",
+    request: request(taskOrdinal * 10, "shell_command", { command: runnerFixture.logicalCommand }),
+    response: { content: [{ type: "text", text: runnerFixture.summaryText }] }
+  });
+  calls.push({
     tool: intentTool,
     request: intentRequest,
     response: intentResponse
-  }];
+  });
   const reportResponse = compactToolResultEnvelope({
     status: "completed", taskId, footer, reportingStatus: "ready"
   });
@@ -539,8 +610,7 @@ async function evaluateTask(
     ...(falsePositives.length ? [`Forbidden false-positive files selected: ${falsePositives.join(", ")}.`] : []),
     ...(criticalConstraintPreservation !== 1 ? ["One or more critical constraints were not preserved."] : []),
     ...(!rawReadPolicyPreserved ? ["Raw-read fallback guidance violated the task policy."] : []),
-    ...(missingExpectedTests.length ? [`Expected tests not recommended: ${missingExpectedTests.join(", ")}.`] : []),
-    ...(netEstimatedSavings <= 0 ? ["Net estimated savings were not positive after schema, tool, and footer overhead."] : [])
+    ...(missingExpectedTests.length ? [`Expected tests not recommended: ${missingExpectedTests.join(", ")}.`] : [])
   ];
   return {
     id: task.id,
@@ -548,6 +618,7 @@ async function evaluateTask(
     query: task.query,
     targetedRawReadsAllowed: task.targetedRawReadsAllowed,
     flow,
+    routing: adviseRouting({ task: task.query }),
     coreOutput: result.coreOutput,
     accounting: {
       coreOutputCount: lifecycleCalls.length,
@@ -558,18 +629,25 @@ async function evaluateTask(
       rawBaselineContentTokens: baseline.tokens,
       rawBaselineTokens,
       baseline: {
-        label: "recommended-raw-reads",
-        files: [...evidence.rawFiles],
+        label: runnerFixture ? "raw-run-output" : "recommended-raw-reads",
+        files: runnerFixture ? [] : [...evidence.rawFiles],
         tokens: rawBaselineTokens,
         fullIndexDumpTokens: estimateTokens(JSON.stringify(stableProjectDump(project)))
       } satisfies BenchmarkBaselineArtifact,
-      targetedReadsIncluded: false,
+      targetedReadsIncluded: targetedReadCalls.length > 0,
       targetedReadCalls,
       amortizedDiscoverySetupTokens,
       completionFooter: footer,
       expectedCompactReference: evidence.expectedCompactReference,
       expectedReferenceTokens,
-      expectedNetSavings
+      expectedNetSavings,
+      ...(runnerFixture ? { runnerCapture: {
+        executed: true,
+        status: runnerFixture.summary.status,
+        repeatCount: runnerFixture.summary.repeatCount,
+        rawOutputTokens: estimateTokens(runnerFixture.rawOutput),
+        summaryTokens: estimateTokens(runnerFixture.summaryText)
+      } } : {})
     },
     metrics: {
       requiredFileRecall,
@@ -583,6 +661,7 @@ async function evaluateTask(
       netEstimatedSavings,
       executionInclusiveNetSavings,
       calibrationResidual,
+      economicsResult: netEstimatedSavings > 0 ? "positive" : "non-positive",
       qualityResult: failureReasons.length ? "failed" : "passed",
       failureReasons
     } satisfies TaskMetrics
@@ -624,6 +703,11 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     tasks.push(await evaluateTask(task, taskEvidence, root, project, memories, taskOrdinal, amortizedDiscoverySetupTokens));
   }
   const categoryCounts = Object.fromEntries(BENCHMARK_CATEGORIES.map((category) => [category, tasks.filter((task) => task.category === category).length]));
+  const activationCoverage = Object.fromEntries(BENCHMARK_CATEGORIES.map((category) => {
+    const categoryTasks = tasks.filter((task) => task.category === category);
+    const activated = categoryTasks.filter((task) => task.routing.useTokenGraph).length;
+    return [category, { activated, bypassed: categoryTasks.length - activated, total: categoryTasks.length, rate: categoryTasks.length ? activated / categoryTasks.length : 0 }];
+  }));
   const requiredTotal = validation.tasks.reduce((total, task) => total + task.requiredFiles.length, 0);
   const falseNegativeTotal = tasks.reduce((total, task) => total + task.metrics.falseNegatives.length, 0);
   const constraintTotal = validation.tasks.reduce((total, task) => total + task.criticalConstraints.length, 0);
@@ -631,12 +715,19 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
   const aggregate = {
     taskCount: tasks.length,
     categoryCounts,
-    medianNetSavings: median(tasks.map((task) => task.metrics.netEstimatedSavings)),
-    medianExecutionInclusiveNetSavings: median(tasks.map((task) => task.metrics.executionInclusiveNetSavings)),
+    activationCoverage,
+    medianNetSavings: median(tasks.filter((task) => task.routing.useTokenGraph).map((task) => task.metrics.netEstimatedSavings)),
+    medianExecutionInclusiveNetSavings: median(tasks.filter((task) => task.routing.useTokenGraph).map((task) => task.metrics.executionInclusiveNetSavings)),
     primarySavingsMetric: "execution-inclusive" as const,
-    primaryMedianNetSavings: median(tasks.map((task) => task.metrics.executionInclusiveNetSavings)),
-    executionInclusiveMedian: median(tasks.map((task) => task.metrics.executionInclusiveNetSavings)),
-    baselineLabel: "recommended-raw-reads" as const,
+    primaryMedianNetSavings: median(tasks.filter((task) => task.routing.useTokenGraph).map((task) => task.metrics.executionInclusiveNetSavings)),
+    executionInclusiveMedian: median(tasks.filter((task) => task.routing.useTokenGraph).map((task) => task.metrics.executionInclusiveNetSavings)),
+    executionInclusiveP25: quantile(tasks.filter((task) => task.routing.useTokenGraph).map((task) => task.metrics.executionInclusiveNetSavings), 0.25),
+    nonNegativeActivatedRate: tasks.some((task) => task.routing.useTokenGraph)
+      ? tasks.filter((task) => task.routing.useTokenGraph && task.metrics.executionInclusiveNetSavings >= 0).length / tasks.filter((task) => task.routing.useTokenGraph).length
+      : 0,
+    activatedTaskCount: tasks.filter((task) => task.routing.useTokenGraph).length,
+    bypassedTaskCount: tasks.filter((task) => !task.routing.useTokenGraph).length,
+    baselineLabel: "category-appropriate" as const,
     criticalFalseNegativeCount: falseNegativeTotal,
     criticalConstraintPreservationRate: constraintTotal ? preservedTotal / constraintTotal : 1,
     requiredFileRecall: requiredTotal ? (requiredTotal - falseNegativeTotal) / requiredTotal : 1,
@@ -676,6 +767,7 @@ function stableProjectDump(project: ProjectIndex): unknown {
   return {
     ...project,
     scannedAt: undefined,
+    repositoryIdentity: undefined,
     scanMetadata: {
       files: Object.fromEntries(Object.entries(project.scanMetadata?.files ?? {}).map(([path, file]) => [path, {
         path: file.path,

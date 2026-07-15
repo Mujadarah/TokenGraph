@@ -20,14 +20,23 @@ function routingControlPath(directory: string): string {
   return `${directory}/routing-control.json`;
 }
 
-function validPromotion(value: unknown): value is RoutingPromotionReport {
+export function isValidatedPromotion(value: unknown): value is RoutingPromotionReport {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<RoutingPromotionReport>;
   const gateRecord = candidate.gates && typeof candidate.gates === "object" ? candidate.gates as Record<string, unknown> : undefined;
   const gates = gateRecord ? Object.values(gateRecord) : [];
   const hasRequiredGates = Boolean(gateRecord) && REQUIRED_PROMOTION_GATES.every((name) => typeof gateRecord?.[name] === "boolean") && Object.keys(gateRecord ?? {}).length === REQUIRED_PROMOTION_GATES.length;
   const allGatesPass = hasRequiredGates && gates.every((gate) => gate === true);
-  return candidate.schemaVersion === 1 && typeof candidate.generatedAt === "string" && typeof candidate.enforcementEnabled === "boolean" && hasRequiredGates && (!candidate.enforcementEnabled || allGatesPass);
+  const categoryCounts = candidate.categoryCounts && typeof candidate.categoryCounts === "object"
+    ? Object.values(candidate.categoryCounts)
+    : [];
+  const evidencePasses = categoryCounts.length > 0 && categoryCounts.every((count) => Number.isInteger(count) && count >= 10) &&
+    typeof candidate.falseBypassRate === "number" && Number.isFinite(candidate.falseBypassRate) && candidate.falseBypassRate >= 0 && candidate.falseBypassRate < 0.1 &&
+    typeof candidate.falseActivationRate === "number" && Number.isFinite(candidate.falseActivationRate) && candidate.falseActivationRate >= 0 && candidate.falseActivationRate < 0.1 &&
+    typeof candidate.executionInclusiveMedian === "number" && Number.isFinite(candidate.executionInclusiveMedian) && candidate.executionInclusiveMedian > 0 &&
+    typeof candidate.executionInclusiveP25 === "number" && Number.isFinite(candidate.executionInclusiveP25) && candidate.executionInclusiveP25 >= 0 &&
+    typeof candidate.nonNegativeActivatedRate === "number" && Number.isFinite(candidate.nonNegativeActivatedRate) && candidate.nonNegativeActivatedRate >= 0.8 && candidate.nonNegativeActivatedRate <= 1;
+  return candidate.schemaVersion === 1 && typeof candidate.generatedAt === "string" && typeof candidate.enforcementEnabled === "boolean" && hasRequiredGates && (!candidate.enforcementEnabled || (allGatesPass && evidencePasses));
 }
 
 function normalize(value: unknown): RoutingControl {
@@ -36,7 +45,7 @@ function normalize(value: unknown): RoutingControl {
   return {
     schemaVersion: CURRENT_ROUTING_CONTROL_SCHEMA,
     killSwitch: envKillSwitch === "1" || envKillSwitch === "true" || candidate.killSwitch === true,
-    ...(validPromotion(candidate.promotion) ? { promotion: candidate.promotion } : {})
+    ...(isValidatedPromotion(candidate.promotion) ? { promotion: candidate.promotion } : {})
   };
 }
 

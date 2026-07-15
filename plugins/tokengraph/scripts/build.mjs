@@ -61,13 +61,37 @@ await build({
   logLevel: "silent"
 });
 
+await build({
+  entryPoints: [resolve(pluginRoot, "src", "polyglotWorker.ts")],
+  outfile: resolve(pluginRoot, "dist", "polyglot-worker.js"),
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node22",
+  logLevel: "silent"
+});
+
+await build({
+  entryPoints: [resolve(pluginRoot, "src", "typescriptWorker.ts")],
+  outfile: resolve(pluginRoot, "dist", "typescript-worker.cjs"),
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  target: "node22",
+  logLevel: "silent"
+});
+
 await Promise.all([
   normalizeBundle(resolve(pluginRoot, "dist", "index.js")),
   normalizeBundle(resolve(pluginRoot, "dist", "hooks.js")),
-  normalizeBundle(resolve(pluginRoot, "dist", "cli.js"))
+  normalizeBundle(resolve(pluginRoot, "dist", "cli.js")),
+  normalizeBundle(resolve(pluginRoot, "dist", "polyglot-worker.js")),
+  normalizeBundle(resolve(pluginRoot, "dist", "typescript-worker.cjs"))
 ]);
 
 // Release entry points are executable on POSIX hosts; Windows ignores this mode.
 await chmod(resolve(pluginRoot, "dist", "index.js"), 0o755);
 await chmod(resolve(pluginRoot, "dist", "hooks.js"), 0o755);
 await chmod(resolve(pluginRoot, "dist", "cli.js"), 0o755);
+await chmod(resolve(pluginRoot, "dist", "polyglot-worker.js"), 0o644);
+await chmod(resolve(pluginRoot, "dist", "typescript-worker.cjs"), 0o644);

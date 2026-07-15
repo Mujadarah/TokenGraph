@@ -9,29 +9,29 @@ pnpm benchmark -- --json
 The current deterministic `evidence-v1` corpus produces:
 
 - Tasks: 30 across seven categories; every category has four or five observations.
-- Exact core discovery plus setup: 1,929 estimated tokens total, or 64.3 amortized per task.
+- Exact core discovery plus setup: 2,354 estimated tokens total, or 78.5 amortized per task.
 - Critical-constraint preservation: 100% under polarity-safe exact normalized predicates.
 - Critical false negatives: 0.
 - Required-file recall: 100% against the checked-in 0.85 baseline.
 - Forbidden false positives: 0; missing expected-test recommendations: 0.
-- Baseline: an already-minimal expert selection of recommended raw reads per task (not a full index dump).
-- Execution-inclusive median after recommended first-file reads: -94.3 tokens; nearest-rank 25th percentile: -293.8; minimum: -537.8; 19 of 30 tasks are non-positive. This is the primary savings metric.
-- Routing-lifecycle median: 5.7 tokens; nearest-rank 25th percentile: -291.8; minimum: -480.8; 15 of 30 tasks are non-positive.
-- Frozen execution-inclusive release gate: fail (median must be positive).
+- Baseline: category-appropriate acquisition. Code, SQL, risk, memory, and release tasks use an already-minimal expert selection of raw reads; debugging and compression use the real noisy command output captured by the runner.
+- Routing: 28 tasks activate TokenGraph and two narrowly bounded code lookups bypass at Stage 0. Bypasses are not booked as savings.
+- Primary execution-inclusive median: +196.5 tokens; nearest-rank 25th percentile: +102.5; 23 of 28 activated tasks are non-negative (82.1%).
+- Frozen execution-inclusive release gate: pass.
 
-Routing-lifecycle category results:
+Execution-inclusive category results (bypassed tasks remain visible at zero but are excluded from activated-task gates):
 
 | Category | Median | Non-positive |
 |---|---:|---:|
-| Code routing | 53.2 | 2/5 |
-| SQL/security | 249.2 | 0/5 |
-| Debugging | -295.3 | 4/4 |
-| Change risk | 20.7 | 2/4 |
-| Compression | -319.3 | 4/4 |
-| Memory/wiki | -233.3 | 3/4 |
-| Release packaging | 191.7 | 0/4 |
+| Code routing | 53.5 | 2/5 (both bypassed) |
+| SQL/security | 249.5 | 0/5 |
+| Debugging | 975.5 | 0/4 |
+| Change risk | 20.0 | 2/4 |
+| Compression | 1050.5 | 0/4 |
+| Memory/wiki | -194.0 | 3/4 |
+| Release packaging | 191.5 | 0/4 |
 
-The release gate now treats execution-inclusive savings as the primary eligibility metric and retains routing-lifecycle savings for continuity. The negative categories show that tiny, bounded raw inputs should bypass TokenGraph; use it where focused routing can avoid broader reads or preserve constraints.
+The release gate treats execution-inclusive savings as the primary eligibility metric. Exact source slices are charged only when a fixture declares an unresolved post-lifecycle evidence gap; the normal corpus does not fabricate reads after its compact evidence is sufficient. Negative tails remain visible, especially in memory/wiki and change-risk tasks.
 
 Every category remains low-confidence and does not activate calibration. These are repeatable fixture estimates, not exact billed tokens, autonomous-agent patch-quality evidence, or universal Codex/Claude results.
 

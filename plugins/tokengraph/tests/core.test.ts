@@ -127,6 +127,26 @@ describe("TokenGraph local config", () => {
     });
   });
 
+  it("migrates the legacy total storage quota into separate class caps", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    const legacy = JSON.parse(JSON.stringify(DEFAULT_TOKEN_GRAPH_CONFIG)) as Record<string, unknown> & { storage: Record<string, unknown> };
+    legacy.storage = { maxBytes: 1000, runRetentionDays: 14, cacheRetentionDays: 7 };
+    await writeFile(configPath(root), JSON.stringify({ schemaVersion: 1, config: legacy }));
+
+    const config = await loadTokenGraphConfig(root);
+
+    expect(config.storage).toMatchObject({
+      maxBytes: 1000,
+      runsMaxBytes: 250,
+      cacheMaxBytes: 500,
+      vaultMaxBytes: 125,
+      durableMaxBytes: 125
+    });
+    expect(JSON.parse(await readFile(`${configPath(root)}.bak`, "utf8"))).toMatchObject({ schemaVersion: 1 });
+    expect(JSON.parse(await readFile(configPath(root), "utf8"))).toMatchObject({ schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: { storage: config.storage } });
+  });
+
   it("quarantines corrupt config instead of silently destroying it", async () => {
     const root = await makeRoot();
     await mkdir(join(root, ".tokengraph"), { recursive: true });
@@ -987,6 +1007,11 @@ describe("index status and reset", () => {
     });
 
     await writeFile(join(root, "src", "patientSummary.ts"), "export const patientSummary = 'new';");
+    await expect(getIndexStatus(root, { probeOnly: true })).resolves.toMatchObject({
+      state: "fresh",
+      hasIndex: true,
+      currentScanSignature: project.scanSignature
+    });
     await expect(getIndexStatus(root)).resolves.toMatchObject({
       state: "stale",
       hasIndex: true,
@@ -2460,6 +2485,19 @@ describe("v0.7 review and export helpers", () => {
     expect(review.matches.map((match) => match.id)).toContain(unrelated.id);
     expect(review.policy).toMatch(/does not modify/i);
     await expect(store.list()).resolves.toHaveLength(2);
+  });
+
+  it("does not rank unrelated memories from query stopwords", async () => {
+    const memory = testMemory({
+      id: "memory-stopword",
+      type: "architecture",
+      title: "Patient route boundary",
+      body: "The route and service are kept separate for safety.",
+      tags: ["patients"],
+      createdAt: "2026-01-01T00:00:00.000Z"
+    });
+    const review = await reviewMemories({ memories: [memory], query: "the and for", limit: 5 });
+    expect(review.matches[0]).toMatchObject({ score: 0, matchedTerms: [], action: "review" });
   });
 
   it("exports a compact Mermaid project map without raw source content", async () => {

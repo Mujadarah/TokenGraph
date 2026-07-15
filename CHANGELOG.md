@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.21.1 - 2026-07-16
+
+- Fixed routing shadow, kill-switch, force-bypass, promotion-evidence, and B7 activation semantics so advisory decisions cannot silently enforce or unlock later phases.
+- Fixed repository/worktree identity refresh, branch-safe index reuse, task-ledger migration and artifact delivery, symlink-safe writes, untrusted-source filtering, and class-specific storage quotas and purge behavior.
+- Wired bounded parser limits, worker isolation, exact hash-validated slices, task read-policy reassessment, saved-run selectors, retention, and the paired-routing evaluator into production paths.
+- Replaced synthetic debugging/compression accounting with real bounded runner captures and made failed benchmark gates return a failing process status.
+- Passed the frozen deterministic release gate with 100% constraint preservation and required-file recall, zero critical false negatives, a +196.5-token activated-task median, +102.5-token p25, and 82.1% non-negative activated tasks. Enforced routing still requires a separate complete passing B6 host evaluation.
+
 ## 0.21.0 - 2026-07-15
 
 - Added shadow-first routing decisions, canonical stable artifacts, exact known-artifact suppression, and task-aware routing overrides.
