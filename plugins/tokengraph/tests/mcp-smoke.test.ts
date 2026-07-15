@@ -196,7 +196,7 @@ describe("TokenGraph MCP stdio server", () => {
     const initialized = await request(9000, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-core-surface-test", version: "0.20.0" }
+      clientInfo: { name: "tokengraph-core-surface-test", version: "0.21.0" }
     });
     send({ method: "notifications/initialized" });
     const listed = await request(9001, "tools/list");
@@ -232,7 +232,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(9010, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-full-surface-test", version: "0.20.0" }
+      clientInfo: { name: "tokengraph-full-surface-test", version: "0.21.0" }
     });
     send({ method: "notifications/initialized" });
     const listed = await request(9011, "tools/list");
@@ -273,7 +273,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(9030, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-core-workflow-test", version: "0.20.0" }
+      clientInfo: { name: "tokengraph-core-workflow-test", version: "0.21.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -490,7 +490,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(90590, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-direct-lifecycle-test", version: "0.20.0" }
+      clientInfo: { name: "tokengraph-direct-lifecycle-test", version: "0.21.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -532,7 +532,7 @@ describe("TokenGraph MCP stdio server", () => {
     await stopServer();
     startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
     await request(90620, "initialize", {
-      protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "tokengraph-auto-start-failure", version: "0.20.0" }
+      protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "tokengraph-auto-start-failure", version: "0.21.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -556,7 +556,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(9051, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-pause-test", version: "0.20.0" }
+      clientInfo: { name: "tokengraph-pause-test", version: "0.21.0" }
     });
     send({ method: "notifications/initialized" });
     const preparedCall = await request(9052, "tools/call", {
@@ -595,7 +595,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(9054, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-completed-pause-test", version: "0.20.0" }
+      clientInfo: { name: "tokengraph-completed-pause-test", version: "0.21.0" }
     });
     send({ method: "notifications/initialized" });
     const preparedCall = await request(9055, "tools/call", {
@@ -642,7 +642,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(9060, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-unsafe-prepare-test", version: "0.20.0" }
+      clientInfo: { name: "tokengraph-unsafe-prepare-test", version: "0.21.0" }
     });
     send({ method: "notifications/initialized" });
 

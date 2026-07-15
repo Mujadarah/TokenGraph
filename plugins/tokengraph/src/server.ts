@@ -588,7 +588,7 @@ function sqlSummary(project: ProjectIndex, query: string, limit: number): Ranked
 export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWorkspaceProvider } = {}): McpServer {
   const toolSurface = selectedToolSurface();
   const server = new McpServer(
-    { name: "tokengraph", version: "0.20.0" },
+    { name: "tokengraph", version: "0.21.0" },
     {
       instructions:
         "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. " +
