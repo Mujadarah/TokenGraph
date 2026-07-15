@@ -36,6 +36,7 @@ import {
 } from "./core/toolContracts.js";
 import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } from "./core/config.js";
 import { adviseRouting } from "./core/routingAdvisor.js";
+import { getRepositoryIdentity } from "./core/repositoryIdentity.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
 import { traceFailure } from "./core/failureTracer.js";
@@ -640,15 +641,19 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({})
     },
-    async () => ok({
-      ...(await inspectWorkspaceSetup(server, options.trustedWorkspace)),
+    async () => {
+      const setup = await inspectWorkspaceSetup(server, options.trustedWorkspace);
+      return ok({
+      ...setup,
+      repositoryIdentity: setup.trustedWorkspace ? await getRepositoryIdentity(setup.trustedWorkspace.root) : null,
       surface: toolSurface,
       capabilities: {
         taskScoped: true,
         coreTools: [...CORE_TOOL_NAMES],
         legacyCompatibility: toolSurface === "full"
       }
-    })
+      });
+    }
   );
 
   server.registerTool(
