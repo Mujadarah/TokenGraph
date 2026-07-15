@@ -20349,32 +20349,32 @@ function classifyTask(task) {
   if (/\b(architecture|design|why|explain)\b/.test(text)) return "architecture";
   return "feature";
 }
-function scoreText(text, terms, weight = 2) {
+function scoreText(text, terms2, weight = 2) {
   const haystack = tokenize(text);
-  return terms.reduce((score, term) => {
+  return terms2.reduce((score, term) => {
     const matched = haystack.some((part) => part.includes(term) || term.includes(part));
     return score + (matched ? weight : 0);
   }, 0);
 }
-function firstMatchingSymbol(project, file, terms) {
-  return project.symbols.filter((symbol) => symbol.filePath === file.path).map((symbol) => ({ symbol, score: scoreText(`${symbol.name} ${symbol.kind}`, terms, 4) })).filter((entry) => entry.score > 0 && entry.symbol.startLine !== void 0).sort((a, b) => b.score - a.score || (a.symbol.startLine ?? 0) - (b.symbol.startLine ?? 0))[0]?.symbol;
+function firstMatchingSymbol(project, file, terms2) {
+  return project.symbols.filter((symbol) => symbol.filePath === file.path).map((symbol) => ({ symbol, score: scoreText(`${symbol.name} ${symbol.kind}`, terms2, 4) })).filter((entry) => entry.score > 0 && entry.symbol.startLine !== void 0).sort((a, b) => b.score - a.score || (a.symbol.startLine ?? 0) - (b.symbol.startLine ?? 0))[0]?.symbol;
 }
-function rankedFiles(project, terms, includeTests, includeZero = false) {
+function rankedFiles(project, terms2, includeTests, includeZero = false) {
   return project.files.filter((file) => includeTests ? file.isTest : !file.isTest && file.kind !== "sql" && file.kind !== "doc").map((file) => {
-    const pathScore = scoreText(`${file.path} ${file.kind} ${file.route ?? ""}`, terms, 2);
+    const pathScore = scoreText(`${file.path} ${file.kind} ${file.route ?? ""}`, terms2, 2);
     const symbolScore = scoreText(
       project.symbols.filter((symbol) => symbol.filePath === file.path).map((symbol) => `${symbol.name} ${symbol.kind}`).join(" "),
-      terms,
+      terms2,
       4
     );
     const importScore = scoreText(
       project.imports.filter((edge) => edge.filePath === file.path).map((edge) => `${edge.source} ${edge.resolvedPath ?? ""}`).join(" "),
-      terms,
+      terms2,
       1
     );
     const lexicalScore = pathScore + symbolScore + importScore;
     const score = lexicalScore > 0 ? lexicalScore + (file.route ? 2 : 0) + (includeTests ? 1 : 0) : 0;
-    const matchedSymbol = firstMatchingSymbol(project, file, terms);
+    const matchedSymbol = firstMatchingSymbol(project, file, terms2);
     return {
       path: file.path,
       reason: lexicalScore > 0 ? `Matches task terms in ${file.kind} graph data.` : "Low lexical overlap with the task.",
@@ -20384,13 +20384,13 @@ function rankedFiles(project, terms, includeTests, includeZero = false) {
     };
   }).filter((entry) => includeZero || entry.score > 0).sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
 }
-function rankedMemories(memories, terms, limit) {
+function rankedMemories(memories, terms2, limit) {
   return memories.map((memory) => ({
     memory,
-    score: scoreText(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`, terms, 3)
-  })).filter((entry) => entry.score > 0 || terms.length === 0).sort((a, b) => b.score - a.score || b.memory.createdAt.localeCompare(a.memory.createdAt)).slice(0, limit).map((entry) => entry.memory);
+    score: scoreText(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`, terms2, 3)
+  })).filter((entry) => entry.score > 0 || terms2.length === 0).sort((a, b) => b.score - a.score || b.memory.createdAt.localeCompare(a.memory.createdAt)).slice(0, limit).map((entry) => entry.memory);
 }
-function rankedSql(project, terms) {
+function rankedSql(project, terms2) {
   const rows = [];
   for (const table of project.sql.tables) {
     rows.push({
@@ -20398,7 +20398,7 @@ function rankedSql(project, terms) {
       name: table.name,
       filePath: table.filePath,
       reason: `Table columns: ${table.columns.slice(0, 6).join(", ")}`,
-      score: scoreText(`${table.name} ${table.columns.join(" ")}`, terms)
+      score: scoreText(`${table.name} ${table.columns.join(" ")}`, terms2)
     });
   }
   for (const constraint of project.sql.constraints) {
@@ -20407,7 +20407,7 @@ function rankedSql(project, terms) {
       name: constraint.name,
       filePath: constraint.filePath,
       reason: `${constraint.kind} constraint on ${constraint.table}`,
-      score: scoreText(`${constraint.name} ${constraint.table} ${constraint.kind} ${constraint.columns?.join(" ") ?? ""} ${constraint.expression ?? ""}`, terms)
+      score: scoreText(`${constraint.name} ${constraint.table} ${constraint.kind} ${constraint.columns?.join(" ") ?? ""} ${constraint.expression ?? ""}`, terms2)
     });
   }
   for (const policy of project.sql.policies) {
@@ -20418,7 +20418,7 @@ function rankedSql(project, terms) {
       reason: `Policy on ${policy.table}${policy.command ? ` for ${policy.command}` : ""}`,
       score: scoreText(
         `${policy.name} ${policy.table} ${policy.command ?? ""} ${policy.roles?.join(" ") ?? ""} ${policy.usingExpression ?? ""} ${policy.checkExpression ?? ""}`,
-        terms
+        terms2
       )
     });
   }
@@ -20428,7 +20428,7 @@ function rankedSql(project, terms) {
       name: index.name,
       filePath: index.filePath,
       reason: `Index on ${index.table}`,
-      score: scoreText(`${index.name} ${index.table} ${index.columns.join(" ")}`, terms)
+      score: scoreText(`${index.name} ${index.table} ${index.columns.join(" ")}`, terms2)
     });
   }
   for (const trigger of project.sql.triggers) {
@@ -20437,14 +20437,14 @@ function rankedSql(project, terms) {
       name: trigger.name,
       filePath: trigger.filePath,
       reason: `Trigger on ${trigger.table}`,
-      score: scoreText(`${trigger.name} ${trigger.table} ${trigger.functionName ?? ""}`, terms)
+      score: scoreText(`${trigger.name} ${trigger.table} ${trigger.functionName ?? ""}`, terms2)
     });
   }
   for (const fn of project.sql.functions) {
-    rows.push({ kind: "function", name: fn.name, filePath: fn.filePath, reason: "Database function", score: scoreText(fn.name, terms) });
+    rows.push({ kind: "function", name: fn.name, filePath: fn.filePath, reason: "Database function", score: scoreText(fn.name, terms2) });
   }
   for (const view of project.sql.views) {
-    rows.push({ kind: "view", name: view.name, filePath: view.filePath, reason: "Database view", score: scoreText(view.name, terms) });
+    rows.push({ kind: "view", name: view.name, filePath: view.filePath, reason: "Database view", score: scoreText(view.name, terms2) });
   }
   for (const enumObject of project.sql.enums) {
     rows.push({
@@ -20452,11 +20452,11 @@ function rankedSql(project, terms) {
       name: enumObject.name,
       filePath: enumObject.filePath,
       reason: `Enum values: ${enumObject.values.join(", ")}`,
-      score: scoreText(`${enumObject.name} ${enumObject.values.join(" ")}`, terms)
+      score: scoreText(`${enumObject.name} ${enumObject.values.join(" ")}`, terms2)
     });
   }
   for (const extension of project.sql.extensions) {
-    rows.push({ kind: "extension", name: extension.name, filePath: extension.filePath, reason: "PostgreSQL extension", score: scoreText(extension.name, terms) });
+    rows.push({ kind: "extension", name: extension.name, filePath: extension.filePath, reason: "PostgreSQL extension", score: scoreText(extension.name, terms2) });
   }
   for (const grant of project.sql.grants) {
     rows.push({
@@ -20464,7 +20464,7 @@ function rankedSql(project, terms) {
       name: `${grant.objectName} to ${grant.grantee}`,
       filePath: grant.filePath,
       reason: `Grant ${grant.privileges.join(", ")} to ${grant.grantee}`,
-      score: scoreText(`${grant.objectName} ${grant.grantee} ${grant.privileges.join(" ")} ${grant.objectType ?? ""}`, terms)
+      score: scoreText(`${grant.objectName} ${grant.grantee} ${grant.privileges.join(" ")} ${grant.objectType ?? ""}`, terms2)
     });
   }
   for (const materializedView of project.sql.materializedViews) {
@@ -20473,7 +20473,7 @@ function rankedSql(project, terms) {
       name: materializedView.name,
       filePath: materializedView.filePath,
       reason: "Materialized view",
-      score: scoreText(materializedView.name, terms)
+      score: scoreText(materializedView.name, terms2)
     });
   }
   return rows.filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
@@ -20569,22 +20569,22 @@ function trimPlanToBudget(plan) {
   return next;
 }
 async function buildContextPlan(input) {
-  const terms = tokenize(input.task);
+  const terms2 = tokenize(input.task);
   const budget = resolveBudget(input.budget);
-  const allRelevantFiles = rankedFiles(input.project, terms, false);
-  const allRelevantTests = rankedFiles(input.project, terms, true);
-  const allRelevantSql = rankedSql(input.project, terms);
+  const allRelevantFiles = rankedFiles(input.project, terms2, false);
+  const allRelevantTests = rankedFiles(input.project, terms2, true);
+  const allRelevantSql = rankedSql(input.project, terms2);
   const relevantFiles = allRelevantFiles.slice(0, budget.maxFiles);
   const relevantTests = allRelevantTests.slice(0, Math.max(1, Math.ceil(budget.maxFiles / 2)));
   const relevantSql = selectSqlAcrossFiles(allRelevantSql, budget.maxSqlObjects);
-  const relevantMemories = rankedMemories(input.memories, terms, budget.maxMemories);
+  const relevantMemories = rankedMemories(input.memories, terms2, budget.maxMemories);
   const budgetExclusions = [];
   if (allRelevantFiles.length > relevantFiles.length) budgetExclusions.push(`${allRelevantFiles.length - relevantFiles.length} lower-ranked file(s) excluded by profile or explicit file budget.`);
   if (allRelevantTests.length > relevantTests.length) budgetExclusions.push(`${allRelevantTests.length - relevantTests.length} lower-ranked test file(s) excluded by profile or explicit file budget.`);
   if (allRelevantSql.length > relevantSql.length) budgetExclusions.push(`${allRelevantSql.length - relevantSql.length} lower-ranked SQL object(s) excluded by profile or explicit SQL budget.`);
   const selectedPaths = new Set([...relevantFiles, ...relevantTests].map((file) => file.path));
   const recommendedFirstReads = relevantFiles.slice(0, Math.min(budget.firstReads, relevantFiles.length));
-  const filesToAvoid = rankedFiles(input.project, terms, false, true).filter((file) => !selectedPaths.has(file.path) && file.score === 0).slice(0, 5).map((file) => ({ ...file, reason: "No lexical overlap with the current task." }));
+  const filesToAvoid = rankedFiles(input.project, terms2, false, true).filter((file) => !selectedPaths.has(file.path) && file.score === 0).slice(0, 5).map((file) => ({ ...file, reason: "No lexical overlap with the current task." }));
   const withoutEstimate = trimPlanToBudget({
     task: input.task,
     taskType: classifyTask(input.task),
@@ -20664,13 +20664,13 @@ function extractFileReads(lines, projectPaths) {
   return [...reads.values()].sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
 }
 function referencedMemories(memories, query, limit) {
-  const terms = tokenize(query);
+  const terms2 = tokenize(query);
   const seen = /* @__PURE__ */ new Set();
   return memories.map((memory) => {
     const haystack = tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")} ${memory.linkedFiles.join(" ")} ${memory.linkedSqlObjects.join(" ")}`);
-    const score = terms.reduce((total, term) => total + (haystack.some((part) => part.includes(term) || term.includes(part)) ? 1 : 0), 0);
+    const score = terms2.reduce((total, term) => total + (haystack.some((part) => part.includes(term) || term.includes(part)) ? 1 : 0), 0);
     return { memory, score };
-  }).filter((entry) => entry.score > 0 || terms.length === 0).sort((a, b) => b.score - a.score || b.memory.createdAt.localeCompare(a.memory.createdAt)).map((entry) => entry.memory).filter((memory) => {
+  }).filter((entry) => entry.score > 0 || terms2.length === 0).sort((a, b) => b.score - a.score || b.memory.createdAt.localeCompare(a.memory.createdAt)).map((entry) => entry.memory).filter((memory) => {
     const key = memory.id || memory.title;
     if (seen.has(key)) return false;
     seen.add(key);
@@ -20679,10 +20679,10 @@ function referencedMemories(memories, query, limit) {
 }
 function referencedWikiPages(wiki, query, limit = 5) {
   if (!wiki) return [];
-  const terms = tokenize(query);
+  const terms2 = tokenize(query);
   return wiki.pages.map((page2) => {
     const haystack = tokenize(`${page2.slug} ${page2.title} ${page2.body}`);
-    const score = terms.reduce((total, term) => total + (haystack.some((part) => part.includes(term) || term.includes(part)) ? 1 : 0), 0);
+    const score = terms2.reduce((total, term) => total + (haystack.some((part) => part.includes(term) || term.includes(part)) ? 1 : 0), 0);
     return { page: page2, score };
   }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.page.slug.localeCompare(b.page.slug)).slice(0, limit).map(({ page: page2, score }) => ({
     slug: page2.slug,
@@ -20901,10 +20901,10 @@ function focusedSql(files, task) {
     if (!current || file.score > current.score) byPath2.set(file.filePath, file);
   }
   const normalize2 = (term) => term.length > 4 && term.endsWith("s") ? term.slice(0, -1) : term;
-  const terms = task.toLowerCase().match(/[a-z0-9]+/g)?.map(normalize2).filter((term) => term.length >= 4 && !["review", "change", "policy", "migration", "database", "table", "tenant"].includes(term)) ?? [];
+  const terms2 = task.toLowerCase().match(/[a-z0-9]+/g)?.map(normalize2).filter((term) => term.length >= 4 && !["review", "change", "policy", "migration", "database", "table", "tenant"].includes(term)) ?? [];
   const scored = [...byPath2.values()].map((file) => ({
     file,
-    lexical: terms.filter((term) => files.some((candidate) => {
+    lexical: terms2.filter((term) => files.some((candidate) => {
       if (candidate.filePath !== file.filePath) return false;
       const candidateTerms = `${candidate.filePath} ${candidate.name}`.toLowerCase().match(/[a-z0-9]+/g)?.map(normalize2) ?? [];
       return candidateTerms.includes(term);
@@ -21240,6 +21240,36 @@ function adviseRouting(input) {
     expectedBenefit: useTokenGraph ? stage === 1 ? 160 : 120 : 0,
     enforced: mode === "enforced" || mode === "always-activate" || forcedOn || forcedBypass
   };
+}
+
+// src/core/retrieval.ts
+function terms(value) {
+  return value.toLocaleLowerCase().match(/[a-z0-9_/-]+/g) ?? [];
+}
+function documentText(file, index) {
+  const symbols = index.symbols.filter((symbol) => symbol.filePath === file.path).map((symbol) => `${symbol.name} ${symbol.kind}`).join(" ");
+  return `${file.path} ${file.kind} ${file.language} ${symbols}`.toLocaleLowerCase();
+}
+function rankFilesBm25(index, query, limit = 10) {
+  const queryTerms = terms(query);
+  if (!queryTerms.length) return [];
+  const documents = index.files.map((file) => ({ file, tokens: terms(documentText(file, index)) }));
+  const averageLength = documents.reduce((sum, entry) => sum + entry.tokens.length, 0) / Math.max(1, documents.length);
+  const documentFrequency = /* @__PURE__ */ new Map();
+  for (const term of new Set(queryTerms)) documentFrequency.set(term, documents.filter((entry) => entry.tokens.includes(term)).length);
+  const scored = documents.map(({ file, tokens: docTokens }) => {
+    const length = docTokens.length;
+    let score = 0;
+    for (const term of queryTerms) {
+      const frequency = docTokens.filter((token) => token === term).length;
+      if (!frequency) continue;
+      const df = documentFrequency.get(term) ?? 0;
+      const idf = Math.log(1 + (documents.length - df + 0.5) / (df + 0.5));
+      score += idf * (frequency * 2.2 / (frequency + 1.2 * (0.25 + 0.75 * length / Math.max(1, averageLength))));
+    }
+    return { path: file.path, score: Number(score.toFixed(6)) };
+  }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+  return scored.slice(0, Math.max(0, limit)).map((entry, index2) => ({ ...entry, rank: index2 + 1 }));
 }
 
 // src/core/fileScanner.ts
@@ -22604,9 +22634,9 @@ function detectTests(text) {
   return unique3(tests);
 }
 function detectSymbols(text, project) {
-  const terms = new Set(tokenize(text));
+  const terms2 = new Set(tokenize(text));
   return unique3(
-    project.symbols.filter((symbol) => text.includes(symbol.name) || terms.has(symbol.name.toLowerCase())).map((symbol) => symbol.name)
+    project.symbols.filter((symbol) => text.includes(symbol.name) || terms2.has(symbol.name.toLowerCase())).map((symbol) => symbol.name)
   );
 }
 function relatedImportEdges(project, paths) {
@@ -22644,8 +22674,8 @@ function relatedFiles(project, hints, imports, planFiles) {
   }).slice(0, 10);
 }
 function sqlMatches(project, termsText, plannedSql) {
-  const terms = tokenize(termsText);
-  const score = (text) => terms.reduce((total, term) => total + (text.toLowerCase().includes(term) ? 1 : 0), 0);
+  const terms2 = tokenize(termsText);
+  const score = (text) => terms2.reduce((total, term) => total + (text.toLowerCase().includes(term) ? 1 : 0), 0);
   const direct = [
     ...project.sql.tables.map((table) => ({
       kind: "table",
@@ -22757,7 +22787,7 @@ function nowIso2() {
 function unique4(values) {
   return Array.from(new Set((values ?? []).filter((value) => typeof value === "string" && value.trim().length > 0).map((value) => value.trim())));
 }
-function scoreMemory(memory, terms) {
+function scoreMemory(memory, terms2) {
   const haystack = tokenize(
     [
       memory.type,
@@ -22771,7 +22801,7 @@ function scoreMemory(memory, terms) {
       memory.evidence.join(" ")
     ].join(" ")
   );
-  return terms.reduce((score, term) => score + (haystack.some((part) => part.includes(term) || term.includes(part)) ? 1 : 0), 0);
+  return terms2.reduce((score, term) => score + (haystack.some((part) => part.includes(term) || term.includes(part)) ? 1 : 0), 0);
 }
 function normalizeMemory(value) {
   if (!value || typeof value !== "object") return void 0;
@@ -22929,15 +22959,15 @@ var MemoryStore = class _MemoryStore {
     );
   }
   async search(query, limit = 5) {
-    const terms = tokenize(query);
+    const terms2 = tokenize(query);
     const memories = await this.list();
-    return this.rank(memories, terms).filter((entry) => entry.score > 0 || terms.length === 0).slice(0, limit).map((entry) => entry.memory);
+    return this.rank(memories, terms2).filter((entry) => entry.score > 0 || terms2.length === 0).slice(0, limit).map((entry) => entry.memory);
   }
   async recall(query, options = {}) {
     const auditMode = options.auditMode === true;
-    const terms = tokenize(query);
+    const terms2 = tokenize(query);
     const memories = await this.list({ includeDeprecated: auditMode || options.includeDeprecated, includeDeleted: auditMode || options.includeDeleted });
-    const ranked = this.rank(memories, terms).filter((entry) => entry.score > 0 || terms.length === 0).slice(0, Math.max(1, Math.min(options.limit ?? 10, 50))).map((entry) => entry.memory);
+    const ranked = this.rank(memories, terms2).filter((entry) => entry.score > 0 || terms2.length === 0).slice(0, Math.max(1, Math.min(options.limit ?? 10, 50))).map((entry) => entry.memory);
     await this.markUsed(ranked.filter((memory) => memory.status === "active").map((memory) => memory.id));
     const refreshed = await this.list({ includeDeprecated: auditMode || options.includeDeprecated, includeDeleted: auditMode || options.includeDeleted });
     const byId = new Map(refreshed.map((memory) => [memory.id, memory]));
@@ -22952,22 +22982,22 @@ var MemoryStore = class _MemoryStore {
     const memories = await this.list();
     const baseMemory = input.id ? memories.find((memory) => memory.id === input.id) : void 0;
     const queryText = input.query ?? (input.candidate ? `${input.candidate.type} ${input.candidate.title} ${input.candidate.body} ${input.candidate.tags.join(" ")}` : "");
-    const terms = tokenize(
+    const terms2 = tokenize(
       baseMemory ? `${baseMemory.title} ${baseMemory.body} ${baseMemory.tags.join(" ")}` : input.candidate ? `${input.candidate.title} ${input.candidate.body} ${input.candidate.tags.join(" ")}` : queryText
     );
     return memories.filter((memory) => memory.id !== input.id).map((memory) => {
       const memoryTerms = tokenize(`${memory.title} ${memory.body} ${memory.tags.join(" ")}`);
-      const matchedTerms2 = unique4(terms.filter((term) => memoryTerms.some((part) => part.includes(term) || term.includes(part))));
+      const matchedTerms2 = unique4(terms2.filter((term) => memoryTerms.some((part) => part.includes(term) || term.includes(part))));
       const sameType = input.candidate?.type ? memory.type === input.candidate.type : baseMemory ? memory.type === baseMemory.type : true;
       const contradictionHint = /\b(no|not|never|avoid|prefer|instead|deprecated|replace|use)\b/i.test(`${queryText} ${memory.title} ${memory.body}`);
       const reason = contradictionHint ? "Potential conflict: overlapping memory terms and incompatible guidance language were found." : "Potential conflict: overlapping memory terms should be reviewed before relying on either memory.";
       return { memory, matchedTerms: matchedTerms2, sameType, contradictionHint, reason };
     }).filter((entry) => entry.sameType && entry.matchedTerms.length >= 2).sort((a, b) => Number(b.contradictionHint) - Number(a.contradictionHint) || b.matchedTerms.length - a.matchedTerms.length).slice(0, Math.max(1, Math.min(input.limit ?? 10, 50))).map(({ memory, matchedTerms: matchedTerms2, reason }) => ({ memory, matchedTerms: matchedTerms2, reason }));
   }
-  rank(memories, terms) {
+  rank(memories, terms2) {
     return memories.map((memory) => {
       const linkedCount = memory.linkedFiles.length + memory.linkedSymbols.length + memory.linkedSqlObjects.length + memory.linkedRules.length;
-      const score = scoreMemory(memory, terms) * 3 + (memory.status === "active" ? 2 : memory.status === "deprecated" ? -4 : -12) + (memory.confirmedAt ? 5 : 0) + Math.min(linkedCount, 4) + (memory.confidence === "high" ? 3 : memory.confidence === "low" ? -1 : 0);
+      const score = scoreMemory(memory, terms2) * 3 + (memory.status === "active" ? 2 : memory.status === "deprecated" ? -4 : -12) + (memory.confirmedAt ? 5 : 0) + Math.min(linkedCount, 4) + (memory.confidence === "high" ? 3 : memory.confidence === "low" ? -1 : 0);
       return { memory, score };
     }).sort(
       (a, b) => b.score - a.score || (b.memory.confirmedAt ?? "").localeCompare(a.memory.confirmedAt ?? "") || (b.memory.lastUsedAt ?? b.memory.createdAt).localeCompare(a.memory.lastUsedAt ?? a.memory.createdAt)
@@ -23139,8 +23169,8 @@ function sqlTextForObject(object2) {
 }
 function relatedSql(project, changedFiles, text) {
   const changed = new Set(changedFiles);
-  const terms = tokenize(text);
-  const scoreTerms = (value) => terms.reduce((score, term) => score + (value.toLowerCase().includes(term) ? 1 : 0), 0);
+  const terms2 = tokenize(text);
+  const scoreTerms = (value) => terms2.reduce((score, term) => score + (value.toLowerCase().includes(term) ? 1 : 0), 0);
   const rows = [
     ...project.sql.tables.map((table) => ({
       kind: "table",
@@ -23199,10 +23229,10 @@ function filterRuleFindings(findings, changedFiles) {
   });
 }
 function relatedMemories(memories, text) {
-  const terms = tokenize(text);
+  const terms2 = tokenize(text);
   return memories.map((memory) => {
     const haystack = tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`);
-    const score = (memory.type === "bug" ? 4 : 0) + (memory.tags.some((tag) => /fragile|bug|risk|regression/i.test(tag)) ? 3 : 0) + terms.reduce((total, term) => total + (haystack.some((part) => part.includes(term) || term.includes(part)) ? 1 : 0), 0);
+    const score = (memory.type === "bug" ? 4 : 0) + (memory.tags.some((tag) => /fragile|bug|risk|regression/i.test(tag)) ? 3 : 0) + terms2.reduce((total, term) => total + (haystack.some((part) => part.includes(term) || term.includes(part)) ? 1 : 0), 0);
     return { memory, score };
   }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || b.memory.createdAt.localeCompare(a.memory.createdAt)).slice(0, 8).map((entry) => entry.memory);
 }
@@ -23293,15 +23323,15 @@ ${memory.body}`).join("\n")}`);
 function escapeMermaidLabel(label) {
   return label.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
-function matchedTerms(memory, terms) {
+function matchedTerms(memory, terms2) {
   const haystack = tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`);
-  return terms.filter((term) => haystack.some((part) => part.includes(term) || term.includes(part)));
+  return terms2.filter((term) => haystack.some((part) => part.includes(term) || term.includes(part)));
 }
 async function reviewMemories({ memories, query = "", limit = 20 }) {
   const normalizedLimit = Math.max(1, Math.min(limit, 100));
-  const terms = tokenize(query);
+  const terms2 = tokenize(query);
   const matches = memories.map((memory) => {
-    const hits = matchedTerms(memory, terms);
+    const hits = matchedTerms(memory, terms2);
     return {
       id: memory.id,
       type: memory.type,
@@ -23312,8 +23342,8 @@ async function reviewMemories({ memories, query = "", limit = 20 }) {
       confidence: memory.confidence,
       score: hits.length,
       matchedTerms: hits,
-      action: hits.length > 0 || terms.length === 0 ? "keep" : "review",
-      reason: hits.length > 0 ? `Matched ${hits.length} review term${hits.length === 1 ? "" : "s"}: ${hits.join(", ")}.` : terms.length === 0 ? "Included because no review query was provided." : "No query terms matched; review whether this memory is still useful."
+      action: hits.length > 0 || terms2.length === 0 ? "keep" : "review",
+      reason: hits.length > 0 ? `Matched ${hits.length} review term${hits.length === 1 ? "" : "s"}: ${hits.join(", ")}.` : terms2.length === 0 ? "Included because no review query was provided." : "No query terms matched; review whether this memory is still useful."
     };
   }).sort((a, b) => b.score - a.score || b.createdAt.localeCompare(a.createdAt)).slice(0, normalizedLimit);
   return {
@@ -24790,13 +24820,14 @@ function projectMap(project) {
   };
 }
 function searchProject(project, query, limit) {
-  const terms = tokenize(query);
-  const score = (text) => terms.reduce((total, term) => total + (text.toLowerCase().includes(term) ? 1 : 0), 0);
+  const terms2 = tokenize(query);
+  const score = (text) => terms2.reduce((total, term) => total + (text.toLowerCase().includes(term) ? 1 : 0), 0);
+  const bm25Scores = new Map(rankFilesBm25(project, query, Math.max(limit, project.files.length)).map((row) => [row.path, row.score]));
   const fileRows = project.files.map((file) => ({
     kind: "file",
     name: file.path,
     path: file.path,
-    score: score(`${file.path} ${file.kind} ${file.route ?? ""}`)
+    score: bm25Scores.get(file.path) ?? score(`${file.path} ${file.kind} ${file.route ?? ""}`)
   }));
   const symbolRows = project.symbols.map((symbol) => ({
     kind: "symbol",
@@ -24861,8 +24892,8 @@ function explain(project, target) {
   };
 }
 function sqlSummary(project, query, limit) {
-  const terms = tokenize(query);
-  const score = (text) => terms.reduce((total, term) => total + (text.toLowerCase().includes(term) ? 1 : 0), 0);
+  const terms2 = tokenize(query);
+  const score = (text) => terms2.reduce((total, term) => total + (text.toLowerCase().includes(term) ? 1 : 0), 0);
   const rows = [
     ...project.sql.tables.map((table) => ({
       kind: "table",
@@ -25215,8 +25246,8 @@ ${input.text ?? ""}`).digest("hex") },
         const store = new MemoryStore(memoryPath(resolvedRoot));
         const project = await ensureProject(resolvedRoot);
         const memories = await store.list({ includeDeprecated: audit === true, includeDeleted: audit === true });
-        const terms = tokenize(query ?? "");
-        const recalled = memories.filter((memory) => terms.length === 0 || terms.some((term) => tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`).some((part) => part.includes(term) || term.includes(part)))).slice(0, limit ?? 10);
+        const terms2 = tokenize(query ?? "");
+        const recalled = memories.filter((memory) => terms2.length === 0 || terms2.some((term) => tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`).some((part) => part.includes(term) || term.includes(part)))).slice(0, limit ?? 10);
         const verboseResult = mode === "review" ? await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 }) : { query: query ?? "", auditMode: audit === true, memories: recalled };
         const result = responseMode === "verbose" ? verboseResult : mode === "review" ? compactRecallResponse(verboseResult, { constraints }, memories, project) : compactMemoryRecallResponse(recalled, { constraints });
         const response = responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);

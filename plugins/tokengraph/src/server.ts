@@ -37,6 +37,7 @@ import {
 import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } from "./core/config.js";
 import { adviseRouting } from "./core/routingAdvisor.js";
 import { getRepositoryIdentity } from "./core/repositoryIdentity.js";
+import { rankFilesBm25 } from "./core/retrieval.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
 import { traceFailure } from "./core/failureTracer.js";
@@ -448,11 +449,12 @@ function projectMap(project: ProjectIndex) {
 function searchProject(project: ProjectIndex, query: string, limit: number) {
   const terms = tokenize(query);
   const score = (text: string) => terms.reduce((total, term) => total + (text.toLowerCase().includes(term) ? 1 : 0), 0);
+  const bm25Scores = new Map(rankFilesBm25(project, query, Math.max(limit, project.files.length)).map((row) => [row.path, row.score]));
   const fileRows = project.files.map((file) => ({
     kind: "file",
     name: file.path,
     path: file.path,
-    score: score(`${file.path} ${file.kind} ${file.route ?? ""}`)
+    score: bm25Scores.get(file.path) ?? score(`${file.path} ${file.kind} ${file.route ?? ""}`)
   }));
   const symbolRows = project.symbols.map((symbol) => ({
     kind: "symbol",
