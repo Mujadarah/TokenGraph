@@ -11,6 +11,8 @@ const FILE_LOCK_ATTEMPTS = 200;
 const FILE_LOCK_WAIT_MS = 10;
 const FILE_LOCK_STALE_MS = 30_000;
 
+export const SAFE_WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
+
 async function wait(milliseconds: number): Promise<void> {
   await new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
 }

@@ -543,6 +543,23 @@ describe("scanProject", () => {
 });
 
 describe("parsePostgresMigration", () => {
+  it("keeps columns and constraints after a quoted close-paren default", () => {
+    const graph = parsePostgresMigration(
+      "supabase/migrations/007_quoted_default.sql",
+      "create table public.messages (id uuid primary key, marker text default ')', tenant_id uuid not null, constraint messages_tenant_fk foreign key (tenant_id) references public.tenants(id));"
+    );
+
+    expect(graph.tables).toEqual([
+      expect.objectContaining({
+        name: "public.messages",
+        columns: ["id", "marker", "tenant_id"]
+      })
+    ]);
+    expect(graph.constraints).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "messages_tenant_fk", kind: "foreign key" })
+    ]));
+  });
+
   it("preserves quoted column names containing spaces", () => {
     const graph = parsePostgresMigration(
       "supabase/migrations/006_columns.sql",
@@ -2164,6 +2181,36 @@ describe("MemoryStore", () => {
 });
 
 describe("ArchitectureRuleStore and checkArchitecture", () => {
+  it("skips a catastrophic pattern loaded directly from disk", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(
+      rulesPath(root),
+      JSON.stringify({
+        schemaVersion: 1,
+        rules: [{
+          id: "rule_disk_unsafe",
+          type: "forbidden-import",
+          name: "Unsafe persisted rule",
+          enabled: true,
+          severity: "warning",
+          fromPattern: "^(a+)+$",
+          createdAt: "2026-07-15T00:00:00.000Z",
+          updatedAt: "2026-07-15T00:00:00.000Z"
+        }]
+      })
+    );
+
+    const store = new ArchitectureRuleStore(rulesPath(root));
+    const project = await indexProject(root);
+    const report = await checkArchitecture({ root, project, rules: await store.list() });
+
+    expect(report.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: expect.stringMatching(/unsafe|invalid|skipped/i) })
+    ]));
+    expect(report.violations).toEqual([]);
+  });
+
   it("rejects a catastrophic architecture rule before persistence", async () => {
     const root = await makeRoot();
     const store = new ArchitectureRuleStore(rulesPath(root));

@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 
 import type { ArchitectureCheckReport, ArchitectureFinding, ArchitectureRule, ArchitectureRuleInput, ArchitectureRuleSeverity, ProjectIndex } from "./types.js";
 import { assertSafeArchitectureRulePatterns } from "./patternSafety.js";
+import { withFileLock } from "./storage.js";
 
 const DEFAULT_SEVERITY: ArchitectureRuleSeverity = "warning";
 const CURRENT_RULES_SCHEMA_VERSION = 1;
@@ -117,7 +118,10 @@ export class ArchitectureRuleStore {
   private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
     const key = resolve(this.filePath);
     const previous = ArchitectureRuleStore.writeChains.get(key) ?? Promise.resolve();
-    const current = previous.then(operation, operation);
+    const current = previous.then(
+      () => withFileLock(`${key}.lock`, operation),
+      () => withFileLock(`${key}.lock`, operation)
+    );
     ArchitectureRuleStore.writeChains.set(
       key,
       current.then(
@@ -183,17 +187,33 @@ export async function checkArchitecture(input: {
   files?: string[];
 }): Promise<ArchitectureCheckReport> {
   const activeRules = input.rules.filter((rule) => rule.enabled);
+  const validRules: ArchitectureRule[] = [];
+  const invalidRules: Array<{ rule: ArchitectureRule; message: string }> = [];
+  for (const rule of activeRules) {
+    try {
+      await assertSafeArchitectureRulePatterns(rule);
+      validRules.push(rule);
+    } catch (error) {
+      invalidRules.push({ rule, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
   const checkedFiles = input.files?.length ? input.files : input.project.files.filter((file) => !file.isTest).map((file) => file.path);
   const report: ArchitectureCheckReport = {
     status: "checked",
     root: input.root,
-    ruleCount: activeRules.length,
+    ruleCount: validRules.length,
     checkedFiles,
     violations: [],
-    warnings: []
+    warnings: invalidRules.map(({ rule, message }) => ({
+      type: "architecture-rule-invalid",
+      severity: "warning",
+      ruleId: rule.id,
+      ruleName: rule.name,
+      message: `Skipped architecture rule ${rule.name}: ${message}`
+    }))
   };
 
-  applyRuleChecks(input.project, activeRules, checkedFiles, report);
+  applyRuleChecks(input.project, validRules, checkedFiles, report);
   applySqlWarnings(input.project, report);
   await applyMarketplaceWarnings(input.root, report);
 
