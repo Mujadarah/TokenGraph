@@ -58,6 +58,16 @@ export interface CodeSymbol {
   endLine?: number;
 }
 
+export interface SymbolChunk {
+  id: string;
+  filePath: string;
+  symbolName: string;
+  kind: CodeSymbol["kind"];
+  exported: boolean;
+  startLine?: number;
+  endLine?: number;
+}
+
 export interface ImportEdge {
   filePath: string;
   source: string;
@@ -207,6 +217,7 @@ export interface ProjectIndex extends CodeGraph {
   scanMetadata?: ProjectScanMetadata;
   frameworks: string[];
   sql: SqlGraph;
+  symbolChunks?: SymbolChunk[];
 }
 
 export interface WikiPage {

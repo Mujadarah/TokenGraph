@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { resolveProjectImports, scanProject, scanProjectFile, scanProjectFileMetadata } from "./fileScanner.js";
 import { mergeSqlGraphs, parsePostgresMigration } from "./sqlParser.js";
 import type { CodeGraph, FileScanMetadata, ProjectIndex, ProjectScanMetadata, SqlGraph } from "./types.js";
+import { buildSymbolChunks } from "./symbolChunks.js";
 
 export const CURRENT_INDEX_SCHEMA_VERSION = 3;
 
@@ -108,7 +109,8 @@ function buildProjectIndex(root: string, graph: CodeGraph, sql: SqlGraph, scanSi
     scanSignature,
     scanMetadata,
     frameworks: detectFrameworks(graph.files),
-    sql
+    sql,
+    symbolChunks: buildSymbolChunks(graph)
   };
 }
 
