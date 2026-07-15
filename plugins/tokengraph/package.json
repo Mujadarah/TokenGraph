@@ -5,6 +5,10 @@
   "type": "module",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.14.0",
   "bin": {
     "tokengraph-mcp": "./dist/index.js"
   },

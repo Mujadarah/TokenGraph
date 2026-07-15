@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.19.0 - 2026-07-12
+
+- Added rootless setup diagnostics and explicit workspace trust recovery.
+- Added shared Codex and Claude Code marketplace metadata and release-install guidance.
+- Added deterministic standalone marketplace ZIP validation and repository hygiene cleanup.
+
+## 0.18.0 - 2026-07-12
+
+- Hardened trusted workspace confinement, symlink handling, and architecture-rule validation.
+- Improved SQL and project scanning fidelity, nested ignore handling, and refreshed index signatures.
+- Added self-contained release packaging and CI validation for both Codex and Claude Code.
+
+## 0.17.0 - 2026-07-11
+
+- Added host-neutral context compression, project-map exports, and quality-first evidence reporting.
+- Added Codex-first host documentation plus generic MCP, Cursor, and Windsurf guidance.
+
 ## 0.20.0 - 2026-07-13
 
 - Added durable task ledgers and one canonical mandatory completion footer with uncertainty and quality status.
@@ -11,3 +28,5 @@
 - Passed the deterministic routing-lifecycle evidence gate at 100% constraint preservation, zero critical false negatives, 100% recall, and median net estimated savings of 31.7 tokens. Its p25 is -270.3 and 15/30 tasks are non-positive; the execution-inclusive median is -133.8 with 20/30 non-positive. All categories remain low-confidence.
 
 Token figures are estimates rather than provider billing counts. TokenGraph remains local-first and requires no paid API.
+
+Earlier pre-tag history from v0.1 through v0.16 is summarized in ROADMAP.md.
