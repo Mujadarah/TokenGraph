@@ -457,7 +457,7 @@ describe("TokenGraph MCP stdio server", () => {
       status: "completed",
       taskId: prepared.taskId,
       report: expect.objectContaining({ taskId: prepared.taskId, eventCount: expect.any(Number) }),
-      footer: expect.stringMatching(/^TokenGraph: ~\d+(?:-\d+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated)\.$/),
+      footer: expect.stringMatching(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated)\.$/),
       reportingStatus: "ready"
     });
     const suggestionsBeforeTerminalRetry = await listKnowledgeSuggestions(firstRoot);
@@ -517,7 +517,7 @@ describe("TokenGraph MCP stdio server", () => {
       expect(completed.structuredContent).toEqual({
         status: "completed",
         taskId: result.taskId,
-        footer: expect.stringMatching(/^TokenGraph: ~\d+(?:-\d+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated)\.$/),
+        footer: expect.stringMatching(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated)\.$/),
         reportingStatus: "ready"
       });
       expect(completed.structuredContent).not.toHaveProperty("report");

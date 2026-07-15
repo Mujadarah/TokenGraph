@@ -248,7 +248,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
     }
     const benchmarkResults = await readFile(resolve(repoRoot, "docs", "benchmarks", "results-current.md"), "utf8");
     expect(benchmarkResults).toMatch(/15 of 30 tasks are non-positive/i);
-    expect(benchmarkResults).toMatch(/execution-inclusive median.*-133\.8/i);
+    expect(benchmarkResults).toMatch(/execution-inclusive median.*-134\.8/i);
     expect(benchmarkResults).toMatch(/low-confidence/i);
 
     const trustFiles = ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"];

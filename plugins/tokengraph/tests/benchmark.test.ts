@@ -21,6 +21,7 @@ import { estimateTokens } from "../src/core/token.js";
 
 const corpusPath = resolve("scripts", "benchmark-corpus-v1.json");
 const evidencePath = resolve("scripts", "benchmark-evidence-v1.json");
+const publishedResultsPath = resolve("..", "..", "docs", "benchmarks", "results-current.json");
 
 async function corpus() {
   return JSON.parse(await readFile(corpusPath, "utf8"));
@@ -227,7 +228,7 @@ describe("evidence benchmark", () => {
       expect(task.metrics.compactTokens).toBe(task.accounting.lifecycleCalls.reduce((total, call) => total + call.requestTokens + call.responseTokens, 0));
       expect(task.metrics.toolOverheadTokens).toBe(task.accounting.amortizedDiscoverySetupTokens);
       expect(task.metrics.rawTokens).toBe(task.accounting.rawBaselineTokens);
-      expect(task.accounting.completionFooter).toMatch(/^TokenGraph: ~\d+(?:-\d+)? tokens saved \(estimated, .+ confidence\); quality .+\.$/);
+      expect(task.accounting.completionFooter).toMatch(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, .+ confidence\); quality .+\.$/);
     }
     expect(report.sessionAccounting).toMatchObject({ taskCount: 30, toolDefinitionCount: 8 });
     expect(report.sessionAccounting.discovery.tools).toHaveLength(8);
@@ -240,6 +241,36 @@ describe("evidence benchmark", () => {
   it("keeps a serialization margin above the release threshold", async () => {
     const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "evidence-project"));
     expect(report.aggregate.medianNetSavings).toBeGreaterThanOrEqual(25);
+  });
+
+  it("matches the checked-in published benchmark result artifact", async () => {
+    const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "evidence-project"));
+    const published = JSON.parse(await readFile(publishedResultsPath, "utf8")) as {
+      schemaId: string;
+      corpusVersion: string;
+      evidenceVersion: string;
+      aggregate: {
+        taskCount: number;
+        medianExecutionInclusiveNetSavings: number;
+        medianNetSavings: number;
+        primarySavingsMetric: string;
+        baselineLabel: string;
+      };
+    };
+    expect(published).toMatchObject({
+      schemaId: "tokengraph-published-benchmark-results",
+      corpusVersion: report.corpusVersion,
+      evidenceVersion: report.evidenceVersion,
+      aggregate: {
+        taskCount: report.aggregate.taskCount,
+        medianExecutionInclusiveNetSavings: expect.any(Number),
+        medianNetSavings: expect.any(Number),
+        primarySavingsMetric: "execution-inclusive",
+        baselineLabel: "recommended-raw-reads"
+      }
+    });
+    expect(published.aggregate.medianExecutionInclusiveNetSavings).toBeCloseTo(report.aggregate.medianExecutionInclusiveNetSavings, 6);
+    expect(published.aggregate.medianNetSavings).toBeCloseTo(report.aggregate.medianNetSavings, 6);
   });
 
   it("charges inflated compact payloads instead of rewarding them", () => {
