@@ -99,10 +99,34 @@ function splitColumns(body: string): string[] {
   const columns: string[] = [];
   let current = "";
   let depth = 0;
-  for (const char of body) {
-    if (char === "(") depth += 1;
-    if (char === ")") depth = Math.max(0, depth - 1);
-    if (char === "," && depth === 0) {
+  let state: "code" | "single" | "double" = "code";
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    const next = body[index + 1];
+    if (state === "single") {
+      if (char === "'" && next === "'") {
+        current += "''";
+        index += 1;
+        continue;
+      }
+      if (char === "'") state = "code";
+    } else if (state === "double") {
+      if (char === '"' && next === '"') {
+        current += '""';
+        index += 1;
+        continue;
+      }
+      if (char === '"') state = "code";
+    } else if (char === "'") {
+      state = "single";
+    } else if (char === '"') {
+      state = "double";
+    } else if (char === "(") {
+      depth += 1;
+    } else if (char === ")") {
+      depth = Math.max(0, depth - 1);
+    }
+    if (char === "," && depth === 0 && state === "code") {
       columns.push(current.trim());
       current = "";
       continue;
@@ -113,6 +137,56 @@ function splitColumns(body: string): string[] {
     columns.push(current.trim());
   }
   return columns;
+}
+
+interface CreateTableMatch {
+  tableName: string;
+  body: string;
+  index: number;
+}
+
+function findCreateTableMatches(text: string): CreateTableMatch[] {
+  const matches: CreateTableMatch[] = [];
+  const prefix = /create\s+table\s+(?:if\s+not\s+exists\s+)?((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(/gi;
+  for (const match of text.matchAll(prefix)) {
+    const openIndex = (match.index ?? 0) + match[0].length - 1;
+    let depth = 1;
+    let state: "code" | "single" | "double" = "code";
+    for (let index = openIndex + 1; index < text.length; index += 1) {
+      const char = text[index];
+      const next = text[index + 1];
+      if (state === "single") {
+        if (char === "'" && next === "'") {
+          index += 1;
+          continue;
+        }
+        if (char === "'") state = "code";
+        continue;
+      }
+      if (state === "double") {
+        if (char === '"' && next === '"') {
+          index += 1;
+          continue;
+        }
+        if (char === '"') state = "code";
+        continue;
+      }
+      if (char === "'") {
+        state = "single";
+      } else if (char === '"') {
+        state = "double";
+      } else if (char === "(") {
+        depth += 1;
+      } else if (char === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          matches.push({ tableName: match[1]!, body: text.slice(openIndex + 1, index), index: match.index ?? 0 });
+          break;
+        }
+      }
+    }
+  }
+  return matches;
 }
 
 interface SqlStatement {
@@ -288,9 +362,9 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
   }
 
   for (const statement of statements.filter((entry) => /^\s*create\s+table\b/i.test(entry.text))) {
-  for (const match of statement.text.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(([\s\S]*?)\)\s*;/gi)) {
-    const tableName = normalizeSqlName(match[1]);
-    const columnDefs = splitColumns(match[2]);
+  for (const match of findCreateTableMatches(statement.text)) {
+    const tableName = normalizeSqlName(match.tableName);
+    const columnDefs = splitColumns(match.body);
     const table: SqlTable = { name: tableName, columns: [], filePath };
     for (const columnDef of columnDefs) {
       const columnName = normalizeSqlName(firstSqlToken(columnDef));
@@ -306,7 +380,7 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
           expression: kind === "check" ? stripOuterParens(columnDef.slice(columnDef.toLowerCase().indexOf("check") + "check".length)) : undefined,
           filePath
         };
-        addConstraint(constraint, statement.index + (match.index ?? 0));
+        addConstraint(constraint, statement.index + match.index);
         const tableForeignKey = columnDef.match(/foreign\s+key\s*\(([^)]*)\)\s+references\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*(?:\(\s*("?[\w]+"?)\s*\))?/i);
         if (tableForeignKey) {
           const fromColumns = splitCommaList(tableForeignKey[1]);
@@ -343,7 +417,7 @@ export function parsePostgresMigration(filePath: string, sql: string): SqlGraph 
           kind: normalizeSqlName(inlineNamedConstraint[2]).toLowerCase() as SqlConstraint["kind"],
           columns: [columnName],
           filePath
-        }, statement.index + (match.index ?? 0));
+        }, statement.index + match.index);
       }
       const reference = columnDef.match(/references\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*(?:\(\s*("?[\w]+"?)\s*\))?/i);
       if (reference) {

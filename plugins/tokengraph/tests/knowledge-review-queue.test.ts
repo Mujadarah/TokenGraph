@@ -485,6 +485,16 @@ describe("knowledge review queue", () => {
     await expect(reviewKnowledgeSuggestion(root, suggestion.id, "approve")).rejects.toThrow(/expired/i);
   });
 
+  it("marks expired proposed suggestions during listing", async () => {
+    const root = await makeRoot();
+    const suggestion = await proposeKnowledgeChange(root, proposal({ expiresAt: "2000-01-01T00:00:00.000Z" }));
+
+    await expect(listKnowledgeSuggestions(root)).resolves.toEqual([
+      expect.objectContaining({ id: suggestion.id, status: "expired" })
+    ]);
+    await expect(reviewKnowledgeSuggestion(root, suggestion.id, "approve")).rejects.toThrow(/expired/i);
+  });
+
   it("serializes concurrent proposals and reviews without losing updates, then cleans its queue", async () => {
     const root = await makeRoot();
     const proposals = await Promise.all(

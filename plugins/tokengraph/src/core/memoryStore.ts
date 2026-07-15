@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { tokenize } from "./token.js";
+import { withFileLock } from "./storage.js";
 import type { MemoryConflict, MemoryEntry, MemoryInput, MemoryRecall, MemoryStatus, MemoryUpdateInput } from "./types.js";
 
 interface MemoryListOptions {
@@ -347,7 +348,10 @@ export class MemoryStore {
   private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
     const key = resolve(this.filePath);
     const previous = MemoryStore.writeChains.get(key) ?? Promise.resolve();
-    const current = previous.then(operation, operation);
+    const current = previous.then(
+      () => withFileLock(`${key}.lock`, operation),
+      () => withFileLock(`${key}.lock`, operation)
+    );
     MemoryStore.writeChains.set(
       key,
       current.then(

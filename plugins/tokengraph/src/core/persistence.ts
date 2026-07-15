@@ -1,7 +1,7 @@
 import { readFile, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
-import { quarantineCorruptJson, resolveConfinedPath, writeJsonAtomic, writeTextAtomic, writeTextAtomicConfined } from "./storage.js";
+import { canonicalPersistenceLockKey, quarantineCorruptJson, resolveConfinedPath, withFileLock, writeJsonAtomic, writeTextAtomic, writeTextAtomicConfined, SAFE_WIKI_SLUG_PATTERN } from "./storage.js";
 import type { ProjectIndex, ProjectWiki, WikiPage } from "./types.js";
 
 export function stateDir(root: string): string {
@@ -41,7 +41,8 @@ export function wikiManifestPath(root: string): string {
 }
 
 export async function saveProjectIndex(root: string, index: ProjectIndex): Promise<void> {
-  await writeJsonAtomic(indexPath(root), index);
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "index.json");
+  await withFileLock(`${key}.lock`, () => writeJsonAtomic(indexPath(root), index));
 }
 
 function isProjectIndex(value: unknown): value is ProjectIndex {
@@ -108,8 +109,6 @@ interface WikiManifest {
   generatedAt: string;
   pages: WikiManifestPage[];
 }
-
-const SAFE_WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");

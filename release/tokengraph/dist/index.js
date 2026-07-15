@@ -19439,9 +19439,9 @@ import { dirname as dirname5, isAbsolute as isAbsolute4, join as join8, parse as
 import { fileURLToPath } from "node:url";
 
 // src/core/architectureRules.ts
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { mkdir as mkdir2, readFile as readFile2, rename as rename2, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname2, join as join2, resolve as resolve2 } from "node:path";
 
 // src/core/patternSafety.ts
 import { Worker } from "node:worker_threads";
@@ -19503,6 +19503,125 @@ async function assertSafeArchitectureRulePatterns(input) {
   }
 }
 
+// src/core/storage.ts
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+var FILE_LOCK_ATTEMPTS = 200;
+var FILE_LOCK_WAIT_MS = 10;
+var FILE_LOCK_STALE_MS = 3e4;
+var SAFE_WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
+async function wait(milliseconds) {
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+function isTransientWindowsFsError(error2) {
+  return process.platform === "win32" && ["EPERM", "EBUSY", "EACCES"].includes(String(error2.code));
+}
+async function retryTransientWindowsFs(operation) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error2) {
+      if (!isTransientWindowsFsError(error2) || attempt >= 19) throw error2;
+      await wait(FILE_LOCK_WAIT_MS);
+    }
+  }
+}
+async function withFileLock(lockPath, operation) {
+  await mkdir(dirname(lockPath), { recursive: true });
+  for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        return await operation();
+      } finally {
+        await handle.close();
+        await retryTransientWindowsFs(async () => rm(lockPath, { force: true }));
+      }
+    } catch (error2) {
+      if (error2.code !== "EEXIST" && !isTransientWindowsFsError(error2)) throw error2;
+      try {
+        const lockStats = await stat(lockPath);
+        if (Date.now() - lockStats.mtimeMs > FILE_LOCK_STALE_MS) {
+          await retryTransientWindowsFs(async () => rm(lockPath, { force: true }));
+        }
+      } catch (lockError) {
+        if (lockError.code !== "ENOENT" && !isTransientWindowsFsError(lockError)) throw lockError;
+      }
+      await wait(FILE_LOCK_WAIT_MS);
+    }
+  }
+  throw new Error("Timed out waiting for a persistence file lock.");
+}
+async function canonicalPersistenceLockKey(root, ...segments) {
+  const resolvedRoot = resolve(root);
+  let canonicalRoot;
+  try {
+    canonicalRoot = await realpath(resolvedRoot);
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+    canonicalRoot = resolvedRoot;
+  }
+  const key = join(canonicalRoot, ...segments);
+  return process.platform === "win32" ? key.toLowerCase() : key;
+}
+async function writeJsonAtomic(path, value) {
+  await writeTextAtomic(path, `${JSON.stringify(value, null, 2)}
+`);
+}
+async function writeTextAtomic(path, content) {
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true });
+  const tempPath = join(directory, `.${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
+  try {
+    await writeFile(tempPath, content);
+    await rename(tempPath, path);
+  } finally {
+    await rm(tempPath, { force: true });
+  }
+}
+async function resolveConfinedPath(root, relativeFile, createParents = false) {
+  if (!relativeFile || isAbsolute(relativeFile) || relativeFile.replaceAll("\\", "/").split("/").includes("..")) {
+    throw new Error("Confined path must be a safe relative file path.");
+  }
+  const canonicalRoot = await realpath(resolve(root));
+  const segments = relativeFile.replaceAll("\\", "/").split("/").filter(Boolean);
+  const fileName = segments.pop();
+  if (!fileName) throw new Error("Confined path must name a file.");
+  let parent = canonicalRoot;
+  for (const segment of segments) {
+    const candidate = join(parent, segment);
+    if (createParents) await mkdir(candidate, { recursive: false }).catch((error2) => {
+      if (error2.code !== "EEXIST") throw error2;
+    });
+    parent = await realpath(candidate);
+    const confined = relative(canonicalRoot, parent);
+    if (!confined || confined.startsWith("..") || isAbsolute(confined)) {
+      throw new Error("Path resolves outside the trusted workspace.");
+    }
+  }
+  const filePath = join(parent, fileName);
+  try {
+    if ((await lstat(filePath)).isSymbolicLink()) throw new Error("Confined file path cannot be a symbolic link.");
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+  }
+  return filePath;
+}
+async function writeTextAtomicConfined(root, relativeFile, content) {
+  await writeTextAtomic(await resolveConfinedPath(root, relativeFile, true), content);
+}
+async function quarantineCorruptJson(path) {
+  const corruptPath = `${path}.corrupt-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  try {
+    await rename(path, corruptPath);
+  } catch (error2) {
+    if (error2.code !== "ENOENT") {
+      throw error2;
+    }
+  }
+}
+
 // src/core/architectureRules.ts
 var DEFAULT_SEVERITY = "warning";
 var CURRENT_RULES_SCHEMA_VERSION = 1;
@@ -19547,7 +19666,7 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
   static writeChains = /* @__PURE__ */ new Map();
   async list() {
     try {
-      const parsed = JSON.parse(await readFile(this.filePath, "utf8"));
+      const parsed = JSON.parse(await readFile2(this.filePath, "utf8"));
       const records = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.rules) ? parsed.rules : [];
       return records.filter(isArchitectureRule);
     } catch (error2) {
@@ -19601,9 +19720,12 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
     });
   }
   async enqueueWrite(operation) {
-    const key = resolve(this.filePath);
+    const key = resolve2(this.filePath);
     const previous = _ArchitectureRuleStore.writeChains.get(key) ?? Promise.resolve();
-    const current = previous.then(operation, operation);
+    const current = previous.then(
+      () => withFileLock(`${key}.lock`, operation),
+      () => withFileLock(`${key}.lock`, operation)
+    );
     _ArchitectureRuleStore.writeChains.set(
       key,
       current.then(
@@ -19614,11 +19736,11 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
     return current;
   }
   async writeAtomic(rules) {
-    const directory = dirname(this.filePath);
-    await mkdir(directory, { recursive: true });
-    const tempPath = join(directory, `.rules-${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
+    const directory = dirname2(this.filePath);
+    await mkdir2(directory, { recursive: true });
+    const tempPath = join2(directory, `.rules-${process.pid}-${Date.now()}-${randomUUID2()}.tmp`);
     try {
-      await writeFile(
+      await writeFile2(
         tempPath,
         `${JSON.stringify(
           {
@@ -19630,15 +19752,15 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
         )}
 `
       );
-      await rename(tempPath, this.filePath);
+      await rename2(tempPath, this.filePath);
     } finally {
-      await rm(tempPath, { force: true });
+      await rm2(tempPath, { force: true });
     }
   }
   async quarantineCorruptFile() {
-    const corruptPath = `${this.filePath}.corrupt-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const corruptPath = `${this.filePath}.corrupt-${Date.now()}-${randomUUID2().slice(0, 8)}`;
     try {
-      await rename(this.filePath, corruptPath);
+      await rename2(this.filePath, corruptPath);
     } catch (error2) {
       if (error2.code !== "ENOENT") {
         throw error2;
@@ -19653,16 +19775,32 @@ function isArchitectureRule(value) {
 }
 async function checkArchitecture(input) {
   const activeRules = input.rules.filter((rule) => rule.enabled);
+  const validRules = [];
+  const invalidRules = [];
+  for (const rule of activeRules) {
+    try {
+      await assertSafeArchitectureRulePatterns(rule);
+      validRules.push(rule);
+    } catch (error2) {
+      invalidRules.push({ rule, message: error2 instanceof Error ? error2.message : String(error2) });
+    }
+  }
   const checkedFiles = input.files?.length ? input.files : input.project.files.filter((file) => !file.isTest).map((file) => file.path);
   const report = {
     status: "checked",
     root: input.root,
-    ruleCount: activeRules.length,
+    ruleCount: validRules.length,
     checkedFiles,
     violations: [],
-    warnings: []
+    warnings: invalidRules.map(({ rule, message }) => ({
+      type: "architecture-rule-invalid",
+      severity: "warning",
+      ruleId: rule.id,
+      ruleName: rule.name,
+      message: `Skipped architecture rule ${rule.name}: ${message}`
+    }))
   };
-  applyRuleChecks(input.project, activeRules, checkedFiles, report);
+  applyRuleChecks(input.project, validRules, checkedFiles, report);
   applySqlWarnings(input.project, report);
   await applyMarketplaceWarnings(input.root, report);
   return report;
@@ -19809,7 +19947,7 @@ function applySqlWarnings(project, report) {
 }
 async function applyMarketplaceWarnings(root, report) {
   try {
-    const marketplace = JSON.parse(await readFile(join(root, ".agents", "plugins", "marketplace.json"), "utf8"));
+    const marketplace = JSON.parse(await readFile2(join2(root, ".agents", "plugins", "marketplace.json"), "utf8"));
     const plugin = marketplace.plugins?.find((candidate) => candidate.name === "tokengraph");
     const sourcePath = plugin?.source?.path;
     const markedDevelopmentOnly = plugin?.developmentOnly === true || plugin?.policy?.developmentOnly === true;
@@ -19834,126 +19972,6 @@ import { readFile as readFile4 } from "node:fs/promises";
 // src/core/persistence.ts
 import { readFile as readFile3, rm as rm3 } from "node:fs/promises";
 import { isAbsolute as isAbsolute2, join as join3, relative as relative2, resolve as resolve3 } from "node:path";
-
-// src/core/storage.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { lstat, mkdir as mkdir2, open, readFile as readFile2, realpath, rename as rename2, rm as rm2, stat, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname2, isAbsolute, join as join2, relative, resolve as resolve2 } from "node:path";
-var FILE_LOCK_ATTEMPTS = 200;
-var FILE_LOCK_WAIT_MS = 10;
-var FILE_LOCK_STALE_MS = 3e4;
-async function wait(milliseconds) {
-  await new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
-}
-function isTransientWindowsFsError(error2) {
-  return process.platform === "win32" && ["EPERM", "EBUSY", "EACCES"].includes(String(error2.code));
-}
-async function retryTransientWindowsFs(operation) {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await operation();
-    } catch (error2) {
-      if (!isTransientWindowsFsError(error2) || attempt >= 19) throw error2;
-      await wait(FILE_LOCK_WAIT_MS);
-    }
-  }
-}
-async function withFileLock(lockPath, operation) {
-  await mkdir2(dirname2(lockPath), { recursive: true });
-  for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
-    try {
-      const handle = await open(lockPath, "wx");
-      try {
-        return await operation();
-      } finally {
-        await handle.close();
-        await retryTransientWindowsFs(async () => rm2(lockPath, { force: true }));
-      }
-    } catch (error2) {
-      if (error2.code !== "EEXIST" && !isTransientWindowsFsError(error2)) throw error2;
-      try {
-        const lockStats = await stat(lockPath);
-        if (Date.now() - lockStats.mtimeMs > FILE_LOCK_STALE_MS) {
-          await retryTransientWindowsFs(async () => rm2(lockPath, { force: true }));
-        }
-      } catch (lockError) {
-        if (lockError.code !== "ENOENT" && !isTransientWindowsFsError(lockError)) throw lockError;
-      }
-      await wait(FILE_LOCK_WAIT_MS);
-    }
-  }
-  throw new Error("Timed out waiting for a persistence file lock.");
-}
-async function canonicalPersistenceLockKey(root, ...segments) {
-  const resolvedRoot = resolve2(root);
-  let canonicalRoot;
-  try {
-    canonicalRoot = await realpath(resolvedRoot);
-  } catch (error2) {
-    if (error2.code !== "ENOENT") throw error2;
-    canonicalRoot = resolvedRoot;
-  }
-  const key = join2(canonicalRoot, ...segments);
-  return process.platform === "win32" ? key.toLowerCase() : key;
-}
-async function writeJsonAtomic(path, value) {
-  await writeTextAtomic(path, `${JSON.stringify(value, null, 2)}
-`);
-}
-async function writeTextAtomic(path, content) {
-  const directory = dirname2(path);
-  await mkdir2(directory, { recursive: true });
-  const tempPath = join2(directory, `.${process.pid}-${Date.now()}-${randomUUID2()}.tmp`);
-  try {
-    await writeFile2(tempPath, content);
-    await rename2(tempPath, path);
-  } finally {
-    await rm2(tempPath, { force: true });
-  }
-}
-async function resolveConfinedPath(root, relativeFile, createParents = false) {
-  if (!relativeFile || isAbsolute(relativeFile) || relativeFile.replaceAll("\\", "/").split("/").includes("..")) {
-    throw new Error("Confined path must be a safe relative file path.");
-  }
-  const canonicalRoot = await realpath(resolve2(root));
-  const segments = relativeFile.replaceAll("\\", "/").split("/").filter(Boolean);
-  const fileName = segments.pop();
-  if (!fileName) throw new Error("Confined path must name a file.");
-  let parent = canonicalRoot;
-  for (const segment of segments) {
-    const candidate = join2(parent, segment);
-    if (createParents) await mkdir2(candidate, { recursive: false }).catch((error2) => {
-      if (error2.code !== "EEXIST") throw error2;
-    });
-    parent = await realpath(candidate);
-    const confined = relative(canonicalRoot, parent);
-    if (!confined || confined.startsWith("..") || isAbsolute(confined)) {
-      throw new Error("Path resolves outside the trusted workspace.");
-    }
-  }
-  const filePath = join2(parent, fileName);
-  try {
-    if ((await lstat(filePath)).isSymbolicLink()) throw new Error("Confined file path cannot be a symbolic link.");
-  } catch (error2) {
-    if (error2.code !== "ENOENT") throw error2;
-  }
-  return filePath;
-}
-async function writeTextAtomicConfined(root, relativeFile, content) {
-  await writeTextAtomic(await resolveConfinedPath(root, relativeFile, true), content);
-}
-async function quarantineCorruptJson(path) {
-  const corruptPath = `${path}.corrupt-${Date.now()}-${randomUUID2().slice(0, 8)}`;
-  try {
-    await rename2(path, corruptPath);
-  } catch (error2) {
-    if (error2.code !== "ENOENT") {
-      throw error2;
-    }
-  }
-}
-
-// src/core/persistence.ts
 function stateDir(root) {
   return join3(root, ".tokengraph");
 }
@@ -19976,7 +19994,8 @@ function wikiManifestPath(root) {
   return join3(wikiDir(root), "manifest.json");
 }
 async function saveProjectIndex(root, index) {
-  await writeJsonAtomic(indexPath(root), index);
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "index.json");
+  await withFileLock(`${key}.lock`, () => writeJsonAtomic(indexPath(root), index));
 }
 function isProjectIndex(value) {
   if (!value || typeof value !== "object") {
@@ -20000,7 +20019,6 @@ async function loadProjectIndex(root) {
     throw error2;
   }
 }
-var SAFE_WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
 function isStringArray(value) {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -20190,10 +20208,11 @@ function unwrapPersistedConfig(value) {
 }
 async function saveTokenGraphConfig(root, config2) {
   const normalized = normalizeConfig(config2);
-  await writeJsonAtomic(configPath(root), {
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "config.json");
+  await withFileLock(`${key}.lock`, () => writeJsonAtomic(configPath(root), {
     schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
     config: normalized
-  });
+  }));
   return normalized;
 }
 async function loadTokenGraphConfig(root) {
@@ -21742,10 +21761,34 @@ function splitColumns(body) {
   const columns = [];
   let current = "";
   let depth = 0;
-  for (const char of body) {
-    if (char === "(") depth += 1;
-    if (char === ")") depth = Math.max(0, depth - 1);
-    if (char === "," && depth === 0) {
+  let state = "code";
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    const next = body[index + 1];
+    if (state === "single") {
+      if (char === "'" && next === "'") {
+        current += "''";
+        index += 1;
+        continue;
+      }
+      if (char === "'") state = "code";
+    } else if (state === "double") {
+      if (char === '"' && next === '"') {
+        current += '""';
+        index += 1;
+        continue;
+      }
+      if (char === '"') state = "code";
+    } else if (char === "'") {
+      state = "single";
+    } else if (char === '"') {
+      state = "double";
+    } else if (char === "(") {
+      depth += 1;
+    } else if (char === ")") {
+      depth = Math.max(0, depth - 1);
+    }
+    if (char === "," && depth === 0 && state === "code") {
       columns.push(current.trim());
       current = "";
       continue;
@@ -21756,6 +21799,49 @@ function splitColumns(body) {
     columns.push(current.trim());
   }
   return columns;
+}
+function findCreateTableMatches(text) {
+  const matches = [];
+  const prefix = /create\s+table\s+(?:if\s+not\s+exists\s+)?((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(/gi;
+  for (const match of text.matchAll(prefix)) {
+    const openIndex = (match.index ?? 0) + match[0].length - 1;
+    let depth = 1;
+    let state = "code";
+    for (let index = openIndex + 1; index < text.length; index += 1) {
+      const char = text[index];
+      const next = text[index + 1];
+      if (state === "single") {
+        if (char === "'" && next === "'") {
+          index += 1;
+          continue;
+        }
+        if (char === "'") state = "code";
+        continue;
+      }
+      if (state === "double") {
+        if (char === '"' && next === '"') {
+          index += 1;
+          continue;
+        }
+        if (char === '"') state = "code";
+        continue;
+      }
+      if (char === "'") {
+        state = "single";
+      } else if (char === '"') {
+        state = "double";
+      } else if (char === "(") {
+        depth += 1;
+      } else if (char === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          matches.push({ tableName: match[1], body: text.slice(openIndex + 1, index), index: match.index ?? 0 });
+          break;
+        }
+      }
+    }
+  }
+  return matches;
 }
 function sqlStatements(sql) {
   const statements = [];
@@ -21903,9 +21989,9 @@ function parsePostgresMigration(filePath, sql) {
     }
   }
   for (const statement of statements.filter((entry) => /^\s*create\s+table\b/i.test(entry.text))) {
-    for (const match of statement.text.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(([\s\S]*?)\)\s*;/gi)) {
-      const tableName = normalizeSqlName(match[1]);
-      const columnDefs = splitColumns(match[2]);
+    for (const match of findCreateTableMatches(statement.text)) {
+      const tableName = normalizeSqlName(match.tableName);
+      const columnDefs = splitColumns(match.body);
       const table = { name: tableName, columns: [], filePath };
       for (const columnDef of columnDefs) {
         const columnName = normalizeSqlName(firstSqlToken(columnDef));
@@ -21921,7 +22007,7 @@ function parsePostgresMigration(filePath, sql) {
             expression: kind === "check" ? stripOuterParens(columnDef.slice(columnDef.toLowerCase().indexOf("check") + "check".length)) : void 0,
             filePath
           };
-          addConstraint(constraint, statement.index + (match.index ?? 0));
+          addConstraint(constraint, statement.index + match.index);
           const tableForeignKey = columnDef.match(/foreign\s+key\s*\(([^)]*)\)\s+references\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*(?:\(\s*("?[\w]+"?)\s*\))?/i);
           if (tableForeignKey) {
             const fromColumns = splitCommaList(tableForeignKey[1]);
@@ -21958,7 +22044,7 @@ function parsePostgresMigration(filePath, sql) {
             kind: normalizeSqlName(inlineNamedConstraint[2]).toLowerCase(),
             columns: [columnName],
             filePath
-          }, statement.index + (match.index ?? 0));
+          }, statement.index + match.index);
         }
         const reference = columnDef.match(/references\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*(?:\(\s*("?[\w]+"?)\s*\))?/i);
         if (reference) {
@@ -22813,7 +22899,10 @@ var MemoryStore = class _MemoryStore {
   async enqueueWrite(operation) {
     const key = resolve4(this.filePath);
     const previous = _MemoryStore.writeChains.get(key) ?? Promise.resolve();
-    const current = previous.then(operation, operation);
+    const current = previous.then(
+      () => withFileLock(`${key}.lock`, operation),
+      () => withFileLock(`${key}.lock`, operation)
+    );
     _MemoryStore.writeChains.set(
       key,
       current.then(
@@ -23758,7 +23847,6 @@ var SUGGESTION_STATUSES = /* @__PURE__ */ new Set(["proposed", "approved", "reje
 var REVIEW_DECISIONS = /* @__PURE__ */ new Set(["approve", "reject"]);
 var UUID_PATTERN2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
-var WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
 var MEMORY_ID_PATTERN = /^mem_[A-Za-z0-9][A-Za-z0-9_-]*$/;
 var SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 var SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
@@ -23782,7 +23870,7 @@ function normalizeUnique(values, label, allowEmpty = false) {
 }
 function validateAffectedIdentifiers(type, values, allowEmpty = false) {
   const identifiers = normalizeUnique(values, `Affected ${type} identifiers`, allowEmpty);
-  const pattern = type === "wiki" ? WIKI_SLUG_PATTERN : type === "memory" ? MEMORY_ID_PATTERN : SKILL_NAME_PATTERN;
+  const pattern = type === "wiki" ? SAFE_WIKI_SLUG_PATTERN : type === "memory" ? MEMORY_ID_PATTERN : SKILL_NAME_PATTERN;
   if (identifiers.some((identifier) => !pattern.test(identifier))) {
     throw new Error(`Affected identifiers must be safe logical ${type} identifiers, not absolute or traversing paths.`);
   }
@@ -24133,12 +24221,24 @@ async function proposeKnowledgeChange(root, input) {
   });
 }
 async function listKnowledgeSuggestions(root, options = {}) {
-  const suggestions = await readQueue(root);
   const types = options.type === void 0 ? void 0 : Array.isArray(options.type) ? options.type : [options.type];
   const statuses = options.status === void 0 ? void 0 : Array.isArray(options.status) ? options.status : [options.status];
   types?.forEach(validateType);
   statuses?.forEach(validateStatus);
-  return suggestions.filter((suggestion) => (!types || types.includes(suggestion.type)) && (!statuses || statuses.includes(suggestion.status)));
+  return enqueueQueueOperation(root, async () => {
+    const suggestions = await readQueue(root);
+    const now = Date.now();
+    let changed = false;
+    const normalized = suggestions.map((suggestion) => {
+      if (suggestion.status === "proposed" && Date.parse(suggestion.expiresAt) <= now) {
+        changed = true;
+        return { ...suggestion, status: "expired", updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      }
+      return suggestion;
+    });
+    if (changed) await writeQueue(root, normalized);
+    return normalized.filter((suggestion) => (!types || types.includes(suggestion.type)) && (!statuses || statuses.includes(suggestion.status)));
+  });
 }
 async function listAppliedKnowledge(root) {
   const [applications, suggestions] = await Promise.all([readApplications(root), readQueue(root)]);

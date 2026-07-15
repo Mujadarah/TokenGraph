@@ -287,7 +287,7 @@ export interface ArchitectureRule extends ArchitectureRuleInput {
 }
 
 export interface ArchitectureFinding {
-  type: ArchitectureRuleType | "marketplace-target" | "tenant-isolation" | "rls" | "grant" | "auth" | "audit-logging";
+  type: ArchitectureRuleType | "architecture-rule-invalid" | "marketplace-target" | "tenant-isolation" | "rls" | "grant" | "auth" | "audit-logging";
   severity: ArchitectureRuleSeverity;
   message: string;
   ruleId?: string;

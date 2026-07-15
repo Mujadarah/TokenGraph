@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, win32 } from "node:path";
 
-import { canonicalPersistenceLockKey, quarantineCorruptJson, resolveConfinedPath, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
+import { canonicalPersistenceLockKey, quarantineCorruptJson, resolveConfinedPath, SAFE_WIKI_SLUG_PATTERN, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
 
 export type KnowledgeSuggestionType = "wiki" | "memory" | "skill";
 export type KnowledgeSuggestionStatus = "proposed" | "approved" | "rejected" | "expired";
@@ -94,7 +94,6 @@ const SUGGESTION_STATUSES = new Set<KnowledgeSuggestionStatus>(["proposed", "app
 const REVIEW_DECISIONS = new Set<KnowledgeReviewDecision>(["approve", "reject"]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
-const WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
 const MEMORY_ID_PATTERN = /^mem_[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
@@ -123,7 +122,7 @@ function normalizeUnique(values: unknown, label: string, allowEmpty = false): st
 
 function validateAffectedIdentifiers(type: KnowledgeSuggestionType, values: unknown, allowEmpty = false): string[] {
   const identifiers = normalizeUnique(values, `Affected ${type} identifiers`, allowEmpty);
-  const pattern = type === "wiki" ? WIKI_SLUG_PATTERN : type === "memory" ? MEMORY_ID_PATTERN : SKILL_NAME_PATTERN;
+  const pattern = type === "wiki" ? SAFE_WIKI_SLUG_PATTERN : type === "memory" ? MEMORY_ID_PATTERN : SKILL_NAME_PATTERN;
   if (identifiers.some((identifier) => !pattern.test(identifier))) {
     throw new Error(`Affected identifiers must be safe logical ${type} identifiers, not absolute or traversing paths.`);
   }
@@ -524,12 +523,24 @@ export async function proposeKnowledgeChange(root: string, input: KnowledgePropo
 }
 
 export async function listKnowledgeSuggestions(root: string, options: KnowledgeSuggestionListOptions = {}): Promise<KnowledgeSuggestion[]> {
-  const suggestions = await readQueue(root);
   const types = options.type === undefined ? undefined : Array.isArray(options.type) ? options.type : [options.type];
   const statuses = options.status === undefined ? undefined : Array.isArray(options.status) ? options.status : [options.status];
   types?.forEach(validateType);
   statuses?.forEach(validateStatus);
-  return suggestions.filter((suggestion) => (!types || types.includes(suggestion.type)) && (!statuses || statuses.includes(suggestion.status)));
+  return enqueueQueueOperation(root, async () => {
+    const suggestions = await readQueue(root);
+    const now = Date.now();
+    let changed = false;
+    const normalized = suggestions.map((suggestion) => {
+      if (suggestion.status === "proposed" && Date.parse(suggestion.expiresAt) <= now) {
+        changed = true;
+        return { ...suggestion, status: "expired" as const, updatedAt: new Date().toISOString() };
+      }
+      return suggestion;
+    });
+    if (changed) await writeQueue(root, normalized);
+    return normalized.filter((suggestion) => (!types || types.includes(suggestion.type)) && (!statuses || statuses.includes(suggestion.status)));
+  });
 }
 
 export async function listAppliedKnowledge(root: string): Promise<AppliedKnowledge[]> {
