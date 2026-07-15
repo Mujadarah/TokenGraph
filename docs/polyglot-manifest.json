@@ -1,0 +1,11 @@
+{
+  "runtime": "web-tree-sitter@0.26.11",
+  "workspaceExecution": false,
+  "grammars": {
+    "python": "v0.25.0",
+    "go": "v0.25.0",
+    "rust": "v0.24.2",
+    "java": "v0.23.5"
+  },
+  "assetPolicy": "WASM assets are package-owned and must be present before parsing; no workspace execution is permitted."
+}

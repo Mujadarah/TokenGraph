@@ -106,7 +106,7 @@ Legacy architecture and review:
 
 ## Packaging contract
 
-The installable plugin contains host manifests, MCP configuration, `hooks/hooks.json`, the bundled `dist/index.js`, `dist/cli.js`, and `dist/hooks.js` entries, skills, README, package metadata, and license. It excludes source, tests, scripts, development dependencies, local state, `dist/server.js`, and `dist/core/`.
+The installable plugin contains host manifests, MCP configuration, `hooks/hooks.json`, pinned standalone Tree-sitter WASM grammar assets, the bundled `dist/index.js`, `dist/cli.js`, and `dist/hooks.js` entries, skills, README, package metadata, and license. It excludes source, tests, scripts, development dependencies, local state, `dist/server.js`, and `dist/core/`.
 
 ## Lifecycle hooks
 

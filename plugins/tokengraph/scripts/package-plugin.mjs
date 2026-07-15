@@ -180,6 +180,7 @@ async function copyInstallablePlugin(packageDir, packageJson, version) {
   await chmod(resolve(packageDir, "dist", "hooks.js"), 0o644);
   await chmod(resolve(packageDir, "dist", "cli.js"), 0o644);
   await copyRequiredPath(resolve(pluginRoot, "hooks"), resolve(packageDir, "hooks"));
+  await copyRequiredPath(resolve(pluginRoot, "assets"), resolve(packageDir, "assets"));
   await copyRequiredPath(resolve(pluginRoot, "skills"), resolve(packageDir, "skills"));
   await copyRequiredPath(resolve(pluginRoot, ".mcp.json"), resolve(packageDir, ".mcp.json"));
   await copyRequiredPath(resolve(pluginRoot, ".claude-plugin"), resolve(packageDir, ".claude-plugin"));
