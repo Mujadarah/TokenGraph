@@ -210,8 +210,20 @@ Status: complete
 - The routing-lifecycle evidence benchmark passes its strict gate with 100% constraint preservation, zero critical false negatives, 100% recall, and median net estimated savings of 31.7 tokens. Its p25 is -270.3 and 15/30 tasks are non-positive; the execution-inclusive median is -133.8 with 20/30 non-positive. Per-category confidence is low.
 - Deterministic v0.20 release packaging includes nine skills, the MCP and hook bundles, both host manifests, and a standalone marketplace archive.
 
+## v0.21 - TokenGraph Roadmap v4
+
+Status: complete
+
+- Stage 0/1 shadow routing, force overrides, kill-switch handling, canonical stable artifacts, and resend-by-default delivery are implemented without expanding the MCP tool names.
+- Repository and worktree identity, common-git-directory storage, schema quarantine, confinement, quotas, bounded TypeScript indexing, deterministic capsules, BM25 retrieval, and exact validated slices are available through the existing context surface.
+- `tokengraph run -- <command> [args...]` provides bounded redacted captures, timeout and signal handling, retention, purge, and targeted saved-run queries.
+- Scoped project briefs, verified outcomes, deterministic Obsidian projection, supersession, archival, compaction, and injection-safe memory composition are implemented.
+- Paired host-trace evaluation reports counterbalanced bootstrap confidence intervals and keeps enforced routing disabled unless every promotion gate passes. JSON remains the default after the negative tabular-format experiment.
+- The standalone release packages `web-tree-sitter@0.26.11` with pinned Python, Go, Rust, and Java grammar WASM assets and asserts zero workspace execution.
+- v0.21.0 benchmark claims use the checked-in artifact: routing median overhead 20.0 tokens and execution-inclusive median net savings -86.0 tokens; these are measured results, not universal savings guarantees.
+
 ## Later
 
 Ideas under consideration:
 
-- Language support beyond TypeScript/JavaScript and PostgreSQL.
+- Additional language adapters and parser grammars beyond the v0.21.0 polyglot set.

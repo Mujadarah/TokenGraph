@@ -7,7 +7,7 @@ TokenGraph is a local-first plugin for Codex and Claude Code. It indexes a trust
 
 - No OpenAI or Anthropic API key required.
 - No cloud index, embeddings service, telemetry, or paid external service.
-- Current release: `0.20.0`.
+- Current release: `0.21.0`.
 - Runtime: Node.js 22 or newer.
 - Source-available under the repository [license](LICENSE).
 
@@ -57,15 +57,15 @@ Claude Code forwards `CLAUDE_PROJECT_DIR` to TokenGraph automatically.
 
 ## Install the release ZIP
 
-Download `tokengraph-0.20.0.zip` from the [latest GitHub release](https://github.com/Mujadarah/TokenGraph/releases/latest) and extract it. The extracted directory is a standalone marketplace root containing both host catalogs and the installable `tokengraph/` plugin.
+Download `tokengraph-0.21.0.zip` from the [latest GitHub release](https://github.com/Mujadarah/TokenGraph/releases/latest) and extract it. The extracted directory is a standalone marketplace root containing both host catalogs and the installable `tokengraph/` plugin.
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.20.0
+codex plugin marketplace add C:\path\to\tokengraph-0.21.0
 codex plugin add tokengraph@tokengraph
 ```
 
 ```bash
-claude plugin marketplace add /path/to/tokengraph-0.20.0
+claude plugin marketplace add /path/to/tokengraph-0.21.0
 claude plugin install tokengraph@tokengraph
 ```
 

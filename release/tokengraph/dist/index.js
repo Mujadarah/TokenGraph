@@ -24977,7 +24977,7 @@ function sqlSummary(project, query, limit) {
 function createTokenGraphServer(options = {}) {
   const toolSurface = selectedToolSurface();
   const server = new McpServer(
-    { name: "tokengraph", version: "0.20.0" },
+    { name: "tokengraph", version: "0.21.0" },
     {
       instructions: "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. Call tokengraph_setup once and capture its trusted workspace root. Use tokengraph_prepare_context only when planning is needed; otherwise omit taskId from the first query, compress, recall, or analyze call and capture the returned taskId. Complete or pause with tokengraph_task_report. TokenGraph tools are task-scoped: never reuse a taskId across workspaces or merge unrelated tasks."
     }
