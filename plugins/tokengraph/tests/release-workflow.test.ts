@@ -9,7 +9,7 @@ describe("tagged release workflow", () => {
     expect(workflow).toContain("pnpm/action-setup@v4");
     expect(workflow).toContain("version: 10.14.0");
     expect(workflow).toContain("node-version: 22");
-    expect(workflow).toContain("pnpm package:plugin -- --release --json");
+    expect(workflow).toContain("pnpm --silent package:plugin -- --release --json");
     expect(workflow).toContain("sha256sum");
     expect(workflow).toContain("gh release create");
     expect(workflow).toContain("--draft");
