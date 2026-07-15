@@ -1860,6 +1860,15 @@ describe("JsonTokenGraphStore", () => {
     expect((await readdir(join(root, ".tokengraph"))).some((file) => file.startsWith("token-events.json.corrupt-"))).toBe(true);
   });
 
+  it("refuses to read a store written by a different schema version", async () => {
+    const root = await makeRoot();
+    const storePath = join(root, ".tokengraph", "token-events.json");
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(storePath, JSON.stringify({ schemaVersion: 0, events: [] }));
+    const store = new JsonTokenGraphStore(storePath, { schemaVersion: 1, dataKey: "events" });
+    await expect(store.read()).rejects.toThrow(/schema version/i);
+  });
+
   it("keeps SQLite optional and unavailable until explicitly implemented", () => {
     expect(() => new SqliteTokenGraphStore("unused.sqlite")).toThrow(/optional SQLite backend is not implemented/i);
   });

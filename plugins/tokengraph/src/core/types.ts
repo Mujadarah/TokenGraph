@@ -1,6 +1,16 @@
 export type TokenSavingProfile = "conservative" | "balanced" | "aggressive";
 export type RoutingMode = "shadow" | "enforced" | "always-activate" | "always-advisory";
 
+export interface RepositoryIdentity {
+  repositoryId: string;
+  repositoryFingerprint: string;
+  workspaceId: string;
+  worktreeId: string;
+  branch: string;
+  headCommit: string;
+  remoteIdentity?: string;
+}
+
 export interface TokenGraphConfig {
   tokenSavingProfile: TokenSavingProfile;
   routingMode: RoutingMode;

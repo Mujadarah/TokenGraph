@@ -8650,7 +8650,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
     ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref);
     const schOrFunc = root.refs[ref];
     if (schOrFunc) return schOrFunc;
-    let _sch = resolve8.call(this, root, ref);
+    let _sch = resolve9.call(this, root, ref);
     if (_sch === void 0) {
       const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
       const { schemaId } = this.opts;
@@ -8676,7 +8676,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve8(root, ref) {
+  function resolve9(root, ref) {
     let sch;
     while (typeof (sch = this.refs[ref]) == "string") ref = sch;
     return sch || this.schemas[ref] || resolveSchema.call(this, root, ref);
@@ -9126,7 +9126,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     else if (typeof uri === "object") uri = parse4(serialize(uri, options), options);
     return uri;
   }
-  function resolve8(baseURI, relativeURI, options) {
+  function resolve9(baseURI, relativeURI, options) {
     const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
     const resolved = resolveComponent(parse4(baseURI, schemelessOptions), parse4(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
@@ -9300,7 +9300,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
   const fastUri = {
     SCHEMES,
     normalize: normalize2,
-    resolve: resolve8,
+    resolve: resolve9,
     resolveComponent,
     equal,
     serialize,
@@ -16227,14 +16227,14 @@ function inputRequiredRoundsExceededMessage(method, maxRounds) {
   return `Multi-round-trip request '${method}' still required input after ${maxRounds} rounds (inputRequired.maxRounds)`;
 }
 function sleep(ms, signal) {
-  return new Promise((resolve8, reject) => {
+  return new Promise((resolve9, reject) => {
     if (signal?.aborted) {
       reject(signal.reason instanceof SdkError ? signal.reason : new SdkError(SdkErrorCode.RequestTimeout, String(signal.reason)));
       return;
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve8();
+      resolve9();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
@@ -17100,7 +17100,7 @@ var Protocol = class {
     const flowStartedAt = Date.now();
     let onAbort;
     let cleanupMessageId;
-    return new Promise((resolve8, reject) => {
+    return new Promise((resolve9, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -17168,7 +17168,7 @@ var Protocol = class {
         }
         if (decoded.kind === "invalid") return reject(decoded.error);
         if (decoded.kind === "input_required") {
-          if (options?.allowInputRequired === true) return resolve8(manualInputRequiredValue(decoded));
+          if (options?.allowInputRequired === true) return resolve9(manualInputRequiredValue(decoded));
           const flow = {
             codec,
             request,
@@ -17180,11 +17180,11 @@ var Protocol = class {
               params
             }, resultSchema, legOptions)
           };
-          return resolve8(this._resolveNonCompleteResult(decoded, flow));
+          return resolve9(this._resolveNonCompleteResult(decoded, flow));
         }
         const result = decoded.result;
         validateStandardSchema(resultSchema, result).then((parseResult) => {
-          if (parseResult.success) resolve8(parseResult.data);
+          if (parseResult.success) resolve9(parseResult.data);
           else reject(new SdkError(SdkErrorCode.InvalidResult, `Invalid result for ${request.method}: ${parseResult.error}`));
         }, reject);
       });
@@ -19008,7 +19008,7 @@ var StdioServerTransport = class {
   }
   send(message) {
     if (this._closed) return Promise.reject(/* @__PURE__ */ new Error("StdioServerTransport is closed"));
-    return new Promise((resolve8, reject) => {
+    return new Promise((resolve9, reject) => {
       const json = serializeMessage(message);
       let settled = false;
       const onError = (error2) => {
@@ -19023,14 +19023,14 @@ var StdioServerTransport = class {
         settled = true;
         this._stdout.off("error", onError);
         this._stdout.off("drain", onDrain);
-        resolve8();
+        resolve9();
       };
       this._stdout.once("error", onError);
       if (this._stdout.write(json)) {
         if (settled) return;
         settled = true;
         this._stdout.off("error", onError);
-        resolve8();
+        resolve9();
       } else if (!settled) this._stdout.once("drain", onDrain);
     });
   }
@@ -19084,14 +19084,14 @@ var StdioConnectionChannel = class {
   */
   async whenRequestsAnswered(timeoutMs) {
     if (this._closed || this._pendingRequests.size === 0) return true;
-    return await new Promise((resolve8) => {
+    return await new Promise((resolve9) => {
       const waiter = () => {
         clearTimeout(timer);
-        resolve8(true);
+        resolve9(true);
       };
       const timer = setTimeout(() => {
         this._drainWaiters = this._drainWaiters.filter((pending) => pending !== waiter);
-        resolve8(false);
+        resolve9(false);
       }, timeoutMs);
       this._drainWaiters.push(waiter);
     });
@@ -19432,10 +19432,10 @@ function toError(value) {
 
 // src/server.ts
 import process4 from "node:process";
-import { createHash as createHash5, randomUUID as randomUUID6 } from "node:crypto";
+import { createHash as createHash6, randomUUID as randomUUID6 } from "node:crypto";
 import { access, realpath as realpath3 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname as dirname5, isAbsolute as isAbsolute4, join as join8, parse as parse3, relative as relative5, resolve as resolve7 } from "node:path";
+import { dirname as dirname5, isAbsolute as isAbsolute4, join as join9, parse as parse3, relative as relative5, resolve as resolve8 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/core/architectureRules.ts
@@ -19457,7 +19457,7 @@ var PATTERN_FIELDS = [
 var PROBE = `${"a".repeat(12e3)}!`;
 var TIMEOUT_MS = 250;
 function assertSafePattern(pattern) {
-  return new Promise((resolve8, reject) => {
+  return new Promise((resolve9, reject) => {
     const worker = new Worker(
       `const { parentPort, workerData } = require("node:worker_threads");
 try {
@@ -19475,7 +19475,7 @@ try {
       clearTimeout(timeout);
       void worker.terminate();
       if (error2) reject(error2);
-      else resolve8();
+      else resolve9();
     };
     const timeout = setTimeout(() => {
       finish(new Error("pattern evaluation exceeded the safety time limit"));
@@ -19971,27 +19971,78 @@ import { readFile as readFile4 } from "node:fs/promises";
 
 // src/core/persistence.ts
 import { readFile as readFile3, rm as rm3 } from "node:fs/promises";
-import { isAbsolute as isAbsolute2, join as join3, relative as relative2, resolve as resolve3 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join4, relative as relative2, resolve as resolve4 } from "node:path";
+
+// src/core/repositoryIdentity.ts
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { createHash } from "node:crypto";
+import { join as join3, resolve as resolve3 } from "node:path";
+var execFileAsync = promisify(execFile);
+async function git(root, ...args) {
+  try {
+    const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 });
+    const output = result.stdout.trim();
+    return output || void 0;
+  } catch {
+    return void 0;
+  }
+}
+function digest(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+async function remoteIdentity(root) {
+  const remotes = await git(root, "remote", "get-url", "--all", "origin");
+  return remotes?.split(/\r?\n/).map((value) => value.trim()).filter(Boolean).sort().join("\n");
+}
+async function getRepositoryIdentity(root) {
+  const workspaceRoot = resolve3(root);
+  const [topLevel, commonDir, gitDir, branch, headCommit, remote] = await Promise.all([
+    git(workspaceRoot, "rev-parse", "--show-toplevel"),
+    git(workspaceRoot, "rev-parse", "--git-common-dir"),
+    git(workspaceRoot, "rev-parse", "--git-dir"),
+    git(workspaceRoot, "symbolic-ref", "--quiet", "--short", "HEAD"),
+    git(workspaceRoot, "rev-parse", "HEAD"),
+    remoteIdentity(workspaceRoot)
+  ]);
+  const normalizedRoot = resolve3(topLevel ?? workspaceRoot);
+  const normalizedCommon = commonDir ? resolve3(workspaceRoot, commonDir) : void 0;
+  const normalizedGitDir = gitDir ? resolve3(workspaceRoot, gitDir) : void 0;
+  const repositoryKey = remote ?? normalizedCommon ?? normalizedRoot;
+  const repositoryFingerprint = digest(`${repositoryKey}
+${headCommit ?? "unborn"}`);
+  return {
+    repositoryId: digest(repositoryKey),
+    repositoryFingerprint,
+    workspaceId: digest(normalizedRoot),
+    worktreeId: digest(normalizedGitDir ?? normalizedRoot),
+    branch: branch ?? "detached",
+    headCommit: headCommit ?? "unborn",
+    ...remote ? { remoteIdentity: remote } : {}
+  };
+}
+
+// src/core/persistence.ts
 function stateDir(root) {
-  return join3(root, ".tokengraph");
+  return join4(root, ".tokengraph");
 }
 function indexPath(root) {
-  return join3(stateDir(root), "index.json");
+  return join4(stateDir(root), "index.json");
 }
 function memoryPath(root) {
-  return join3(stateDir(root), "memory.json");
+  return join4(stateDir(root), "memory.json");
 }
 function configPath(root) {
-  return join3(stateDir(root), "config.json");
+  return join4(stateDir(root), "config.json");
 }
 function rulesPath(root) {
-  return join3(stateDir(root), "rules.json");
+  return join4(stateDir(root), "rules.json");
 }
 function wikiDir(root) {
-  return join3(stateDir(root), "wiki");
+  return join4(stateDir(root), "wiki");
 }
 function wikiManifestPath(root) {
-  return join3(wikiDir(root), "manifest.json");
+  return join4(wikiDir(root), "manifest.json");
 }
 async function saveProjectIndex(root, index) {
   const key = await canonicalPersistenceLockKey(root, ".tokengraph", "index.json");
@@ -20035,8 +20086,8 @@ function isSafeWikiPageFile(root, file) {
   if (!file || isAbsolute2(file) || file.startsWith("../") || file.startsWith("..\\")) {
     return false;
   }
-  const directory = resolve3(wikiDir(root));
-  const resolved = resolve3(directory, file);
+  const directory = resolve4(wikiDir(root));
+  const resolved = resolve4(directory, file);
   const relativePath = relative2(directory, resolved);
   return Boolean(relativePath) && !relativePath.startsWith("..") && !isAbsolute2(relativePath);
 }
@@ -20056,7 +20107,7 @@ async function saveProjectWiki(root, wiki) {
     ...page2.freshness === void 0 ? {} : { freshness: page2.freshness }
   }));
   for (const wikiPage of wiki.pages) {
-    const relativeFile = join3(".tokengraph", "wiki", `${wikiPage.slug}.md`);
+    const relativeFile = join4(".tokengraph", "wiki", `${wikiPage.slug}.md`);
     const path = await resolveConfinedPath(root, relativeFile, true);
     let existing;
     try {
@@ -20067,19 +20118,19 @@ async function saveProjectWiki(root, wiki) {
     if (existing !== wikiPage.body) await writeTextAtomic(path, wikiPage.body);
   }
   const retained = new Set(pages.map((page2) => page2.file));
-  await Promise.all((previous?.pages ?? []).filter((page2) => !retained.has(`${page2.slug}.md`)).map(async (page2) => rm3(await resolveConfinedPath(root, join3(".tokengraph", "wiki", `${page2.slug}.md`)), { force: true })));
+  await Promise.all((previous?.pages ?? []).filter((page2) => !retained.has(`${page2.slug}.md`)).map(async (page2) => rm3(await resolveConfinedPath(root, join4(".tokengraph", "wiki", `${page2.slug}.md`)), { force: true })));
   const manifest = {
     schemaVersion: wiki.schemaVersion,
     fingerprint: wiki.fingerprint,
     generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
     pages
   };
-  await writeTextAtomicConfined(root, join3(".tokengraph", "wiki", "manifest.json"), `${JSON.stringify(manifest, null, 2)}
+  await writeTextAtomicConfined(root, join4(".tokengraph", "wiki", "manifest.json"), `${JSON.stringify(manifest, null, 2)}
 `);
 }
 async function loadProjectWiki(root) {
   try {
-    const manifest = JSON.parse(await readFile3(await resolveConfinedPath(root, join3(".tokengraph", "wiki", "manifest.json")), "utf8"));
+    const manifest = JSON.parse(await readFile3(await resolveConfinedPath(root, join4(".tokengraph", "wiki", "manifest.json")), "utf8"));
     if (!isWikiManifest(manifest) || !manifest.pages.every((page2) => isSafeWikiPageFile(root, page2.file))) {
       return void 0;
     }
@@ -20089,7 +20140,7 @@ async function loadProjectWiki(root) {
         slug: manifestPage.slug,
         title: manifestPage.title,
         estimatedTokens: manifestPage.estimatedTokens,
-        body: await readFile3(await resolveConfinedPath(root, join3(".tokengraph", "wiki", manifestPage.file)), "utf8"),
+        body: await readFile3(await resolveConfinedPath(root, join4(".tokengraph", "wiki", manifestPage.file)), "utf8"),
         ...manifestPage.sourceFingerprints === void 0 ? {} : { sourceFingerprints: manifestPage.sourceFingerprints },
         ...manifestPage.backlinks === void 0 ? {} : { backlinks: manifestPage.backlinks },
         ...manifestPage.contradictions === void 0 ? {} : { contradictions: manifestPage.contradictions },
@@ -21193,9 +21244,9 @@ function adviseRouting(input) {
 
 // src/core/fileScanner.ts
 var ignorePackage = __toESM(require_ignore(), 1);
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 import { readdir, readFile as readFile5, stat as stat2 } from "node:fs/promises";
-import { basename, dirname as dirname3, extname, join as join4, normalize, relative as relative3, sep } from "node:path";
+import { basename, dirname as dirname3, extname, join as join5, normalize, relative as relative3, sep } from "node:path";
 var DEPENDENCY_DIRS = /* @__PURE__ */ new Set(["node_modules", "vendor", "bower_components"]);
 var BUILD_DIRS = /* @__PURE__ */ new Set([".next", "dist", "build", "out", "coverage", ".turbo", ".cache", ".parcel-cache"]);
 var SUPPORTED_EXTENSIONS = /* @__PURE__ */ new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".sql", ".md", ".mdx"]);
@@ -21213,7 +21264,7 @@ function normalizePath(path) {
   return path.split(sep).join("/");
 }
 function hashText(text) {
-  return createHash("sha256").update(text.replace(/\r\n?/g, "\n")).digest("hex");
+  return createHash2("sha256").update(text.replace(/\r\n?/g, "\n")).digest("hex");
 }
 function exclusionForName(name) {
   if (DEPENDENCY_DIRS.has(name)) return "dependency";
@@ -21224,7 +21275,7 @@ function exclusionForName(name) {
 async function loadIgnoreScopes(base2, inherited = []) {
   let content;
   try {
-    content = await readFile5(join4(base2, ".gitignore"), "utf8");
+    content = await readFile5(join5(base2, ".gitignore"), "utf8");
   } catch (error2) {
     if (error2.code !== "ENOENT") {
       throw error2;
@@ -21422,7 +21473,7 @@ function extractSymbols(filePath, content) {
   return symbols;
 }
 function candidateImportPaths(root, fromFile, source) {
-  const basePaths = source.startsWith("@/") || source.startsWith("~/") ? [source.slice(2), normalize(join4("src", source.slice(2)))] : source.startsWith(".") ? [normalize(join4(dirname3(fromFile), source))] : [];
+  const basePaths = source.startsWith("@/") || source.startsWith("~/") ? [source.slice(2), normalize(join5("src", source.slice(2)))] : source.startsWith(".") ? [normalize(join5(dirname3(fromFile), source))] : [];
   if (!basePaths.length) {
     return [];
   }
@@ -21445,7 +21496,7 @@ function candidatePathsForBase(root, basePath) {
     `${normalized}/index.js`,
     `${normalized}/index.jsx`
   ]);
-  return candidates.map((candidate) => normalizePath(relative3(root, join4(root, candidate))));
+  return candidates.map((candidate) => normalizePath(relative3(root, join5(root, candidate))));
 }
 function resolveLocalImports(root, graph) {
   const indexedPaths = new Set(graph.files.map((file) => file.path));
@@ -21482,7 +21533,7 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
   }
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
-    const absolute = join4(current, entry.name);
+    const absolute = join5(current, entry.name);
     const relativePath = normalizePath(relative3(root, absolute));
     if (entry.name === ".tokengraph") {
       continue;
@@ -21607,7 +21658,7 @@ async function scanProjectFileMetadata(root, options) {
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
-      const absolute = join4(current, entry.name);
+      const absolute = join5(current, entry.name);
       const relativePath = normalizePath(relative3(root, absolute));
       if (entry.name === ".tokengraph") continue;
       if (relativePath && isIgnored(currentScopes, absolute, entry.isDirectory())) {
@@ -21705,7 +21756,7 @@ async function scanProjectFileMetadata(root, options) {
 async function scanProjectFile(root, metadata) {
   let content;
   try {
-    content = await readFile5(join4(root, metadata.path), "utf8");
+    content = await readFile5(join5(root, metadata.path), "utf8");
   } catch {
     return void 0;
   }
@@ -21731,7 +21782,7 @@ async function scanProjectFile(root, metadata) {
 }
 
 // src/core/projectIndexer.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 
 // src/core/sqlParser.ts
 function normalizeSqlName(name) {
@@ -22252,7 +22303,7 @@ function mergeSqlGraphs(graphs) {
 // src/core/projectIndexer.ts
 var CURRENT_INDEX_SCHEMA_VERSION = 3;
 function fingerprintPayload(value) {
-  return createHash2("sha256").update(JSON.stringify(value)).digest("hex");
+  return createHash3("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function detectFrameworks(files) {
   const frameworks = /* @__PURE__ */ new Set();
@@ -22672,7 +22723,7 @@ ${input.text}`, plan.relevantSql);
 // src/core/memoryStore.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { mkdir as mkdir3, readFile as readFile6, rename as rename3, rm as rm4, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname4, join as join5, resolve as resolve4 } from "node:path";
+import { dirname as dirname4, join as join6, resolve as resolve5 } from "node:path";
 var DEFAULT_SOURCE = "manual";
 var CURRENT_MEMORY_SCHEMA_VERSION = 1;
 function nowIso2() {
@@ -22944,7 +22995,7 @@ var MemoryStore = class _MemoryStore {
     }
   }
   async enqueueWrite(operation) {
-    const key = resolve4(this.filePath);
+    const key = resolve5(this.filePath);
     const previous = _MemoryStore.writeChains.get(key) ?? Promise.resolve();
     const current = previous.then(
       () => withFileLock(`${key}.lock`, operation),
@@ -22962,7 +23013,7 @@ var MemoryStore = class _MemoryStore {
   async writeAtomic(memories) {
     const directory = dirname4(this.filePath);
     await mkdir3(directory, { recursive: true });
-    const tempPath = join5(directory, `.memory-${process.pid}-${Date.now()}-${randomUUID3()}.tmp`);
+    const tempPath = join6(directory, `.memory-${process.pid}-${Date.now()}-${randomUUID3()}.tmp`);
     try {
       await writeFile3(
         tempPath,
@@ -23417,7 +23468,7 @@ function formatTaskReportFooter(report) {
 }
 
 // src/core/wiki.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 import { posix } from "node:path";
 var CURRENT_WIKI_SCHEMA_VERSION = 1;
 var LIST_LIMIT = 20;
@@ -23437,7 +23488,7 @@ function pageSourceFingerprints(index, draft, applications) {
   const reviewed = applications.flatMap(
     (application) => application.sources.map((source) => `${source.kind}:${source.sourceId}:${source.fingerprint}`)
   );
-  const indexedFingerprint = indexed.length ? [`index:${createHash3("sha256").update(JSON.stringify(indexed.sort())).digest("hex")}`] : [];
+  const indexedFingerprint = indexed.length ? [`index:${createHash4("sha256").update(JSON.stringify(indexed.sort())).digest("hex")}`] : [];
   return Array.from(/* @__PURE__ */ new Set([...indexedFingerprint, ...reviewed])).sort();
 }
 function sourceIsStale(index, application) {
@@ -23649,7 +23700,7 @@ function buildProjectWiki(index, memories, applications = []) {
 // src/core/taskLedger.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
 import { readFile as readFile7, readdir as readdir2, rename as rename4, rm as rm5 } from "node:fs/promises";
-import { join as join6, resolve as resolve5 } from "node:path";
+import { join as join7, resolve as resolve6 } from "node:path";
 var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
 var TASK_LEDGER_SCHEMA_VERSION = 1;
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -23660,11 +23711,11 @@ function assertTaskId(taskId) {
   }
 }
 function tasksDirectory(root) {
-  return join6(resolve5(root), ".tokengraph", "tasks");
+  return join7(resolve6(root), ".tokengraph", "tasks");
 }
 function taskLedgerPath(root, taskId) {
   assertTaskId(taskId);
-  return join6(tasksDirectory(root), `${taskId}.json`);
+  return join7(tasksDirectory(root), `${taskId}.json`);
 }
 function isRecord2(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -23889,9 +23940,9 @@ async function setTaskDisposition(root, taskId, disposition, turnId, calibration
 }
 
 // src/core/knowledgeReviewQueue.ts
-import { createHash as createHash4, randomUUID as randomUUID5 } from "node:crypto";
+import { createHash as createHash5, randomUUID as randomUUID5 } from "node:crypto";
 import { readFile as readFile8, realpath as realpath2 } from "node:fs/promises";
-import { isAbsolute as isAbsolute3, join as join7, relative as relative4, resolve as resolve6, win32 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join8, relative as relative4, resolve as resolve7, win32 } from "node:path";
 var REVIEW_QUEUE_SCHEMA_VERSION = 3;
 var APPLICATION_SCHEMA_VERSION = 2;
 var DEFAULT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1e3;
@@ -23905,10 +23956,10 @@ var SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 var SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 var queueWriteChains = /* @__PURE__ */ new Map();
 function queuePath(root) {
-  return join7(resolve6(root), ".tokengraph", "review-queue.json");
+  return join8(resolve7(root), ".tokengraph", "review-queue.json");
 }
 function applicationPath(root) {
-  return join7(resolve6(root), ".tokengraph", "knowledge-applications.json");
+  return join8(resolve7(root), ".tokengraph", "knowledge-applications.json");
 }
 function nonEmptyString(value, label) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a non-empty string.`);
@@ -23999,7 +24050,7 @@ function normalizeAffectedTargets(value, type, legacyIdentifiers) {
   return result;
 }
 function suggestionFingerprint(input) {
-  return createHash4("sha256").update(JSON.stringify({
+  return createHash5("sha256").update(JSON.stringify({
     type: input.type,
     title: input.title,
     rationale: input.rationale,
@@ -24064,7 +24115,7 @@ function reconstructSuggestion(value, schemaVersion) {
     } : {}
   });
   if (persistedSources) proposal.sources = persistedSources;
-  const expectedFingerprint = schemaVersion === 1 ? createHash4("sha256").update(JSON.stringify({
+  const expectedFingerprint = schemaVersion === 1 ? createHash5("sha256").update(JSON.stringify({
     type: proposal.type,
     title: proposal.title,
     proposedContent: proposal.proposedContent,
@@ -24173,11 +24224,11 @@ async function readApplications(root) {
   }
 }
 function targetFiles(root, application) {
-  const base2 = join7(resolve6(root), ".tokengraph", "knowledge");
+  const base2 = join8(resolve7(root), ".tokengraph", "knowledge");
   return [
-    ...application.affectedTargets.wikiPages.map((slug) => join7(base2, "wiki", ...slug.split("/"), `${application.suggestionId}.md`)),
-    ...application.affectedTargets.memories.map((id) => join7(base2, "memories", id, `${application.suggestionId}.md`)),
-    ...application.affectedTargets.skills.map((name) => join7(base2, "skills", name, `${application.suggestionId}.md`))
+    ...application.affectedTargets.wikiPages.map((slug) => join8(base2, "wiki", ...slug.split("/"), `${application.suggestionId}.md`)),
+    ...application.affectedTargets.memories.map((id) => join8(base2, "memories", id, `${application.suggestionId}.md`)),
+    ...application.affectedTargets.skills.map((name) => join8(base2, "skills", name, `${application.suggestionId}.md`))
   ];
 }
 function applicationMarkdown(application) {
@@ -24198,9 +24249,9 @@ async function writeApplication(root, applications, application) {
 }
 async function ensureApplicationTargets(root, application) {
   const expected = applicationMarkdown(application);
-  const logicalBase = join7(resolve6(root), ".tokengraph", "knowledge");
+  const logicalBase = join8(resolve7(root), ".tokengraph", "knowledge");
   for (const logicalPath of targetFiles(root, application)) {
-    const path = await resolveConfinedPath(root, join7(".tokengraph", "knowledge", relative4(logicalBase, logicalPath)), true);
+    const path = await resolveConfinedPath(root, join8(".tokengraph", "knowledge", relative4(logicalBase, logicalPath)), true);
     try {
       const existing = await readFile8(path, "utf8");
       if (existing !== expected) throw new Error("Applied knowledge target differs from its reviewed payload.");
@@ -24221,8 +24272,8 @@ async function assertFreshForApproval(root, suggestion) {
     if (source.kind !== "path") continue;
     let content;
     try {
-      const canonicalRoot = await realpath2(resolve6(root));
-      const canonicalSource = await realpath2(join7(canonicalRoot, ...source.sourceId.split("/")));
+      const canonicalRoot = await realpath2(resolve7(root));
+      const canonicalSource = await realpath2(join8(canonicalRoot, ...source.sourceId.split("/")));
       const confined = relative4(canonicalRoot, canonicalSource);
       if (!confined || confined.startsWith("..") || isAbsolute3(confined)) {
         throw new Error(`Knowledge source ${source.sourceId} resolves outside the trusted workspace.`);
@@ -24232,7 +24283,7 @@ async function assertFreshForApproval(root, suggestion) {
       if (error2.code === "ENOENT") throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} is missing.`);
       throw error2;
     }
-    const current = createHash4("sha256").update(content.toString("utf8").replace(/\r\n?/g, "\n")).digest("hex");
+    const current = createHash5("sha256").update(content.toString("utf8").replace(/\r\n?/g, "\n")).digest("hex");
     if (current !== source.fingerprint) throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} fingerprint changed.`);
   }
 }
@@ -24451,7 +24502,7 @@ function taskHost(value) {
   return "unknown";
 }
 function eventFingerprint(taskId, toolName, category, operation) {
-  return createHash5("sha256").update(JSON.stringify({ taskId, toolName, category, operation })).digest("hex");
+  return createHash6("sha256").update(JSON.stringify({ taskId, toolName, category, operation })).digest("hex");
 }
 async function recordCoreEvent(input) {
   const overheadTokens = input.overheadTokens ?? coreEventOverheadTokens(input.taskId, input.toolName, input.category);
@@ -24473,19 +24524,19 @@ function coreEventOverheadTokens(taskId, toolName, category) {
   return estimateTokens(compactJson({ taskId, toolName, category }));
 }
 function ownPluginRoot() {
-  return resolve7(dirname5(fileURLToPath(import.meta.url)), "..");
+  return resolve8(dirname5(fileURLToPath(import.meta.url)), "..");
 }
 async function isPluginRoot(root) {
   try {
     const [realRoot, realSelf] = await Promise.all([realpath3(root), realpath3(ownPluginRoot())]);
     if (realRoot !== realSelf) return false;
     const hasManifest = await Promise.any([
-      access(join8(root, ".codex-plugin", "plugin.json")),
-      access(join8(root, ".claude-plugin", "plugin.json"))
+      access(join9(root, ".codex-plugin", "plugin.json")),
+      access(join9(root, ".claude-plugin", "plugin.json"))
     ]).then(() => true, () => false);
     const hasMcpConfig = await Promise.any([
-      access(join8(root, ".mcp.json")),
-      access(join8(root, ".mcp.claude.json"))
+      access(join9(root, ".mcp.json")),
+      access(join9(root, ".mcp.claude.json"))
     ]).then(() => true, () => false);
     return hasManifest && hasMcpConfig;
   } catch {
@@ -24539,7 +24590,7 @@ async function inspectWorkspaceSetup(server, provider) {
     return {
       status: "blocked",
       host: detectedHost(),
-      trustedWorkspace: { ...candidate, root: resolve7(candidate.root) },
+      trustedWorkspace: { ...candidate, root: resolve8(candidate.root) },
       blockingReason: "unreadable-trusted-workspace",
       pluginRootLaunch,
       message: "The host-provided TokenGraph workspace does not exist or is not readable.",
@@ -24583,7 +24634,7 @@ function createWorkspaceResolver(server, provider) {
     }
     const allowedRoot = setup.trustedWorkspace?.root;
     if (!allowedRoot) throw new Error(setup.message);
-    const requested = inputRoot?.trim() ? resolve7(allowedRoot, inputRoot.trim()) : allowedRoot;
+    const requested = inputRoot?.trim() ? resolve8(allowedRoot, inputRoot.trim()) : allowedRoot;
     let resolvedRoot;
     try {
       resolvedRoot = await realpath3(requested);
@@ -24620,7 +24671,7 @@ function okWithResourceLinks(output) {
 }
 var projectWriteChains = /* @__PURE__ */ new Map();
 async function enqueueProjectWrite(root, operation) {
-  const key = resolve7(root);
+  const key = resolve8(root);
   const previous = projectWriteChains.get(key) ?? Promise.resolve();
   const current = previous.then(operation, operation);
   projectWriteChains.set(
@@ -24888,15 +24939,19 @@ function createTokenGraphServer(options = {}) {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: object({})
     },
-    async () => ok({
-      ...await inspectWorkspaceSetup(server, options.trustedWorkspace),
-      surface: toolSurface,
-      capabilities: {
-        taskScoped: true,
-        coreTools: [...CORE_TOOL_NAMES],
-        legacyCompatibility: toolSurface === "full"
-      }
-    })
+    async () => {
+      const setup = await inspectWorkspaceSetup(server, options.trustedWorkspace);
+      return ok({
+        ...setup,
+        repositoryIdentity: setup.trustedWorkspace ? await getRepositoryIdentity(setup.trustedWorkspace.root) : null,
+        surface: toolSurface,
+        capabilities: {
+          taskScoped: true,
+          coreTools: [...CORE_TOOL_NAMES],
+          legacyCompatibility: toolSurface === "full"
+        }
+      });
+    }
   );
   server.registerTool(
     "tokengraph_prepare_context",
@@ -24982,7 +25037,7 @@ function createTokenGraphServer(options = {}) {
         taskId: ledger.taskId,
         toolName: "tokengraph_prepare_context",
         category: "context-routing",
-        operation: { taskHash: createHash5("sha256").update(task).digest("hex"), profile: plan.profile, indexingMode },
+        operation: { taskHash: createHash6("sha256").update(task).digest("hex"), profile: plan.profile, indexingMode },
         originalTokens: project.files.reduce((total, file) => total + file.estimatedTokens, 0),
         compactTokens: estimateTokens(compactJson(compactToolResultEnvelope(response)))
       });
@@ -25046,7 +25101,7 @@ function createTokenGraphServer(options = {}) {
           taskId: task.taskId,
           toolName: "tokengraph_query_context",
           category: `query-${mode}`,
-          operation: { mode, queryHash: createHash5("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
+          operation: { mode, queryHash: createHash6("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
           originalTokens,
           compactTokens
         });
@@ -25111,7 +25166,7 @@ ${text ?? ""}`, config2.maxMemories) : [];
           taskId: task.taskId,
           toolName: "tokengraph_compress",
           category,
-          operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash5("sha256").update(`${"task" in input ? input.task : ""}
+          operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash6("sha256").update(`${"task" in input ? input.task : ""}
 ${input.text ?? ""}`).digest("hex") },
           originalTokens: estimates.original,
           compactTokens,
@@ -25146,7 +25201,7 @@ ${input.text ?? ""}`).digest("hex") },
           taskId: task.taskId,
           toolName: "tokengraph_recall",
           category: `memory-${mode}`,
-          operation: { mode, queryHash: createHash5("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
+          operation: { mode, queryHash: createHash6("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
           originalTokens: estimateTokens(compactJson(memories)),
           compactTokens
         });
@@ -25196,7 +25251,7 @@ ${changedFiles.join("\n")}`, 8);
           taskId: task.taskId,
           toolName: "tokengraph_analyze",
           category: `analysis-${mode}`,
-          operation: { mode, inputHash: createHash5("sha256").update(JSON.stringify(input)).digest("hex") },
+          operation: { mode, inputHash: createHash6("sha256").update(JSON.stringify(input)).digest("hex") },
           originalTokens: Math.max(compactTokens, project.files.reduce((total, file) => total + file.estimatedTokens, 0)),
           compactTokens
         });
@@ -25251,7 +25306,7 @@ ${changedFiles.join("\n")}`, 8);
         taskId,
         toolName: "tokengraph_propose_knowledge",
         category: `knowledge-${action}`,
-        operation: action === "propose" ? { action, proposalHash: createHash5("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") } : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
+        operation: action === "propose" ? { action, proposalHash: createHash6("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") } : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
         originalTokens: compactTokens,
         compactTokens
       });

@@ -2,10 +2,19 @@ import { readFile, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { canonicalPersistenceLockKey, quarantineCorruptJson, resolveConfinedPath, withFileLock, writeJsonAtomic, writeTextAtomic, writeTextAtomicConfined, SAFE_WIKI_SLUG_PATTERN } from "./storage.js";
+import { resolveRepositoryStateDirectory } from "./repositoryIdentity.js";
 import type { ProjectIndex, ProjectWiki, WikiPage } from "./types.js";
 
 export function stateDir(root: string): string {
   return join(root, ".tokengraph");
+}
+
+export async function repositoryDir(root: string): Promise<string> {
+  return resolveRepositoryStateDirectory(root);
+}
+
+export async function repositoryIndexPath(root: string): Promise<string> {
+  return join(await repositoryDir(root), "index.json");
 }
 
 export function indexPath(root: string): string {

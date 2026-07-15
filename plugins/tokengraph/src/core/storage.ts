@@ -145,6 +145,10 @@ export class JsonTokenGraphStore<T = unknown> {
         return parsed as T[];
       }
       if (parsed && typeof parsed === "object") {
+        const schemaVersion = (parsed as Record<string, unknown>).schemaVersion;
+        if (typeof schemaVersion === "number" && schemaVersion !== this.options.schemaVersion) {
+          throw new Error(`Unsupported TokenGraph store schema version ${schemaVersion}; expected ${this.options.schemaVersion}.`);
+        }
         const value = (parsed as Record<string, unknown>)[this.options.dataKey];
         return Array.isArray(value) ? (value as T[]) : [];
       }
