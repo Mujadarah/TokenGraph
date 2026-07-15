@@ -219,7 +219,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
       criticalConstraintPreservationRate: 1,
       criticalFalseNegativeCount: 0,
       requiredFileRecall: 1,
-      medianNetSavings: 31.700000000000003,
+      medianNetSavings: 19.96666666666667,
       taskFailures: expect.arrayContaining(["memory-wiki-01"])
     });
     expect(report.releaseGate).toEqual({ passed: true, failureReasons: [] });
@@ -248,7 +248,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
     }
     const benchmarkResults = await readFile(resolve(repoRoot, "docs", "benchmarks", "results-current.md"), "utf8");
     expect(benchmarkResults).toMatch(/15 of 30 tasks are non-positive/i);
-    expect(benchmarkResults).toMatch(/execution-inclusive median.*-74\.3/i);
+    expect(benchmarkResults).toMatch(/execution-inclusive median.*-86\.0/i);
     expect(benchmarkResults).toMatch(/low-confidence/i);
 
     const trustFiles = ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"];

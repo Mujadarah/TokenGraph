@@ -35,6 +35,7 @@ import {
   taskReportInputSchema
 } from "./core/toolContracts.js";
 import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } from "./core/config.js";
+import { adviseRouting } from "./core/routingAdvisor.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
 import { traceFailure } from "./core/failureTracer.js";
@@ -658,10 +659,19 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: prepareContextInputSchema
     },
-    async ({ root, task, profile, maxTokens, allowRawReads, constraints, responseMode, refreshIndex, host }) => {
+    async ({ root, task, profile, maxTokens, allowRawReads, constraints, responseMode, refreshIndex, host, routingOverride, knownArtifacts }) => {
       const resolvedRoot = await workspaceRoot(root);
       const statusBefore = await getIndexStatus(resolvedRoot);
       const existing = await loadProjectIndex(resolvedRoot);
+      const config = await loadTokenGraphConfig(resolvedRoot);
+      const routing = adviseRouting({
+        task,
+        knownArtifacts,
+        routingOverride,
+        routingMode: config.routingMode,
+        indexAvailable: Boolean(existing),
+        cachedStatus: statusBefore.state === "fresh" ? "fresh" : statusBefore.state === "missing" ? "missing" : "stale"
+      });
       let project: ProjectIndex;
       let indexingMode: "existing" | "full" | "incremental" = "existing";
       let changes = { addedFiles: [] as string[], changedFiles: [] as string[], deletedFiles: [] as string[], parsedFiles: [] as string[] };
@@ -688,7 +698,6 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         await saveProjectIndex(resolvedRoot, project);
       }
 
-      const config = await loadTokenGraphConfig(resolvedRoot);
       if (indexingMode !== "existing" && config.wikiGenerationEnabled) {
         const wikiMemories = config.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).list() : [];
         await saveProjectWiki(resolvedRoot, buildProjectWiki(project, wikiMemories, await listAppliedKnowledge(resolvedRoot)));
@@ -714,10 +723,10 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         ? {
             root: resolvedRoot, taskId: ledger.taskId,
             index: { status: indexingMode === "existing" ? statusAfter.state : "refreshed", previousStatus: statusBefore.state, postStatus: statusAfter.state, indexingMode, changes },
-            plan: projectedPlan, wikiStatus
+            plan: projectedPlan, wikiStatus, routing
           }
         : compactPrepareEnvelope({
-            root: resolvedRoot, taskId: ledger.taskId, plan: projectedPlan
+            root: resolvedRoot, taskId: ledger.taskId, plan: projectedPlan, routing
           });
       await recordCoreEvent({
         root: resolvedRoot,
@@ -757,6 +766,15 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       } else if (mode === "sql") {
         const { query, limit } = input;
         result = { query, sql: sqlSummary(project!, query!, limit ?? 10) };
+      } else if (mode === "artifact") {
+        result = { artifactHash: input.artifactHash, status: "not-found", message: "Stable artifacts are not present in this workspace ledger." };
+      } else if (mode === "run") {
+        result = {
+          runId: input.runId,
+          selector: input.test ? { test: input.test } : input.file ? { file: input.file } : { errorClass: input.errorClass },
+          status: "not-found",
+          message: "Saved runner captures are not present in this workspace ledger."
+        };
       } else {
         const { slug, constraints, responseMode } = input;
         const wiki = await loadProjectWiki(resolvedRoot);
@@ -1142,6 +1160,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       inputSchema: z.object({
         root: z.string().optional(),
         tokenSavingProfile: z.enum(["conservative", "balanced", "aggressive"]).optional(),
+        routingMode: z.enum(["shadow", "enforced", "always-activate", "always-advisory"]).optional(),
         maxFiles: z.number().int().min(1).max(50).optional(),
         maxSqlObjects: z.number().int().min(0).max(50).optional(),
         maxMemories: z.number().int().min(0).max(50).optional(),

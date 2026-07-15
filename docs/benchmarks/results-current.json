@@ -14,10 +14,10 @@
       "release-packaging": 4,
       "sql-security": 5
     },
-    "medianNetSavings": 31.7,
-    "medianExecutionInclusiveNetSavings": -74.3,
+    "medianNetSavings": 19.96666666666667,
+    "medianExecutionInclusiveNetSavings": -86.03333333333333,
     "primarySavingsMetric": "execution-inclusive",
-    "primaryMedianNetSavings": -74.3,
+    "primaryMedianNetSavings": -86.03333333333333,
     "baselineLabel": "recommended-raw-reads"
   }
 }

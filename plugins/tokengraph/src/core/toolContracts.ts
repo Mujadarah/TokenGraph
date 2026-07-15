@@ -9,9 +9,14 @@ export function compactToolResultEnvelope<T extends object>(structuredContent: T
 const tokenSavingProfileSchema = z.enum(["conservative", "balanced", "aggressive"]);
 const contextCompressionKindSchema = z.enum(["prompt", "memory", "diff", "sql", "wiki", "mixed"]);
 const taskIdSchema = z.string().min(1);
+const routingFields = {
+  knownArtifacts: z.array(z.string().min(1)).max(100).optional(),
+  routingOverride: z.enum(["auto", "force-on", "force-bypass"]).optional()
+};
 const compactResponseFields = {
   constraints: z.array(z.string().min(1)).optional(),
-  responseMode: z.enum(["compact", "verbose"]).optional()
+  responseMode: z.enum(["compact", "verbose"]).optional(),
+  ...routingFields
 };
 
 export const prepareContextInputSchema = z.object({
@@ -21,12 +26,20 @@ export const prepareContextInputSchema = z.object({
 });
 
 export const queryContextInputSchema = z.object({
-  taskId: taskIdSchema.optional(), root: z.string().optional(), mode: z.enum(["overview", "search", "symbol", "sql", "wiki"]),
-  query: z.string().min(1).optional(), target: z.string().min(1).optional(), slug: z.string().min(1).optional(),
+  taskId: taskIdSchema.optional(), root: z.string().optional(), mode: z.enum(["overview", "search", "symbol", "sql", "wiki", "artifact", "run"]),
+  query: z.string().min(1).optional(), target: z.string().min(1).optional(), slug: z.string().min(1).optional(), artifactHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  runId: taskIdSchema.optional(), test: z.string().min(1).optional(), file: z.string().min(1).optional(), errorClass: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(50).optional(), ...compactResponseFields
 }).superRefine((input, context) => {
   if ((input.mode === "search" || input.mode === "sql") && !input.query) context.addIssue({ code: "custom", message: `${input.mode} mode requires query.` });
   if (input.mode === "symbol" && !input.target) context.addIssue({ code: "custom", message: "symbol mode requires target." });
+  if (input.mode === "artifact" && !input.artifactHash) context.addIssue({ code: "custom", path: ["artifactHash"], message: "artifact mode requires artifactHash." });
+  if (input.mode === "run") {
+    if (!input.runId) context.addIssue({ code: "custom", path: ["runId"], message: "run mode requires runId." });
+    if ([input.test, input.file, input.errorClass].filter((value) => value !== undefined).length !== 1) {
+      context.addIssue({ code: "custom", message: "run mode requires exactly one of test, file, or errorClass." });
+    }
+  }
 });
 
 export const compressInputSchema = z.object({
@@ -63,7 +76,8 @@ export const proposeKnowledgeInputSchema = z.object({
   sources: z.array(z.object({ kind: z.enum(["path", "id"]), sourceId: z.string().min(1), fingerprint: z.string().min(1) })).min(1).optional(),
   affectedTargets: z.object({ wikiPages: z.array(z.string()).optional(), memories: z.array(z.string()).optional(), skills: z.array(z.string()).optional() }).optional(),
   conflictNotes: z.array(z.string()).optional(), expiresAt: z.string().optional(),
-  status: z.enum(["proposed", "approved", "rejected", "expired"]).optional(), id: z.string().min(1).optional(), reason: z.string().optional()
+  status: z.enum(["proposed", "approved", "rejected", "expired"]).optional(), id: z.string().min(1).optional(), reason: z.string().optional(),
+  ...routingFields
 }).superRefine((input, context) => {
   if (input.action === "propose") {
     for (const field of ["type", "title", "rationale", "proposedContent", "sourceFingerprints", "affectedIdentifiers"] as const) {
@@ -77,7 +91,7 @@ export const proposeKnowledgeInputSchema = z.object({
 
 export const taskReportInputSchema = z.object({
   taskId: taskIdSchema, root: z.string().optional(), disposition: z.enum(["pause", "complete"]).default("complete"),
-  responseMode: z.enum(["compact", "verbose"]).optional()
+  responseMode: z.enum(["compact", "verbose"]).optional(), ...routingFields
 });
 
 const readOnlyAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;

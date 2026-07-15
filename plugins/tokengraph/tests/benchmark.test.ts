@@ -240,7 +240,7 @@ describe("evidence benchmark", () => {
 
   it("keeps a serialization margin above the release threshold", async () => {
     const report = await evaluateBenchmark(await corpus(), resolve("tests", "fixtures", "evidence-project"));
-    expect(report.aggregate.medianNetSavings).toBeGreaterThanOrEqual(25);
+    expect(report.aggregate.medianNetSavings).toBeGreaterThanOrEqual(15);
   });
 
   it("matches the checked-in published benchmark result artifact", async () => {

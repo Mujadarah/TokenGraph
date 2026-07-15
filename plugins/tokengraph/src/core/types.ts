@@ -1,7 +1,9 @@
 export type TokenSavingProfile = "conservative" | "balanced" | "aggressive";
+export type RoutingMode = "shadow" | "enforced" | "always-activate" | "always-advisory";
 
 export interface TokenGraphConfig {
   tokenSavingProfile: TokenSavingProfile;
+  routingMode: RoutingMode;
   maxFiles: number;
   maxSqlObjects: number;
   maxMemories: number;
