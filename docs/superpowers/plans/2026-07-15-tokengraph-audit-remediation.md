@@ -8,6 +8,10 @@
 
 **Tech Stack:** TypeScript, Node.js 22+, pnpm 10.14.0, Vitest, web-tree-sitter 0.26.11, pinned WASM grammars, JSON durable stores with atomic writes and file locks.
 
+## Authorization update - 2026-07-16
+
+The original constraint below protected the already-published `v0.21.0` tag while the deterministic release gate was failing. After the remediation passed every local and Linux CI gate, the user explicitly authorized a new corrective release and branch cleanup. That later instruction supersedes the no-corrective-tag and fixed-`0.21.0` constraints for `v0.21.1`; `v0.21.0` itself remains immutable, and enforced routing still requires a separate complete passing B6 host evaluation.
+
 ## Global Constraints
 
 - Keep package version `0.21.0`; leave the published tag and release immutable.
