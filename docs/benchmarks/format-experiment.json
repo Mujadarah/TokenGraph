@@ -1,0 +1,8 @@
+{
+  "schemaId": "tokengraph-response-format-experiment",
+  "version": 1,
+  "defaultFormat": "json",
+  "result": "negative",
+  "reason": "The compact tabular candidate did not improve token usage and quality simultaneously on the checked-in response corpus.",
+  "enforcement": "JSON remains the public default until a repeatable experiment improves both metrics."
+}

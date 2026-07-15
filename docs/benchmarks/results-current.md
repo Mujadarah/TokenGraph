@@ -34,3 +34,5 @@ Routing-lifecycle category results:
 The deterministic release gate still checks routing-lifecycle savings for continuity, while the execution-inclusive metric is the primary product metric and includes downstream recommended source reads. The negative categories show that tiny, bounded raw inputs should bypass TokenGraph; use it where focused routing can avoid broader reads or preserve constraints.
 
 Every category remains low-confidence and does not activate calibration. These are repeatable fixture estimates, not exact billed tokens, autonomous-agent patch-quality evidence, or universal Codex/Claude results.
+
+The checked-in JSON-versus-tabular format experiment is negative: the tabular candidate did not improve token usage and quality simultaneously, so JSON remains the public default. See `docs/benchmarks/format-experiment.json`.
