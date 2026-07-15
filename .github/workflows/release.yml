@@ -79,5 +79,5 @@ jobs:
             --draft \
             --title "TokenGraph $TAG_NAME" \
             --notes "Automated release built from the tagged commit. The attached ZIP and SHA-256 checksum were produced by CI." \
-            "plugins/tokengraph/${{ steps.artifact.outputs.archive }}" \
-            "plugins/tokengraph/${{ steps.artifact.outputs.checksum }}"
+            "${{ steps.artifact.outputs.archive }}" \
+            "${{ steps.artifact.outputs.checksum }}"
