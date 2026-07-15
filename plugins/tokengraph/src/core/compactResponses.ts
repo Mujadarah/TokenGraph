@@ -143,8 +143,8 @@ function base(options: CompactResponseOptions, input: Partial<CompactCoreRespons
   return response;
 }
 
-export function compactModeEnvelope<T>(_mode: string, result: T): T {
-  return result;
+export function compactModeEnvelope<T>(mode: string, result: T): T & { mode: string; result: T } {
+  return { mode, result } as T & { mode: string; result: T };
 }
 
 export function compactCompressionEnvelope<T>(mode: string, result: T, estimates?: { original: number; compact: number; overhead: number }) {

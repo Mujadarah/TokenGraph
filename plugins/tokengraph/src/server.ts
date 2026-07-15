@@ -417,6 +417,7 @@ function projectMap(project: ProjectIndex) {
       files: project.files.length,
       symbols: project.symbols.length,
       imports: project.imports.length,
+      unsupportedLanguages: project.exclusions.filter((exclusion) => exclusion.reason === "unsupported").length,
       tables: project.sql.tables.length,
       policies: project.sql.policies.length,
       constraints: project.sql.constraints.length,
@@ -998,6 +999,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
   );
 
   if (toolSurface === "full") {
+    // The legacy description patch is scoped to the compatibility surface only;
+    // the eight default intent tools retain their compact, canonical metadata.
     const registerTool = server.registerTool.bind(server);
     server.registerTool = ((name: string, config: { description?: string }, handler: unknown) =>
       registerTool(name, { ...config, description: legacyDescription(config.description) } as never, handler as never)) as typeof server.registerTool;

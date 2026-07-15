@@ -46,5 +46,6 @@ await build({
   logLevel: "silent"
 });
 
+// Release entry points are executable on POSIX hosts; Windows ignores this mode.
 await chmod(resolve(pluginRoot, "dist", "index.js"), 0o755);
 await chmod(resolve(pluginRoot, "dist", "hooks.js"), 0o755);

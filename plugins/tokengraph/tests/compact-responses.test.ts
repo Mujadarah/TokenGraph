@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  compactModeEnvelope,
   compactCompressionResponse,
   compactFailureResponse,
   compactPlanResponse,
@@ -13,6 +14,10 @@ import { estimateTokens } from "../src/core/token.js";
 const constraints = ["Must preserve this exact user constraint."];
 
 describe("compact MCP response projections", () => {
+  it("keeps the requested mode in compact envelopes", () => {
+    expect(compactModeEnvelope("overview", { files: [] })).toEqual({ mode: "overview", result: { files: [] } });
+  });
+
   it("projects plans into an actionable compact response with verbatim constraints", () => {
     const verbose = {
       task: "Change patient service migration",

@@ -210,6 +210,15 @@ describe("scanProject", () => {
     );
   });
 
+  it("reports unsupported-language exclusions instead of silently dropping them", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "diagram.py"), "print('not parsed by the TypeScript-first scanner')");
+    const graph = await scanProject(root);
+    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/diagram.py", reason: "unsupported" }));
+    expect(graph.exclusions.filter((exclusion) => exclusion.reason === "unsupported")).toHaveLength(1);
+  });
+
   it("does not classify similarly named directories as tests", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src", "contests"), { recursive: true });
