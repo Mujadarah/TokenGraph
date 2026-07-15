@@ -15,5 +15,7 @@ describe("tagged release workflow", () => {
     expect(workflow).toContain("sha256sum");
     expect(workflow).toContain("gh release create");
     expect(workflow).toContain("--draft");
+    expect(workflow).toContain('"${{ steps.artifact.outputs.archive }}"');
+    expect(workflow).not.toContain('"plugins/tokengraph/${{ steps.artifact.outputs.archive }}"');
   });
 });
