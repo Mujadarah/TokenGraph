@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import { configPath, stateDir } from "./persistence.js";
 import { canonicalPersistenceLockKey, quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
-import type { TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
+import type { RoutingMode, TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
 
 export const CURRENT_CONFIG_SCHEMA_VERSION = 1;
 
@@ -42,6 +42,7 @@ export const PROFILE_DEFAULTS = {
 
 export const DEFAULT_TOKEN_GRAPH_CONFIG: TokenGraphConfig = {
   tokenSavingProfile: "balanced",
+  routingMode: "shadow",
   maxFiles: PROFILE_DEFAULTS.balanced.maxFiles,
   maxSqlObjects: PROFILE_DEFAULTS.balanced.maxSqlObjects,
   maxMemories: PROFILE_DEFAULTS.balanced.maxMemories,
@@ -56,6 +57,10 @@ function isProfile(value: unknown): value is TokenSavingProfile {
   return value === "conservative" || value === "balanced" || value === "aggressive";
 }
 
+function isRoutingMode(value: unknown): value is RoutingMode {
+  return value === "shadow" || value === "enforced" || value === "always-activate" || value === "always-advisory";
+}
+
 function sanitizeNumber(value: unknown, fallback: number, min = 0): number {
   return Number.isInteger(value) && (value as number) >= min ? (value as number) : fallback;
 }
@@ -64,6 +69,9 @@ function normalizeConfig(value: unknown): TokenGraphConfig {
   const candidate = value && typeof value === "object" ? (value as Partial<TokenGraphConfig>) : {};
   return {
     tokenSavingProfile: isProfile(candidate.tokenSavingProfile) ? candidate.tokenSavingProfile : DEFAULT_TOKEN_GRAPH_CONFIG.tokenSavingProfile,
+    routingMode: isRoutingMode(process.env.TOKENGRAPH_ROUTING_MODE)
+      ? process.env.TOKENGRAPH_ROUTING_MODE
+      : isRoutingMode(candidate.routingMode) ? candidate.routingMode : DEFAULT_TOKEN_GRAPH_CONFIG.routingMode,
     maxFiles: sanitizeNumber(candidate.maxFiles, DEFAULT_TOKEN_GRAPH_CONFIG.maxFiles, 1),
     maxSqlObjects: sanitizeNumber(candidate.maxSqlObjects, DEFAULT_TOKEN_GRAPH_CONFIG.maxSqlObjects),
     maxMemories: sanitizeNumber(candidate.maxMemories, DEFAULT_TOKEN_GRAPH_CONFIG.maxMemories),

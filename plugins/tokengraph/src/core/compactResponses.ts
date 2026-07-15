@@ -155,8 +155,9 @@ export function compactPrepareEnvelope<T>(input: {
   root: string;
   taskId: string;
   plan: T;
+  routing?: unknown;
 }) {
-  return { taskId: input.taskId, plan: input.plan };
+  return { taskId: input.taskId, plan: input.plan, ...(input.routing === undefined ? {} : { routing: input.routing }) };
 }
 
 export function compactPlanResponse(plan: ContextPlan, options: CompactResponseOptions = {}): CompactCoreResponse {

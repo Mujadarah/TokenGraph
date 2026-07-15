@@ -20168,6 +20168,7 @@ var PROFILE_DEFAULTS = {
 };
 var DEFAULT_TOKEN_GRAPH_CONFIG = {
   tokenSavingProfile: "balanced",
+  routingMode: "shadow",
   maxFiles: PROFILE_DEFAULTS.balanced.maxFiles,
   maxSqlObjects: PROFILE_DEFAULTS.balanced.maxSqlObjects,
   maxMemories: PROFILE_DEFAULTS.balanced.maxMemories,
@@ -20180,6 +20181,9 @@ var DEFAULT_TOKEN_GRAPH_CONFIG = {
 function isProfile(value) {
   return value === "conservative" || value === "balanced" || value === "aggressive";
 }
+function isRoutingMode(value) {
+  return value === "shadow" || value === "enforced" || value === "always-activate" || value === "always-advisory";
+}
 function sanitizeNumber(value, fallback, min = 0) {
   return Number.isInteger(value) && value >= min ? value : fallback;
 }
@@ -20187,6 +20191,7 @@ function normalizeConfig(value) {
   const candidate = value && typeof value === "object" ? value : {};
   return {
     tokenSavingProfile: isProfile(candidate.tokenSavingProfile) ? candidate.tokenSavingProfile : DEFAULT_TOKEN_GRAPH_CONFIG.tokenSavingProfile,
+    routingMode: isRoutingMode(process.env.TOKENGRAPH_ROUTING_MODE) ? process.env.TOKENGRAPH_ROUTING_MODE : isRoutingMode(candidate.routingMode) ? candidate.routingMode : DEFAULT_TOKEN_GRAPH_CONFIG.routingMode,
     maxFiles: sanitizeNumber(candidate.maxFiles, DEFAULT_TOKEN_GRAPH_CONFIG.maxFiles, 1),
     maxSqlObjects: sanitizeNumber(candidate.maxSqlObjects, DEFAULT_TOKEN_GRAPH_CONFIG.maxSqlObjects),
     maxMemories: sanitizeNumber(candidate.maxMemories, DEFAULT_TOKEN_GRAPH_CONFIG.maxMemories),
@@ -20892,7 +20897,7 @@ function compactCompressionEnvelope(mode, result, estimates) {
   return estimates ? { mode, result, estimates } : result;
 }
 function compactPrepareEnvelope(input) {
-  return { taskId: input.taskId, plan: input.plan };
+  return { taskId: input.taskId, plan: input.plan, ...input.routing === void 0 ? {} : { routing: input.routing } };
 }
 function compactPlanResponse(plan, options = {}) {
   const sql = hasSqlIntent(plan.task) ? focusedSql(plan.relevantSql, plan.task) : [];
@@ -21031,9 +21036,14 @@ function compactToolResultEnvelope(structuredContent) {
 var tokenSavingProfileSchema = _enum(["conservative", "balanced", "aggressive"]);
 var contextCompressionKindSchema = _enum(["prompt", "memory", "diff", "sql", "wiki", "mixed"]);
 var taskIdSchema = string2().min(1);
+var routingFields = {
+  knownArtifacts: array(string2().min(1)).max(100).optional(),
+  routingOverride: _enum(["auto", "force-on", "force-bypass"]).optional()
+};
 var compactResponseFields = {
   constraints: array(string2().min(1)).optional(),
-  responseMode: _enum(["compact", "verbose"]).optional()
+  responseMode: _enum(["compact", "verbose"]).optional(),
+  ...routingFields
 };
 var prepareContextInputSchema = object({
   root: string2().optional(),
@@ -21048,15 +21058,27 @@ var prepareContextInputSchema = object({
 var queryContextInputSchema = object({
   taskId: taskIdSchema.optional(),
   root: string2().optional(),
-  mode: _enum(["overview", "search", "symbol", "sql", "wiki"]),
+  mode: _enum(["overview", "search", "symbol", "sql", "wiki", "artifact", "run"]),
   query: string2().min(1).optional(),
   target: string2().min(1).optional(),
   slug: string2().min(1).optional(),
+  artifactHash: string2().regex(/^[a-f0-9]{64}$/).optional(),
+  runId: taskIdSchema.optional(),
+  test: string2().min(1).optional(),
+  file: string2().min(1).optional(),
+  errorClass: string2().min(1).optional(),
   limit: number2().int().min(1).max(50).optional(),
   ...compactResponseFields
 }).superRefine((input, context) => {
   if ((input.mode === "search" || input.mode === "sql") && !input.query) context.addIssue({ code: "custom", message: `${input.mode} mode requires query.` });
   if (input.mode === "symbol" && !input.target) context.addIssue({ code: "custom", message: "symbol mode requires target." });
+  if (input.mode === "artifact" && !input.artifactHash) context.addIssue({ code: "custom", path: ["artifactHash"], message: "artifact mode requires artifactHash." });
+  if (input.mode === "run") {
+    if (!input.runId) context.addIssue({ code: "custom", path: ["runId"], message: "run mode requires runId." });
+    if ([input.test, input.file, input.errorClass].filter((value) => value !== void 0).length !== 1) {
+      context.addIssue({ code: "custom", message: "run mode requires exactly one of test, file, or errorClass." });
+    }
+  }
 });
 var compressInputSchema = object({
   taskId: taskIdSchema.optional(),
@@ -21114,7 +21136,8 @@ var proposeKnowledgeInputSchema = object({
   expiresAt: string2().optional(),
   status: _enum(["proposed", "approved", "rejected", "expired"]).optional(),
   id: string2().min(1).optional(),
-  reason: string2().optional()
+  reason: string2().optional(),
+  ...routingFields
 }).superRefine((input, context) => {
   if (input.action === "propose") {
     for (const field of ["type", "title", "rationale", "proposedContent", "sourceFingerprints", "affectedIdentifiers"]) {
@@ -21129,7 +21152,8 @@ var taskReportInputSchema = object({
   taskId: taskIdSchema,
   root: string2().optional(),
   disposition: _enum(["pause", "complete"]).default("complete"),
-  responseMode: _enum(["compact", "verbose"]).optional()
+  responseMode: _enum(["compact", "verbose"]).optional(),
+  ...routingFields
 });
 var readOnlyAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 var taskReadAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -21143,6 +21167,29 @@ var CORE_TOOL_METADATA = {
   tokengraph_propose_knowledge: { title: "Propose Task Knowledge", description: "Review local knowledge. propose requires type, title, rationale, proposedContent, sourceFingerprints, and affectedIdentifiers; approve/reject require id.", annotations: { ...taskReadAnnotations, idempotentHint: false }, schema: proposeKnowledgeInputSchema },
   tokengraph_task_report: { title: "Set Task Disposition", description: "Complete by default with the canonical footer, or pause; verbose adds the report.", annotations: taskReadAnnotations, schema: taskReportInputSchema }
 };
+
+// src/core/routingAdvisor.ts
+function boundedTask(task) {
+  const normalized = task.trim();
+  return normalized.length > 0 && normalized.length <= 180 && /\b(what is|where is|show me|rename|format|explain)\b/i.test(normalized) && !/\b(repository|architecture|migration|security|debug|regression|dependencies|all files)\b/i.test(normalized);
+}
+function adviseRouting(input) {
+  const mode = input.routingMode ?? "shadow";
+  const forcedOn = input.routingOverride === "force-on";
+  const forcedBypass = input.routingOverride === "force-bypass";
+  const bypass = forcedBypass || mode !== "always-activate" && !forcedOn && boundedTask(input.task);
+  const useTokenGraph = mode === "always-activate" || forcedOn || !bypass;
+  const stage = input.indexAvailable && (input.cachedStatus ?? "fresh") === "fresh" ? 1 : 0;
+  const reason = forcedOn ? "routing override force-on" : forcedBypass ? "routing override force-bypass" : bypass ? "bounded-task" : stage === 1 ? "indexed-discovery" : "context-discovery";
+  return {
+    useTokenGraph,
+    stage,
+    reason,
+    expectedOverheadTokens: useTokenGraph ? stage === 1 ? 25 : 80 : 0,
+    expectedBenefit: useTokenGraph ? stage === 1 ? 160 : 120 : 0,
+    enforced: mode === "enforced" || mode === "always-activate" || forcedOn || forcedBypass
+  };
+}
 
 // src/core/fileScanner.ts
 var ignorePackage = __toESM(require_ignore(), 1);
@@ -24859,10 +24906,19 @@ function createTokenGraphServer(options = {}) {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: prepareContextInputSchema
     },
-    async ({ root, task, profile, maxTokens, allowRawReads, constraints, responseMode, refreshIndex, host }) => {
+    async ({ root, task, profile, maxTokens, allowRawReads, constraints, responseMode, refreshIndex, host, routingOverride, knownArtifacts }) => {
       const resolvedRoot = await workspaceRoot(root);
       const statusBefore = await getIndexStatus(resolvedRoot);
       const existing = await loadProjectIndex(resolvedRoot);
+      const config2 = await loadTokenGraphConfig(resolvedRoot);
+      const routing = adviseRouting({
+        task,
+        knownArtifacts,
+        routingOverride,
+        routingMode: config2.routingMode,
+        indexAvailable: Boolean(existing),
+        cachedStatus: statusBefore.state === "fresh" ? "fresh" : statusBefore.state === "missing" ? "missing" : "stale"
+      });
       let project;
       let indexingMode = "existing";
       let changes = { addedFiles: [], changedFiles: [], deletedFiles: [], parsedFiles: [] };
@@ -24887,7 +24943,6 @@ function createTokenGraphServer(options = {}) {
         changes.parsedFiles = project.files.map((file) => file.path);
         await saveProjectIndex(resolvedRoot, project);
       }
-      const config2 = await loadTokenGraphConfig(resolvedRoot);
       if (indexingMode !== "existing" && config2.wikiGenerationEnabled) {
         const wikiMemories = config2.memoryEnabled ? await new MemoryStore(memoryPath(resolvedRoot)).list() : [];
         await saveProjectWiki(resolvedRoot, buildProjectWiki(project, wikiMemories, await listAppliedKnowledge(resolvedRoot)));
@@ -24914,11 +24969,13 @@ function createTokenGraphServer(options = {}) {
         taskId: ledger.taskId,
         index: { status: indexingMode === "existing" ? statusAfter.state : "refreshed", previousStatus: statusBefore.state, postStatus: statusAfter.state, indexingMode, changes },
         plan: projectedPlan,
-        wikiStatus
+        wikiStatus,
+        routing
       } : compactPrepareEnvelope({
         root: resolvedRoot,
         taskId: ledger.taskId,
-        plan: projectedPlan
+        plan: projectedPlan,
+        routing
       });
       await recordCoreEvent({
         root: resolvedRoot,
@@ -24957,6 +25014,15 @@ function createTokenGraphServer(options = {}) {
         } else if (mode === "sql") {
           const { query, limit } = input;
           result = { query, sql: sqlSummary(project, query, limit ?? 10) };
+        } else if (mode === "artifact") {
+          result = { artifactHash: input.artifactHash, status: "not-found", message: "Stable artifacts are not present in this workspace ledger." };
+        } else if (mode === "run") {
+          result = {
+            runId: input.runId,
+            selector: input.test ? { test: input.test } : input.file ? { file: input.file } : { errorClass: input.errorClass },
+            status: "not-found",
+            message: "Saved runner captures are not present in this workspace ledger."
+          };
         } else {
           const { slug, constraints, responseMode: responseMode2 } = input;
           const wiki = await loadProjectWiki(resolvedRoot);
@@ -25355,6 +25421,7 @@ ${changedFiles.join("\n")}`, 8);
         inputSchema: object({
           root: string2().optional(),
           tokenSavingProfile: _enum(["conservative", "balanced", "aggressive"]).optional(),
+          routingMode: _enum(["shadow", "enforced", "always-activate", "always-advisory"]).optional(),
           maxFiles: number2().int().min(1).max(50).optional(),
           maxSqlObjects: number2().int().min(0).max(50).optional(),
           maxMemories: number2().int().min(0).max(50).optional(),

@@ -160,6 +160,19 @@ describe("TokenGraph local config", () => {
       memoryEnabled: true
     });
   });
+
+  it("lets TOKENGRAPH_ROUTING_MODE override the persisted mode", async () => {
+    const root = await makeRoot();
+    const previous = process.env.TOKENGRAPH_ROUTING_MODE;
+    process.env.TOKENGRAPH_ROUTING_MODE = "enforced";
+    try {
+      await updateTokenGraphConfig(root, { routingMode: "always-advisory" });
+      expect((await loadTokenGraphConfig(root)).routingMode).toBe("enforced");
+    } finally {
+      if (previous === undefined) delete process.env.TOKENGRAPH_ROUTING_MODE;
+      else process.env.TOKENGRAPH_ROUTING_MODE = previous;
+    }
+  });
 });
 
 describe("scanProject", () => {
