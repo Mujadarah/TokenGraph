@@ -16,6 +16,7 @@
 - Added the bounded `tokengraph run -- <command> [args...]` CLI with redacted captures, timeouts, retention, and saved-run selectors.
 - Added scoped memory briefs/outcomes, deterministic Obsidian projection, gated paired router evaluation, a negative JSON/tabular experiment, and pinned standalone Tree-sitter WASM grammars.
 - The checked-in benchmark remains diagnostic and fails the frozen execution-inclusive release gate: routing-lifecycle median 5.7 tokens and execution-inclusive median -94.3 tokens; JSON remains the default response format and enforcement stays disabled.
+- Correction note (2026-07-16): the benchmark figures in this entry were restated in place during the v0.21.1 remediation. The values published at the v0.21.0 tag were routing-lifecycle median 20.0 tokens and execution-inclusive median -86.0 tokens; the remediation recomputed the same corpus under corrected harness accounting as 5.7 and -94.3 tokens (19/30 non-positive). Both computations describe the same failing gate. Published entries are append-only from now on and are corrected only by dated notes like this one.
 
 ## 0.20.0 - 2026-07-13
 
