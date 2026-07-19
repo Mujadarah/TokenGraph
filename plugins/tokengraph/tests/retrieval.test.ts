@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildEvidenceBackedSliceRecommendation, buildRetrievalCapsule, capsuleArtifact, deliverDelta, escalateReadPolicy, expandGraph, rankFilesBm25, readExactSlice, recommendExactRead, startReadPolicyResponse } from "../src/core/retrieval.js";
-import type { ProjectIndex } from "../src/core/types.js";
+import type { CodeFile, ProjectIndex } from "../src/core/types.js";
 
 function index(): ProjectIndex {
   return {
@@ -15,6 +15,29 @@ function index(): ProjectIndex {
     symbols: [{ name: "authenticate", kind: "function", filePath: "src/auth.ts", exported: true, startLine: 1, endLine: 3 }],
     imports: [{ filePath: "src/user.ts", source: "./auth", resolvedPath: "src/auth.ts" }], exclusions: [],
     sql: { tables: [], relations: [], constraints: [], policies: [], indexes: [], triggers: [], functions: [], views: [], enums: [], extensions: [], grants: [], materializedViews: [], history: [], warnings: [] }
+  };
+}
+
+function rankingIndex(
+  files: Array<Pick<CodeFile, "path" | "kind" | "language" | "isTest">>,
+  distances: Record<string, number> = {}
+): ProjectIndex {
+  return {
+    ...index(),
+    files: files.map((file, position) => ({
+      ...file,
+      size: 20,
+      estimatedTokens: 5,
+      contentHash: `${position}`
+    })),
+    symbols: files.map((file) => ({
+      name: "target",
+      kind: "function" as const,
+      filePath: file.path,
+      exported: true
+    })),
+    imports: [],
+    retrievalSignals: { source: "git-commit-distance", historyDepth: 50, fileCommitDistance: distances }
   };
 }
 
@@ -52,7 +75,68 @@ describe("deterministic retrieval", () => {
     const otherTask = buildRetrievalCapsule("task-2", "authenticate", project);
     expect(otherTask).toEqual(first);
     expect(capsuleArtifact(otherTask)).toEqual(capsuleArtifact(first));
+    expect(capsuleArtifact(first).artifactSchemaVersion).toBe(4);
     expect(JSON.stringify(capsuleArtifact(first))).not.toContain("task-1");
+  });
+
+  it("breaks lexical ties with bounded Git commit distance", () => {
+    const project = rankingIndex([
+      { path: "src/old.ts", kind: "module", language: "typescript", isTest: false },
+      { path: "src/recent.ts", kind: "module", language: "typescript", isTest: false }
+    ], { "src/old.ts": 10, "src/recent.ts": 0 });
+
+    const ranked = rankFilesBm25(project, "implement target", 2);
+
+    expect(ranked.map((entry) => entry.path)).toEqual(["src/recent.ts", "src/old.ts"]);
+    expect(Number((ranked[0]!.score - ranked[1]!.score).toFixed(6))).toBe(0.03);
+  });
+
+  it.each([
+    ["coverage target", "tests/target.spec.ts", [
+      { path: "src/target.ts", kind: "module", language: "typescript", isTest: false },
+      { path: "tests/target.spec.ts", kind: "test", language: "typescript", isTest: true }
+    ]],
+    ["database target", "z-db/target.sql", [
+      { path: "a-src/target.ts", kind: "module", language: "typescript", isTest: false },
+      { path: "z-db/target.sql", kind: "sql", language: "sql", isTest: false }
+    ]],
+    ["documentation target", "z-docs/target.md", [
+      { path: "a-src/target.ts", kind: "module", language: "typescript", isTest: false },
+      { path: "z-docs/target.md", kind: "doc", language: "markdown", isTest: false }
+    ]],
+    ["implement target", "z-src/target.ts", [
+      { path: "a-notes/target.md", kind: "doc", language: "markdown", isTest: false },
+      { path: "z-src/target.ts", kind: "module", language: "typescript", isTest: false }
+    ]],
+    ["cleanup target", "z-src/target.ts", [
+      { path: "a-notes/target.md", kind: "doc", language: "markdown", isTest: false },
+      { path: "z-src/target.ts", kind: "module", language: "typescript", isTest: false }
+    ]],
+    ["fix target", "tests/target.spec.ts", [
+      { path: "src/target.ts", kind: "module", language: "typescript", isTest: false },
+      { path: "tests/target.spec.ts", kind: "test", language: "typescript", isTest: true }
+    ]],
+    ["design target", "y-docs/target.md", [
+      { path: "a-tests/target.spec.ts", kind: "test", language: "typescript", isTest: true },
+      { path: "y-docs/target.md", kind: "doc", language: "markdown", isTest: false },
+      { path: "z-src/target.ts", kind: "module", language: "typescript", isTest: false }
+    ]]
+  ] as const)("applies the shared task-type weight for %s", (query, expectedPath, files) => {
+    expect(rankFilesBm25(rankingIndex([...files]), query, files.length)[0]?.path).toBe(expectedPath);
+  });
+
+  it("never introduces zero-BM25 files and preserves deterministic top-k path ordering", () => {
+    const project = rankingIndex([
+      { path: "src/alpha.ts", kind: "module", language: "typescript", isTest: false },
+      { path: "src/beta.ts", kind: "module", language: "typescript", isTest: false },
+      { path: "src/unrelated.ts", kind: "module", language: "typescript", isTest: false }
+    ]);
+    project.symbols = project.symbols.filter((symbol) => symbol.filePath !== "src/unrelated.ts");
+
+    expect(rankFilesBm25(project, "implement target", 1)).toEqual([
+      expect.objectContaining({ path: "src/alpha.ts", rank: 1 })
+    ]);
+    expect(rankFilesBm25(project, "implement target", 10).map((entry) => entry.path)).not.toContain("src/unrelated.ts");
   });
 
   it("reads only confined exact slices and escalates monotonically", async () => {

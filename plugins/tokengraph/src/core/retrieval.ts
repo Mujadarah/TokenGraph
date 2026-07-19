@@ -4,7 +4,8 @@ import { open } from "node:fs/promises";
 import { artifactKey, createStableArtifact, shouldSuppressArtifact, type StableArtifact } from "./artifact.js";
 import { canonicalHash } from "./canonical.js";
 import { resolveConfinedPath } from "./storage.js";
-import type { CodeFile, CodeSymbol, EvidenceStatement, ProjectIndex } from "./types.js";
+import { classifyTask } from "./taskClassifier.js";
+import type { CodeFile, CodeSymbol, EvidenceStatement, ProjectIndex, TaskType } from "./types.js";
 
 type FileStatement = Pick<CodeFile, "path" | "kind" | "language" | "estimatedTokens" | "contentHash"> & EvidenceStatement;
 type SymbolStatement = Pick<CodeSymbol, "name" | "kind" | "filePath" | "exported" | "startLine" | "endLine"> & EvidenceStatement;
@@ -74,9 +75,21 @@ function documentText(file: CodeFile, index: ProjectIndex): string {
   return `${file.path} ${file.kind} ${file.language} ${symbols}`.toLocaleLowerCase();
 }
 
+function boostForTaskType(file: CodeFile, taskType: TaskType): number {
+  const source = !file.isTest && ["module", "next-route", "react-component"].includes(file.kind);
+  if (taskType === "test") return file.isTest ? 0.20 : 0;
+  if (taskType === "database") return file.kind === "sql" ? 0.20 : 0;
+  if (taskType === "docs") return file.kind === "doc" ? 0.20 : 0;
+  if (taskType === "bug") return file.isTest ? 0.20 : source ? 0.10 : 0;
+  if (taskType === "feature" || taskType === "refactor") return source ? 0.15 : 0;
+  if (taskType === "architecture") return file.kind === "module" || file.kind === "doc" ? 0.10 : 0;
+  return 0;
+}
+
 export function rankFilesBm25(index: ProjectIndex, query: string, limit = 10): RankedFile[] {
   const queryTerms = terms(query);
   if (!queryTerms.length) return [];
+  const taskType = classifyTask(query);
   const documents = index.files.map((file) => ({ file, tokens: terms(documentText(file, index)) }));
   const averageLength = documents.reduce((sum, entry) => sum + entry.tokens.length, 0) / Math.max(1, documents.length);
   const documentFrequency = new Map<string, number>();
@@ -91,8 +104,14 @@ export function rankFilesBm25(index: ProjectIndex, query: string, limit = 10): R
       const idf = Math.log(1 + (documents.length - df + 0.5) / (df + 0.5));
       score += idf * ((frequency * 2.2) / (frequency + 1.2 * (0.25 + 0.75 * length / Math.max(1, averageLength))));
     }
-    return { path: file.path, score: Number(score.toFixed(6)) };
-  }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+    return { file, bm25: score };
+  }).filter((entry) => entry.bm25 > 0).map(({ file, bm25 }) => {
+    const distance = index.retrievalSignals?.fileCommitDistance[file.path];
+    const validDistance = typeof distance === "number" && Number.isInteger(distance) && distance >= 0 && distance < 50;
+    const recencyBoost = validDistance ? 0.15 * (50 - distance) / 50 : 0;
+    const taskTypeBoost = boostForTaskType(file, taskType);
+    return { path: file.path, score: Number((bm25 + recencyBoost + taskTypeBoost).toFixed(6)) };
+  }).sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
   return scored.slice(0, Math.max(0, limit)).map((entry, index) => ({ ...entry, rank: index + 1 }));
 }
 
@@ -140,7 +159,7 @@ export function buildRetrievalCapsule(_taskId: string, query: string, index: Pro
 }
 
 export function capsuleArtifact(capsule: RetrievalCapsule): StableArtifact<RetrievalCapsule> {
-  return createStableArtifact("capsule/retrieval", capsule, 3);
+  return createStableArtifact("capsule/retrieval", capsule, 4);
 }
 
 export async function readExactSlice(root: string, path: string, startLine: number, endLine: number, maxBytes = 64 * 1024, expectedContentHash?: string, maxSourceBytes = 512 * 1024): Promise<{ path: string; startLine: number; endLine: number; text: string; hash: string; contentHash: string }> {

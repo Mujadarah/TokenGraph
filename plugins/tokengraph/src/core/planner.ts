@@ -9,20 +9,9 @@ import type {
   ProjectIndex,
   RankedFile,
   RankedSqlObject,
-  TaskType,
   TokenSavingProfile
 } from "./types.js";
-
-function classifyTask(task: string): TaskType {
-  const text = task.toLowerCase();
-  if (/\b(fix|bug|error|failing|regression)\b/.test(text)) return "bug";
-  if (/\b(refactor|cleanup|rename|split)\b/.test(text)) return "refactor";
-  if (/\b(sql|database|table|migration|rls|policy|postgres|supabase)\b/.test(text)) return "database";
-  if (/\b(test|spec|coverage)\b/.test(text)) return "test";
-  if (/\b(doc|readme|guide|documentation)\b/.test(text)) return "docs";
-  if (/\b(architecture|design|why|explain)\b/.test(text)) return "architecture";
-  return "feature";
-}
+import { classifyTask } from "./taskClassifier.js";
 
 function scoreText(text: string, terms: string[], weight = 2): number {
   const haystack = tokenize(text);
