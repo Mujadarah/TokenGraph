@@ -25254,6 +25254,9 @@ import { join as join9, resolve as resolve10 } from "node:path";
 var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
 var TASK_LEDGER_SCHEMA_VERSION = 3;
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var COMPLETED_OUTCOMES_INDEX_SCHEMA_ID = "tokengraph-completed-outcomes-index";
+var COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION = 1;
+var MAX_COMPLETED_OUTCOMES = 100;
 var taskLedgerWriteChains = /* @__PURE__ */ new Map();
 function assertTaskId(taskId) {
   if (!UUID_PATTERN.test(taskId)) {
@@ -25266,6 +25269,9 @@ function tasksDirectory(root) {
 function taskLedgerPath(root, taskId) {
   assertTaskId(taskId);
   return join9(tasksDirectory(root), `${taskId}.json`);
+}
+function completedOutcomesIndexPath(root) {
+  return join9(tasksDirectory(root), "completed-outcomes.json");
 }
 function isRecord2(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -25570,7 +25576,40 @@ async function recordTaskEvent(root, taskId, event) {
     return ledger;
   });
 }
-async function listCompletedTaskOutcomes(root) {
+function orderOutcomes(outcomes) {
+  return [...outcomes].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)).slice(0, MAX_COMPLETED_OUTCOMES);
+}
+async function readCompletedOutcomesIndex(root) {
+  const path = completedOutcomesIndexPath(root);
+  try {
+    const parsed = JSON.parse(await readFile14(path, "utf8"));
+    if (!isRecord2(parsed) || parsed.schemaId !== COMPLETED_OUTCOMES_INDEX_SCHEMA_ID || parsed.schemaVersion !== COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION || !Array.isArray(parsed.outcomes)) {
+      await quarantine(path);
+      return void 0;
+    }
+    const outcomes = parsed.outcomes.map(reconstructOutcome);
+    if (outcomes.some((outcome) => outcome === void 0)) {
+      await quarantine(path);
+      return void 0;
+    }
+    return orderOutcomes(outcomes);
+  } catch (error2) {
+    if (error2.code === "ENOENT") return void 0;
+    if (error2 instanceof SyntaxError) {
+      await quarantine(path);
+      return void 0;
+    }
+    throw error2;
+  }
+}
+async function writeCompletedOutcomesIndex(root, outcomes) {
+  await writeJsonAtomic(completedOutcomesIndexPath(root), {
+    schemaId: COMPLETED_OUTCOMES_INDEX_SCHEMA_ID,
+    schemaVersion: COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION,
+    outcomes: orderOutcomes(outcomes)
+  });
+}
+async function scanCompletedTaskOutcomes(root) {
   let files;
   try {
     files = await readdir4(tasksDirectory(root));
@@ -25583,7 +25622,34 @@ async function listCompletedTaskOutcomes(root) {
     const ledger = await loadTaskLedger(root, file.slice(0, -".json".length));
     if (ledger?.status === "completed") outcomes.push(...ledger.outcomes);
   }
-  return outcomes.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+  return orderOutcomes(outcomes);
+}
+async function withCompletedOutcomesIndexLock(root, operation) {
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "tasks", "completed-outcomes.json");
+  return withFileLock(`${key}.lock`, operation);
+}
+async function updateCompletedOutcomesIndex(root, added) {
+  await withCompletedOutcomesIndexLock(root, async () => {
+    const cached2 = await readCompletedOutcomesIndex(root);
+    if (!cached2) {
+      await writeCompletedOutcomesIndex(root, await scanCompletedTaskOutcomes(root));
+      return;
+    }
+    const merged = new Map(cached2.map((outcome) => [`${outcome.taskId}:${outcome.id}`, outcome]));
+    for (const outcome of added) merged.set(`${outcome.taskId}:${outcome.id}`, outcome);
+    await writeCompletedOutcomesIndex(root, [...merged.values()]);
+  });
+}
+async function listCompletedTaskOutcomes(root) {
+  const cached2 = await readCompletedOutcomesIndex(root);
+  if (cached2) return cached2;
+  return withCompletedOutcomesIndexLock(root, async () => {
+    const existing = await readCompletedOutcomesIndex(root);
+    if (existing) return existing;
+    const outcomes = await scanCompletedTaskOutcomes(root);
+    await writeCompletedOutcomesIndex(root, outcomes);
+    return outcomes;
+  });
 }
 async function setTaskDisposition(root, taskId, disposition, turnId, calibration, reportOverheadTokens = 0) {
   return enqueueLedgerOperation(root, taskId, async () => {
@@ -25609,6 +25675,7 @@ async function setTaskDisposition(root, taskId, disposition, turnId, calibration
     ledger.completedAt = now;
     ledger.completedReport = buildTaskReport(ledger, calibration, reportOverheadTokens);
     await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    await updateCompletedOutcomesIndex(root, ledger.outcomes);
     return { ledger, report: ledger.completedReport };
   });
 }

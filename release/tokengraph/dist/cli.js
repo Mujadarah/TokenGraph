@@ -1569,7 +1569,8 @@ async function main(argv) {
     try {
       await recordTaskOutcome(root, taskId, taskOutcomeFromRun(run, taskId, taskIdentity));
     } catch (error) {
-      throw new Error(`Run ${run.runId} was saved but was not linked to task ${taskId}: ${error instanceof Error ? error.message : String(error)}`);
+      process.stderr.write(`Run ${run.runId} was saved but was not linked to task ${taskId}: ${error instanceof Error ? error.message : String(error)}
+`);
     }
   }
   await purgeRuns(root, retentionCutoff());

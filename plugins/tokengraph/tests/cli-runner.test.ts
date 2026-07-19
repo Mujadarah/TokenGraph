@@ -39,6 +39,24 @@ describe("tokengraph run CLI", () => {
     }
   });
 
+  it("reports a post-run linkage failure without replacing the command result", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-cli-task-link-failure-"));
+    try {
+      const ledger = await createTaskLedger(root, { host: "codex" });
+      const path = join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`);
+      const result = await execFileAsync(process.execPath, [
+        resolve("dist", "cli.js"), "run", "--root", root, "--task-id", ledger.taskId,
+        "--", process.execPath, "-e", `require('node:fs').unlinkSync(${JSON.stringify(path)}); process.exit(7)`
+      ], { cwd: process.cwd() }).catch((error: unknown) => error) as { code: number; stdout: string; stderr: string };
+
+      expect(result.code).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({ status: "failed", exitCode: 7 });
+      expect(result.stderr).toMatch(new RegExp(`Run .+ was saved but was not linked to task ${ledger.taskId}:`));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects invalid task linkage before spawning the command", async () => {
     const root = await mkdtemp(join(tmpdir(), "tokengraph-cli-task-guard-"));
     try {
