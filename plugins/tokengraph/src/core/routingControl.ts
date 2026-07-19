@@ -7,10 +7,12 @@ import type { RoutingControl, RoutingPromotionReport } from "./types.js";
 const CURRENT_ROUTING_CONTROL_SCHEMA = 1;
 const REQUIRED_PROMOTION_GATES = [
   "minimumSamples",
+  "realHostEvidence",
   "qualityNonInferiority",
   "tokenSuperiority",
   "resources",
   "routerRates",
+  "routerLatency",
   "executionMedian",
   "executionP25",
   "nonNegativeActivated"
@@ -31,12 +33,20 @@ export function isValidatedPromotion(value: unknown): value is RoutingPromotionR
     ? Object.values(candidate.categoryCounts)
     : [];
   const evidencePasses = categoryCounts.length > 0 && categoryCounts.every((count) => Number.isInteger(count) && count >= 10) &&
+    candidate.evidenceSource === "real-host" && candidate.reviewed === true &&
+    Number.isInteger(candidate.beneficialCount) && candidate.beneficialCount! > 0 &&
+    Number.isInteger(candidate.boundedCount) && candidate.boundedCount! > 0 &&
     typeof candidate.falseBypassRate === "number" && Number.isFinite(candidate.falseBypassRate) && candidate.falseBypassRate >= 0 && candidate.falseBypassRate < 0.1 &&
     typeof candidate.falseActivationRate === "number" && Number.isFinite(candidate.falseActivationRate) && candidate.falseActivationRate >= 0 && candidate.falseActivationRate < 0.1 &&
+    typeof candidate.stage0LatencyMs === "number" && Number.isFinite(candidate.stage0LatencyMs) && candidate.stage0LatencyMs >= 0 &&
+    typeof candidate.activationLatencyMs === "number" && Number.isFinite(candidate.activationLatencyMs) && candidate.activationLatencyMs > candidate.stage0LatencyMs &&
+    Number.isInteger(candidate.stage0LatencySamples) && candidate.stage0LatencySamples! > 0 &&
+    Number.isInteger(candidate.activationLatencySamples) && candidate.activationLatencySamples! > 0 &&
+    candidate.stage0FasterThanActivation === true &&
     typeof candidate.executionInclusiveMedian === "number" && Number.isFinite(candidate.executionInclusiveMedian) && candidate.executionInclusiveMedian > 0 &&
     typeof candidate.executionInclusiveP25 === "number" && Number.isFinite(candidate.executionInclusiveP25) && candidate.executionInclusiveP25 >= 0 &&
     typeof candidate.nonNegativeActivatedRate === "number" && Number.isFinite(candidate.nonNegativeActivatedRate) && candidate.nonNegativeActivatedRate >= 0.8 && candidate.nonNegativeActivatedRate <= 1;
-  return candidate.schemaVersion === 1 && typeof candidate.generatedAt === "string" && typeof candidate.enforcementEnabled === "boolean" && hasRequiredGates && (!candidate.enforcementEnabled || (allGatesPass && evidencePasses));
+  return candidate.schemaVersion === 2 && typeof candidate.generatedAt === "string" && typeof candidate.enforcementEnabled === "boolean" && hasRequiredGates && evidencePasses && (!candidate.enforcementEnabled || allGatesPass);
 }
 
 function normalize(value: unknown): RoutingControl {
