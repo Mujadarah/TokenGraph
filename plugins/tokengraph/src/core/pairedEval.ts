@@ -20,6 +20,12 @@ export interface HostTrace {
   failed: boolean;
   resourceUnits?: number;
   executionInclusiveTokens?: number;
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  reasoningOutputTokens?: number;
+  toolCalls?: number;
+  fallbackRawReads?: number;
   repeat?: number;
   conditionOrder?: "on-first" | "off-first";
   usageSource?: "host";
@@ -184,6 +190,11 @@ function validateRealHostTrace(trace: HostTrace): void {
     (trace.acceptance.status !== "passed" && trace.acceptance.status !== "failed") ||
     !isSha256(trace.acceptance.commandHash)) {
     throw new Error("Real-host trace provenance is invalid.");
+  }
+  if (![trace.inputTokens, trace.cachedInputTokens, trace.outputTokens, trace.reasoningOutputTokens, trace.toolCalls, trace.fallbackRawReads]
+    .every((value) => Number.isSafeInteger(value) && value! >= 0) ||
+    trace.cachedInputTokens! > trace.inputTokens! || trace.tokens !== trace.inputTokens! + trace.outputTokens!) {
+    throw new Error("Real-host trace requires exact host token and tool counters.");
   }
   if (trace.condition === "off") return;
   if (!validShadowObservation(trace.routing)) throw new Error("Real-host routing observation is invalid.");

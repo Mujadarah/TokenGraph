@@ -12,6 +12,11 @@ import { createTaskLedger, loadTaskLedger, setTaskDisposition } from "../src/cor
 const execFileAsync = promisify(execFile);
 
 describe("tokengraph run CLI", () => {
+  it("prints evaluate-host help without starting a host run", async () => {
+    const result = await execFileAsync(process.execPath, [resolve("dist", "cli.js"), "evaluate-host", "--help"], { cwd: process.cwd() });
+    expect(result.stdout).toMatch(/evaluate-host.*--protocol.*--dry-run/is);
+  });
+
   it("links a real failed command to an active task as a verified scoped outcome", async () => {
     const root = await mkdtemp(join(tmpdir(), "tokengraph-cli-task-outcome-"));
     try {
@@ -103,6 +108,7 @@ describe("tokengraph run CLI", () => {
         return [
           {
             ...shared, condition: "on", tokens: 80, executionInclusiveTokens: 80,
+            inputTokens: 70, cachedInputTokens: 10, outputTokens: 10, reasoningOutputTokens: 2, toolCalls: 1, fallbackRawReads: 0,
             routing: {
               mode: "shadow", decision: expectedRouting, stage: 0,
               reason: expectedRouting === "activate" ? "context-discovery" : "bounded-task",
@@ -112,7 +118,7 @@ describe("tokengraph run CLI", () => {
               falseBypass: false, falseActivation: false
             }
           },
-          { ...shared, condition: "off", tokens: 100, executionInclusiveTokens: 100 }
+          { ...shared, condition: "off", tokens: 100, executionInclusiveTokens: 100, inputTokens: 90, cachedInputTokens: 10, outputTokens: 10, reasoningOutputTokens: 2, toolCalls: 1, fallbackRawReads: 1 }
         ];
       });
       const manifestPath = join(root, "manifest.json");

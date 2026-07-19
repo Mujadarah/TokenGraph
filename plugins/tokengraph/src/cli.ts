@@ -3,6 +3,7 @@ import { executeRun, purgeRuns, saveRun, summarizeRun, taskOutcomeFromRun } from
 import { loadTokenGraphConfig } from "./core/config.js";
 import { assertStorageWriteAllowed, purgeStorageClass, type PurgeStorageClass } from "./core/storagePolicy.js";
 import { evaluateManifest, loadEvaluationManifest, persistPromotionReport } from "./core/pairedEval.js";
+import { loadPairedHostProtocol, runPairedHostEvaluation } from "./core/pairedHost.js";
 import { recordTaskOutcome, requireOpenTaskForOutcome } from "./core/taskLedger.js";
 import { getRepositoryIdentity } from "./core/repositoryIdentity.js";
 
@@ -12,6 +13,29 @@ function optionValue(args: string[], name: string): string | undefined {
 }
 
 async function main(argv: string[]): Promise<void> {
+  if (argv[0] === "evaluate-host") {
+    const options = argv.slice(1);
+    const usage = "Usage: tokengraph evaluate-host [--root <path>] --protocol <path> [--output-manifest <path>] [--codex <executable>] [--timeout-ms <n>] [--dry-run]";
+    if (options.includes("--help")) {
+      process.stdout.write(`${usage}\n`);
+      return;
+    }
+    const root = optionValue(options, "--root") ?? process.cwd();
+    const protocolPath = optionValue(options, "--protocol");
+    if (!protocolPath) throw new Error(usage);
+    const timeoutMs = Number(optionValue(options, "--timeout-ms") ?? 30 * 60_000);
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error("evaluate-host --timeout-ms must be a positive number.");
+    const result = await runPairedHostEvaluation({
+      root,
+      protocol: await loadPairedHostProtocol(protocolPath),
+      ...(optionValue(options, "--output-manifest") ? { outputManifest: optionValue(options, "--output-manifest") } : {}),
+      ...(optionValue(options, "--codex") ? { hostExecutable: optionValue(options, "--codex") } : {}),
+      timeoutMs,
+      dryRun: options.includes("--dry-run")
+    });
+    process.stdout.write(`${JSON.stringify(options.includes("--dry-run") ? { dryRun: true, hostVersion: result.hostVersion, runs: result.plan } : { manifest: result.manifest, hostVersion: result.hostVersion })}\n`);
+    return;
+  }
   if (argv[0] === "evaluate-routing") {
     const options = argv.slice(1);
     const root = optionValue(options, "--root") ?? process.cwd();
@@ -32,7 +56,7 @@ async function main(argv: string[]): Promise<void> {
     process.stdout.write(`${JSON.stringify(await purgeStorageClass(root, storageClass as PurgeStorageClass))}\n`);
     return;
   }
-  if (argv[0] !== "run") throw new Error("Usage: tokengraph run [--root <path>] [--task-id <uuid>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived; or tokengraph evaluate-routing [--root <path>] --manifest <path>");
+  if (argv[0] !== "run") throw new Error("Usage: tokengraph run [--root <path>] [--task-id <uuid>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived; tokengraph evaluate-routing [--root <path>] --manifest <path>; or tokengraph evaluate-host --protocol <path> [--dry-run]");
   const separator = argv.indexOf("--");
   if (separator < 0 || separator === argv.length - 1) throw new Error("tokengraph run requires `-- <command> [args...]`.");
   const commandArgs = argv.slice(separator + 1);

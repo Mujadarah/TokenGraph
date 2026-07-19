@@ -74,8 +74,8 @@ function realHostManifest() {
       resourceUnits: 1
     };
     return [
-      { ...shared, condition: "on" as const, tokens: 80, executionInclusiveTokens: 80, routing },
-      { ...shared, condition: "off" as const, tokens: 100, executionInclusiveTokens: 100 }
+      { ...shared, condition: "on" as const, tokens: 80, executionInclusiveTokens: 80, inputTokens: 70, cachedInputTokens: 10, outputTokens: 10, reasoningOutputTokens: 2, toolCalls: 1, fallbackRawReads: 0, routing },
+      { ...shared, condition: "off" as const, tokens: 100, executionInclusiveTokens: 100, inputTokens: 90, cachedInputTokens: 10, outputTokens: 10, reasoningOutputTokens: 2, toolCalls: 1, fallbackRawReads: 1 }
     ];
   });
   return {
