@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -22,11 +22,14 @@ export interface PairedHostProtocol {
   reviewed?: boolean;
   model: { identifier: string; versionOrDate: string };
   reasoningLevel: string;
+  approvalPolicy: "never";
+  windowsSandbox: "elevated";
   sandbox: "read-only" | "workspace-write";
   repositoryCommit: string;
   plugin: { version: string; commit: string };
   promptTemplate: { identifier: string; template: string };
   tokenGraphMcp: { command: string; args: string[]; env?: Record<string, string> };
+  dependencySource?: string;
   acceptance: { command: string; args: string[] };
   toolConfiguration: Record<string, unknown>;
   cacheState: string;
@@ -229,10 +232,13 @@ function assertProtocol(value: unknown): PairedHostProtocol {
     !typed.tasks.length || new Set(typed.tasks.map((task) => task.taskId)).size !== typed.tasks.length ||
     typeof typed.model.identifier !== "string" || !typed.model.identifier || typeof typed.model.versionOrDate !== "string" || !typed.model.versionOrDate ||
     typeof typed.reasoningLevel !== "string" || !typed.reasoningLevel || !["read-only", "workspace-write"].includes(typed.sandbox) ||
+    typed.approvalPolicy !== "never" ||
+    typed.windowsSandbox !== "elevated" ||
     typeof typed.repositoryCommit !== "string" || !/^[a-f0-9]{7,40}$/i.test(typed.repositoryCommit) || typeof typed.plugin.version !== "string" || !typed.plugin.version || typeof typed.plugin.commit !== "string" || !/^[a-f0-9]{40}$/i.test(typed.plugin.commit) ||
     typeof typed.promptTemplate.identifier !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(typed.promptTemplate.identifier) || typeof typed.promptTemplate.template !== "string" || typed.promptTemplate.template.length > 20_000 || !typed.promptTemplate.template.includes("{{task}}") ||
     typeof typed.tokenGraphMcp.command !== "string" || !typed.tokenGraphMcp.command || !Array.isArray(typed.tokenGraphMcp.args) || typed.tokenGraphMcp.args.some((entry) => typeof entry !== "string") ||
     typeof typed.acceptance.command !== "string" || !typed.acceptance.command || !Array.isArray(typed.acceptance.args) || typed.acceptance.args.some((entry) => typeof entry !== "string") ||
+    (typed.dependencySource !== undefined && (typeof typed.dependencySource !== "string" || isAbsolute(typed.dependencySource) || typed.dependencySource.split(/[\\/]/).includes(".."))) ||
     typeof typed.cacheState !== "string" || !typed.cacheState || !["cold", "warm"].includes(typed.indexState) ||
     !typed.toolConfiguration || typeof typed.toolConfiguration !== "object" || Array.isArray(typed.toolConfiguration) || containsAbsolutePath(typed.toolConfiguration) ||
     (typed.tokenGraphMcp.env && Object.entries(typed.tokenGraphMcp.env).some(([key, entry]) => !/^[A-Z_][A-Z0-9_]*$/.test(key) || typeof entry !== "string")) ||
@@ -257,10 +263,10 @@ function beneath(root: string, candidate: string): boolean {
   return child.length > 0 && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
 }
 
-async function runProcess(command: string, args: string[], cwd: string, timeoutMs: number, stdin?: string): Promise<ProcessResult> {
+async function runProcess(command: string, args: string[], cwd: string, timeoutMs: number, stdin?: string, environment?: NodeJS.ProcessEnv): Promise<ProcessResult> {
   return await new Promise((resolvePromise, rejectPromise) => {
     const startedAt = performance.now();
-    const child = spawn(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd, env: environment, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let pendingLine = "";
@@ -311,6 +317,12 @@ async function runProcess(command: string, args: string[], cwd: string, timeoutM
     });
     if (stdin !== undefined) child.stdin.end(stdin); else child.stdin.end();
   });
+}
+
+function isolatedHostEnvironment(): NodeJS.ProcessEnv {
+  const environment = { ...process.env };
+  for (const name of ["CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "CODEX_PERMISSION_PROFILE", "CODEX_SHELL", "CODEX_THREAD_ID"]) delete environment[name];
+  return environment;
 }
 
 async function git(root: string, args: string[]): Promise<string> {
@@ -408,7 +420,8 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
   const plan = planPairedHostRuns(protocol.tasks, protocol.protocol.runsPerTask, protocol.seed);
   const hostExecutable = options.hostExecutable ?? "codex";
   const hostArgumentsPrefix = options.hostArgumentsPrefix ?? [];
-  const version = await runProcess(hostExecutable, [...hostArgumentsPrefix, "--version"], root, 10_000);
+  const hostEnvironment = isolatedHostEnvironment();
+  const version = await runProcess(hostExecutable, [...hostArgumentsPrefix, "--version"], root, 10_000, undefined, hostEnvironment);
   if (version.exitCode !== 0 || !/^codex-cli\s+\S+/i.test(version.stdout.trim())) throw new Error("Codex host version could not be verified.");
   const hostVersion = version.stdout.trim();
   if (options.dryRun) return { manifest: null, plan, hostVersion };
@@ -425,6 +438,7 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
   await mkdir(normalizedRoot, { recursive: true });
   const traces: HostTrace[] = [];
   const acceptanceHash = sha256(JSON.stringify([protocol.acceptance.command, ...protocol.acceptance.args]));
+  const acceptanceArgs = protocol.acceptance.args.map((arg) => /\.[cm]?js$/i.test(arg) && !isAbsolute(arg) ? resolve(root, arg) : arg);
   const resolvedMcp = resolveMcp(root, protocol.tokenGraphMcp);
 
   for (const run of plan) {
@@ -435,13 +449,23 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
     await git(root, ["worktree", "add", "--detach", worktree, commit]);
     let durable = false;
     try {
+      if (protocol.dependencySource) {
+        const dependencySource = resolve(root, protocol.dependencySource);
+        const dependencyTarget = resolve(worktree, protocol.dependencySource);
+        if (!beneath(root, dependencySource) || !beneath(worktree, dependencyTarget)) throw new Error("Dependency provisioning escaped its verified root.");
+        await access(dependencySource);
+        await mkdir(dirname(dependencyTarget), { recursive: true });
+        await symlink(dependencySource, dependencyTarget, process.platform === "win32" ? "junction" : "dir");
+      }
       const args = [
         ...hostArgumentsPrefix,
         "exec", "--json", "--ephemeral", "--ignore-user-config",
         "--model", protocol.model.identifier,
         "--sandbox", protocol.sandbox,
         "--cd", worktree,
-        "--config", `model_reasoning_effort=${tomlString(protocol.reasoningLevel)}`
+        "--config", `model_reasoning_effort=${tomlString(protocol.reasoningLevel)}`,
+        "--config", `approval_policy=${tomlString(protocol.approvalPolicy)}`,
+        "--config", `windows.sandbox=${tomlString(protocol.windowsSandbox)}`
       ];
       if (run.condition === "on") {
         args.push("--config", `mcp_servers.tokengraph.command=${tomlString(resolvedMcp.command)}`);
@@ -453,7 +477,7 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
       }
       args.push("-");
       const measuredRouting = run.condition === "on" ? measureRouting(task, protocol.indexState) : undefined;
-      const host = await runProcess(hostExecutable, args, worktree, options.timeoutMs ?? 30 * 60_000, `${renderPrompt(protocol.promptTemplate.template, task)}\n`);
+      const host = await runProcess(hostExecutable, args, worktree, options.timeoutMs ?? 30 * 60_000, `${renderPrompt(protocol.promptTemplate.template, task)}\n`, hostEnvironment);
       const rawPath = resolve(rawRoot, `${runName}.jsonl`);
       await writeFile(rawPath, host.stdout);
       let parsed: ParsedCodexJsonl | undefined;
@@ -468,7 +492,7 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
       } catch {
         parseFailure = "invalid-host-stream";
       }
-      const acceptance = await runProcess(protocol.acceptance.command, protocol.acceptance.args, worktree, Math.min(options.timeoutMs ?? 30 * 60_000, 10 * 60_000));
+      const acceptance = await runProcess(protocol.acceptance.command, acceptanceArgs, worktree, Math.min(options.timeoutMs ?? 30 * 60_000, 10 * 60_000));
       const normalized = {
         schemaVersion: 1,
         taskId: run.taskId,

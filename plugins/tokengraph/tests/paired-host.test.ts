@@ -17,6 +17,8 @@ function protocol(repositoryCommit: string, prompt = "Where is src/a.ts? Do not 
     reviewed: true,
     model: { identifier: "gpt-5", versionOrDate: "2026-07-19" },
     reasoningLevel: "high",
+    approvalPolicy: "never",
+    windowsSandbox: "elevated",
     sandbox: "workspace-write",
     repositoryCommit,
     plugin: { version: "0.21.1", commit: "a".repeat(40) },
@@ -90,6 +92,9 @@ describe("paired Codex host adapter", () => {
       const { stdout: commit } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root });
       const hostScript = join(root, "fake-host.mjs");
       const cwdLog = join(root, "host-cwds.txt");
+      const sharedDependencies = join(root, "shared-dependencies");
+      await mkdir(sharedDependencies);
+      await writeFile(join(sharedDependencies, "sentinel.txt"), "preserve\n");
       await writeFile(hostScript, [
         "import { appendFileSync, writeFileSync } from 'node:fs';",
         "const log = process.argv[2];",
@@ -100,9 +105,10 @@ describe("paired Codex host adapter", () => {
         "console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:100,cached_input_tokens:20,output_tokens:30,reasoning_output_tokens:5}}));"
       ].join("\n"));
       const outputManifest = join(root, "reviewed-manifest.json");
+      const provisionedProtocol = { ...protocol(commit.trim()), dependencySource: "shared-dependencies" };
       const result = await runPairedHostEvaluation({
         root,
-        protocol: protocol(commit.trim()),
+        protocol: provisionedProtocol,
         outputManifest,
         hostExecutable: process.execPath,
         hostArgumentsPrefix: [hostScript, cwdLog],
@@ -119,6 +125,7 @@ describe("paired Codex host adapter", () => {
       expect(reviewed).not.toContain(root);
       expect(reviewed).not.toContain("Do not persist this raw prompt");
       expect(reviewed).not.toContain("thread-secret");
+      expect(await readFile(join(sharedDependencies, "sentinel.txt"), "utf8")).toBe("preserve\n");
 
       const failedAcceptanceProtocol = {
         ...protocol(commit.trim()),
