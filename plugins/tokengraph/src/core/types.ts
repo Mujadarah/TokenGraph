@@ -293,6 +293,13 @@ export interface ProjectIndex extends CodeGraph {
   symbolChunks?: SymbolChunk[];
   configuration?: ConfigurationEvidence[];
   unsupportedLanguageCounts?: Record<string, number>;
+  retrievalSignals?: RetrievalSignals;
+}
+
+export interface RetrievalSignals {
+  source: "git-commit-distance" | "unavailable";
+  historyDepth: number;
+  fileCommitDistance: Record<string, number>;
 }
 
 export interface ConfigurationEvidence {

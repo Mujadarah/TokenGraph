@@ -18,3 +18,9 @@ TokenGraph never treats a caller-supplied `root` as the workspace trust boundary
 Every requested root must resolve inside that boundary. Installed plugin launches with no host-provided source remain blocked. Filesystem roots and home directories are rejected, and no `.tokengraph/` state is written before the check succeeds.
 
 Architecture-rule patterns are validated in a bounded worker before they are persisted. Invalid or catastrophic-backtracking regular expressions are rejected so one saved rule cannot block the MCP server.
+
+## Runner capture boundary
+
+Runner secret redaction is best effort and not a guarantee. Saved captures are JSON under `.tokengraph/runs/` in the active worktree and are stored as plaintext. TokenGraph does not perform always-on process capture. To avoid runner capture entirely, do not invoke `tokengraph run`; use normal host execution instead.
+
+Do not send regulated or highly sensitive output through the runner. Storage is not encrypted today. The isolated storage interfaces and write boundaries preserve the option to add future optional local encryption, but no encryption feature is currently claimed.

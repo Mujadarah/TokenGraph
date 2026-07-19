@@ -1,6 +1,8 @@
+import { execFile as execFileCallback } from "node:child_process";
 import { access, cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compressOutput } from "../src/core/compressor.js";
@@ -41,6 +43,8 @@ import { exportProjectMap, reviewMemories } from "../src/core/review.js";
 import { estimateTokens, tokenize } from "../src/core/token.js";
 import { buildProjectWiki } from "../src/core/wiki.js";
 import type { MemoryEntry, MemoryInput } from "../src/core/types.js";
+
+const execFile = promisify(execFileCallback);
 
 const tempRoots: string[] = [];
 
@@ -881,11 +885,30 @@ describe("indexProject", () => {
     const second = await indexProject(root);
 
     expect(first.schemaVersion).toBe(CURRENT_INDEX_SCHEMA_VERSION);
+    expect(CURRENT_INDEX_SCHEMA_VERSION).toBe(4);
+    expect(first.retrievalSignals).toEqual({ source: "unavailable", historyDepth: 50, fileCommitDistance: {} });
     expect(first.scanMetadata?.files["src/patientSummary.ts"]).toMatchObject({ path: "src/patientSummary.ts" });
     expect(first.fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(second.fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(second.fingerprint).not.toBe(first.fingerprint);
     expect(new Date(second.scannedAt).toISOString()).toBe(second.scannedAt);
+  });
+
+  it("includes Git recency signals in the stable project fingerprint", async () => {
+    const root = await makeRoot();
+    await execFile("git", ["init", "-q", "-b", "main", root]);
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "entry.ts"), "export const entry = true;\n");
+    await execFile("git", ["-C", root, "add", "src/entry.ts"]);
+    await execFile("git", ["-C", root, "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "commit", "-qm", "entry"]);
+    const first = await indexProject(root);
+    await execFile("git", ["-C", root, "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "commit", "--allow-empty", "-qm", "distance"]);
+    const second = await indexProject(root);
+
+    expect(first.retrievalSignals?.fileCommitDistance).toEqual({ "src/entry.ts": 0 });
+    expect(second.retrievalSignals?.fileCommitDistance).toEqual({ "src/entry.ts": 1 });
+    expect(second.files).toEqual(first.files);
+    expect(second.fingerprint).not.toBe(first.fingerprint);
   });
 
   it("records ordered SQL object history across migration files", async () => {
@@ -980,7 +1003,7 @@ describe("indexProject", () => {
     await writeFile(join(root, "src", "patientSummary.ts"), "export function patientSummary() { return true; }");
 
     const first = await indexProject(root);
-    const result = await updateProjectIndexIncremental(root, { ...first, schemaVersion: 0, scanMetadata: undefined });
+    const result = await updateProjectIndexIncremental(root, { ...first, schemaVersion: 3 });
 
     expect(result.mode).toBe("full");
     expect(result.fallbackReason).toMatch(/schema/i);
@@ -990,6 +1013,24 @@ describe("indexProject", () => {
 });
 
 describe("index status and reset", () => {
+  it("rejects schema-v3 and malformed schema-v4 retrieval signals as stale derived indexes", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "entry.ts"), "export const entry = true;\n");
+    const project = await indexProject(root);
+
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(indexPath(root), JSON.stringify({ ...project, schemaVersion: 3 }));
+    await expect(loadProjectIndex(root)).resolves.toBeUndefined();
+
+    await writeFile(indexPath(root), JSON.stringify({
+      ...project,
+      schemaVersion: 4,
+      retrievalSignals: { source: "unavailable", historyDepth: 50, fileCommitDistance: { "../outside.ts": 0 } }
+    }));
+    await expect(loadProjectIndex(root)).resolves.toBeUndefined();
+  });
+
   it("reports missing, fresh, and stale index states", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });

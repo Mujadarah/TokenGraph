@@ -83,6 +83,14 @@ function hashText(text: string): string {
   return createHash("sha256").update(text.replace(/\r\n?/g, "\n")).digest("hex");
 }
 
+function normalizedText(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
+function normalizedTextSize(text: string): number {
+  return Buffer.byteLength(normalizedText(text), "utf8");
+}
+
 function exclusionForName(name: string): Exclusion["reason"] | undefined {
   if (DEPENDENCY_DIRS.has(name)) return "dependency";
   if (BUILD_DIRS.has(name)) return "build-output";
@@ -534,8 +542,8 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreScope
       path: relativePath,
       kind,
       language: languageForExtension(extension),
-      size: fileStat.size,
-      estimatedTokens: estimateTokens(content),
+      size: normalizedTextSize(content),
+      estimatedTokens: estimateTokens(normalizedText(content)),
       contentHash: hashText(content),
       route: nextRouteForPath(relativePath),
       isTest: isTestPath(relativePath)
@@ -733,8 +741,8 @@ export async function scanProjectFile(root: string, metadata: FileScanMetadata, 
     path: metadata.path,
     kind: detectFileKind(metadata.path, metadata.extension, content),
     language: metadata.language,
-    size: metadata.size,
-    estimatedTokens: estimateTokens(content),
+    size: normalizedTextSize(content),
+    estimatedTokens: estimateTokens(normalizedText(content)),
     contentHash: hashText(content),
     route: metadata.route,
     isTest: metadata.isTest

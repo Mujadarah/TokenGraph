@@ -6,9 +6,10 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { indexProject } from "../src/core/projectIndexer.js";
+import { createTaskOutcome } from "../src/core/memoryCore.js";
 import { estimateTokens } from "../src/core/token.js";
 import { benchmarkMcpInputSchemas } from "../src/core/toolContracts.js";
-import { loadTaskLedger } from "../src/core/taskLedger.js";
+import { loadTaskLedger, recordTaskOutcome } from "../src/core/taskLedger.js";
 import { listKnowledgeSuggestions } from "../src/core/knowledgeReviewQueue.js";
 import { createTokenGraphServer } from "../src/server.js";
 
@@ -449,7 +450,19 @@ describe("TokenGraph MCP stdio server", () => {
     const report = reportCall.structuredContent as {
       status: string;
       taskId: string;
-      report: { taskId: string; eventCount: number; estimate: { overhead: number } };
+      report: {
+        taskId: string;
+        eventCount: number;
+        estimate: { overhead: number };
+        categories: Array<{
+          category: string;
+          eventCount: number;
+          range: { low: number; likely: number; high: number; unit: string };
+          confidence: string;
+          overhead: number;
+          basis: string[];
+        }>;
+      };
       footer: string;
       reportingStatus: string;
     };
@@ -457,9 +470,22 @@ describe("TokenGraph MCP stdio server", () => {
       status: "completed",
       taskId: prepared.taskId,
       report: expect.objectContaining({ taskId: prepared.taskId, eventCount: expect.any(Number) }),
-      footer: expect.stringMatching(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated)\.$/),
+      footer: expect.stringMatching(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated); categories .+\.$/),
       reportingStatus: "ready"
     });
+    expect(report.report.categories.map((entry) => entry.category)).toEqual(
+      [...report.report.categories.map((entry) => entry.category)].sort((a, b) => a.localeCompare(b))
+    );
+    for (const category of report.report.categories) {
+      expect(category).toMatchObject({
+        category: expect.any(String),
+        eventCount: expect.any(Number),
+        range: { low: expect.any(Number), likely: expect.any(Number), high: expect.any(Number), unit: "estimated_tokens" },
+        confidence: expect.stringMatching(/^(low|medium|high)$/),
+        overhead: expect.any(Number),
+        basis: expect.any(Array)
+      });
+    }
     const suggestionsBeforeTerminalRetry = await listKnowledgeSuggestions(firstRoot);
     const completedMutation = await request(9058, "tools/call", {
       name: "tokengraph_propose_knowledge",
@@ -554,6 +580,59 @@ describe("TokenGraph MCP stdio server", () => {
     expect(JSON.stringify(recalled.structuredContent)).not.toContain("sk-test-planted-secret");
   });
 
+  it("recalls verified outcomes from completed tasks while excluding proposals", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "entry.ts"), "export const entry = true;\n");
+    await stopServer();
+    startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
+    await request(90314, "initialize", {
+      protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "tokengraph-outcome-recall-test", version: "0.21.1" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const first = await request(90315, "tools/call", {
+      name: "tokengraph_prepare_context",
+      arguments: { task: "Review repository security architecture", responseMode: "verbose" }
+    });
+    const firstTaskId = (first.structuredContent as { taskId: string }).taskId;
+    const ledger = await loadTaskLedger(root, firstTaskId);
+    const identity = ledger!.repositoryIdentity!;
+    await recordTaskOutcome(root, firstTaskId, createTaskOutcome({
+      id: "runner-observation",
+      taskId: firstTaskId,
+      summary: "node check.js -> completed (exit 0)",
+      evidence: ["run:r1", "exit-code:0", "runner-status:completed"],
+      createdAt: "2026-07-19T00:00:00.000Z",
+      branch: identity.branch,
+      worktreeId: identity.worktreeId,
+      headCommit: identity.headCommit,
+      provenance: "runner"
+    }));
+    await recordTaskOutcome(root, firstTaskId, createTaskOutcome({
+      id: "agent-claim",
+      taskId: firstTaskId,
+      summary: "agent says the task succeeded",
+      evidence: ["agent:claim"],
+      createdAt: "2026-07-19T00:01:00.000Z",
+      branch: identity.branch,
+      worktreeId: identity.worktreeId,
+      headCommit: identity.headCommit,
+      provenance: "agent"
+    }));
+    await request(90316, "tools/call", {
+      name: "tokengraph_task_report", arguments: { taskId: firstTaskId, disposition: "complete" }
+    });
+
+    const next = await request(90317, "tools/call", {
+      name: "tokengraph_prepare_context",
+      arguments: { task: "Review repository security architecture again", responseMode: "verbose", refreshIndex: false }
+    });
+    const outcomes = (next.structuredContent as { memory: { outcomes: Array<{ id: string; status: string }> } }).memory.outcomes;
+    expect(outcomes).toEqual([expect.objectContaining({ id: "runner-observation", status: "verified" })]);
+    expect(outcomes).not.toContainEqual(expect.objectContaining({ id: "agent-claim" }));
+  });
+
   it("revalidates exact slices and requires reassessment after three task reads", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
@@ -622,7 +701,7 @@ describe("TokenGraph MCP stdio server", () => {
       expect(completed.structuredContent).toEqual({
         status: "completed",
         taskId: result.taskId,
-        footer: expect.stringMatching(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated)\.$/),
+        footer: expect.stringMatching(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated); categories .+\.$/),
         reportingStatus: "ready"
       });
       expect(completed.structuredContent).not.toHaveProperty("report");

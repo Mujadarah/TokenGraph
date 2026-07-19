@@ -69,7 +69,7 @@ import { buildTaskReport, formatTaskReportFooter } from "./core/taskEstimator.js
 import type { ContextPlan, ProjectIndex, RankedSqlObject } from "./core/types.js";
 import { buildProjectWiki } from "./core/wiki.js";
 import { projectToVault } from "./core/vaultProjection.js";
-import { createTaskLedger, discardEmptyTaskLedger, loadTaskLedger, recordTaskArtifactDelivery, recordTaskEvent, setTaskDisposition, updateTaskReadPolicy, updateTaskRoutingObservation, type TaskHost } from "./core/taskLedger.js";
+import { createTaskLedger, discardEmptyTaskLedger, listCompletedTaskOutcomes, loadTaskLedger, recordTaskArtifactDelivery, recordTaskEvent, setTaskDisposition, updateTaskReadPolicy, updateTaskRoutingObservation, type TaskHost } from "./core/taskLedger.js";
 import { listAppliedKnowledge, listKnowledgeSuggestions, proposeKnowledgeChange, reviewKnowledgeSuggestion } from "./core/knowledgeReviewQueue.js";
 
 const architectureRuleTypeSchema = z.enum([
@@ -851,6 +851,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const capsule = buildRetrievalCapsule(ledger.taskId, task, project, plan.recommendedFirstReads.map((file) => file.path), config.parser.maxGraphDepth);
       const capsuleStableArtifact = capsuleArtifact(capsule);
       await saveStableArtifact(resolvedRoot, capsuleStableArtifact);
+      const outcomes = await listCompletedTaskOutcomes(resolvedRoot);
       const memoryContext = composeMemoryContext({
         repositoryId: identity.repositoryId,
         worktreeId: identity.worktreeId,
@@ -864,7 +865,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
           ...memories.filter((memory) => Boolean(memory.confirmedAt)).map((memory) => `${memory.title}: ${memory.body}`)
         ],
         maxTokens: config.memory.maxRetrievalTokens,
-        outcomes: []
+        outcomes
       });
       if (memories.length) {
         const vaultNotes = projectToVault(memories.map((memory) => ({ id: memory.id, title: memory.title, body: memory.body, links: memory.linkedFiles, archived: memory.status !== "active", updatedAt: memory.updatedAt })));
@@ -888,7 +889,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
           // indexed state so equivalent LF/CRLF checkouts produce the same artifact.
           repositoryFingerprint: identity.repositoryFingerprint,
           sourceFingerprint: project.fingerprint,
-          parserVersion: "tokengraph-index-v3",
+          parserVersion: "tokengraph-index-v4",
           normalizedIntent: task.trim().replace(/\s+/g, " ").toLocaleLowerCase(),
           retrievalConfig: { profile: plan.profile, maxEstimatedTokens: plan.budget.maxEstimatedTokens, allowRawReads: plan.budget.allowRawReads },
           memoryFingerprint: createHash("sha256").update(JSON.stringify(memories.map((memory) => memory.id))).digest("hex"),

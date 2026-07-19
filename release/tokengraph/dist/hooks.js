@@ -6,7 +6,7 @@ import { mkdir as mkdir2, open as open2, readFile as readFile4, readdir as readd
 import { dirname as dirname2, isAbsolute as isAbsolute2, join as join4, resolve as resolve4 } from "node:path";
 
 // src/core/taskEstimator.ts
-var TASK_ESTIMATOR_VERSION = "task-estimator-v1";
+var TASK_ESTIMATOR_VERSION = "task-estimator-v2";
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -19,16 +19,36 @@ function isConfidence(value) {
 function isQualityStatus(value) {
   return value === "passed" || value === "warning" || value === "not_evaluated";
 }
+function reconstructCategory(value) {
+  if (!isRecord(value) || !isRecord(value.range) || !Array.isArray(value.basis)) return void 0;
+  if (typeof value.category !== "string" || value.category.length === 0 || !Number.isInteger(value.eventCount) || value.eventCount < 1 || !isFiniteNumber(value.range.low) || !isFiniteNumber(value.range.likely) || !isFiniteNumber(value.range.high) || value.range.low > value.range.likely || value.range.likely > value.range.high || value.range.unit !== "estimated_tokens" || !isConfidence(value.confidence) || !value.basis.every((item) => typeof item === "string") || !isFiniteNumber(value.overhead) || value.overhead < 0) return void 0;
+  return {
+    category: value.category,
+    eventCount: value.eventCount,
+    range: {
+      low: value.range.low,
+      likely: value.range.likely,
+      high: value.range.high,
+      unit: "estimated_tokens"
+    },
+    confidence: value.confidence,
+    basis: [...value.basis],
+    overhead: value.overhead
+  };
+}
 function reconstructTaskReport(value, expectedTaskId, expectedEventCount) {
-  if (!isRecord(value) || !isRecord(value.estimate) || !isRecord(value.estimate.range) || !isRecord(value.quality)) {
+  if (!isRecord(value) || !isRecord(value.estimate) || !isRecord(value.estimate.range) || !isRecord(value.quality) || !Array.isArray(value.categories)) {
     return void 0;
   }
   const range = value.estimate.range;
   const basis = value.estimate.basis;
   const checks = value.quality.checks;
-  if (value.taskId !== expectedTaskId || value.eventCount !== expectedEventCount || !Number.isInteger(value.eventCount) || !isFiniteNumber(range.low) || !isFiniteNumber(range.likely) || !isFiniteNumber(range.high) || range.low > range.likely || range.likely > range.high || range.unit !== "estimated_tokens" || !isConfidence(value.estimate.confidence) || !Array.isArray(basis) || !basis.every((item) => typeof item === "string") || !isFiniteNumber(value.estimate.overhead) || value.estimate.estimatorVersion !== TASK_ESTIMATOR_VERSION || !isQualityStatus(value.quality.status) || !Array.isArray(checks) || !checks.every((item) => typeof item === "string")) {
+  const categories = value.categories.map(reconstructCategory);
+  if (value.taskId !== expectedTaskId || value.eventCount !== expectedEventCount || !Number.isInteger(value.eventCount) || !isFiniteNumber(range.low) || !isFiniteNumber(range.likely) || !isFiniteNumber(range.high) || range.low > range.likely || range.likely > range.high || range.unit !== "estimated_tokens" || !isConfidence(value.estimate.confidence) || !Array.isArray(basis) || !basis.every((item) => typeof item === "string") || !isFiniteNumber(value.estimate.overhead) || value.estimate.estimatorVersion !== TASK_ESTIMATOR_VERSION || !isQualityStatus(value.quality.status) || !Array.isArray(checks) || !checks.every((item) => typeof item === "string") || categories.some((entry) => entry === void 0)) {
     return void 0;
   }
+  const reconstructedCategories = categories;
+  if (reconstructedCategories.reduce((count, entry) => count + entry.eventCount, 0) !== expectedEventCount || reconstructedCategories.some((entry, index) => index > 0 && reconstructedCategories[index - 1].category.localeCompare(entry.category) >= 0)) return void 0;
   return {
     taskId: value.taskId,
     eventCount: value.eventCount,
@@ -39,18 +59,108 @@ function reconstructTaskReport(value, expectedTaskId, expectedEventCount) {
       overhead: value.estimate.overhead,
       estimatorVersion: TASK_ESTIMATOR_VERSION
     },
+    categories: reconstructedCategories,
     quality: { status: value.quality.status, checks: [...checks] }
+  };
+}
+var confidenceRank = { low: 0, medium: 1, high: 2 };
+function finite(value) {
+  return Number.isFinite(value) ? value : 0;
+}
+function estimateEvents(events, calibration, reportOverheadTokens = 0) {
+  let low = 0;
+  let likely = 0;
+  let high = 0;
+  let overhead = 0;
+  let confidence = events.length > 0 ? "high" : "low";
+  const basis = /* @__PURE__ */ new Set();
+  for (const event of events) {
+    const original = Math.max(0, finite(event.originalTokens));
+    const compact = Math.max(0, finite(event.compactTokens));
+    const eventOverhead = Math.max(0, finite(event.overheadTokens));
+    const net = original - compact - eventOverhead;
+    const gross = original - compact;
+    const categoryCalibration = calibration[event.category];
+    const isCalibrated = Boolean(categoryCalibration && categoryCalibration.observations >= 10);
+    likely += net;
+    overhead += eventOverhead;
+    if (isCalibrated && categoryCalibration) {
+      low += net + finite(categoryCalibration.lowResidual);
+      high += Math.max(net, gross, net + finite(categoryCalibration.highResidual));
+      basis.add(`${event.category}:calibrated:${categoryCalibration.observations}`);
+      if (confidenceRank[event.confidence] < confidenceRank[confidence]) confidence = event.confidence;
+    } else {
+      if (net < 0) low += net;
+      high += Math.max(0, gross);
+      confidence = "low";
+      basis.add(`${event.category}:uncalibrated`);
+    }
+  }
+  const reportOverhead = Math.max(0, finite(reportOverheadTokens));
+  const hasNegativeEvent = events.some((event) => event.originalTokens - event.compactTokens - event.overheadTokens < 0);
+  if (!hasNegativeEvent) low = Math.max(0, low);
+  low = Math.min(low, likely);
+  high = Math.max(likely, high);
+  low -= reportOverhead;
+  likely -= reportOverhead;
+  high = Math.max(likely, high - reportOverhead);
+  if (!hasNegativeEvent) low = Math.max(0, low);
+  low = Math.min(low, likely);
+  overhead += reportOverhead;
+  return {
+    range: { low, likely, high, unit: "estimated_tokens" },
+    confidence,
+    basis: [...basis].sort(),
+    overhead
+  };
+}
+function buildTaskReport(ledger, calibration = {}, reportOverheadTokens = 0) {
+  const checks = [];
+  let hasFailedCheck = false;
+  for (const event of ledger.events) {
+    for (const check of event.qualityChecks) {
+      checks.push(`${check.name}:${check.passed ? "passed" : "failed"}`);
+      if (!check.passed) {
+        hasFailedCheck = true;
+      }
+    }
+  }
+  const aggregate = estimateEvents(ledger.events, calibration, reportOverheadTokens);
+  const categories = [...new Set(ledger.events.map((event) => event.category))].sort((a, b) => a.localeCompare(b)).map((category) => {
+    const events = ledger.events.filter((event) => event.category === category);
+    return { category, eventCount: events.length, ...estimateEvents(events, calibration) };
+  });
+  return {
+    taskId: ledger.taskId,
+    eventCount: ledger.events.length,
+    estimate: {
+      range: aggregate.range,
+      confidence: aggregate.confidence,
+      basis: aggregate.basis,
+      overhead: aggregate.overhead,
+      estimatorVersion: TASK_ESTIMATOR_VERSION
+    },
+    categories,
+    quality: {
+      status: hasFailedCheck ? "warning" : checks.length > 0 ? "passed" : "not_evaluated",
+      checks
+    }
   };
 }
 function formatTaskReportFooter(report) {
   if (report.eventCount === 0) {
     return "TokenGraph: savings not measured (no qualifying task events).";
   }
-  const { low, high } = report.estimate.range;
-  const formatValue = (value) => Number.isInteger(value) ? `${value}` : `${Number(value.toFixed(1))}`;
-  const savings = low === high ? formatValue(low) : low < 0 && high >= 0 ? `${formatValue(low)} to ${formatValue(high)}` : `${formatValue(low)}-${formatValue(high)}`;
+  const formatRange = (range) => {
+    const { low, high } = range;
+    const formatValue = (value) => Number.isInteger(value) ? `${value}` : `${Number(value.toFixed(1))}`;
+    return low === high ? formatValue(low) : low < 0 && high >= 0 ? `${formatValue(low)} to ${formatValue(high)}` : `${formatValue(low)}-${formatValue(high)}`;
+  };
+  const savings = formatRange(report.estimate.range);
   const quality = report.quality.status === "not_evaluated" ? "not evaluated" : report.quality.status;
-  return `TokenGraph: ~${savings} tokens saved (estimated, ${report.estimate.confidence} confidence); quality ${quality}.`;
+  const aggregateFooter = `TokenGraph: ~${savings} tokens saved (estimated, ${report.estimate.confidence} confidence); quality ${quality}.`;
+  const categoryText = report.categories.map((entry) => `${entry.category}=~${formatRange(entry.range)} (${entry.basis.join(",")})`).join("; ");
+  return `${aggregateFooter.slice(0, -1)}; categories ${categoryText}.`;
 }
 
 // src/core/taskLedger.ts
@@ -285,7 +395,7 @@ function repositoryStateDirectory(root, commonDirectory) {
 
 // src/core/taskLedger.ts
 var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
-var TASK_LEDGER_SCHEMA_VERSION = 2;
+var TASK_LEDGER_SCHEMA_VERSION = 3;
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var taskLedgerWriteChains = /* @__PURE__ */ new Map();
 function assertTaskId(taskId) {
@@ -337,27 +447,46 @@ function reconstructEvent(value) {
     qualityChecks
   };
 }
+function reconstructOutcome(value) {
+  if (!isRecord2(value) || !Array.isArray(value.evidence)) return void 0;
+  if (!isIdentifier(value.id) || !isIdentifier(value.taskId) || typeof value.summary !== "string" || value.summary.trim().length === 0 || !["verified", "proposed", "failed"].includes(String(value.status)) || !value.evidence.every((entry) => isIdentifier(entry)) || !isTimestamp(value.createdAt) || value.staleAt !== void 0 && !isTimestamp(value.staleAt) || value.sourceFingerprint !== void 0 && !isIdentifier(value.sourceFingerprint) || !isIdentifier(value.branch) || !isIdentifier(value.worktreeId) || !isIdentifier(value.headCommit)) return void 0;
+  return {
+    id: value.id,
+    taskId: value.taskId,
+    summary: value.summary,
+    status: value.status,
+    evidence: [...value.evidence],
+    createdAt: value.createdAt,
+    ...value.staleAt === void 0 ? {} : { staleAt: value.staleAt },
+    ...value.sourceFingerprint === void 0 ? {} : { sourceFingerprint: value.sourceFingerprint },
+    branch: value.branch,
+    worktreeId: value.worktreeId,
+    headCommit: value.headCommit
+  };
+}
 function reconstructTaskLedger(value, expectedTaskId) {
   if (!isRecord2(value) || !Array.isArray(value.events)) return void 0;
+  const legacy = value.schemaVersion === 1 || value.schemaVersion === 2;
   const events = value.events.map(reconstructEvent);
+  const outcomes = value.outcomes === void 0 && legacy ? [] : Array.isArray(value.outcomes) ? value.outcomes.map(reconstructOutcome) : void 0;
   const routingObservation = value.routingObservation === void 0 ? void 0 : reconstructRoutingObservation(value.routingObservation);
   const readPolicy = value.readPolicy === void 0 ? void 0 : reconstructReadPolicy(value.readPolicy);
   const deliveredArtifacts = value.deliveredArtifacts === void 0 ? [] : Array.isArray(value.deliveredArtifacts) && value.deliveredArtifacts.every((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 512) ? [...new Set(value.deliveredArtifacts)] : void 0;
-  if (value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== 1 && value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId || !["codex", "claude", "unknown"].includes(String(value.host)) || !["open", "paused", "completed", "quarantined"].includes(String(value.status)) || !isOptionalIdentifier(value.sessionId) || !isOptionalIdentifier(value.turnId) || !isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt) || value.pausedAt !== void 0 && !isTimestamp(value.pausedAt) || value.completedAt !== void 0 && !isTimestamp(value.completedAt) || value.estimatorVersion !== TASK_ESTIMATOR_VERSION || value.repositoryIdentity !== void 0 && !isRepositoryIdentity(value.repositoryIdentity) || value.routingObservation !== void 0 && routingObservation === void 0 || value.readPolicy !== void 0 && readPolicy === void 0 || deliveredArtifacts === void 0 || events.some((event) => event === void 0) || value.lastDisposition !== void 0 && value.lastDisposition !== "pause" && value.lastDisposition !== "complete" || Date.parse(value.updatedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) > Date.parse(value.updatedAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) < Date.parse(value.createdAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) > Date.parse(value.updatedAt)) {
+  if (value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId || !["codex", "claude", "unknown"].includes(String(value.host)) || !["open", "paused", "completed", "quarantined"].includes(String(value.status)) || !isOptionalIdentifier(value.sessionId) || !isOptionalIdentifier(value.turnId) || !isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt) || value.pausedAt !== void 0 && !isTimestamp(value.pausedAt) || value.completedAt !== void 0 && !isTimestamp(value.completedAt) || !legacy && value.estimatorVersion !== TASK_ESTIMATOR_VERSION || legacy && value.estimatorVersion !== "task-estimator-v1" && value.estimatorVersion !== TASK_ESTIMATOR_VERSION || value.repositoryIdentity !== void 0 && !isRepositoryIdentity(value.repositoryIdentity) || value.routingObservation !== void 0 && routingObservation === void 0 || value.readPolicy !== void 0 && readPolicy === void 0 || deliveredArtifacts === void 0 || outcomes === void 0 || outcomes.some((outcome) => outcome === void 0) || events.some((event) => event === void 0) || value.lastDisposition !== void 0 && value.lastDisposition !== "pause" && value.lastDisposition !== "complete" || Date.parse(value.updatedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) > Date.parse(value.updatedAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) < Date.parse(value.createdAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) > Date.parse(value.updatedAt)) {
     return void 0;
   }
-  const completedReport = value.completedReport === void 0 ? void 0 : reconstructTaskReport(value.completedReport, expectedTaskId, events.length);
-  if (value.completedReport !== void 0 && completedReport === void 0) return void 0;
+  const completedReport = legacy && value.status === "completed" ? void 0 : value.completedReport === void 0 ? void 0 : reconstructTaskReport(value.completedReport, expectedTaskId, events.length);
+  if (!legacy && value.completedReport !== void 0 && completedReport === void 0) return void 0;
   if (value.status === "open" && (value.pausedAt !== void 0 || value.completedAt !== void 0 || completedReport !== void 0 || value.lastDisposition !== void 0)) {
     return void 0;
   }
   if (value.status === "paused" && (value.pausedAt === void 0 || value.completedAt !== void 0 || completedReport !== void 0 || value.lastDisposition !== "pause")) {
     return void 0;
   }
-  if (value.status === "completed" && (value.completedAt === void 0 || completedReport === void 0 || value.lastDisposition !== "complete")) {
+  if (value.status === "completed" && (value.completedAt === void 0 || !legacy && completedReport === void 0 || value.completedReport === void 0 || value.lastDisposition !== "complete")) {
     return void 0;
   }
-  return {
+  const ledger = {
     schemaId: TASK_LEDGER_SCHEMA_ID,
     schemaVersion: TASK_LEDGER_SCHEMA_VERSION,
     taskId: expectedTaskId,
@@ -374,10 +503,13 @@ function reconstructTaskLedger(value, expectedTaskId) {
     ...routingObservation === void 0 ? {} : { routingObservation },
     ...readPolicy === void 0 ? {} : { readPolicy },
     deliveredArtifacts,
+    outcomes,
     events,
     ...value.lastDisposition === void 0 ? {} : { lastDisposition: value.lastDisposition },
     ...completedReport === void 0 ? {} : { completedReport }
   };
+  if (legacy && ledger.status === "completed") ledger.completedReport = buildTaskReport(ledger);
+  return ledger;
 }
 function isRepositoryIdentity(value) {
   if (!isRecord2(value)) return false;
@@ -467,9 +599,12 @@ async function loadTaskLedger(root, taskId) {
       await quarantine(path);
       return void 0;
     }
-    if (!ledger.repositoryIdentity || isRecord2(parsed) && parsed.schemaVersion === 1) {
-      ledger.repositoryIdentity = await getRepositoryIdentity(root);
+    if (!ledger.repositoryIdentity || isRecord2(parsed) && (parsed.schemaVersion === 1 || parsed.schemaVersion === 2)) {
+      ledger.repositoryIdentity ??= await getRepositoryIdentity(root);
       ledger.schemaVersion = TASK_LEDGER_SCHEMA_VERSION;
+      ledger.estimatorVersion = TASK_ESTIMATOR_VERSION;
+      ledger.outcomes ??= [];
+      if (ledger.status === "completed") ledger.completedReport = buildTaskReport(ledger);
       await writeJsonAtomic(path, ledger);
     }
     return ledger;

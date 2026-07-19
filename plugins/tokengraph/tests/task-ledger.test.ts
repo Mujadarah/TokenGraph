@@ -4,20 +4,24 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildTaskReport, formatTaskReportFooter } from "../src/core/taskEstimator.js";
+import { createTaskOutcome, verifiedOutcomes, type TaskOutcome } from "../src/core/memoryCore.js";
 import {
   __getTaskLedgerWriteQueueSizeForTests,
   attachTaskHostContext,
   createTaskLedger,
   discardEmptyTaskLedger,
+  listCompletedTaskOutcomes,
   loadTaskLedger,
   pruneTaskLedgers,
   recordTaskArtifactDelivery,
   recordTaskEvent,
+  recordTaskOutcome,
+  requireOpenTaskForOutcome,
   setTaskDisposition,
   updateTaskReadPolicy,
   updateTaskRoutingObservation
 } from "../src/core/taskLedger.js";
-import type { TaskEvent } from "../src/core/taskLedger.js";
+import type { TaskEvent, TaskLedger } from "../src/core/taskLedger.js";
 
 const roots: string[] = [];
 
@@ -47,6 +51,26 @@ function ledgerPath(root: string, taskId: string): string {
   return join(root, ".tokengraph", "tasks", `${taskId}.json`);
 }
 
+function outcomeFor(
+  ledger: TaskLedger,
+  overrides: Partial<TaskOutcome> & { provenance?: "runner" | "hook" | "filesystem-diff" | "agent" | "inferred" } = {}
+): TaskOutcome {
+  const identity = ledger.repositoryIdentity!;
+  return createTaskOutcome({
+    id: overrides.id,
+    taskId: overrides.taskId ?? ledger.taskId,
+    summary: overrides.summary ?? "command observed",
+    evidence: overrides.evidence ?? ["run:r1"],
+    createdAt: overrides.createdAt ?? "2026-07-19T00:00:00.000Z",
+    ...(overrides.staleAt ? { staleAt: overrides.staleAt } : {}),
+    ...(overrides.sourceFingerprint ? { sourceFingerprint: overrides.sourceFingerprint } : {}),
+    branch: overrides.branch ?? identity.branch,
+    worktreeId: overrides.worktreeId ?? identity.worktreeId,
+    headCommit: overrides.headCommit ?? identity.headCommit,
+    provenance: overrides.provenance ?? "runner"
+  });
+}
+
 afterEach(async () => {
   vi.useRealTimers();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -59,12 +83,13 @@ describe("task ledger persistence", () => {
 
     expect(ledger).toMatchObject({
       schemaId: "tokengraph-task-ledger",
-      schemaVersion: 2,
+      schemaVersion: 3,
       host: "codex",
       sessionId: "session-1",
       turnId: "turn-1",
       status: "open",
-      estimatorVersion: "task-estimator-v1",
+      estimatorVersion: "task-estimator-v2",
+      outcomes: [],
       events: []
     });
     expect(ledger.taskId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
@@ -80,8 +105,8 @@ describe("task ledger persistence", () => {
     await writeFile(ledgerPath(root, created.taskId), JSON.stringify(legacy));
 
     const migrated = await loadTaskLedger(root, created.taskId);
-    expect(migrated).toMatchObject({ schemaVersion: 2, repositoryIdentity: expect.objectContaining({ repositoryId: expect.any(String) }) });
-    expect(JSON.parse(await readFile(ledgerPath(root, created.taskId), "utf8"))).toMatchObject({ schemaVersion: 2, repositoryIdentity: expect.any(Object) });
+    expect(migrated).toMatchObject({ schemaVersion: 3, estimatorVersion: "task-estimator-v2", outcomes: [], repositoryIdentity: expect.objectContaining({ repositoryId: expect.any(String) }) });
+    expect(JSON.parse(await readFile(ledgerPath(root, created.taskId), "utf8"))).toMatchObject({ schemaVersion: 3, estimatorVersion: "task-estimator-v2", outcomes: [], repositoryIdentity: expect.any(Object) });
 
     await updateTaskRoutingObservation(root, created.taskId, {
       decision: "activate", stage: 2, reason: "shadow candidate", expectedOverheadTokens: 24, mode: "shadow", enforced: false
@@ -95,6 +120,43 @@ describe("task ledger persistence", () => {
     await recordTaskArtifactDelivery(root, created.taskId, ["capsule:a", "capsule:a", "brief:b"]);
     await recordTaskArtifactDelivery(root, created.taskId, ["brief:b", "wiki:c"]);
     expect((await loadTaskLedger(root, created.taskId))?.deliveredArtifacts).toEqual(["capsule:a", "brief:b", "wiki:c"]);
+  });
+
+  it("migrates completed schema-v2 ledgers and rebuilds category reports", async () => {
+    const root = await makeRoot();
+    const created = await createTaskLedger(root, { host: "codex" });
+    await recordTaskEvent(root, created.taskId, event({ fingerprint: "context-event" }));
+    await recordTaskEvent(root, created.taskId, event({
+      fingerprint: "sql-event", category: "sql", originalTokens: 50, compactTokens: 60, overheadTokens: 5
+    }));
+    const completed = await setTaskDisposition(root, created.taskId, "complete");
+    const legacy = structuredClone(completed.ledger) as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 2;
+    legacy.estimatorVersion = "task-estimator-v1";
+    delete legacy.outcomes;
+    const legacyReport = legacy.completedReport as Record<string, unknown>;
+    delete legacyReport.categories;
+    (legacyReport.estimate as Record<string, unknown>).estimatorVersion = "task-estimator-v1";
+    await writeFile(ledgerPath(root, created.taskId), JSON.stringify(legacy));
+
+    const migrated = await loadTaskLedger(root, created.taskId);
+
+    expect(migrated).toMatchObject({
+      schemaVersion: 3,
+      estimatorVersion: "task-estimator-v2",
+      events: expect.arrayContaining([
+        expect.objectContaining({ fingerprint: "context-event" }),
+        expect.objectContaining({ fingerprint: "sql-event" })
+      ]),
+      outcomes: [],
+      completedReport: {
+        categories: [
+          expect.objectContaining({ category: "context", basis: ["context:uncalibrated"] }),
+          expect.objectContaining({ category: "sql", basis: ["sql:uncalibrated"] })
+        ]
+      }
+    });
+    expect(JSON.parse(await readFile(ledgerPath(root, created.taskId), "utf8"))).toEqual(migrated);
   });
 
   it("rejects non-UUID task ids before path construction", async () => {
@@ -375,18 +437,18 @@ describe("task savings estimator", () => {
     const ledger = await createTaskLedger(root, { host: "codex" });
     const singular = await recordTaskEvent(root, ledger.taskId, event({ compactTokens: 50, overheadTokens: 0, qualityChecks: [{ name: "tests", passed: true }] }));
     expect(formatTaskReportFooter(buildTaskReport(singular, { context: { observations: 10, lowResidual: 0, highResidual: -10 } }))).toBe(
-      "TokenGraph: ~50 tokens saved (estimated, medium confidence); quality passed."
+      "TokenGraph: ~50 tokens saved (estimated, medium confidence); quality passed; categories context=~50 (context:calibrated:10)."
     );
 
     const warning = await recordTaskEvent(root, ledger.taskId, event({ fingerprint: "warning", qualityChecks: [{ name: "tests", passed: false }] }));
     expect(formatTaskReportFooter(buildTaskReport(warning))).toBe(
-      "TokenGraph: ~0-110 tokens saved (estimated, low confidence); quality warning."
+      "TokenGraph: ~0-110 tokens saved (estimated, low confidence); quality warning; categories context=~0-110 (context:uncalibrated)."
     );
 
     const noChecks = await createTaskLedger(root, { host: "codex" });
     const measured = await recordTaskEvent(root, noChecks.taskId, event());
     expect(formatTaskReportFooter(buildTaskReport(measured))).toBe(
-      "TokenGraph: ~0-60 tokens saved (estimated, low confidence); quality not evaluated."
+      "TokenGraph: ~0-60 tokens saved (estimated, low confidence); quality not evaluated; categories context=~0-60 (context:uncalibrated)."
     );
   });
 
@@ -425,10 +487,16 @@ describe("task savings estimator", () => {
         range: { low: -15, likely: 35, high: 60, unit: "estimated_tokens" },
         confidence: "low",
         overhead: 15,
-        estimatorVersion: "task-estimator-v1"
+        estimatorVersion: "task-estimator-v2"
       },
+      categories: [
+        expect.objectContaining({ category: "context", eventCount: 1, basis: ["context:uncalibrated"] }),
+        expect.objectContaining({ category: "sql", eventCount: 1, basis: ["sql:uncalibrated"] })
+      ],
       quality: { status: "not_evaluated", checks: [] }
     });
+    expect(formatTaskReportFooter(buildTaskReport(stored))).toContain("categories context=");
+    expect(formatTaskReportFooter(buildTaskReport(stored))).toContain("sql:uncalibrated");
   });
 
   it("applies category residual calibration deterministically and clamps the aggregate range", async () => {
@@ -667,6 +735,67 @@ describe("task lifecycle and retention", () => {
 
     const open = await createTaskLedger(root, { host: "codex" });
     await expect(recordTaskEvent(root, open.taskId, event())).resolves.toBeDefined();
+  });
+
+  it("records outcomes idempotently and enforces current ledger identity and open status", async () => {
+    const root = await makeRoot();
+    const open = await createTaskLedger(root, { host: "codex" });
+    const runner = outcomeFor(open, { id: "runner-outcome" });
+
+    await recordTaskOutcome(root, open.taskId, runner);
+    const retried = await recordTaskOutcome(root, open.taskId, runner);
+    expect(retried.outcomes).toEqual([runner]);
+    await expect(requireOpenTaskForOutcome(root, open.taskId)).resolves.toMatchObject({ taskId: open.taskId, status: "open" });
+
+    await expect(recordTaskOutcome(root, open.taskId, outcomeFor(open, {
+      id: "wrong-branch", branch: `${open.repositoryIdentity!.branch}-other`
+    }))).rejects.toThrow(/branch/i);
+    await expect(recordTaskOutcome(root, open.taskId, outcomeFor(open, {
+      id: "wrong-worktree", worktreeId: `${open.repositoryIdentity!.worktreeId}-other`
+    }))).rejects.toThrow(/worktree/i);
+
+    const paused = await createTaskLedger(root, { host: "codex" });
+    await setTaskDisposition(root, paused.taskId, "pause");
+    await expect(recordTaskOutcome(root, paused.taskId, outcomeFor(paused))).rejects.toThrow(/open|paused|terminal/i);
+
+    const completed = await createTaskLedger(root, { host: "codex" });
+    await setTaskDisposition(root, completed.taskId, "complete");
+    await expect(recordTaskOutcome(root, completed.taskId, outcomeFor(completed))).rejects.toThrow(/open|completed/i);
+  });
+
+  it("lists outcomes only from completed valid ledgers in deterministic order and leaves proposals out of recall", async () => {
+    const root = await makeRoot();
+    const older = await createTaskLedger(root, { host: "codex" });
+    const olderOutcome = outcomeFor(older, { id: "z-older", createdAt: "2026-07-19T00:00:00.000Z" });
+    await recordTaskOutcome(root, older.taskId, olderOutcome);
+    await setTaskDisposition(root, older.taskId, "complete");
+
+    const newer = await createTaskLedger(root, { host: "codex" });
+    const proposed = outcomeFor(newer, {
+      id: "a-proposed", createdAt: "2026-07-19T01:00:00.000Z", provenance: "agent"
+    });
+    const verified = outcomeFor(newer, {
+      id: "b-verified", createdAt: "2026-07-19T01:00:00.000Z"
+    });
+    await recordTaskOutcome(root, newer.taskId, proposed);
+    await recordTaskOutcome(root, newer.taskId, verified);
+    await setTaskDisposition(root, newer.taskId, "complete");
+
+    const open = await createTaskLedger(root, { host: "codex" });
+    await recordTaskOutcome(root, open.taskId, outcomeFor(open, {
+      id: "open-outcome", createdAt: "2026-07-19T02:00:00.000Z"
+    }));
+    const corruptId = crypto.randomUUID();
+    await writeFile(ledgerPath(root, corruptId), "{not-json");
+
+    const listed = await listCompletedTaskOutcomes(root);
+
+    expect(listed.map((outcome) => outcome.id)).toEqual(["a-proposed", "b-verified", "z-older"]);
+    expect((await loadTaskLedger(root, newer.taskId))?.outcomes).toEqual([proposed, verified]);
+    expect(verifiedOutcomes(listed, {
+      branch: newer.repositoryIdentity!.branch,
+      worktreeId: newer.repositoryIdentity!.worktreeId
+    }).map((outcome) => outcome.id)).toEqual(["b-verified", "z-older"]);
   });
 
   it("prunes terminal and unreachable empty ledgers older than 30 days while preserving active open ledgers", async () => {

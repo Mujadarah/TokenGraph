@@ -3,8 +3,8 @@
 // src/core/runner.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { spawn } from "node:child_process";
-import { readFile as readFile2, readdir, rm as rm2 } from "node:fs/promises";
-import { join as join4 } from "node:path";
+import { readFile as readFile4, readdir as readdir2, rm as rm3 } from "node:fs/promises";
+import { join as join5 } from "node:path";
 
 // src/core/storage.ts
 import { randomUUID } from "node:crypto";
@@ -122,8 +122,12 @@ import { isAbsolute as isAbsolute2, join as join3, relative as relative2, resolv
 // src/core/repositoryIdentity.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createHash } from "node:crypto";
+import { access, readFile as readFile2 } from "node:fs/promises";
 import { join as join2, resolve as resolve2 } from "node:path";
 var execFileAsync = promisify(execFile);
+var LOCAL_EXCLUDE_WARNING = "TokenGraph could not update .git/info/exclude; add this exact line manually: .tokengraph/";
+var setupWarnings = /* @__PURE__ */ new Map();
 async function git(root, ...args) {
   try {
     const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 });
@@ -132,6 +136,110 @@ async function git(root, ...args) {
   } catch {
     return void 0;
   }
+}
+async function ensureLocalExclude(root) {
+  const exclude = await git(root, "rev-parse", "--git-path", "info/exclude");
+  if (!exclude) return;
+  const path = resolve2(root, exclude);
+  try {
+    const lockKey = await canonicalPersistenceLockKey(path);
+    await withFileLock(`${lockKey}.lock`, async () => {
+      let existing = "";
+      try {
+        existing = await readFile2(path, "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      const lines = existing.split(/\r?\n/);
+      if (lines.some((line) => line.trim() === ".tokengraph/")) return;
+      const next = `${existing.replace(/[\r\n]*$/, "")}${existing ? "\n" : ""}.tokengraph/
+`;
+      await writeTextAtomic(path, next);
+    });
+    setupWarnings.delete(resolve2(root));
+  } catch {
+    setupWarnings.set(resolve2(root), [LOCAL_EXCLUDE_WARNING]);
+  }
+}
+function digest(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+async function remoteIdentity(root) {
+  const remotes = await git(root, "remote", "get-url", "--all", "origin");
+  return remotes?.split(/\r?\n/).map((value) => sanitizeRemote(value.trim())).filter(Boolean).sort().join("\n");
+}
+function sanitizeRemote(value) {
+  const scpStyle = value.match(/^[^@\/\s]+@([^:\/\s]+):(.+)$/);
+  if (scpStyle) return `ssh://${scpStyle[1]}/${scpStyle[2]}`;
+  try {
+    const parsed = new URL(value);
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return value.replace(/\/\/[^/@\s]+@/g, "//");
+  }
+}
+async function loadOrCreateRepositoryId(directory) {
+  const path = join2(directory, "identity.json");
+  try {
+    const parsed = JSON.parse(await readFile2(path, "utf8"));
+    if (parsed.schemaVersion === 1 && typeof parsed.repositoryId === "string" && parsed.repositoryId.length >= 16) return parsed.repositoryId;
+  } catch (error) {
+    if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+  }
+  const repositoryId = digest(`${directory}
+${Date.now()}
+${Math.random()}`);
+  const lockKey = await canonicalPersistenceLockKey(directory, "identity.json");
+  await withFileLock(`${lockKey}.lock`, async () => {
+    try {
+      const existing = JSON.parse(await readFile2(path, "utf8"));
+      if (existing.schemaVersion === 1 && typeof existing.repositoryId === "string" && existing.repositoryId.length >= 16) return;
+    } catch (error) {
+      if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+    }
+    await writeJsonAtomic(path, { schemaVersion: 1, repositoryId });
+  });
+  try {
+    const persisted = JSON.parse(await readFile2(path, "utf8"));
+    return typeof persisted.repositoryId === "string" ? persisted.repositoryId : repositoryId;
+  } catch {
+    return repositoryId;
+  }
+}
+async function getRepositoryIdentity(root) {
+  const workspaceRoot = resolve2(root);
+  return getRepositoryIdentityUncached(workspaceRoot);
+}
+async function getRepositoryIdentityUncached(workspaceRoot) {
+  const [topLevel, commonDir, gitDir, branch, headCommit, firstCommits, remote] = await Promise.all([
+    git(workspaceRoot, "rev-parse", "--show-toplevel"),
+    git(workspaceRoot, "rev-parse", "--git-common-dir"),
+    git(workspaceRoot, "rev-parse", "--git-dir"),
+    git(workspaceRoot, "symbolic-ref", "--quiet", "--short", "HEAD"),
+    git(workspaceRoot, "rev-parse", "HEAD"),
+    git(workspaceRoot, "rev-list", "--max-parents=0", "HEAD"),
+    remoteIdentity(workspaceRoot)
+  ]);
+  const normalizedRoot = resolve2(topLevel ?? workspaceRoot);
+  const normalizedCommon = commonDir ? resolve2(workspaceRoot, commonDir) : void 0;
+  const normalizedGitDir = gitDir ? resolve2(workspaceRoot, gitDir) : void 0;
+  if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
+  const repositoryState = repositoryStateDirectory(normalizedRoot, normalizedCommon);
+  const repositoryId = await loadOrCreateRepositoryId(repositoryState);
+  const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
+  const repositoryFingerprint = digest(`${repositoryId}
+${firstCommit}`);
+  return {
+    repositoryId,
+    repositoryFingerprint,
+    workspaceId: digest(normalizedRoot),
+    worktreeId: digest(normalizedGitDir ?? normalizedRoot),
+    branch: branch ?? "detached",
+    headCommit: headCommit ?? "unborn",
+    ...remote ? { remoteIdentity: remote } : {}
+  };
 }
 async function gitCommonDirectory(root) {
   const commonDir = await git(resolve2(root), "rev-parse", "--git-common-dir");
@@ -168,15 +276,217 @@ function vaultDir(root) {
   return join3(stateDir(root), "vault");
 }
 
+// src/core/memoryCore.ts
+import { createHash as createHash2 } from "node:crypto";
+
+// src/core/storagePolicy.ts
+import { chmod as chmod2, lstat as lstat2, mkdir as mkdir2, readFile as readFile3, readdir, realpath as realpath2, rm as rm2 } from "node:fs/promises";
+import { basename, dirname as dirname2, isAbsolute as isAbsolute3, join as join4, relative as relative3, resolve as resolve4 } from "node:path";
+async function usage(path) {
+  try {
+    const info = await lstat2(path);
+    if (info.isSymbolicLink()) throw new Error(`TokenGraph storage accounting refuses symbolic-link paths: ${path}`);
+    if (info.isFile()) return { bytes: info.size, files: 1 };
+    if (!info.isDirectory()) return { bytes: 0, files: 0 };
+    const entries = await readdir(path);
+    const children = await Promise.all(entries.map((entry) => usage(join4(path, entry))));
+    return children.reduce((total, child) => ({ bytes: total.bytes + child.bytes, files: total.files + child.files }), { bytes: 0, files: 0 });
+  } catch (error) {
+    if (error.code === "ENOENT") return { bytes: 0, files: 0 };
+    throw error;
+  }
+}
+function containsPath(parent, child) {
+  const nested = relative3(resolve4(parent), resolve4(child));
+  return nested === "" || !nested.startsWith("..") && !isAbsolute3(nested);
+}
+async function usageMany(paths) {
+  const unique = paths.map((path) => resolve4(path)).filter((path, index, all) => all.indexOf(path) === index);
+  const roots = unique.filter((path, index, all) => !all.some((candidate, candidateIndex) => candidateIndex !== index && containsPath(candidate, path)));
+  const values = await Promise.all(roots.map((path) => usage(path)));
+  return values.reduce((total, current) => ({ bytes: total.bytes + current.bytes, files: total.files + current.files }), { bytes: 0, files: 0 });
+}
+async function storageUsage(root) {
+  return usageMany([stateDir(root), await resolveRepositoryStateDirectory(root)]);
+}
+async function storageClassUsage(root) {
+  const repository = await resolveRepositoryStateDirectory(root);
+  const [total, runs, cache, vault] = await Promise.all([
+    storageUsage(root),
+    usage(runsDir(root)),
+    usageMany([join4(stateDir(root), "index.json"), wikiDir(root), join4(repository, "index.json"), join4(repository, "artifacts")]),
+    usage(vaultDir(root))
+  ]);
+  return {
+    total,
+    runs,
+    cache,
+    vault,
+    durable: {
+      bytes: Math.max(0, total.bytes - runs.bytes - cache.bytes - vault.bytes),
+      files: Math.max(0, total.files - runs.files - cache.files - vault.files)
+    }
+  };
+}
+function assertClassQuotas(quotas) {
+  for (const [name, value] of Object.entries(quotas)) {
+    if (!Number.isInteger(value) || value < (name === "maxBytes" ? 1 : 0)) throw new Error(`Storage ${name} must be a non-negative integer${name === "maxBytes" ? " greater than zero" : ""}.`);
+  }
+}
+function classQuota(quotas, storageClass) {
+  return quotas[`${storageClass}MaxBytes`];
+}
+function quotaExceededError(storageClass, current, maximum) {
+  if (storageClass === "runs") return new Error(`TokenGraph runs storage quota exceeded (${current}/${maximum} bytes); run \`tokengraph purge --class runs\` or raise storage.runsMaxBytes.`);
+  if (storageClass === "vault") return new Error(`TokenGraph vault storage quota exceeded (${current}/${maximum} bytes); explicitly purge derived projections with \`tokengraph purge --class derived\` or raise storage.vaultMaxBytes.`);
+  if (storageClass === "durable") return new Error(`TokenGraph durable storage quota exceeded (${current}/${maximum} bytes); refusing the write. Review durable state or raise storage.durableMaxBytes; reviewed decisions and preferences are never purged implicitly.`);
+  return new Error(`TokenGraph cache item exceeds its storage quota (${current}/${maximum} bytes); raise storage.cacheMaxBytes.`);
+}
+async function safeRemoveUnderBase(base, relativeTarget, recursive) {
+  if (!relativeTarget || isAbsolute3(relativeTarget) || relativeTarget.replaceAll("\\", "/").split("/").includes("..")) throw new Error("Storage purge target must be a safe relative path.");
+  let canonicalBase;
+  try {
+    if ((await lstat2(base)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link base paths: ${base}`);
+    canonicalBase = await realpath2(base);
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+  const target = join4(canonicalBase, relativeTarget);
+  if (!containsPath(canonicalBase, target) || target === canonicalBase) throw new Error("Storage purge target escapes its approved base directory.");
+  let current = canonicalBase;
+  for (const segment of relativeTarget.replaceAll("\\", "/").split("/").filter(Boolean)) {
+    current = join4(current, segment);
+    try {
+      if ((await lstat2(current)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link or junction paths: ${current}`);
+    } catch (error) {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    }
+  }
+  await rm2(target, { recursive, force: true });
+  return true;
+}
+async function removeWorktreeState(root, relativeTarget, recursive, label) {
+  const workspace = await realpath2(resolve4(root));
+  return await safeRemoveUnderBase(workspace, join4(".tokengraph", relativeTarget), recursive) ? [label] : [];
+}
+async function purgeCache(root) {
+  const repository = await resolveRepositoryStateDirectory(root);
+  const removed = [
+    ...await removeWorktreeState(root, "index.json", false, ".tokengraph/index.json"),
+    ...await removeWorktreeState(root, "wiki", true, ".tokengraph/wiki")
+  ];
+  if (await safeRemoveUnderBase(repository, "index.json", false)) removed.push("repository/index.json");
+  if (await safeRemoveUnderBase(repository, "artifacts", true)) removed.push("repository/artifacts");
+  return removed;
+}
+async function purgeOutcomes(root) {
+  const directory = join4(await realpath2(resolve4(root)), ".tokengraph", "tasks");
+  const entries = await readdir(directory).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error));
+  const removed = [];
+  for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
+    try {
+      const parsed = JSON.parse(await readFile3(join4(directory, entry), "utf8"));
+      if (parsed.status !== "completed" && parsed.status !== "quarantined") continue;
+    } catch {
+      continue;
+    }
+    removed.push(...await removeWorktreeState(root, join4("tasks", entry), false, `.tokengraph/tasks/${entry}`));
+  }
+  return removed;
+}
+async function purgeStorageClass(root, storageClass) {
+  let removed = [];
+  if (storageClass === "runs" || storageClass === "derived") removed.push(...await removeWorktreeState(root, "runs", true, ".tokengraph/runs"));
+  if (storageClass === "cache" || storageClass === "derived") removed.push(...await purgeCache(root));
+  if (storageClass === "outcomes" || storageClass === "derived") removed.push(...await purgeOutcomes(root));
+  if (storageClass === "derived") removed.push(...await removeWorktreeState(root, "vault", true, ".tokengraph/vault"));
+  return { class: storageClass, removed: [...new Set(removed)] };
+}
+async function enforceStorageClassQuotas(root, quotas) {
+  assertClassQuotas(quotas);
+  let current = await storageClassUsage(root);
+  const cleaned = [];
+  if (current.cache.bytes > quotas.cacheMaxBytes || current.total.bytes > quotas.maxBytes) {
+    if (current.cache.bytes > 0) {
+      await purgeStorageClass(root, "cache");
+      cleaned.push("cache");
+      current = await storageClassUsage(root);
+    }
+  }
+  for (const storageClass of ["runs", "vault", "durable"]) {
+    const maximum = classQuota(quotas, storageClass);
+    if (current[storageClass].bytes > maximum) throw quotaExceededError(storageClass, current[storageClass].bytes, maximum);
+  }
+  if (current.cache.bytes > quotas.cacheMaxBytes) throw quotaExceededError("cache", current.cache.bytes, quotas.cacheMaxBytes);
+  if (current.total.bytes > quotas.maxBytes) throw new Error(`TokenGraph total storage quota exceeded (${current.total.bytes}/${quotas.maxBytes} bytes) after cache cleanup; explicitly purge runs, outcomes, or derived state, or raise storage.maxBytes.`);
+  return { usage: current, cleaned };
+}
+async function assertStorageWriteAllowed(root, storageClass, incomingBytes, quotas) {
+  if (!Number.isInteger(incomingBytes) || incomingBytes < 0) throw new Error("Incoming storage bytes must be a non-negative integer.");
+  let report = await enforceStorageClassQuotas(root, quotas);
+  let projectedClassBytes = report.usage[storageClass].bytes + incomingBytes;
+  if (storageClass === "cache" && projectedClassBytes > quotas.cacheMaxBytes && report.usage.cache.bytes > 0) {
+    await purgeStorageClass(root, "cache");
+    report = { usage: await storageClassUsage(root), cleaned: [.../* @__PURE__ */ new Set([...report.cleaned, "cache"])] };
+    projectedClassBytes = incomingBytes;
+  }
+  const maximum = classQuota(quotas, storageClass);
+  if (projectedClassBytes > maximum) throw quotaExceededError(storageClass, projectedClassBytes, maximum);
+  let projectedTotal = report.usage.total.bytes + incomingBytes;
+  if (projectedTotal > quotas.maxBytes && report.usage.cache.bytes > 0 && storageClass !== "cache") {
+    await purgeStorageClass(root, "cache");
+    report = { usage: await storageClassUsage(root), cleaned: [.../* @__PURE__ */ new Set([...report.cleaned, "cache"])] };
+    projectedTotal = report.usage.total.bytes + incomingBytes;
+  }
+  if (projectedTotal > quotas.maxBytes) throw new Error(`TokenGraph total storage quota would be exceeded (${projectedTotal}/${quotas.maxBytes} bytes); explicitly purge storage or raise storage.maxBytes.`);
+  return report;
+}
+var SECRET_PATTERNS = [
+  /\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*[^\s]+/gi,
+  /\b(?:sk|ghp|github_pat)_[A-Za-z0-9_-]{12,}/g
+];
+function isInstructionLikeSourceLine(line) {
+  return /^\s*(?:ignore previous|you must\b|system message|developer message|assistant message|instructions?:|(?:agent|model|assistant)\s*:|(?:call|invoke|use|run|execute)\s+(?:the\s+)?(?:tool|function|command)\b)/i.test(line);
+}
+function filterUntrustedSourceText(value) {
+  return value.split(/\r?\n/).filter((line) => !isInstructionLikeSourceLine(line)).map((line) => SECRET_PATTERNS.reduce((result, pattern) => result.replace(pattern, "[REDACTED]"), line)).join("\n");
+}
+
+// src/core/token.ts
+var PICTOGRAPHIC_CHARACTER = new RegExp("\\p{Extended_Pictographic}", "u");
+
+// src/core/memoryCore.ts
+function createTaskOutcome(input) {
+  const status = ["runner", "hook", "filesystem-diff"].includes(input.provenance) ? "verified" : "proposed";
+  const summary = filterUntrustedSourceText(input.summary).trim();
+  if (!summary) throw new Error("Task outcome summary is empty after safety filtering.");
+  const content = {
+    taskId: input.taskId.trim(),
+    summary,
+    status,
+    evidence: [...new Set(input.evidence.map((entry) => entry.trim()).filter(Boolean))].sort(),
+    createdAt: input.createdAt,
+    ...input.staleAt ? { staleAt: input.staleAt } : {},
+    ...input.sourceFingerprint ? { sourceFingerprint: input.sourceFingerprint } : {},
+    branch: input.branch,
+    worktreeId: input.worktreeId,
+    headCommit: input.headCommit
+  };
+  const id = input.id?.trim() || createHash2("sha256").update(JSON.stringify(content)).digest("hex").slice(0, 24);
+  return { id, ...content };
+}
+
 // src/core/runner.ts
 var ANSI_PATTERN = /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g;
-var SECRET_PATTERNS = [
+var SECRET_PATTERNS2 = [
   /\b(?:api[_-]?key|access[_-]?token|secret|password)\s*([:=])\s*[^\s]+/gi,
   /\b(?:sk|ghp|github_pat)_[A-Za-z0-9_-]{12,}/g
 ];
 var INTERACTIVE_COMMANDS = /* @__PURE__ */ new Set(["ssh", "vim", "vi", "nano", "less", "more", "top", "htop", "pwsh", "powershell"]);
 function redact(value) {
-  return SECRET_PATTERNS.reduce((result, pattern) => result.replace(pattern, (match, separator) => separator ? `[REDACTED]${separator}[REDACTED]` : "[REDACTED]"), value);
+  return SECRET_PATTERNS2.reduce((result, pattern) => result.replace(pattern, (match, separator) => separator ? `[REDACTED]${separator}[REDACTED]` : "[REDACTED]"), value);
 }
 function compactRepeatedLines(value) {
   const lines = value.split("\n");
@@ -233,6 +543,20 @@ function validateCommand(command, interactive) {
 function redactRunnerArguments(args) {
   return args.map((arg) => redact(arg));
 }
+function taskOutcomeFromRun(run, taskId, identity) {
+  const command = redactRunnerArguments([run.command, ...run.args]).join(" ");
+  return createTaskOutcome({
+    id: `run-${run.runId}`,
+    taskId,
+    summary: `${command} -> ${run.status} (exit ${run.exitCode ?? "null"})`,
+    evidence: [`run:${run.runId}`, `exit-code:${run.exitCode ?? "null"}`, `runner-status:${run.status}`],
+    createdAt: run.finishedAt,
+    branch: identity.branch,
+    worktreeId: identity.worktreeId,
+    headCommit: identity.headCommit,
+    provenance: "runner"
+  });
+}
 function inferRunMetadata(stdout, stderr) {
   const combined = `${stderr}
 ${stdout}`;
@@ -280,9 +604,9 @@ async function executeRun(options, signal) {
     terminate();
   };
   signal?.addEventListener("abort", abort, { once: true });
-  const result = await new Promise((resolve5, reject) => {
+  const result = await new Promise((resolve6, reject) => {
     child.once("error", reject);
-    child.once("close", (code, childSignal) => resolve5({ code, signal: childSignal }));
+    child.once("close", (code, childSignal) => resolve6({ code, signal: childSignal }));
   }).finally(() => {
     clearTimeout(timer);
     if (escalationTimer) clearTimeout(escalationTimer);
@@ -320,7 +644,7 @@ async function saveRun(root, run) {
 }
 async function loadRun(root, runId) {
   try {
-    const parsed = JSON.parse(await readFile2(runPath(root, runId), "utf8"));
+    const parsed = JSON.parse(await readFile4(runPath(root, runId), "utf8"));
     return parsed && parsed.runId === runId && parsed.root === root ? parsed : void 0;
   } catch (error) {
     if (error.code === "ENOENT") return void 0;
@@ -354,13 +678,13 @@ ${run.stdout}`;
   };
 }
 async function purgeRuns(root, before) {
-  const entries = await readdir(runsDir(root)).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error));
+  const entries = await readdir2(runsDir(root)).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error));
   const removed = [];
   for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
     const runId = entry.slice(0, -5);
     const run = await loadRun(root, runId);
     if (run && (!before || new Date(run.finishedAt) < before)) {
-      await rm2(join4(runsDir(root), entry), { force: true });
+      await rm3(join5(runsDir(root), entry), { force: true });
       removed.push(runId);
     }
   }
@@ -368,7 +692,7 @@ async function purgeRuns(root, before) {
 }
 
 // src/core/config.ts
-import { copyFile, readFile as readFile3 } from "node:fs/promises";
+import { copyFile, readFile as readFile5 } from "node:fs/promises";
 var CURRENT_CONFIG_SCHEMA_VERSION = 2;
 var PROFILE_DEFAULTS = {
   conservative: {
@@ -535,7 +859,7 @@ async function saveTokenGraphConfig(root, config) {
 }
 async function loadTokenGraphConfig(root) {
   try {
-    const parsed = JSON.parse(await readFile3(configPath(root), "utf8"));
+    const parsed = JSON.parse(await readFile5(configPath(root), "utf8"));
     const unwrapped = unwrapPersistedConfig(parsed);
     const persistedNormalized = normalizeConfig(unwrapped.config, false);
     const normalized = normalizeConfig(persistedNormalized);
@@ -558,176 +882,11 @@ async function loadTokenGraphConfig(root) {
   }
 }
 
-// src/core/storagePolicy.ts
-import { chmod as chmod2, lstat as lstat2, mkdir as mkdir2, readFile as readFile4, readdir as readdir2, realpath as realpath2, rm as rm3 } from "node:fs/promises";
-import { basename, dirname as dirname2, isAbsolute as isAbsolute3, join as join5, relative as relative3, resolve as resolve4 } from "node:path";
-async function usage(path) {
-  try {
-    const info = await lstat2(path);
-    if (info.isSymbolicLink()) throw new Error(`TokenGraph storage accounting refuses symbolic-link paths: ${path}`);
-    if (info.isFile()) return { bytes: info.size, files: 1 };
-    if (!info.isDirectory()) return { bytes: 0, files: 0 };
-    const entries = await readdir2(path);
-    const children = await Promise.all(entries.map((entry) => usage(join5(path, entry))));
-    return children.reduce((total, child) => ({ bytes: total.bytes + child.bytes, files: total.files + child.files }), { bytes: 0, files: 0 });
-  } catch (error) {
-    if (error.code === "ENOENT") return { bytes: 0, files: 0 };
-    throw error;
-  }
-}
-function containsPath(parent, child) {
-  const nested = relative3(resolve4(parent), resolve4(child));
-  return nested === "" || !nested.startsWith("..") && !isAbsolute3(nested);
-}
-async function usageMany(paths) {
-  const unique = paths.map((path) => resolve4(path)).filter((path, index, all) => all.indexOf(path) === index);
-  const roots = unique.filter((path, index, all) => !all.some((candidate, candidateIndex) => candidateIndex !== index && containsPath(candidate, path)));
-  const values = await Promise.all(roots.map((path) => usage(path)));
-  return values.reduce((total, current) => ({ bytes: total.bytes + current.bytes, files: total.files + current.files }), { bytes: 0, files: 0 });
-}
-async function storageUsage(root) {
-  return usageMany([stateDir(root), await resolveRepositoryStateDirectory(root)]);
-}
-async function storageClassUsage(root) {
-  const repository = await resolveRepositoryStateDirectory(root);
-  const [total, runs, cache, vault] = await Promise.all([
-    storageUsage(root),
-    usage(runsDir(root)),
-    usageMany([join5(stateDir(root), "index.json"), wikiDir(root), join5(repository, "index.json"), join5(repository, "artifacts")]),
-    usage(vaultDir(root))
-  ]);
-  return {
-    total,
-    runs,
-    cache,
-    vault,
-    durable: {
-      bytes: Math.max(0, total.bytes - runs.bytes - cache.bytes - vault.bytes),
-      files: Math.max(0, total.files - runs.files - cache.files - vault.files)
-    }
-  };
-}
-function assertClassQuotas(quotas) {
-  for (const [name, value] of Object.entries(quotas)) {
-    if (!Number.isInteger(value) || value < (name === "maxBytes" ? 1 : 0)) throw new Error(`Storage ${name} must be a non-negative integer${name === "maxBytes" ? " greater than zero" : ""}.`);
-  }
-}
-function classQuota(quotas, storageClass) {
-  return quotas[`${storageClass}MaxBytes`];
-}
-function quotaExceededError(storageClass, current, maximum) {
-  if (storageClass === "runs") return new Error(`TokenGraph runs storage quota exceeded (${current}/${maximum} bytes); run \`tokengraph purge --class runs\` or raise storage.runsMaxBytes.`);
-  if (storageClass === "vault") return new Error(`TokenGraph vault storage quota exceeded (${current}/${maximum} bytes); explicitly purge derived projections with \`tokengraph purge --class derived\` or raise storage.vaultMaxBytes.`);
-  if (storageClass === "durable") return new Error(`TokenGraph durable storage quota exceeded (${current}/${maximum} bytes); refusing the write. Review durable state or raise storage.durableMaxBytes; reviewed decisions and preferences are never purged implicitly.`);
-  return new Error(`TokenGraph cache item exceeds its storage quota (${current}/${maximum} bytes); raise storage.cacheMaxBytes.`);
-}
-async function safeRemoveUnderBase(base, relativeTarget, recursive) {
-  if (!relativeTarget || isAbsolute3(relativeTarget) || relativeTarget.replaceAll("\\", "/").split("/").includes("..")) throw new Error("Storage purge target must be a safe relative path.");
-  let canonicalBase;
-  try {
-    if ((await lstat2(base)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link base paths: ${base}`);
-    canonicalBase = await realpath2(base);
-  } catch (error) {
-    if (error.code === "ENOENT") return false;
-    throw error;
-  }
-  const target = join5(canonicalBase, relativeTarget);
-  if (!containsPath(canonicalBase, target) || target === canonicalBase) throw new Error("Storage purge target escapes its approved base directory.");
-  let current = canonicalBase;
-  for (const segment of relativeTarget.replaceAll("\\", "/").split("/").filter(Boolean)) {
-    current = join5(current, segment);
-    try {
-      if ((await lstat2(current)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link or junction paths: ${current}`);
-    } catch (error) {
-      if (error.code === "ENOENT") return false;
-      throw error;
-    }
-  }
-  await rm3(target, { recursive, force: true });
-  return true;
-}
-async function removeWorktreeState(root, relativeTarget, recursive, label) {
-  const workspace = await realpath2(resolve4(root));
-  return await safeRemoveUnderBase(workspace, join5(".tokengraph", relativeTarget), recursive) ? [label] : [];
-}
-async function purgeCache(root) {
-  const repository = await resolveRepositoryStateDirectory(root);
-  const removed = [
-    ...await removeWorktreeState(root, "index.json", false, ".tokengraph/index.json"),
-    ...await removeWorktreeState(root, "wiki", true, ".tokengraph/wiki")
-  ];
-  if (await safeRemoveUnderBase(repository, "index.json", false)) removed.push("repository/index.json");
-  if (await safeRemoveUnderBase(repository, "artifacts", true)) removed.push("repository/artifacts");
-  return removed;
-}
-async function purgeOutcomes(root) {
-  const directory = join5(await realpath2(resolve4(root)), ".tokengraph", "tasks");
-  const entries = await readdir2(directory).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error));
-  const removed = [];
-  for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
-    try {
-      const parsed = JSON.parse(await readFile4(join5(directory, entry), "utf8"));
-      if (parsed.status !== "completed" && parsed.status !== "quarantined") continue;
-    } catch {
-      continue;
-    }
-    removed.push(...await removeWorktreeState(root, join5("tasks", entry), false, `.tokengraph/tasks/${entry}`));
-  }
-  return removed;
-}
-async function purgeStorageClass(root, storageClass) {
-  let removed = [];
-  if (storageClass === "runs" || storageClass === "derived") removed.push(...await removeWorktreeState(root, "runs", true, ".tokengraph/runs"));
-  if (storageClass === "cache" || storageClass === "derived") removed.push(...await purgeCache(root));
-  if (storageClass === "outcomes" || storageClass === "derived") removed.push(...await purgeOutcomes(root));
-  if (storageClass === "derived") removed.push(...await removeWorktreeState(root, "vault", true, ".tokengraph/vault"));
-  return { class: storageClass, removed: [...new Set(removed)] };
-}
-async function enforceStorageClassQuotas(root, quotas) {
-  assertClassQuotas(quotas);
-  let current = await storageClassUsage(root);
-  const cleaned = [];
-  if (current.cache.bytes > quotas.cacheMaxBytes || current.total.bytes > quotas.maxBytes) {
-    if (current.cache.bytes > 0) {
-      await purgeStorageClass(root, "cache");
-      cleaned.push("cache");
-      current = await storageClassUsage(root);
-    }
-  }
-  for (const storageClass of ["runs", "vault", "durable"]) {
-    const maximum = classQuota(quotas, storageClass);
-    if (current[storageClass].bytes > maximum) throw quotaExceededError(storageClass, current[storageClass].bytes, maximum);
-  }
-  if (current.cache.bytes > quotas.cacheMaxBytes) throw quotaExceededError("cache", current.cache.bytes, quotas.cacheMaxBytes);
-  if (current.total.bytes > quotas.maxBytes) throw new Error(`TokenGraph total storage quota exceeded (${current.total.bytes}/${quotas.maxBytes} bytes) after cache cleanup; explicitly purge runs, outcomes, or derived state, or raise storage.maxBytes.`);
-  return { usage: current, cleaned };
-}
-async function assertStorageWriteAllowed(root, storageClass, incomingBytes, quotas) {
-  if (!Number.isInteger(incomingBytes) || incomingBytes < 0) throw new Error("Incoming storage bytes must be a non-negative integer.");
-  let report = await enforceStorageClassQuotas(root, quotas);
-  let projectedClassBytes = report.usage[storageClass].bytes + incomingBytes;
-  if (storageClass === "cache" && projectedClassBytes > quotas.cacheMaxBytes && report.usage.cache.bytes > 0) {
-    await purgeStorageClass(root, "cache");
-    report = { usage: await storageClassUsage(root), cleaned: [.../* @__PURE__ */ new Set([...report.cleaned, "cache"])] };
-    projectedClassBytes = incomingBytes;
-  }
-  const maximum = classQuota(quotas, storageClass);
-  if (projectedClassBytes > maximum) throw quotaExceededError(storageClass, projectedClassBytes, maximum);
-  let projectedTotal = report.usage.total.bytes + incomingBytes;
-  if (projectedTotal > quotas.maxBytes && report.usage.cache.bytes > 0 && storageClass !== "cache") {
-    await purgeStorageClass(root, "cache");
-    report = { usage: await storageClassUsage(root), cleaned: [.../* @__PURE__ */ new Set([...report.cleaned, "cache"])] };
-    projectedTotal = report.usage.total.bytes + incomingBytes;
-  }
-  if (projectedTotal > quotas.maxBytes) throw new Error(`TokenGraph total storage quota would be exceeded (${projectedTotal}/${quotas.maxBytes} bytes); explicitly purge storage or raise storage.maxBytes.`);
-  return report;
-}
-
 // src/core/pairedEval.ts
-import { readFile as readFile6 } from "node:fs/promises";
+import { readFile as readFile7 } from "node:fs/promises";
 
 // src/core/routingControl.ts
-import { readFile as readFile5 } from "node:fs/promises";
+import { readFile as readFile6 } from "node:fs/promises";
 var CURRENT_ROUTING_CONTROL_SCHEMA = 1;
 var REQUIRED_PROMOTION_GATES = [
   "minimumSamples",
@@ -766,7 +925,7 @@ async function loadRoutingControl(root) {
   const directory = await repositoryDir(root);
   const path = routingControlPath(directory);
   try {
-    return normalize(JSON.parse(await readFile5(path, "utf8")));
+    return normalize(JSON.parse(await readFile6(path, "utf8")));
   } catch (error) {
     if (error.code === "ENOENT") return normalize(void 0);
     if (error instanceof SyntaxError) {
@@ -939,7 +1098,7 @@ function parseEvaluationManifest(value) {
   };
 }
 async function loadEvaluationManifest(path) {
-  return parseEvaluationManifest(JSON.parse(await readFile6(path, "utf8")));
+  return parseEvaluationManifest(JSON.parse(await readFile7(path, "utf8")));
 }
 async function persistPromotionReport(root, report) {
   const promotion = {
@@ -961,6 +1120,399 @@ async function persistPromotionReport(root, report) {
     await saveRoutingControl(root, { schemaVersion: current.schemaVersion, killSwitch: current.killSwitch });
   }
   return promotion;
+}
+
+// src/core/taskLedger.ts
+import { readFile as readFile8, readdir as readdir3, rename as rename2, rm as rm4 } from "node:fs/promises";
+import { join as join6, resolve as resolve5 } from "node:path";
+
+// src/core/taskEstimator.ts
+var TASK_ESTIMATOR_VERSION = "task-estimator-v2";
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+function isConfidence(value) {
+  return value === "low" || value === "medium" || value === "high";
+}
+function isQualityStatus(value) {
+  return value === "passed" || value === "warning" || value === "not_evaluated";
+}
+function reconstructCategory(value) {
+  if (!isRecord(value) || !isRecord(value.range) || !Array.isArray(value.basis)) return void 0;
+  if (typeof value.category !== "string" || value.category.length === 0 || !Number.isInteger(value.eventCount) || value.eventCount < 1 || !isFiniteNumber(value.range.low) || !isFiniteNumber(value.range.likely) || !isFiniteNumber(value.range.high) || value.range.low > value.range.likely || value.range.likely > value.range.high || value.range.unit !== "estimated_tokens" || !isConfidence(value.confidence) || !value.basis.every((item) => typeof item === "string") || !isFiniteNumber(value.overhead) || value.overhead < 0) return void 0;
+  return {
+    category: value.category,
+    eventCount: value.eventCount,
+    range: {
+      low: value.range.low,
+      likely: value.range.likely,
+      high: value.range.high,
+      unit: "estimated_tokens"
+    },
+    confidence: value.confidence,
+    basis: [...value.basis],
+    overhead: value.overhead
+  };
+}
+function reconstructTaskReport(value, expectedTaskId, expectedEventCount) {
+  if (!isRecord(value) || !isRecord(value.estimate) || !isRecord(value.estimate.range) || !isRecord(value.quality) || !Array.isArray(value.categories)) {
+    return void 0;
+  }
+  const range = value.estimate.range;
+  const basis = value.estimate.basis;
+  const checks = value.quality.checks;
+  const categories = value.categories.map(reconstructCategory);
+  if (value.taskId !== expectedTaskId || value.eventCount !== expectedEventCount || !Number.isInteger(value.eventCount) || !isFiniteNumber(range.low) || !isFiniteNumber(range.likely) || !isFiniteNumber(range.high) || range.low > range.likely || range.likely > range.high || range.unit !== "estimated_tokens" || !isConfidence(value.estimate.confidence) || !Array.isArray(basis) || !basis.every((item) => typeof item === "string") || !isFiniteNumber(value.estimate.overhead) || value.estimate.estimatorVersion !== TASK_ESTIMATOR_VERSION || !isQualityStatus(value.quality.status) || !Array.isArray(checks) || !checks.every((item) => typeof item === "string") || categories.some((entry) => entry === void 0)) {
+    return void 0;
+  }
+  const reconstructedCategories = categories;
+  if (reconstructedCategories.reduce((count, entry) => count + entry.eventCount, 0) !== expectedEventCount || reconstructedCategories.some((entry, index) => index > 0 && reconstructedCategories[index - 1].category.localeCompare(entry.category) >= 0)) return void 0;
+  return {
+    taskId: value.taskId,
+    eventCount: value.eventCount,
+    estimate: {
+      range: { low: range.low, likely: range.likely, high: range.high, unit: "estimated_tokens" },
+      confidence: value.estimate.confidence,
+      basis: [...basis],
+      overhead: value.estimate.overhead,
+      estimatorVersion: TASK_ESTIMATOR_VERSION
+    },
+    categories: reconstructedCategories,
+    quality: { status: value.quality.status, checks: [...checks] }
+  };
+}
+var confidenceRank = { low: 0, medium: 1, high: 2 };
+function finite(value) {
+  return Number.isFinite(value) ? value : 0;
+}
+function estimateEvents(events, calibration, reportOverheadTokens = 0) {
+  let low = 0;
+  let likely = 0;
+  let high = 0;
+  let overhead = 0;
+  let confidence = events.length > 0 ? "high" : "low";
+  const basis = /* @__PURE__ */ new Set();
+  for (const event of events) {
+    const original = Math.max(0, finite(event.originalTokens));
+    const compact = Math.max(0, finite(event.compactTokens));
+    const eventOverhead = Math.max(0, finite(event.overheadTokens));
+    const net = original - compact - eventOverhead;
+    const gross = original - compact;
+    const categoryCalibration = calibration[event.category];
+    const isCalibrated = Boolean(categoryCalibration && categoryCalibration.observations >= 10);
+    likely += net;
+    overhead += eventOverhead;
+    if (isCalibrated && categoryCalibration) {
+      low += net + finite(categoryCalibration.lowResidual);
+      high += Math.max(net, gross, net + finite(categoryCalibration.highResidual));
+      basis.add(`${event.category}:calibrated:${categoryCalibration.observations}`);
+      if (confidenceRank[event.confidence] < confidenceRank[confidence]) confidence = event.confidence;
+    } else {
+      if (net < 0) low += net;
+      high += Math.max(0, gross);
+      confidence = "low";
+      basis.add(`${event.category}:uncalibrated`);
+    }
+  }
+  const reportOverhead = Math.max(0, finite(reportOverheadTokens));
+  const hasNegativeEvent = events.some((event) => event.originalTokens - event.compactTokens - event.overheadTokens < 0);
+  if (!hasNegativeEvent) low = Math.max(0, low);
+  low = Math.min(low, likely);
+  high = Math.max(likely, high);
+  low -= reportOverhead;
+  likely -= reportOverhead;
+  high = Math.max(likely, high - reportOverhead);
+  if (!hasNegativeEvent) low = Math.max(0, low);
+  low = Math.min(low, likely);
+  overhead += reportOverhead;
+  return {
+    range: { low, likely, high, unit: "estimated_tokens" },
+    confidence,
+    basis: [...basis].sort(),
+    overhead
+  };
+}
+function buildTaskReport(ledger, calibration = {}, reportOverheadTokens = 0) {
+  const checks = [];
+  let hasFailedCheck = false;
+  for (const event of ledger.events) {
+    for (const check of event.qualityChecks) {
+      checks.push(`${check.name}:${check.passed ? "passed" : "failed"}`);
+      if (!check.passed) {
+        hasFailedCheck = true;
+      }
+    }
+  }
+  const aggregate = estimateEvents(ledger.events, calibration, reportOverheadTokens);
+  const categories = [...new Set(ledger.events.map((event) => event.category))].sort((a, b) => a.localeCompare(b)).map((category) => {
+    const events = ledger.events.filter((event) => event.category === category);
+    return { category, eventCount: events.length, ...estimateEvents(events, calibration) };
+  });
+  return {
+    taskId: ledger.taskId,
+    eventCount: ledger.events.length,
+    estimate: {
+      range: aggregate.range,
+      confidence: aggregate.confidence,
+      basis: aggregate.basis,
+      overhead: aggregate.overhead,
+      estimatorVersion: TASK_ESTIMATOR_VERSION
+    },
+    categories,
+    quality: {
+      status: hasFailedCheck ? "warning" : checks.length > 0 ? "passed" : "not_evaluated",
+      checks
+    }
+  };
+}
+
+// src/core/taskLedger.ts
+var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
+var TASK_LEDGER_SCHEMA_VERSION = 3;
+var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var taskLedgerWriteChains = /* @__PURE__ */ new Map();
+function assertTaskId(taskId) {
+  if (!UUID_PATTERN.test(taskId)) {
+    throw new Error("Task id must be a UUID.");
+  }
+}
+function tasksDirectory(root) {
+  return join6(resolve5(root), ".tokengraph", "tasks");
+}
+function taskLedgerPath(root, taskId) {
+  assertTaskId(taskId);
+  return join6(tasksDirectory(root), `${taskId}.json`);
+}
+function isRecord2(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function isTimestamp(value) {
+  if (typeof value !== "string") return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+function isIdentifier(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+function isOptionalIdentifier(value) {
+  return value === void 0 || isIdentifier(value);
+}
+function reconstructQualityCheck(value) {
+  if (!isRecord2(value) || typeof value.name !== "string" || typeof value.passed !== "boolean") return void 0;
+  return { name: value.name, passed: value.passed };
+}
+function reconstructEvent(value) {
+  if (!isRecord2(value) || !Array.isArray(value.qualityChecks)) return void 0;
+  const qualityChecks = value.qualityChecks.map(reconstructQualityCheck);
+  if (typeof value.id !== "string" || typeof value.fingerprint !== "string" || typeof value.category !== "string" || typeof value.toolName !== "string" || typeof value.originalTokens !== "number" || !Number.isFinite(value.originalTokens) || value.originalTokens < 0 || typeof value.compactTokens !== "number" || !Number.isFinite(value.compactTokens) || value.compactTokens < 0 || typeof value.overheadTokens !== "number" || !Number.isFinite(value.overheadTokens) || value.overheadTokens < 0 || value.confidence !== "low" && value.confidence !== "medium" && value.confidence !== "high" || !isTimestamp(value.timestamp) || qualityChecks.some((check) => check === void 0)) {
+    return void 0;
+  }
+  return {
+    id: value.id,
+    fingerprint: value.fingerprint,
+    category: value.category,
+    toolName: value.toolName,
+    originalTokens: value.originalTokens,
+    compactTokens: value.compactTokens,
+    overheadTokens: value.overheadTokens,
+    confidence: value.confidence,
+    timestamp: value.timestamp,
+    qualityChecks
+  };
+}
+function reconstructOutcome(value) {
+  if (!isRecord2(value) || !Array.isArray(value.evidence)) return void 0;
+  if (!isIdentifier(value.id) || !isIdentifier(value.taskId) || typeof value.summary !== "string" || value.summary.trim().length === 0 || !["verified", "proposed", "failed"].includes(String(value.status)) || !value.evidence.every((entry) => isIdentifier(entry)) || !isTimestamp(value.createdAt) || value.staleAt !== void 0 && !isTimestamp(value.staleAt) || value.sourceFingerprint !== void 0 && !isIdentifier(value.sourceFingerprint) || !isIdentifier(value.branch) || !isIdentifier(value.worktreeId) || !isIdentifier(value.headCommit)) return void 0;
+  return {
+    id: value.id,
+    taskId: value.taskId,
+    summary: value.summary,
+    status: value.status,
+    evidence: [...value.evidence],
+    createdAt: value.createdAt,
+    ...value.staleAt === void 0 ? {} : { staleAt: value.staleAt },
+    ...value.sourceFingerprint === void 0 ? {} : { sourceFingerprint: value.sourceFingerprint },
+    branch: value.branch,
+    worktreeId: value.worktreeId,
+    headCommit: value.headCommit
+  };
+}
+function reconstructTaskLedger(value, expectedTaskId) {
+  if (!isRecord2(value) || !Array.isArray(value.events)) return void 0;
+  const legacy = value.schemaVersion === 1 || value.schemaVersion === 2;
+  const events = value.events.map(reconstructEvent);
+  const outcomes = value.outcomes === void 0 && legacy ? [] : Array.isArray(value.outcomes) ? value.outcomes.map(reconstructOutcome) : void 0;
+  const routingObservation = value.routingObservation === void 0 ? void 0 : reconstructRoutingObservation(value.routingObservation);
+  const readPolicy = value.readPolicy === void 0 ? void 0 : reconstructReadPolicy(value.readPolicy);
+  const deliveredArtifacts = value.deliveredArtifacts === void 0 ? [] : Array.isArray(value.deliveredArtifacts) && value.deliveredArtifacts.every((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 512) ? [...new Set(value.deliveredArtifacts)] : void 0;
+  if (value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId || !["codex", "claude", "unknown"].includes(String(value.host)) || !["open", "paused", "completed", "quarantined"].includes(String(value.status)) || !isOptionalIdentifier(value.sessionId) || !isOptionalIdentifier(value.turnId) || !isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt) || value.pausedAt !== void 0 && !isTimestamp(value.pausedAt) || value.completedAt !== void 0 && !isTimestamp(value.completedAt) || !legacy && value.estimatorVersion !== TASK_ESTIMATOR_VERSION || legacy && value.estimatorVersion !== "task-estimator-v1" && value.estimatorVersion !== TASK_ESTIMATOR_VERSION || value.repositoryIdentity !== void 0 && !isRepositoryIdentity(value.repositoryIdentity) || value.routingObservation !== void 0 && routingObservation === void 0 || value.readPolicy !== void 0 && readPolicy === void 0 || deliveredArtifacts === void 0 || outcomes === void 0 || outcomes.some((outcome) => outcome === void 0) || events.some((event) => event === void 0) || value.lastDisposition !== void 0 && value.lastDisposition !== "pause" && value.lastDisposition !== "complete" || Date.parse(value.updatedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) > Date.parse(value.updatedAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) < Date.parse(value.createdAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) > Date.parse(value.updatedAt)) {
+    return void 0;
+  }
+  const completedReport = legacy && value.status === "completed" ? void 0 : value.completedReport === void 0 ? void 0 : reconstructTaskReport(value.completedReport, expectedTaskId, events.length);
+  if (!legacy && value.completedReport !== void 0 && completedReport === void 0) return void 0;
+  if (value.status === "open" && (value.pausedAt !== void 0 || value.completedAt !== void 0 || completedReport !== void 0 || value.lastDisposition !== void 0)) {
+    return void 0;
+  }
+  if (value.status === "paused" && (value.pausedAt === void 0 || value.completedAt !== void 0 || completedReport !== void 0 || value.lastDisposition !== "pause")) {
+    return void 0;
+  }
+  if (value.status === "completed" && (value.completedAt === void 0 || !legacy && completedReport === void 0 || value.completedReport === void 0 || value.lastDisposition !== "complete")) {
+    return void 0;
+  }
+  const ledger = {
+    schemaId: TASK_LEDGER_SCHEMA_ID,
+    schemaVersion: TASK_LEDGER_SCHEMA_VERSION,
+    taskId: expectedTaskId,
+    host: value.host,
+    ...value.sessionId === void 0 ? {} : { sessionId: value.sessionId },
+    ...value.turnId === void 0 ? {} : { turnId: value.turnId },
+    status: value.status,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    ...value.pausedAt === void 0 ? {} : { pausedAt: value.pausedAt },
+    ...value.completedAt === void 0 ? {} : { completedAt: value.completedAt },
+    estimatorVersion: TASK_ESTIMATOR_VERSION,
+    ...value.repositoryIdentity === void 0 ? {} : { repositoryIdentity: value.repositoryIdentity },
+    ...routingObservation === void 0 ? {} : { routingObservation },
+    ...readPolicy === void 0 ? {} : { readPolicy },
+    deliveredArtifacts,
+    outcomes,
+    events,
+    ...value.lastDisposition === void 0 ? {} : { lastDisposition: value.lastDisposition },
+    ...completedReport === void 0 ? {} : { completedReport }
+  };
+  if (legacy && ledger.status === "completed") ledger.completedReport = buildTaskReport(ledger);
+  return ledger;
+}
+function isRepositoryIdentity(value) {
+  if (!isRecord2(value)) return false;
+  return ["repositoryId", "repositoryFingerprint", "workspaceId", "worktreeId", "branch", "headCommit"].every((key) => isIdentifier(value[key]));
+}
+function reconstructRoutingObservation(value) {
+  if (!isRecord2(value)) return void 0;
+  if (value.decision !== "activate" && value.decision !== "bypass" || !Number.isInteger(value.stage) || value.stage < 0 || typeof value.reason !== "string" || typeof value.expectedOverheadTokens !== "number" || !Number.isFinite(value.expectedOverheadTokens) || value.expectedOverheadTokens < 0 || !["shadow", "enforced", "always-activate", "always-advisory"].includes(String(value.mode)) || typeof value.enforced !== "boolean") return void 0;
+  return {
+    decision: value.decision,
+    stage: value.stage,
+    reason: value.reason,
+    expectedOverheadTokens: value.expectedOverheadTokens,
+    mode: value.mode,
+    enforced: value.enforced
+  };
+}
+function reconstructReadPolicy(value) {
+  if (!isRecord2(value)) return void 0;
+  if (!["L0", "L1", "L2", "L3", "L4"].includes(String(value.level)) || typeof value.allowRawReads !== "boolean" || typeof value.reason !== "string" || value.targetedReads !== void 0 && (!Number.isInteger(value.targetedReads) || value.targetedReads < 0) || value.recommendedReadsThisResponse !== void 0 && (!Number.isInteger(value.recommendedReadsThisResponse) || value.recommendedReadsThisResponse < 0) || value.requiresReassessment !== void 0 && typeof value.requiresReassessment !== "boolean" || value.hasReassessed !== void 0 && typeof value.hasReassessed !== "boolean" || value.evidenceGap !== void 0 && typeof value.evidenceGap !== "string") return void 0;
+  return {
+    level: value.level,
+    allowRawReads: value.allowRawReads,
+    reason: value.reason,
+    ...value.targetedReads === void 0 ? {} : { targetedReads: value.targetedReads },
+    ...value.recommendedReadsThisResponse === void 0 ? {} : { recommendedReadsThisResponse: value.recommendedReadsThisResponse },
+    ...value.requiresReassessment === void 0 ? {} : { requiresReassessment: value.requiresReassessment },
+    ...value.hasReassessed === void 0 ? {} : { hasReassessed: value.hasReassessed },
+    ...value.evidenceGap === void 0 ? {} : { evidenceGap: value.evidenceGap }
+  };
+}
+async function quarantine(path, now = /* @__PURE__ */ new Date()) {
+  const timestamp = now.toISOString().replaceAll(":", "-");
+  try {
+    await rename2(path, `${path}.quarantine-${timestamp}`);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+async function enqueueLedgerOperation(root, taskId, operation) {
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "tasks", `${taskId}.json`);
+  const previous = taskLedgerWriteChains.get(key) ?? Promise.resolve();
+  const runWithFileLock = async () => withFileLock(`${taskLedgerPath(root, taskId)}.lock`, operation);
+  const current = previous.then(runWithFileLock, runWithFileLock);
+  let settled;
+  const cleanUp = () => {
+    if (taskLedgerWriteChains.get(key) === settled) {
+      taskLedgerWriteChains.delete(key);
+    }
+  };
+  settled = current.then(cleanUp, cleanUp);
+  taskLedgerWriteChains.set(key, settled);
+  return current;
+}
+async function loadTaskLedger(root, taskId) {
+  const path = taskLedgerPath(root, taskId);
+  try {
+    const parsed = JSON.parse(await readFile8(path, "utf8"));
+    if (isRecord2(parsed) && typeof parsed.schemaVersion === "number" && parsed.schemaVersion > TASK_LEDGER_SCHEMA_VERSION) {
+      throw new Error(`Task ledger schema ${parsed.schemaVersion} is newer than supported schema ${TASK_LEDGER_SCHEMA_VERSION}; refusing to modify it.`);
+    }
+    const ledger = reconstructTaskLedger(parsed, taskId);
+    if (!ledger) {
+      await quarantine(path);
+      return void 0;
+    }
+    if (!ledger.repositoryIdentity || isRecord2(parsed) && (parsed.schemaVersion === 1 || parsed.schemaVersion === 2)) {
+      ledger.repositoryIdentity ??= await getRepositoryIdentity(root);
+      ledger.schemaVersion = TASK_LEDGER_SCHEMA_VERSION;
+      ledger.estimatorVersion = TASK_ESTIMATOR_VERSION;
+      ledger.outcomes ??= [];
+      if (ledger.status === "completed") ledger.completedReport = buildTaskReport(ledger);
+      await writeJsonAtomic(path, ledger);
+    }
+    return ledger;
+  } catch (error) {
+    if (error.code === "ENOENT") return void 0;
+    if (error instanceof SyntaxError) {
+      await quarantine(path);
+      return void 0;
+    }
+    throw error;
+  }
+}
+async function requireTaskLedger(root, taskId) {
+  const ledger = await loadTaskLedger(root, taskId);
+  if (!ledger) throw new Error(`Task ledger ${taskId} was not found or was corrupt.`);
+  return ledger;
+}
+async function requireOpenTaskForOutcome(root, taskId) {
+  const ledger = await requireTaskLedger(root, taskId);
+  if (ledger.status !== "open") {
+    throw new Error(`Task ${taskId} must be open to record an outcome; current status is ${ledger.status}.`);
+  }
+  if (!ledger.repositoryIdentity) throw new Error(`Task ${taskId} has no repository identity.`);
+  const currentIdentity = await getRepositoryIdentity(root);
+  if (currentIdentity.repositoryId !== ledger.repositoryIdentity.repositoryId) {
+    throw new Error(`Task ${taskId} belongs to a different repository.`);
+  }
+  if (currentIdentity.worktreeId !== ledger.repositoryIdentity.worktreeId) {
+    throw new Error(`Task ${taskId} belongs to a different worktree.`);
+  }
+  if (currentIdentity.branch !== ledger.repositoryIdentity.branch) {
+    throw new Error(`Task ${taskId} belongs to a different branch.`);
+  }
+  return ledger;
+}
+async function recordTaskOutcome(root, taskId, outcome) {
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireOpenTaskForOutcome(root, taskId);
+    const candidate = reconstructOutcome(outcome);
+    if (!candidate) throw new Error("Task outcome is malformed.");
+    if (candidate.taskId !== taskId) throw new Error("Task outcome task id does not match the ledger task id.");
+    if (candidate.branch !== ledger.repositoryIdentity.branch) {
+      throw new Error("Task outcome branch does not match the ledger branch.");
+    }
+    if (candidate.worktreeId !== ledger.repositoryIdentity.worktreeId) {
+      throw new Error("Task outcome worktree does not match the ledger worktree.");
+    }
+    if (!ledger.outcomes.some((stored) => stored.id === candidate.id)) {
+      ledger.outcomes.push(candidate);
+      ledger.outcomes.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+      ledger.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+      await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    }
+    return ledger;
+  });
 }
 
 // src/cli.ts
@@ -991,12 +1543,13 @@ async function main(argv) {
 `);
     return;
   }
-  if (argv[0] !== "run") throw new Error("Usage: tokengraph run [--root <path>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived; or tokengraph evaluate-routing [--root <path>] --manifest <path>");
+  if (argv[0] !== "run") throw new Error("Usage: tokengraph run [--root <path>] [--task-id <uuid>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived; or tokengraph evaluate-routing [--root <path>] --manifest <path>");
   const separator = argv.indexOf("--");
   if (separator < 0 || separator === argv.length - 1) throw new Error("tokengraph run requires `-- <command> [args...]`.");
   const commandArgs = argv.slice(separator + 1);
   const options = argv.slice(1, separator);
   const root = optionValue(options, "--root") ?? process.cwd();
+  const taskId = optionValue(options, "--task-id");
   const config = await loadTokenGraphConfig(root);
   const timeoutMs = Number(optionValue(options, "--timeout-ms") ?? config.runner.timeoutMs);
   const maxBytes = Number(optionValue(options, "--max-bytes") ?? config.runner.maxBytes);
@@ -1005,12 +1558,20 @@ async function main(argv) {
     ...optionValue(options, "--file") ? { file: optionValue(options, "--file") } : {},
     ...optionValue(options, "--error-class") ? { errorClass: optionValue(options, "--error-class") } : {}
   };
+  const taskIdentity = taskId ? (await requireOpenTaskForOutcome(root, taskId), await getRepositoryIdentity(root)) : void 0;
   const retentionCutoff = () => new Date(Date.now() - config.storage.runRetentionDays * 24 * 60 * 60 * 1e3);
   await purgeRuns(root, retentionCutoff());
   const run = await executeRun({ root, command: commandArgs[0], args: commandArgs.slice(1), timeoutMs, maxBytes, ...Object.keys(metadata).length ? { metadata } : {} });
   await assertStorageWriteAllowed(root, "runs", Buffer.byteLength(`${JSON.stringify(run, null, 2)}
 `, "utf8"), config.storage);
   await saveRun(root, run);
+  if (taskId && taskIdentity) {
+    try {
+      await recordTaskOutcome(root, taskId, taskOutcomeFromRun(run, taskId, taskIdentity));
+    } catch (error) {
+      throw new Error(`Run ${run.runId} was saved but was not linked to task ${taskId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   await purgeRuns(root, retentionCutoff());
   process.stdout.write(`${JSON.stringify({ ...summarizeRun(run), stdoutTruncated: run.stdoutTruncated, stderrTruncated: run.stderrTruncated })}
 `);

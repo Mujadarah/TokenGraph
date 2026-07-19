@@ -17,23 +17,25 @@ The current deterministic `evidence-v1` corpus produces:
 - Baseline: category-appropriate acquisition. Code, SQL, risk, memory, and release tasks use an already-minimal expert selection of raw reads; debugging and compression use the real noisy command output captured by the runner.
 - Routing: 28 tasks activate TokenGraph and two narrowly bounded code lookups bypass at Stage 0. Bypasses are not booked as savings.
 - Delta delivery: the default no-handshake assumption resends 6,288 estimated tokens and books zero delta savings. When the host explicitly confirms every prior `id@hash`, the same fixture delivers 846 tokens and measures 5,442 estimated tokens saved. The handshake scenario is reported separately and is not part of the release-gate savings.
-- Primary execution-inclusive median: +196.5 tokens; nearest-rank 25th percentile: +102.5; 23 of 28 activated tasks are non-negative (82.1%).
+- Primary execution-inclusive median: +183.5 tokens; nearest-rank 25th percentile: +91.5; 23 of 28 activated tasks are non-negative (82.1%).
 - Frozen execution-inclusive release gate: pass.
 
 Execution-inclusive category results (bypassed tasks remain visible at zero but are excluded from activated-task gates):
 
 | Category | Median | Non-positive |
 |---|---:|---:|
-| Code routing | 53.5 | 2/5 (both bypassed) |
-| SQL/security | 249.5 | 0/5 |
-| Debugging | 975.5 | 0/4 |
-| Change risk | 20.0 | 2/4 |
-| Compression | 1050.5 | 0/4 |
-| Memory/wiki | -194.0 | 3/4 |
-| Release packaging | 191.5 | 0/4 |
+| Code routing | 40.5 | 2/5 (both bypassed) |
+| SQL/security | 236.5 | 0/5 |
+| Debugging | 962.5 | 0/4 |
+| Change risk | 9.0 | 2/4 |
+| Compression | 1035.5 | 0/4 |
+| Memory/wiki | -210.0 | 3/4 |
+| Release packaging | 178.5 | 0/4 |
 
 The release gate treats execution-inclusive savings as the primary eligibility metric. Exact source slices are charged only when a fixture declares an unresolved post-lifecycle evidence gap; the normal corpus does not fabricate reads after its compact evidence is sufficient. Negative tails remain visible, especially in memory/wiki and change-risk tasks.
 
 Every category remains low-confidence and does not activate calibration. These are repeatable fixture estimates, not exact billed tokens, autonomous-agent patch-quality evidence, or universal Codex/Claude results.
+
+2026-07-19 accounting note: these current results were regenerated after the estimator began charging the category-qualified completion footer. This is a deterministic accounting update; it does not add host evaluation evidence or change the R4 routing-promotion state.
 
 The checked-in JSON-versus-tabular format experiment is negative: the tabular candidate did not improve token usage and quality simultaneously, so JSON remains the public default. See `docs/benchmarks/format-experiment.json`.

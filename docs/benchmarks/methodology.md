@@ -38,7 +38,7 @@ The frozen release gate uses execution-inclusive savings as the primary metric a
 - nearest-rank execution-inclusive p25 is non-negative; and
 - at least 80% of activated tasks have non-negative execution-inclusive savings.
 
-Task-level failures, bypasses, and the full execution-inclusive distribution remain visible. The v0.21.1 fixture passes with a +196.5-token activated-task median, +102.5-token p25, and 82.1% non-negative activated tasks. This deterministic gate does not by itself enable enforced routing; B6 promotion still requires a complete host-trace manifest and every paired-evaluation gate.
+Task-level failures, bypasses, and the full execution-inclusive distribution remain visible. The v0.21.1 fixture passes with a +183.5-token activated-task median, +91.5-token p25, and 82.1% non-negative activated tasks. This deterministic gate does not by itself enable enforced routing; B6 promotion still requires a complete host-trace manifest and every paired-evaluation gate.
 
 ## Calibration and claim boundary
 

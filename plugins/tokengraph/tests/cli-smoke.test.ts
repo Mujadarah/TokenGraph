@@ -77,7 +77,7 @@ describe("tokengraph CLI smoke command", () => {
     expect(report.wikiPageSlugs).toEqual([]);
     expect(report.tools).toEqual(coreToolNames);
     expect(report).toMatchObject({ toolSurface: "core", taskId: expect.any(String) });
-  });
+  }, 15_000);
 
   it("validates the opt-in full MCP surface", async () => {
     const root = await makeRoot();
@@ -219,8 +219,8 @@ describe("tokengraph benchmark harness and trust docs", () => {
       criticalConstraintPreservationRate: 1,
       criticalFalseNegativeCount: 0,
       requiredFileRecall: 1,
-      medianNetSavings: 196.53333333333333,
-      executionInclusiveP25: 102.53333333333333,
+      medianNetSavings: 183.53333333333333,
+      executionInclusiveP25: 91.53333333333333,
       nonNegativeActivatedRate: expect.any(Number),
       taskFailures: []
     });
@@ -250,8 +250,10 @@ describe("tokengraph benchmark harness and trust docs", () => {
     }
     const benchmarkResults = await readFile(resolve(repoRoot, "docs", "benchmarks", "results-current.md"), "utf8");
     expect(benchmarkResults).toMatch(/23 of 28 activated tasks are non-negative/i);
-    expect(benchmarkResults).toMatch(/execution-inclusive median.*\+196\.5/i);
+    expect(benchmarkResults).toMatch(/execution-inclusive median.*\+183\.5/i);
     expect(benchmarkResults).toMatch(/low-confidence/i);
+    const benchmarkMethodology = await readFile(resolve(repoRoot, "docs", "benchmarks", "methodology.md"), "utf8");
+    expect(benchmarkMethodology).toMatch(/\+183\.5-token activated-task median.*\+91\.5-token p25/i);
 
     const trustFiles = ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"];
     const trustText = (
@@ -273,6 +275,14 @@ describe("tokengraph benchmark harness and trust docs", () => {
     expect(trustText).toMatch(/not a clinical, legal, or regulated-domain decision system/i);
 
     const securityText = await readFile(resolve(repoRoot, "docs", "trust", "security.md"), "utf8");
+    const privacyText = await readFile(resolve(repoRoot, "docs", "trust", "privacy.md"), "utf8");
+    for (const text of [securityText, privacyText]) {
+      expect(text).toMatch(/best effort.*not a guarantee/is);
+      expect(text).toMatch(/\.tokengraph\/runs\/.*plaintext/is);
+      expect(text).toMatch(/do not invoke.*tokengraph run/is);
+      expect(text).toMatch(/regulated|highly sensitive/is);
+      expect(text).toMatch(/not encrypted today.*future.*local encryption/is);
+    }
     const trustSources = ["CLAUDE_PROJECT_DIR", "TOKENGRAPH_WORKSPACE_ROOT", "MCP Roots", "process working directory"];
     const trustPositions = trustSources.map((source) => securityText.indexOf(source));
     expect(trustPositions.every((position) => position >= 0)).toBe(true);

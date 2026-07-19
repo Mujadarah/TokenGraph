@@ -581,9 +581,9 @@ async function evaluateTask(
   const intentRequestTokens = estimateTokens(JSON.stringify(intentRequest));
   const intentResponseTokens = estimateTokens(JSON.stringify(intentResponse));
   const measuredLedger: TaskLedger = {
-    schemaId: "tokengraph-task-ledger", schemaVersion: 2, taskId, host: "unknown", status: "completed",
+    schemaId: "tokengraph-task-ledger", schemaVersion: 3, taskId, host: "unknown", status: "completed",
     createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", completedAt: "2026-01-01T00:00:00.000Z",
-    estimatorVersion: TASK_ESTIMATOR_VERSION, deliveredArtifacts: [],
+    estimatorVersion: TASK_ESTIMATOR_VERSION, deliveredArtifacts: [], outcomes: [],
     events: [{
       id: `10000000-0000-4000-8000-${String(taskOrdinal + 1).padStart(12, "0")}`,
       fingerprint: `benchmark-${task.id}`, category: flow, toolName: intentTool,
@@ -787,14 +787,16 @@ function sortJson(value: unknown): unknown {
 }
 
 function stableProjectDump(project: ProjectIndex): unknown {
+  const stableSizes = new Map(project.files.map((file) => [file.path, file.size]));
   return {
     ...project,
+    root: undefined,
     scannedAt: undefined,
     repositoryIdentity: undefined,
     scanMetadata: {
       files: Object.fromEntries(Object.entries(project.scanMetadata?.files ?? {}).map(([path, file]) => [path, {
         path: file.path,
-        size: file.size,
+        size: stableSizes.get(path),
         contentHash: file.contentHash,
         language: file.language,
         extension: file.extension,
