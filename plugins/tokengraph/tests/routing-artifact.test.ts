@@ -14,6 +14,7 @@ describe("canonical artifacts", () => {
     const first = createStableArtifact("brief/project", { z: 1, a: "x" });
     const reordered = createStableArtifact("brief/project", { a: "x", z: 1 });
     expect(first.hash).toBe(reordered.hash);
+    expect(first.artifactSchemaVersion).toBe(5);
     expect(artifactKey(first)).toBe(`brief/project@${first.hash}`);
     expect(shouldSuppressArtifact(first, [artifactKey(first)])).toBe(true);
     expect(shouldSuppressArtifact(first, [`brief/other@${first.hash}`])).toBe(false);
@@ -37,19 +38,34 @@ describe("routing advisor", () => {
     expect(decision.enforced).toBe(false);
     expect(decision.reason).toBe("bounded-task");
     expect(adviseRouting({ task: "Find the patient detail route and PatientCard rendering component" })).toMatchObject({ useTokenGraph: false, stage: 0, reason: "bounded-task" });
+    expect(adviseRouting({ task: "Find the patient detail route and PatientCard rendering component", indexAvailable: true })).toMatchObject({ useTokenGraph: false, stage: 0, reason: "bounded-task" });
     expect(adviseRouting({ task: "Update auditEvent usage in patientService" })).toMatchObject({ useTokenGraph: false, stage: 0, reason: "bounded-task" });
+    expect(adviseRouting({ task: "Fix src/core/routingAdvisor.ts:42" })).toMatchObject({
+      useTokenGraph: false,
+      stage: 0,
+      reason: "bounded-task",
+      expectedBenefit: "none"
+    });
+    expect(adviseRouting({ task: "Rename src/core/routingAdvisor.ts:42:7" })).toMatchObject({ useTokenGraph: false, reason: "bounded-task" });
     expect(adviseRouting({ task: "Update patient service behavior" }).useTokenGraph).toBe(true);
     expect(adviseRouting({ task: "Update auth across services" }).useTokenGraph).toBe(true);
     expect(adviseRouting({ task: "Update the repository architecture and security boundary" }).useTokenGraph).toBe(true);
+    expect(adviseRouting({ task: "Review the repository security boundary around src/core/routingAdvisor.ts:42" })).toMatchObject({
+      useTokenGraph: true,
+      reason: "context-discovery",
+      expectedBenefit: "medium"
+    });
+    expect(adviseRouting({ task: "Assess change risk for src/core/routingAdvisor.ts:42" })).toMatchObject({ useTokenGraph: true });
   });
 
   it("activates discovery work and escalates to Stage 1 with a fresh index", () => {
     const discovery = adviseRouting({ task: "Trace the architecture and dependencies for this change" });
     expect(discovery.useTokenGraph).toBe(true);
     expect(discovery.stage).toBe(0);
+    expect(discovery.expectedBenefit).toBe("medium");
     const indexed = adviseRouting({ task: "Trace the architecture and dependencies for this change", indexAvailable: true });
     expect(indexed.stage).toBe(1);
-    expect(indexed.expectedBenefit).toBeGreaterThan(discovery.expectedBenefit);
+    expect(indexed.expectedBenefit).toBe("high");
   });
 
   it("honors force overrides and configured routing modes", () => {
@@ -68,7 +84,15 @@ describe("routing advisor", () => {
       routingMode: "enforced",
       routingOverride: "force-bypass",
       promotion: { enforcementEnabled: true }
-    })).toMatchObject({ useTokenGraph: false, enforced: false, reason: "routing override force-bypass" });
+    })).toMatchObject({ useTokenGraph: false, enforced: false, reason: "routing override force-bypass", expectedBenefit: "none" });
+
+    const inconsistent = [
+      adviseRouting({ task: "Where is x?" }),
+      adviseRouting({ task: "Trace architecture" }),
+      adviseRouting({ task: "Trace architecture", routingOverride: "force-bypass" })
+    ];
+    expect(inconsistent.every((decision) => decision.reason === "bounded-task" ? !decision.useTokenGraph : true)).toBe(true);
+    expect(inconsistent.every((decision) => decision.reason.endsWith("discovery") ? decision.useTokenGraph : true)).toBe(true);
 
     expect(adviseRouting({
       task: "Trace architecture",
@@ -82,7 +106,7 @@ describe("routing advisor", () => {
       stage: 0,
       reason: "routing kill switch",
       expectedOverheadTokens: 0,
-      expectedBenefit: 0,
+      expectedBenefit: "none",
       enforced: false
     });
   });

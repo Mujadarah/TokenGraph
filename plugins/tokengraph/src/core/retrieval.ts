@@ -159,7 +159,7 @@ export function buildRetrievalCapsule(_taskId: string, query: string, index: Pro
 }
 
 export function capsuleArtifact(capsule: RetrievalCapsule): StableArtifact<RetrievalCapsule> {
-  return createStableArtifact("capsule/retrieval", capsule, 4);
+  return createStableArtifact("capsule/retrieval", capsule, 5);
 }
 
 export async function readExactSlice(root: string, path: string, startLine: number, endLine: number, maxBytes = 64 * 1024, expectedContentHash?: string, maxSourceBytes = 512 * 1024): Promise<{ path: string; startLine: number; endLine: number; text: string; hash: string; contentHash: string }> {

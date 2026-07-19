@@ -5,12 +5,15 @@ import { canonicalHash, canonicalize } from "./canonical.js";
 import { repositoryDir } from "./persistence.js";
 import { canonicalPersistenceLockKey, quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
 
+export const CURRENT_ARTIFACT_SCHEMA_VERSION = 5;
+export type ExpectedBenefit = "none" | "low" | "medium" | "high";
+
 export interface RoutingDecision {
   useTokenGraph: boolean;
   stage: 0 | 1;
   reason: string;
   expectedOverheadTokens: number;
-  expectedBenefit: number;
+  expectedBenefit: ExpectedBenefit;
   enforced: boolean;
 }
 
@@ -40,7 +43,7 @@ export interface ArtifactEnvelope<T> {
   deliveredArtifacts: string[];
 }
 
-export function createStableArtifact<T>(id: string, content: T, artifactSchemaVersion = 1, hashContext: ArtifactHashContext = {}): StableArtifact<T> {
+export function createStableArtifact<T>(id: string, content: T, artifactSchemaVersion = CURRENT_ARTIFACT_SCHEMA_VERSION, hashContext: ArtifactHashContext = {}): StableArtifact<T> {
   const normalized = canonicalize(content);
   const normalizedContext = canonicalize(hashContext);
   return {
