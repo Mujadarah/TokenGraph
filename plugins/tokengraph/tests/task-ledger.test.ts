@@ -4,20 +4,24 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildTaskReport, formatTaskReportFooter } from "../src/core/taskEstimator.js";
+import { createTaskOutcome, verifiedOutcomes, type TaskOutcome } from "../src/core/memoryCore.js";
 import {
   __getTaskLedgerWriteQueueSizeForTests,
   attachTaskHostContext,
   createTaskLedger,
   discardEmptyTaskLedger,
+  listCompletedTaskOutcomes,
   loadTaskLedger,
   pruneTaskLedgers,
   recordTaskArtifactDelivery,
   recordTaskEvent,
+  recordTaskOutcome,
+  requireOpenTaskForOutcome,
   setTaskDisposition,
   updateTaskReadPolicy,
   updateTaskRoutingObservation
 } from "../src/core/taskLedger.js";
-import type { TaskEvent } from "../src/core/taskLedger.js";
+import type { TaskEvent, TaskLedger } from "../src/core/taskLedger.js";
 
 const roots: string[] = [];
 
@@ -45,6 +49,26 @@ function event(overrides: Partial<TaskEvent> = {}): TaskEvent {
 
 function ledgerPath(root: string, taskId: string): string {
   return join(root, ".tokengraph", "tasks", `${taskId}.json`);
+}
+
+function outcomeFor(
+  ledger: TaskLedger,
+  overrides: Partial<TaskOutcome> & { provenance?: "runner" | "hook" | "filesystem-diff" | "agent" | "inferred" } = {}
+): TaskOutcome {
+  const identity = ledger.repositoryIdentity!;
+  return createTaskOutcome({
+    id: overrides.id,
+    taskId: overrides.taskId ?? ledger.taskId,
+    summary: overrides.summary ?? "command observed",
+    evidence: overrides.evidence ?? ["run:r1"],
+    createdAt: overrides.createdAt ?? "2026-07-19T00:00:00.000Z",
+    ...(overrides.staleAt ? { staleAt: overrides.staleAt } : {}),
+    ...(overrides.sourceFingerprint ? { sourceFingerprint: overrides.sourceFingerprint } : {}),
+    branch: overrides.branch ?? identity.branch,
+    worktreeId: overrides.worktreeId ?? identity.worktreeId,
+    headCommit: overrides.headCommit ?? identity.headCommit,
+    provenance: overrides.provenance ?? "runner"
+  });
 }
 
 afterEach(async () => {
@@ -711,6 +735,67 @@ describe("task lifecycle and retention", () => {
 
     const open = await createTaskLedger(root, { host: "codex" });
     await expect(recordTaskEvent(root, open.taskId, event())).resolves.toBeDefined();
+  });
+
+  it("records outcomes idempotently and enforces current ledger identity and open status", async () => {
+    const root = await makeRoot();
+    const open = await createTaskLedger(root, { host: "codex" });
+    const runner = outcomeFor(open, { id: "runner-outcome" });
+
+    await recordTaskOutcome(root, open.taskId, runner);
+    const retried = await recordTaskOutcome(root, open.taskId, runner);
+    expect(retried.outcomes).toEqual([runner]);
+    await expect(requireOpenTaskForOutcome(root, open.taskId)).resolves.toMatchObject({ taskId: open.taskId, status: "open" });
+
+    await expect(recordTaskOutcome(root, open.taskId, outcomeFor(open, {
+      id: "wrong-branch", branch: `${open.repositoryIdentity!.branch}-other`
+    }))).rejects.toThrow(/branch/i);
+    await expect(recordTaskOutcome(root, open.taskId, outcomeFor(open, {
+      id: "wrong-worktree", worktreeId: `${open.repositoryIdentity!.worktreeId}-other`
+    }))).rejects.toThrow(/worktree/i);
+
+    const paused = await createTaskLedger(root, { host: "codex" });
+    await setTaskDisposition(root, paused.taskId, "pause");
+    await expect(recordTaskOutcome(root, paused.taskId, outcomeFor(paused))).rejects.toThrow(/open|paused|terminal/i);
+
+    const completed = await createTaskLedger(root, { host: "codex" });
+    await setTaskDisposition(root, completed.taskId, "complete");
+    await expect(recordTaskOutcome(root, completed.taskId, outcomeFor(completed))).rejects.toThrow(/open|completed/i);
+  });
+
+  it("lists outcomes only from completed valid ledgers in deterministic order and leaves proposals out of recall", async () => {
+    const root = await makeRoot();
+    const older = await createTaskLedger(root, { host: "codex" });
+    const olderOutcome = outcomeFor(older, { id: "z-older", createdAt: "2026-07-19T00:00:00.000Z" });
+    await recordTaskOutcome(root, older.taskId, olderOutcome);
+    await setTaskDisposition(root, older.taskId, "complete");
+
+    const newer = await createTaskLedger(root, { host: "codex" });
+    const proposed = outcomeFor(newer, {
+      id: "a-proposed", createdAt: "2026-07-19T01:00:00.000Z", provenance: "agent"
+    });
+    const verified = outcomeFor(newer, {
+      id: "b-verified", createdAt: "2026-07-19T01:00:00.000Z"
+    });
+    await recordTaskOutcome(root, newer.taskId, proposed);
+    await recordTaskOutcome(root, newer.taskId, verified);
+    await setTaskDisposition(root, newer.taskId, "complete");
+
+    const open = await createTaskLedger(root, { host: "codex" });
+    await recordTaskOutcome(root, open.taskId, outcomeFor(open, {
+      id: "open-outcome", createdAt: "2026-07-19T02:00:00.000Z"
+    }));
+    const corruptId = crypto.randomUUID();
+    await writeFile(ledgerPath(root, corruptId), "{not-json");
+
+    const listed = await listCompletedTaskOutcomes(root);
+
+    expect(listed.map((outcome) => outcome.id)).toEqual(["a-proposed", "b-verified", "z-older"]);
+    expect((await loadTaskLedger(root, newer.taskId))?.outcomes).toEqual([proposed, verified]);
+    expect(verifiedOutcomes(listed, {
+      branch: newer.repositoryIdentity!.branch,
+      worktreeId: newer.repositoryIdentity!.worktreeId
+    }).map((outcome) => outcome.id)).toEqual(["b-verified", "z-older"]);
   });
 
   it("prunes terminal and unreachable empty ledgers older than 30 days while preserving active open ledgers", async () => {

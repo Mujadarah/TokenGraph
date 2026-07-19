@@ -30,6 +30,35 @@ export interface TaskOutcome {
   headCommit: string;
 }
 
+export type TaskOutcomeProvenance = "runner" | "hook" | "filesystem-diff" | "agent" | "inferred";
+
+export function createTaskOutcome(
+  input: Omit<TaskOutcome, "id" | "status"> & { id?: string; provenance: TaskOutcomeProvenance }
+): TaskOutcome {
+  const status: TaskOutcome["status"] = ["runner", "hook", "filesystem-diff"].includes(input.provenance)
+    ? "verified"
+    : "proposed";
+  const summary = filterUntrustedSourceText(input.summary).trim();
+  if (!summary) throw new Error("Task outcome summary is empty after safety filtering.");
+  const content: Omit<TaskOutcome, "id"> = {
+    taskId: input.taskId.trim(),
+    summary,
+    status,
+    evidence: [...new Set(input.evidence.map((entry) => entry.trim()).filter(Boolean))].sort(),
+    createdAt: input.createdAt,
+    ...(input.staleAt ? { staleAt: input.staleAt } : {}),
+    ...(input.sourceFingerprint ? { sourceFingerprint: input.sourceFingerprint } : {}),
+    branch: input.branch,
+    worktreeId: input.worktreeId,
+    headCommit: input.headCommit
+  };
+  const id = input.id?.trim() || createHash("sha256")
+    .update(JSON.stringify(content))
+    .digest("hex")
+    .slice(0, 24);
+  return { id, ...content };
+}
+
 export interface ProjectBrief {
   repositoryId: string;
   sourceFingerprint: string;

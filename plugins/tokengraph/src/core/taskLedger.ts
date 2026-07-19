@@ -575,6 +575,63 @@ export async function recordTaskEvent(root: string, taskId: string, event: TaskE
   });
 }
 
+export async function requireOpenTaskForOutcome(root: string, taskId: string): Promise<TaskLedger> {
+  const ledger = await requireTaskLedger(root, taskId);
+  if (ledger.status !== "open") {
+    throw new Error(`Task ${taskId} must be open to record an outcome; current status is ${ledger.status}.`);
+  }
+  if (!ledger.repositoryIdentity) throw new Error(`Task ${taskId} has no repository identity.`);
+  const currentIdentity = await getRepositoryIdentity(root);
+  if (currentIdentity.repositoryId !== ledger.repositoryIdentity.repositoryId) {
+    throw new Error(`Task ${taskId} belongs to a different repository.`);
+  }
+  if (currentIdentity.worktreeId !== ledger.repositoryIdentity.worktreeId) {
+    throw new Error(`Task ${taskId} belongs to a different worktree.`);
+  }
+  if (currentIdentity.branch !== ledger.repositoryIdentity.branch) {
+    throw new Error(`Task ${taskId} belongs to a different branch.`);
+  }
+  return ledger;
+}
+
+export async function recordTaskOutcome(root: string, taskId: string, outcome: TaskOutcome): Promise<TaskLedger> {
+  return enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireOpenTaskForOutcome(root, taskId);
+    const candidate = reconstructOutcome(outcome);
+    if (!candidate) throw new Error("Task outcome is malformed.");
+    if (candidate.taskId !== taskId) throw new Error("Task outcome task id does not match the ledger task id.");
+    if (candidate.branch !== ledger.repositoryIdentity!.branch) {
+      throw new Error("Task outcome branch does not match the ledger branch.");
+    }
+    if (candidate.worktreeId !== ledger.repositoryIdentity!.worktreeId) {
+      throw new Error("Task outcome worktree does not match the ledger worktree.");
+    }
+    if (!ledger.outcomes.some((stored) => stored.id === candidate.id)) {
+      ledger.outcomes.push(candidate);
+      ledger.outcomes.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+      ledger.updatedAt = new Date().toISOString();
+      await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    }
+    return ledger;
+  });
+}
+
+export async function listCompletedTaskOutcomes(root: string): Promise<TaskOutcome[]> {
+  let files: string[];
+  try {
+    files = await readdir(tasksDirectory(root));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const outcomes: TaskOutcome[] = [];
+  for (const file of files.filter((name) => UUID_PATTERN.test(name.slice(0, -".json".length)) && name.endsWith(".json")).sort()) {
+    const ledger = await loadTaskLedger(root, file.slice(0, -".json".length));
+    if (ledger?.status === "completed") outcomes.push(...ledger.outcomes);
+  }
+  return outcomes.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+}
+
 export async function setTaskDisposition(
   root: string,
   taskId: string,

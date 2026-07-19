@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { buildAdaptiveProjectBrief, composeMemoryContext, filterScopedPreferences, verifiedOutcomes } from "../src/core/memoryCore.js";
+import { buildAdaptiveProjectBrief, composeMemoryContext, createTaskOutcome, filterScopedPreferences, verifiedOutcomes } from "../src/core/memoryCore.js";
 import { projectToVault } from "../src/core/vaultProjection.js";
 
 describe("scoped memory core", () => {
+  it("derives outcome status exclusively from provenance", () => {
+    const base = {
+      taskId: "task",
+      summary: "command observed",
+      evidence: ["run:r1"],
+      createdAt: "2026-07-19T00:00:00.000Z",
+      branch: "main",
+      worktreeId: "wt",
+      headCommit: "abc"
+    };
+
+    expect(createTaskOutcome({ ...base, provenance: "runner" }).status).toBe("verified");
+    expect(createTaskOutcome({ ...base, provenance: "hook" }).status).toBe("verified");
+    expect(createTaskOutcome({ ...base, provenance: "filesystem-diff" }).status).toBe("verified");
+    expect(createTaskOutcome({ ...base, provenance: "agent" }).status).toBe("proposed");
+    expect(createTaskOutcome({ ...base, provenance: "inferred" }).status).toBe("proposed");
+  });
+
   it("scopes preferences, verifies outcomes, and adapts briefs to budgets", () => {
     const preferences = [
       { id: "u", key: "style", value: "short", scope: "user" as const, scopeId: "u", updatedAt: "2026-01-01" },
