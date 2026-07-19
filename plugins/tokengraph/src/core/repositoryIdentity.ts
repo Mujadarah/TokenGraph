@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import type { RepositoryIdentity } from "./types.js";
+import type { RepositoryIdentity, RetrievalSignals } from "./types.js";
 import { canonicalPersistenceLockKey, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
 
 const execFileAsync = promisify(execFile);
@@ -19,6 +19,40 @@ async function git(root: string, ...args: string[]): Promise<string | undefined>
     return output || undefined;
   } catch {
     return undefined;
+  }
+}
+
+export async function getGitFileRecency(
+  root: string,
+  requestedPaths: string[],
+  requestedDepth = 50
+): Promise<RetrievalSignals> {
+  const historyDepth = Math.max(1, Math.min(50, Number.isFinite(requestedDepth) ? Math.trunc(requestedDepth) : 50));
+  const neutral: RetrievalSignals = { source: "unavailable", historyDepth, fileCommitDistance: {} };
+  const normalizedPaths = [...new Set(requestedPaths.map((path) => path.replaceAll("\\", "/")))].sort();
+  const requested = new Set(normalizedPaths);
+  try {
+    const result = await execFileAsync("git", [
+      "-C", resolve(root), "-c", "core.quotePath=false", "log", "-n", String(historyDepth),
+      "--format=commit:%H%x00", "--name-only", "-z", "--no-renames", "HEAD", "--"
+    ], { windowsHide: true, maxBuffer: 1024 * 1024 });
+    const distances = new Map<string, number>();
+    let commitDistance = -1;
+    for (const rawToken of result.stdout.split("\0")) {
+      if (rawToken.startsWith("commit:")) {
+        commitDistance += 1;
+        continue;
+      }
+      const path = rawToken.replace(/^\r?\n/, "").replaceAll("\\", "/");
+      if (path && requested.has(path) && !distances.has(path)) distances.set(path, commitDistance);
+    }
+    return {
+      source: "git-commit-distance",
+      historyDepth,
+      fileCommitDistance: Object.fromEntries([...distances.entries()].sort(([a], [b]) => a.localeCompare(b)))
+    };
+  } catch {
+    return neutral;
   }
 }
 

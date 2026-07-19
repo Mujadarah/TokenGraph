@@ -119,8 +119,11 @@ export async function saveVaultProjection(root: string, notes: VaultNote[]): Pro
 }
 
 export async function saveProjectIndex(root: string, index: ProjectIndex): Promise<void> {
-  if (typeof index.schemaVersion === "number" && index.schemaVersion > 3) {
+  if (typeof index.schemaVersion === "number" && index.schemaVersion > 4) {
     throw new Error(`Unsupported newer TokenGraph index schema version ${index.schemaVersion}; refusing to overwrite it.`);
+  }
+  if (index.schemaVersion === 4 && !hasValidRetrievalSignals(index)) {
+    throw new Error("TokenGraph index schema 4 has malformed retrieval signals; refusing to persist it.");
   }
   const worktreePath = indexPath(root);
   const worktreeKey = await canonicalPersistenceLockKey(worktreePath);
@@ -131,15 +134,42 @@ export async function saveProjectIndex(root: string, index: ProjectIndex): Promi
   });
 }
 
+function isNormalizedRelativePath(path: string): boolean {
+  return path.length > 0 &&
+    !path.includes("\\") &&
+    !path.startsWith("/") &&
+    !/^[A-Za-z]:/.test(path) &&
+    path.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+function hasValidRetrievalSignals(index: Partial<ProjectIndex>): boolean {
+  const signals = index.retrievalSignals;
+  if (!signals || (signals.source !== "git-commit-distance" && signals.source !== "unavailable")) return false;
+  if (!Number.isInteger(signals.historyDepth) || signals.historyDepth < 1 || signals.historyDepth > 50) return false;
+  if (!signals.fileCommitDistance || typeof signals.fileCommitDistance !== "object" || Array.isArray(signals.fileCommitDistance)) return false;
+  const entries = Object.entries(signals.fileCommitDistance);
+  const indexedPaths = new Set(index.files?.map((file) => file.path) ?? []);
+  if (signals.source === "unavailable" && entries.length > 0) return false;
+  if (entries.some(([path, distance]) =>
+    !isNormalizedRelativePath(path) ||
+    !indexedPaths.has(path) ||
+    !Number.isInteger(distance) ||
+    distance < 0 ||
+    distance >= signals.historyDepth
+  )) return false;
+  return entries.every(([path], index) => index === 0 || entries[index - 1]![0].localeCompare(path) < 0);
+}
+
 function isProjectIndex(value: unknown): value is ProjectIndex {
   if (!value || typeof value !== "object") {
     return false;
   }
   const candidate = value as Partial<ProjectIndex>;
-  if (typeof candidate.schemaVersion === "number" && candidate.schemaVersion > 3) {
+  if (typeof candidate.schemaVersion === "number" && candidate.schemaVersion > 4) {
     throw new Error(`Unsupported newer TokenGraph index schema version ${candidate.schemaVersion}; refusing to overwrite it.`);
   }
   return (
+    candidate.schemaVersion === 4 &&
     typeof candidate.root === "string" &&
     typeof candidate.scannedAt === "string" &&
     typeof candidate.fingerprint === "string" &&
@@ -161,7 +191,8 @@ function isProjectIndex(value: unknown): value is ProjectIndex {
     Array.isArray(candidate.sql?.extensions) &&
     Array.isArray(candidate.sql?.grants) &&
     Array.isArray(candidate.sql?.materializedViews) &&
-    Array.isArray(candidate.sql?.history)
+    Array.isArray(candidate.sql?.history) &&
+    hasValidRetrievalSignals(candidate)
   );
 }
 

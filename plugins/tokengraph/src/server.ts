@@ -889,7 +889,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
           // indexed state so equivalent LF/CRLF checkouts produce the same artifact.
           repositoryFingerprint: identity.repositoryFingerprint,
           sourceFingerprint: project.fingerprint,
-          parserVersion: "tokengraph-index-v3",
+          parserVersion: "tokengraph-index-v4",
           normalizedIntent: task.trim().replace(/\s+/g, " ").toLocaleLowerCase(),
           retrievalConfig: { profile: plan.profile, maxEstimatedTokens: plan.budget.maxEstimatedTokens, allowRawReads: plan.budget.allowRawReads },
           memoryFingerprint: createHash("sha256").update(JSON.stringify(memories.map((memory) => memory.id))).digest("hex"),

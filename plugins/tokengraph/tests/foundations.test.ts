@@ -1,10 +1,10 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { access, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { getRepositoryIdentity, repositoryStateDirectory, resolveRepositoryStateDirectory } from "../src/core/repositoryIdentity.js";
+import { getGitFileRecency, getRepositoryIdentity, repositoryStateDirectory, resolveRepositoryStateDirectory } from "../src/core/repositoryIdentity.js";
 import { composeMemoryContext } from "../src/core/memoryCore.js";
 import { assertStorageReplacementAllowed, enforceStorageClassQuotas, enforceStorageQuota, filterUntrustedSourceText, hardenStoragePermissions, isConfinedStoragePath, purgeStorageClass, purgeTokenGraphStorage, storageClassUsage, storageUsage } from "../src/core/storagePolicy.js";
 
@@ -22,6 +22,39 @@ async function makeRoot(): Promise<string> {
 }
 
 describe("repository identity and storage foundations", () => {
+  it("derives bounded file recency from Git commit distance without filesystem timestamp drift", async () => {
+    const root = await makeRoot();
+    await execFile("git", ["init", "-q", "-b", "main", root]);
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "old.ts"), "export const old = true;\n");
+    await execFile("git", ["-C", root, "add", "src/old.ts"]);
+    await execFile("git", ["-C", root, "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "commit", "-qm", "old"]);
+    await writeFile(join(root, "src", "recent.ts"), "export const recent = true;\n");
+    await execFile("git", ["-C", root, "add", "src/recent.ts"]);
+    await execFile("git", ["-C", root, "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "commit", "-qm", "recent"]);
+
+    const expected = {
+      source: "git-commit-distance",
+      historyDepth: 50,
+      fileCommitDistance: { "src/old.ts": 1, "src/recent.ts": 0 }
+    };
+    expect(await getGitFileRecency(root, ["src/old.ts", "src/recent.ts"], 50)).toEqual(expected);
+
+    const changedTime = new Date("2030-01-01T00:00:00.000Z");
+    await utimes(join(root, "src", "old.ts"), changedTime, changedTime);
+    await utimes(join(root, "src", "recent.ts"), changedTime, changedTime);
+    expect(await getGitFileRecency(root, ["src/old.ts", "src/recent.ts"], 50)).toEqual(expected);
+  });
+
+  it("returns an explicit neutral recency signal outside Git", async () => {
+    const root = await makeRoot();
+    expect(await getGitFileRecency(root, ["src/missing.ts"], 50)).toEqual({
+      source: "unavailable",
+      historyDepth: 50,
+      fileCommitDistance: {}
+    });
+  });
+
   it("distinguishes repository, workspace, and worktree identity", async () => {
     const root = await makeRoot();
     await execFile("git", ["init", "-q", root]);

@@ -6,10 +6,10 @@ import { mergeSqlGraphs, parsePostgresMigration } from "./sqlParser.js";
 import type { CodeGraph, FileScanMetadata, ProjectIndex, ProjectScanMetadata, SqlGraph } from "./types.js";
 import { buildSymbolChunks } from "./symbolChunks.js";
 import { parseConfigurationDataBounded, type ConfigurationLimits } from "./configData.js";
-import { getRepositoryIdentity } from "./repositoryIdentity.js";
+import { getGitFileRecency, getRepositoryIdentity } from "./repositoryIdentity.js";
 import { resolveConfinedPath } from "./storage.js";
 
-export const CURRENT_INDEX_SCHEMA_VERSION = 3;
+export const CURRENT_INDEX_SCHEMA_VERSION = 4;
 
 export interface IndexUpdateResult {
   index: ProjectIndex;
@@ -195,9 +195,10 @@ async function configurationEvidence(root: string, limits?: ParserResourceLimits
 }
 
 async function buildProjectIndex(root: string, graph: CodeGraph, sql: SqlGraph, scanSignature: string, scanMetadata: ProjectScanMetadata, parserLimits?: ParserResourceLimits): Promise<ProjectIndex> {
-  const [configuration, repositoryIdentity] = await Promise.all([
+  const [configuration, repositoryIdentity, retrievalSignals] = await Promise.all([
     configurationEvidence(root, parserLimits),
-    getRepositoryIdentity(root)
+    getRepositoryIdentity(root),
+    getGitFileRecency(root, graph.files.map((file) => file.path), 50)
   ]);
   const fingerprint = fingerprintPayload({
     files: graph.files,
@@ -206,7 +207,8 @@ async function buildProjectIndex(root: string, graph: CodeGraph, sql: SqlGraph, 
     exclusions: graph.exclusions,
     sql,
     configuration,
-    unsupportedLanguageCounts: unsupportedLanguageCounts(graph)
+    unsupportedLanguageCounts: unsupportedLanguageCounts(graph),
+    retrievalSignals
   });
 
   return {
@@ -221,6 +223,7 @@ async function buildProjectIndex(root: string, graph: CodeGraph, sql: SqlGraph, 
     sql,
     symbolChunks: buildSymbolChunks(graph),
     unsupportedLanguageCounts: unsupportedLanguageCounts(graph),
+    retrievalSignals,
     ...(configuration.length ? { configuration } : {})
   };
 }
