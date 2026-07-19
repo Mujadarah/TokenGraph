@@ -82,6 +82,23 @@ describe("evidence benchmark", () => {
     for (const category of BENCHMARK_CATEGORIES) {
       expect(result.tasks.filter((task) => task.category === category).length).toBeGreaterThanOrEqual(4);
     }
+    expect(result.tasks.filter((task) => task.requiresExactSlice).map((task) => task.id)).toEqual([
+      "code-routing-02",
+      "debugging-01",
+      "debugging-03",
+      "debugging-04"
+    ]);
+  });
+
+  it("rejects incomplete or ungrounded exact-slice corpus contracts", async () => {
+    const missingTarget = await corpus();
+    missingTarget.tasks[0].requiresExactSlice = true;
+    expect(validateCorpus(missingTarget).errors).toEqual(expect.arrayContaining([expect.stringMatching(/exact slice target/i)]));
+
+    const outsideRequiredFiles = await corpus();
+    outsideRequiredFiles.tasks[0].requiresExactSlice = true;
+    outsideRequiredFiles.tasks[0].exactSliceTarget = { file: "src/audit.ts" };
+    expect(validateCorpus(outsideRequiredFiles).errors).toEqual(expect.arrayContaining([expect.stringMatching(/required files/i)]));
   });
 
   it("evaluates distinct scenarios through real core routing functions", async () => {
@@ -110,6 +127,14 @@ describe("evidence benchmark", () => {
     });
     expect(report.deltaDelivery.noHandshake.deliveredTokens).toBeGreaterThan(report.deltaDelivery.handshake.deliveredTokens);
     expect(report.deltaDelivery.handshake.savedTokens).toBeGreaterThan(0);
+    expect(report.exactSliceAccounting).toMatchObject({
+      taskCount: 4,
+      targetedReadCallCount: expect.any(Number),
+      targetedReadTokens: expect.any(Number),
+      taskIds: ["code-routing-02", "debugging-01", "debugging-03", "debugging-04"]
+    });
+    expect(report.exactSliceAccounting.targetedReadCallCount).toBeGreaterThanOrEqual(4);
+    expect(report.exactSliceAccounting.targetedReadTokens).toBeGreaterThan(0);
     expect(report.routerShadow).toMatchObject({
       beneficialTaskCount: 27,
       boundedTaskCount: 3,
@@ -284,7 +309,7 @@ describe("evidence benchmark", () => {
       expect(task.accounting.rawBaselineContentTokens).toBeGreaterThan(0);
       expect(task.metrics.rawTokens).toBeGreaterThan(task.accounting.rawBaselineContentTokens);
       expect(task.accounting.targetedReadCalls).toEqual(expect.any(Array));
-      expect(task.accounting.targetedReadCalls).toHaveLength(0);
+      expect(task.accounting.targetedReadCalls).toHaveLength(task.requiresExactSlice ? 1 : 0);
       for (const call of task.accounting.targetedReadCalls) {
         expect(call.tool).toBe("tokengraph_query_context");
         const args = call.request.params.arguments as { mode: string; file: string; startLine: number; endLine: number; contentHash: string };
@@ -323,6 +348,7 @@ describe("evidence benchmark", () => {
   it("performs one hash-validated exact slice only when the fixture declares a post-lifecycle evidence gap", async () => {
     const loaded = await corpus();
     loaded.tasks[2].requiresExactSlice = true;
+    loaded.tasks[2].exactSliceTarget = { file: "app/patients/[id]/page.tsx", symbol: "PatientPage" };
     const report = await evaluateBenchmark(loaded, resolve("tests", "fixtures", "evidence-project"));
     const task = report.tasks.find((candidate) => candidate.id === loaded.tasks[2].id)!;
     expect(task.accounting.targetedReadCalls).toHaveLength(1);
@@ -354,6 +380,7 @@ describe("evidence benchmark", () => {
       evidenceVersion: string;
       deltaDelivery: typeof report.deltaDelivery;
       routerShadow: typeof report.routerShadow;
+      exactSliceAccounting: typeof report.exactSliceAccounting;
       aggregate: {
         taskCount: number;
         medianExecutionInclusiveNetSavings: number;
@@ -369,6 +396,7 @@ describe("evidence benchmark", () => {
       evidenceVersion: report.evidenceVersion,
       deltaDelivery: report.deltaDelivery,
       routerShadow: report.routerShadow,
+      exactSliceAccounting: report.exactSliceAccounting,
       aggregate: {
         taskCount: report.aggregate.taskCount,
         medianExecutionInclusiveNetSavings: expect.any(Number),

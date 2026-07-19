@@ -199,6 +199,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
         metrics: Record<string, unknown>;
       }>;
       aggregate: { taskCount: number; categoryCounts: Record<string, number>; medianNetSavings: number; criticalConstraintPreservationRate: number; criticalFalseNegativeCount: number; requiredFileRecall: number; taskFailures: string[] };
+      exactSliceAccounting: { taskCount: number; targetedReadCallCount: number; targetedReadTokens: number; taskIds: string[] };
       releaseGate: { passed: boolean; failureReasons: string[] };
       calibration: { categories: Record<string, { observations: number; confidence: string }> };
     };
@@ -219,10 +220,16 @@ describe("tokengraph benchmark harness and trust docs", () => {
       criticalConstraintPreservationRate: 1,
       criticalFalseNegativeCount: 0,
       requiredFileRecall: 1,
-      medianNetSavings: 183.53333333333333,
-      executionInclusiveP25: 91.53333333333333,
+      medianNetSavings: 182.53333333333333,
+      executionInclusiveP25: 40.53333333333333,
       nonNegativeActivatedRate: expect.any(Number),
       taskFailures: []
+    });
+    expect(report.exactSliceAccounting).toEqual({
+      taskCount: 4,
+      targetedReadCallCount: 4,
+      targetedReadTokens: 685,
+      taskIds: ["code-routing-02", "debugging-01", "debugging-03", "debugging-04"]
     });
     expect(report.releaseGate).toMatchObject({ passed: true, failureReasons: [] });
     for (const task of report.tasks) {
@@ -249,11 +256,11 @@ describe("tokengraph benchmark harness and trust docs", () => {
       await expect(access(resolve(repoRoot, "docs", "benchmarks", file))).resolves.toBeUndefined();
     }
     const benchmarkResults = await readFile(resolve(repoRoot, "docs", "benchmarks", "results-current.md"), "utf8");
-    expect(benchmarkResults).toMatch(/23 of 28 activated tasks are non-negative/i);
-    expect(benchmarkResults).toMatch(/execution-inclusive median.*\+183\.5/i);
+    expect(benchmarkResults).toMatch(/22 of 27 activated tasks are non-negative/i);
+    expect(benchmarkResults).toMatch(/execution-inclusive median.*\+174\.5/i);
     expect(benchmarkResults).toMatch(/low-confidence/i);
     const benchmarkMethodology = await readFile(resolve(repoRoot, "docs", "benchmarks", "methodology.md"), "utf8");
-    expect(benchmarkMethodology).toMatch(/\+183\.5-token activated-task median.*\+91\.5-token p25/i);
+    expect(benchmarkMethodology).toMatch(/\+174\.5-token activated-task median.*\+40\.5-token p25/i);
 
     const trustFiles = ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"];
     const trustText = (

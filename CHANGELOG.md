@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- R4 accounting note (2026-07-19): charged four hash-validated exact source slices on edit/debug benchmark tasks and published independent router truth, changing the deterministic execution-inclusive median from +183.5 to +174.5 estimated tokens and p25 from +91.5 to +40.5; enforced routing remains disabled pending eligible real-host evidence.
 - Linked explicitly selected active tasks to privacy-minimal verified runner outcomes while keeping agent and inferred claims proposed.
 - Added sorted category-level ranges, confidence, overhead, and calibration bases to verbose task reports and the canonical compact footer.
 - Added schema-v4 deterministic Git commit-distance metadata and shared task-type weighting without filesystem-time ranking inputs.

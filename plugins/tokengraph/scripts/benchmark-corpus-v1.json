@@ -48,7 +48,12 @@
       "constraints": [
         "Must keep tenant_id in the patient result."
       ],
-      "expectedRouting": "activate"
+      "expectedRouting": "activate",
+      "requiresExactSlice": true,
+      "exactSliceTarget": {
+        "file": "services/patientService.ts",
+        "symbol": "getPatient"
+      }
     },
     {
       "id": "code-routing-03",
@@ -250,7 +255,11 @@
       "constraints": [
         "Must keep tenant-scoped behavior while fixing the failure."
       ],
-      "expectedRouting": "bypass"
+      "expectedRouting": "bypass",
+      "requiresExactSlice": true,
+      "exactSliceTarget": {
+        "file": "services/patientService.test.ts"
+      }
     },
     {
       "id": "debugging-02",
@@ -293,7 +302,12 @@
       "constraints": [
         "Must preserve the page route and service boundary."
       ],
-      "expectedRouting": "activate"
+      "expectedRouting": "activate",
+      "requiresExactSlice": true,
+      "exactSliceTarget": {
+        "file": "app/patients/[id]/page.tsx",
+        "symbol": "PatientPage"
+      }
     },
     {
       "id": "debugging-04",
@@ -316,7 +330,12 @@
       "constraints": [
         "Must restore audit evidence without exposing patient secrets."
       ],
-      "expectedRouting": "activate"
+      "expectedRouting": "activate",
+      "requiresExactSlice": true,
+      "exactSliceTarget": {
+        "file": "services/patientService.ts",
+        "symbol": "getPatient"
+      }
     },
     {
       "id": "change-risk-01",

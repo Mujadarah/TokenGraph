@@ -60,6 +60,7 @@ export interface BenchmarkTask {
   targetedRawReadsAllowed: boolean;
   expectedRouting: "activate" | "bypass";
   requiresExactSlice?: boolean;
+  exactSliceTarget?: { file: string; symbol?: string };
 }
 
 export interface RouterShadowSummary {
@@ -202,12 +203,26 @@ export function validateCorpus(value: unknown): { tasks: BenchmarkTask[]; errors
       (candidate.expectedRouting !== "activate" && candidate.expectedRouting !== "bypass") ||
       (candidate.allowRawReads !== undefined && typeof candidate.allowRawReads !== "boolean") ||
       (candidate.requiresExactSlice !== undefined && typeof candidate.requiresExactSlice !== "boolean") ||
+      (candidate.exactSliceTarget !== undefined && (
+        !isRecord(candidate.exactSliceTarget) ||
+        typeof candidate.exactSliceTarget.file !== "string" ||
+        !candidate.exactSliceTarget.file.trim() ||
+        (candidate.exactSliceTarget.symbol !== undefined && (typeof candidate.exactSliceTarget.symbol !== "string" || !candidate.exactSliceTarget.symbol.trim()))
+      )) ||
       typeof candidate.targetedRawReadsAllowed !== "boolean"
     ) {
       errors.push(`Task at index ${index} is malformed.`);
       continue;
     }
-    tasks.push(candidate as unknown as BenchmarkTask);
+    const task = candidate as unknown as BenchmarkTask;
+    if (task.requiresExactSlice && !task.exactSliceTarget) {
+      errors.push(`Task ${task.id} requires an exact slice target.`);
+    } else if (task.requiresExactSlice && !task.requiredFiles.includes(task.exactSliceTarget!.file)) {
+      errors.push(`Task ${task.id} exact slice target must be one of its required files.`);
+    } else if (!task.requiresExactSlice && task.exactSliceTarget) {
+      errors.push(`Task ${task.id} has an exact slice target without requiring an exact slice.`);
+    }
+    tasks.push(task);
   }
   if (tasks.length < 30) errors.push("Corpus must contain at least 30 tasks.");
   if (new Set(tasks.map((task) => task.id)).size !== tasks.length) errors.push("Task ids must be unique.");
@@ -490,18 +505,6 @@ function lifecycleWire(
   return compactToolResultEnvelope(payload);
 }
 
-function firstReadPaths(wire: { content: Array<{ type: "text"; text: string }> }): string[] {
-  const parsed = JSON.parse(wire.content[0]!.text) as unknown;
-  if (!isRecord(parsed)) return [];
-  const candidate = isRecord(parsed.plan) ? parsed.plan : parsed;
-  if (!Array.isArray(candidate.files) || !Array.isArray(candidate.firstReads)) return [];
-  const files = candidate.files.filter(isRecord);
-  return [...new Set(candidate.firstReads
-    .filter((index): index is number => Number.isInteger(index) && index >= 0)
-    .map((index) => files[index]?.path)
-    .filter((path): path is string => typeof path === "string"))].slice(0, 1);
-}
-
 function normalizePredicate(text: string): string {
   return text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
 }
@@ -573,13 +576,17 @@ async function evaluateTask(
   const rawBaselineTokens = rawBaselineCalls.reduce((total, call) => total + call.requestTokens + call.responseTokens, 0);
   const intentResponse = lifecycleWire(result.serializedOutputs[0], taskId);
   const indexedPaths = new Set(project.files.map((file) => file.path));
-  const targetedReadCalls = task.allowRawReads === false || task.requiresExactSlice !== true ? [] : await Promise.all(firstReadPaths(intentResponse)
-    .filter((path) => indexedPaths.has(path))
+  const targetPaths = task.requiresExactSlice && task.exactSliceTarget ? [task.exactSliceTarget.file] : [];
+  const targetedReadCalls = task.allowRawReads === false || task.requiresExactSlice !== true ? [] : await Promise.all(targetPaths
     .map(async (path, index) => {
+      if (!indexedPaths.has(path)) throw new Error(`Exact slice target ${path} is not indexed for ${task.id}.`);
       const indexedFile = project.files.find((file) => file.path === path)!;
       const symbol = project.symbols
-        .filter((candidate) => candidate.filePath === path && Number.isInteger(candidate.startLine) && Number.isInteger(candidate.endLine))
+        .filter((candidate) => candidate.filePath === path &&
+          (!task.exactSliceTarget?.symbol || candidate.name === task.exactSliceTarget.symbol) &&
+          Number.isInteger(candidate.startLine) && Number.isInteger(candidate.endLine))
         .sort((left, right) => left.startLine! - right.startLine! || left.endLine! - right.endLine!)[0];
+      if (task.exactSliceTarget?.symbol && !symbol) throw new Error(`Exact slice symbol ${task.exactSliceTarget.symbol} is not indexed in ${path} for ${task.id}.`);
       const startLine = symbol?.startLine ?? 1;
       const endLine = symbol?.endLine ?? startLine;
       const slice = await readExactSlice(root, path, startLine, endLine, 64 * 1024, indexedFile.contentHash);
@@ -684,6 +691,8 @@ async function evaluateTask(
     category: task.category,
     query: task.query,
     expectedRouting: task.expectedRouting,
+    requiresExactSlice: task.requiresExactSlice === true,
+    ...(task.exactSliceTarget ? { exactSliceTarget: task.exactSliceTarget } : {}),
     targetedRawReadsAllowed: task.targetedRawReadsAllowed,
     flow,
     routing,
@@ -807,6 +816,13 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
   };
   const releaseGate = evaluateReleaseGate({ ...aggregate, baselineRequiredFileRecall: corpus.baselineRequiredFileRecall });
   const routerShadow = summarizeRouterShadow(tasks);
+  const exactSliceTasks = tasks.filter((task) => task.requiresExactSlice);
+  const exactSliceAccounting = {
+    taskCount: exactSliceTasks.length,
+    targetedReadCallCount: exactSliceTasks.reduce((total, task) => total + task.accounting.targetedReadCalls.length, 0),
+    targetedReadTokens: exactSliceTasks.reduce((total, task) => total + task.accounting.targetedReadCalls.reduce((subtotal, call) => subtotal + call.requestTokens + call.responseTokens, 0), 0),
+    taskIds: exactSliceTasks.map((task) => task.id).sort()
+  };
   const observations = tasks.map((task) => ({ category: task.category, residual: task.metrics.calibrationResidual }));
   const calibration = buildCalibration(observations);
   const taskCalibration: TaskCalibration = Object.fromEntries(
@@ -824,6 +840,7 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     sessionAccounting,
     tasks,
     routerShadow,
+    exactSliceAccounting,
     deltaDelivery: measureDeltaDelivery(tasks),
     aggregate,
     releaseGate,

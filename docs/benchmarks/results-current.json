@@ -17,15 +17,26 @@
       "sql-security": 5
     },
     "medianNetSavings": 182.53333333333333,
-    "medianExecutionInclusiveNetSavings": 182.53333333333333,
+    "medianExecutionInclusiveNetSavings": 174.53333333333333,
     "primarySavingsMetric": "execution-inclusive",
-    "primaryMedianNetSavings": 182.53333333333333,
-    "executionInclusiveMedian": 182.53333333333333,
-    "executionInclusiveP25": 91.53333333333333,
+    "primaryMedianNetSavings": 174.53333333333333,
+    "executionInclusiveMedian": 174.53333333333333,
+    "executionInclusiveP25": 40.53333333333333,
     "nonNegativeActivatedRate": 0.8148148148148148,
     "criticalConstraintPreservationRate": 1,
     "requiredFileRecall": 1,
     "baselineLabel": "category-appropriate"
+  },
+  "exactSliceAccounting": {
+    "taskCount": 4,
+    "targetedReadCallCount": 4,
+    "targetedReadTokens": 685,
+    "taskIds": [
+      "code-routing-02",
+      "debugging-01",
+      "debugging-03",
+      "debugging-04"
+    ]
   },
   "routerShadow": {
     "observationCount": 30,
