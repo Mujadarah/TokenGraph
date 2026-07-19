@@ -175,6 +175,7 @@ async function purgeOutcomes(root: string): Promise<string[]> {
     }
     removed.push(...await removeWorktreeState(root, join("tasks", entry), false, `.tokengraph/tasks/${entry}`));
   }
+  removed.push(...await removeWorktreeState(root, join("tasks", "completed-outcomes.json"), false, ".tokengraph/tasks/completed-outcomes.json"));
   return removed;
 }
 

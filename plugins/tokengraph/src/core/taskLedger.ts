@@ -746,7 +746,11 @@ export async function setTaskDisposition(
     ledger.completedAt = now;
     ledger.completedReport = buildTaskReport(ledger, calibration, reportOverheadTokens);
     await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
-    await updateCompletedOutcomesIndex(root, ledger.outcomes);
+    try {
+      await updateCompletedOutcomesIndex(root, ledger.outcomes);
+    } catch {
+      // The outcomes index is derived state; the completed ledger is already durable.
+    }
     return { ledger, report: ledger.completedReport };
   });
 }

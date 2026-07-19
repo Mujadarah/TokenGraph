@@ -20635,6 +20635,7 @@ async function purgeOutcomes(root) {
     }
     removed.push(...await removeWorktreeState(root, join6("tasks", entry), false, `.tokengraph/tasks/${entry}`));
   }
+  removed.push(...await removeWorktreeState(root, join6("tasks", "completed-outcomes.json"), false, ".tokengraph/tasks/completed-outcomes.json"));
   return removed;
 }
 async function purgeStorageClass(root, storageClass) {
@@ -25675,7 +25676,10 @@ async function setTaskDisposition(root, taskId, disposition, turnId, calibration
     ledger.completedAt = now;
     ledger.completedReport = buildTaskReport(ledger, calibration, reportOverheadTokens);
     await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
-    await updateCompletedOutcomesIndex(root, ledger.outcomes);
+    try {
+      await updateCompletedOutcomesIndex(root, ledger.outcomes);
+    } catch {
+    }
     return { ledger, report: ledger.completedReport };
   });
 }
