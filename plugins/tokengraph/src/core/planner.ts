@@ -323,9 +323,6 @@ export async function buildContextPlan(input: ContextPlanInput): Promise<Context
 
   return {
     ...withoutEstimate,
-    estimatedTokens: {
-      ...estimateSavings(originalContext, compact),
-      avoided: Math.max(0, estimateTokens(originalContext) - estimateTokens(compact))
-    }
+    estimatedTokens: estimateSavings(originalContext, compact, "full-index-dump")
   };
 }

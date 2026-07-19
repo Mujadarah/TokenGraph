@@ -43,7 +43,7 @@ export function compressOutput(input: { kind: CompressedOutput["kind"]; text: st
     : `${input.kind} output contained no actionable lines.`;
   const compressedText = [summary, ...fallbackLines].join("\n");
 
-  const estimatedTokens = estimateSavings(input.text, compressedText);
+  const estimatedTokens = estimateSavings(input.text, compressedText, "provided-output");
   const omittedLineCount = Math.max(0, lines.length - fallbackLines.length) + (truncatedByChars || truncatedByLines ? 1 : 0);
   return {
     kind: input.kind,

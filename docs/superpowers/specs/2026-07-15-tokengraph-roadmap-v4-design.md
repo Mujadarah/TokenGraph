@@ -41,7 +41,9 @@ location in the trust docs, comments the registerTool patch scope, and reports
 unsupported-language exclusions. Correction (2026-07-16 audit): the dist
 permission cross-reference comment, the README language-coverage sentence, and
 the security.md process-cwd trust-fallback documentation were not delivered in
-this phase; they are tracked as audit tasks R2.2-R2.4.
+this phase; they were tracked as audit tasks R2.2-R2.4. Remediation
+(2026-07-19) delivered the comments, public coverage statement, and ordered
+trust-source documentation.
 
 ## Contracts C1-C7
 

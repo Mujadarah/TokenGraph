@@ -260,7 +260,7 @@ async function runSmoke() {
       symbolsIndexed: overview.counts?.symbols ?? overview.result?.counts?.symbols ?? 0,
       recommendedFirstReads: prepared.plan?.firstReads ?? prepared.plan?.recommendedFirstReads ?? [],
       activeProfile: prepared.plan?.profile ?? "unknown",
-      estimatedTokensAvoided: Math.max(0, (compressed.estimates?.original ?? 0) - (compressed.estimates?.compact ?? 0) - (compressed.estimates?.overhead ?? 0)),
+      estimatedTokensAvoidedVsInput: Math.max(0, (compressed.estimates?.original ?? 0) - (compressed.estimates?.compact ?? 0) - (compressed.estimates?.overhead ?? 0)),
       memoriesReviewed: memoryReview.totalMemories ?? memoryReview.result?.totalMemories ?? 0,
       architectureStatus: analysis.status ?? analysis.result?.status ?? "unknown",
       knowledgeSuggestions: knowledge.suggestions?.length ?? 0,
@@ -281,7 +281,7 @@ runSmoke()
       return;
     }
     console.log(`TokenGraph smoke passed for ${report.root}`);
-    console.log(`Tools: ${report.tools.length}; files indexed: ${report.filesIndexed}; estimated tokens avoided: ${report.estimatedTokensAvoided}`);
+    console.log(`Tools: ${report.tools.length}; files indexed: ${report.filesIndexed}; estimated tokens avoided vs input: ${report.estimatedTokensAvoidedVsInput}`);
   })
   .catch((error) => {
     console.error(`TokenGraph smoke failed: ${error.message}`);

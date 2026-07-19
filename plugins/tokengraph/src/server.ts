@@ -1047,7 +1047,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       return withTaskIntent(root, taskId, async (task) => {
       const resolvedRoot = task.root;
       let result: object;
-      let estimates: { original: number; compressed: number; avoided: number };
+      let estimates: { baselineTokens: number };
       if (mode === "output") {
         const { kind, text, maxLines } = input;
         const compressed = compressOutput({ kind: kind!, text: text!, maxLines });
@@ -1072,7 +1072,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       let compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
       if (includeEstimates) {
         for (let attempt = 0; attempt < 3; attempt += 1) {
-          returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.original, compact: compactTokens, overhead: overheadTokens });
+          returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.baselineTokens, compact: compactTokens, overhead: overheadTokens });
           const measured = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
           if (measured === compactTokens) break;
           compactTokens = measured;
@@ -1081,7 +1081,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       await recordCoreEvent({
         root: resolvedRoot, taskId: task.taskId, toolName: "tokengraph_compress", category,
         operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash("sha256").update(`${"task" in input ? input.task : ""}\n${input.text ?? ""}`).digest("hex") },
-        originalTokens: estimates.original, compactTokens, overheadTokens
+        originalTokens: estimates.baselineTokens, compactTokens, overheadTokens
       });
       return ok(task.autoStarted ? { ...returnedResponse, taskId: task.taskId } : returnedResponse);
       });
@@ -2078,15 +2078,21 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     "tokengraph_show_token_savings",
     {
       title: "Show Token Savings",
-      description: "Use this to estimate how many tokens TokenGraph avoided by using the compact local index.",
+      description: "Use this to compare the compact local index with an explicitly labeled full-index-dump baseline.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({ root: z.string().optional() })
     },
     async ({ root }) => {
       const project = await ensureProject(await workspaceRoot(root));
-      const original = project.files.reduce((total, file) => total + file.estimatedTokens, 0);
-      const compact = estimateTokens(compactJson(projectMap(project)));
-      return ok({ original, compact, avoided: Math.max(0, original - compact), unit: "estimated tokens" });
+      const baselineTokens = project.files.reduce((total, file) => total + file.estimatedTokens, 0);
+      const compactTokens = estimateTokens(compactJson(projectMap(project)));
+      return ok({
+        baseline: "full-index-dump",
+        baselineTokens,
+        compactTokens,
+        avoidedVsBaseline: Math.max(0, baselineTokens - compactTokens),
+        unit: "estimated-tokens"
+      });
     }
   );
   }

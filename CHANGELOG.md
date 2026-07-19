@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Replaced ambiguous live token-savings response fields with explicit baseline labels and `avoidedVsBaseline` accounting.
+- Documented workspace trust precedence, default indexing coverage, and promotion-gated WASM language support.
+- Clarified hook-state and packaged-permission implementation locations inline.
+
 ## 0.21.1 - 2026-07-16
 
 - Fixed routing shadow, kill-switch, force-bypass, promotion-evidence, and B7 activation semantics so advisory decisions cannot silently enforce or unlock later phases.

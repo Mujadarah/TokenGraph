@@ -20648,13 +20648,15 @@ function estimateTokens(text) {
   }
   return Math.max(1, denseCharacters + Math.ceil(regularCharacters / 4));
 }
-function estimateSavings(originalText, compressedText) {
-  const original = estimateTokens(originalText);
-  const compressed = estimateTokens(compressedText);
+function estimateSavings(baselineText, compactText, baseline) {
+  const baselineTokens = estimateTokens(baselineText);
+  const compactTokens = estimateTokens(compactText);
   return {
-    original,
-    compressed,
-    avoided: Math.max(0, original - compressed)
+    baseline,
+    baselineTokens,
+    compactTokens,
+    avoidedVsBaseline: Math.max(0, baselineTokens - compactTokens),
+    unit: "estimated-tokens"
   };
 }
 function tokenize(text) {
@@ -21211,10 +21213,7 @@ async function buildContextPlan(input) {
   const compact = planText(withoutEstimate);
   return {
     ...withoutEstimate,
-    estimatedTokens: {
-      ...estimateSavings(originalContext, compact),
-      avoided: Math.max(0, estimateTokens(originalContext) - estimateTokens(compact))
-    }
+    estimatedTokens: estimateSavings(originalContext, compact, "full-index-dump")
   };
 }
 
@@ -21394,7 +21393,7 @@ ${page2.body}`)].join("\n");
     recommendedFirstReads,
     omissions,
     confidence,
-    estimatedTokens: estimateSavings(originalForEstimate, compactForEstimate)
+    estimatedTokens: estimateSavings(originalForEstimate, compactForEstimate, "provided-context")
   };
 }
 
@@ -21437,7 +21436,7 @@ function compressOutput(input) {
   const fallbackLines = keyLines.length > 0 ? keyLines : lines.filter((line) => line).slice(0, maxLines);
   const summary = fallbackLines.length ? `${input.kind} output: ${fallbackLines.slice(0, 3).join(" | ")}` : `${input.kind} output contained no actionable lines.`;
   const compressedText = [summary, ...fallbackLines].join("\n");
-  const estimatedTokens = estimateSavings(input.text, compressedText);
+  const estimatedTokens = estimateSavings(input.text, compressedText, "provided-output");
   const omittedLineCount = Math.max(0, lines.length - fallbackLines.length) + (truncatedByChars || truncatedByLines ? 1 : 0);
   return {
     kind: input.kind,
@@ -24067,11 +24066,7 @@ ${input.text}`, plan.relevantSql);
     recommendedFirstReads: firstReads,
     recommendedCommands: recommendedCommands(input.kind, detectedTests, detectedPaths, plan.relevantTests),
     confidence,
-    tokenEstimate: {
-      original: estimateTokens(input.text),
-      compressed: compressedOutput.estimatedTokens.compressed,
-      avoided: compressedOutput.estimatedTokens.avoided
-    }
+    tokenEstimate: compressedOutput.estimatedTokens
   };
 }
 
@@ -24584,18 +24579,16 @@ async function assessChangeRisk(input) {
     memoryCount: memories.length,
     warningCount: warnings.length
   });
-  const original = estimateTokens(`${text}
+  const baselineText = `${text}
 ${input.project.files.map((file) => file.path).join("\n")}
 ${input.memories.map((memory) => `${memory.title}
-${memory.body}`).join("\n")}`);
-  const compressed = estimateTokens(
-    [
-      changedFiles.join("\n"),
-      code.affectedFiles.map((file) => `${file.path}: ${file.reason}`).join("\n"),
-      sql.map(sqlTextForObject).join("\n"),
-      warnings.join("\n")
-    ].join("\n")
-  );
+${memory.body}`).join("\n")}`;
+  const compactText = [
+    changedFiles.join("\n"),
+    code.affectedFiles.map((file) => `${file.path}: ${file.reason}`).join("\n"),
+    sql.map(sqlTextForObject).join("\n"),
+    warnings.join("\n")
+  ].join("\n");
   return {
     riskScore: score,
     riskLevel: riskLevel(score),
@@ -24607,11 +24600,7 @@ ${memory.body}`).join("\n")}`);
     affectedMemories: memories,
     recommendedTests: recommendedTests(code.affectedTests),
     manualReviewWarnings: warnings,
-    tokenEstimate: {
-      original,
-      compressed,
-      avoided: Math.max(0, original - compressed)
-    }
+    tokenEstimate: estimateSavings(baselineText, compactText, "task-files-and-memories")
   };
 }
 
@@ -26845,7 +26834,7 @@ ${text ?? ""}`, config2.maxMemories) : [];
         let compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
         if (includeEstimates) {
           for (let attempt = 0; attempt < 3; attempt += 1) {
-            returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.original, compact: compactTokens, overhead: overheadTokens });
+            returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.baselineTokens, compact: compactTokens, overhead: overheadTokens });
             const measured = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
             if (measured === compactTokens) break;
             compactTokens = measured;
@@ -26858,7 +26847,7 @@ ${text ?? ""}`, config2.maxMemories) : [];
           category,
           operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash12("sha256").update(`${"task" in input ? input.task : ""}
 ${input.text ?? ""}`).digest("hex") },
-          originalTokens: estimates.original,
+          originalTokens: estimates.baselineTokens,
           compactTokens,
           overheadTokens
         });
@@ -27824,15 +27813,21 @@ ${changedFiles.join("\n")}`, 8);
       "tokengraph_show_token_savings",
       {
         title: "Show Token Savings",
-        description: "Use this to estimate how many tokens TokenGraph avoided by using the compact local index.",
+        description: "Use this to compare the compact local index with an explicitly labeled full-index-dump baseline.",
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: object({ root: string2().optional() })
       },
       async ({ root }) => {
         const project = await ensureProject(await workspaceRoot(root));
-        const original = project.files.reduce((total, file) => total + file.estimatedTokens, 0);
-        const compact = estimateTokens(compactJson(projectMap(project)));
-        return ok({ original, compact, avoided: Math.max(0, original - compact), unit: "estimated tokens" });
+        const baselineTokens = project.files.reduce((total, file) => total + file.estimatedTokens, 0);
+        const compactTokens = estimateTokens(compactJson(projectMap(project)));
+        return ok({
+          baseline: "full-index-dump",
+          baselineTokens,
+          compactTokens,
+          avoidedVsBaseline: Math.max(0, baselineTokens - compactTokens),
+          unit: "estimated-tokens"
+        });
       }
     );
   }

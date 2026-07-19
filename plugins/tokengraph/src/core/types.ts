@@ -90,10 +90,14 @@ export type TaskType = "bug" | "feature" | "refactor" | "database" | "test" | "d
 
 export type FileKind = "module" | "next-route" | "react-component" | "test" | "sql" | "doc";
 
+export type TokenEstimateBaseline = "full-index-dump" | "task-files-and-memories" | "provided-context" | "provided-output";
+
 export interface TokenEstimate {
-  original: number;
-  compressed: number;
-  avoided: number;
+  baseline: TokenEstimateBaseline;
+  baselineTokens: number;
+  compactTokens: number;
+  avoidedVsBaseline: number;
+  unit: "estimated-tokens";
 }
 
 export interface CodeFile {

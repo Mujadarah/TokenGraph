@@ -47,7 +47,13 @@ describe("compact MCP response projections", () => {
       filesToAvoid: Array.from({ length: 20 }, (_, index) => ({ path: `avoid-${index}.ts`, reason: "No overlap", score: 0 })),
       budgetExclusions: ["One lower-ranked file was excluded."],
       rawReadPolicy: "Read only targeted files after checking the compact scope.",
-      estimatedTokens: { original: 500, compressed: 400, avoided: 100 }
+      estimatedTokens: {
+        baseline: "full-index-dump",
+        baselineTokens: 500,
+        compactTokens: 400,
+        avoidedVsBaseline: 100,
+        unit: "estimated-tokens"
+      }
     } as never;
 
     const compact = compactPlanResponse(verbose, { constraints });
