@@ -73,7 +73,7 @@
 - Modify: `plugins/tokengraph/src/core/taskEstimator.ts`, `types.ts`, `planner.ts`, `regressionRisk.ts`, `contextCompressor.ts`, benchmark scripts/tests/docs
 
 - [x] Add failing tests proving negative event totals survive and execution-inclusive values lead the footer.
-- [x] Replace the ambiguous baseline label with explicit recommended-raw-read and full-index-dump metrics; retain both only where needed for diagnostics.
+- [ ] Replace the ambiguous baseline label with explicit recommended-raw-read and full-index-dump metrics; retain both only where needed for diagnostics. Correction (2026-07-16 audit): only the benchmark harness gained a diagnostic full-index-dump field; the live tool response fields in `planner.ts`, `regressionRisk.ts`, and `contextCompressor.ts` were never relabeled and still report unlabeled full-index-dump savings. Tracked as audit task R2.1.
 - [x] Generate checked-in benchmark results and make CI fail when the generated docs drift.
 - [x] Commit `fix: report execution-inclusive token economics` after the full gate.
 
@@ -84,7 +84,8 @@
 - Test: compact response, scanner, and MCP smoke tests
 
 - [x] Add failing mode-envelope and unsupported-language-count tests.
-- [x] Implement the compact mode field and exclusion summary; add the required comments and trust/privacy documentation.
+- [x] Implement the compact mode field and exclusion summary; add hook-data-location trust/privacy documentation.
+- [ ] Correction (2026-07-16 audit): the `hooks.ts` dataRoot inline comment, the `build.mjs` cross-reference comment, the README language-coverage sentence, and the `security.md` trust-source precedence documentation (including the process-cwd fallback) were not delivered. Tracked as audit tasks R2.2-R2.4.
 - [x] Commit `docs: clarify runtime surfaces and indexing limits` after the full gate.
 
 ### Task 6: B1 routing and canonical artifacts
@@ -192,9 +193,13 @@
 - [ ] Commit `release: publish TokenGraph v0.21.0`. The existing published tag remains immutable; remediation is tracked in `2026-07-15-tokengraph-audit-remediation.md`.
 
 Historical evidence: the tag workflow and published ZIP checks above describe the
-immutable v0.21.0 publication. The current remediation keeps that tag unchanged; the
-fresh fixture run has 320 passing tests but fails the execution-inclusive eligibility gate
-with a median of -92.5 tokens, so no corrective tag or publication is created.
+immutable v0.21.0 publication. The first remediation pass kept that tag unchanged: its
+fresh fixture run had 320 passing tests but failed the execution-inclusive eligibility gate
+with a median of -92.5 tokens, so no corrective tag was created at that point.
+Update (2026-07-16): after the user authorized a corrective release and the accounting
+fixes landed, v0.21.1 was tagged at the final remediation commit with a passing gate
+(+196.5-token activated-task median). Its CI-built draft release still awaits manual
+publication; until then the latest published release remains v0.21.0.
 
 ## Required verification command set
 

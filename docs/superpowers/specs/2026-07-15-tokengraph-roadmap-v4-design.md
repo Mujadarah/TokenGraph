@@ -37,9 +37,11 @@ first, labels the baseline as recommended raw reads, and makes benchmark output
 reproducible from a checked-in result artifact.
 
 Phase A5 makes compact mode envelopes carry their mode, documents hook data
-location, registerTool patch scope, dist permission normalization, supported
-language limits, and process-cwd trust fallback, and reports unsupported-language
-exclusions.
+location in the trust docs, comments the registerTool patch scope, and reports
+unsupported-language exclusions. Correction (2026-07-16 audit): the dist
+permission cross-reference comment, the README language-coverage sentence, and
+the security.md process-cwd trust-fallback documentation were not delivered in
+this phase; they are tracked as audit tasks R2.2-R2.4.
 
 ## Contracts C1-C7
 
