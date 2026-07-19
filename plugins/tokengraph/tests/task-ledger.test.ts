@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildTaskReport, formatTaskReportFooter } from "../src/core/taskEstimator.js";
 import { createTaskOutcome, verifiedOutcomes, type TaskOutcome } from "../src/core/memoryCore.js";
+import { purgeStorageClass } from "../src/core/storagePolicy.js";
 import {
   __getTaskLedgerWriteQueueSizeForTests,
   attachTaskHostContext,
@@ -798,6 +799,56 @@ describe("task lifecycle and retention", () => {
     }).map((outcome) => outcome.id)).toEqual(["b-verified", "z-older"]);
   });
 
+  it("reuses completed outcomes without rescanning unrelated task ledgers", async () => {
+    const root = await makeRoot();
+    const completed = await createTaskLedger(root, { host: "codex" });
+    await recordTaskOutcome(root, completed.taskId, outcomeFor(completed, { id: "cached-outcome" }));
+    await setTaskDisposition(root, completed.taskId, "complete");
+    expect((await listCompletedTaskOutcomes(root)).map((outcome) => outcome.id)).toEqual(["cached-outcome"]);
+
+    const unrelatedCorruptPath = ledgerPath(root, crypto.randomUUID());
+    await writeFile(unrelatedCorruptPath, "{not-json");
+    const next = await createTaskLedger(root, { host: "codex" });
+    await recordTaskOutcome(root, next.taskId, outcomeFor(next, {
+      id: "new-outcome", createdAt: "2026-07-19T01:00:00.000Z"
+    }));
+    await setTaskDisposition(root, next.taskId, "complete");
+
+    expect((await listCompletedTaskOutcomes(root)).map((outcome) => outcome.id)).toEqual(["new-outcome", "cached-outcome"]);
+    await expect(readFile(unrelatedCorruptPath, "utf8")).resolves.toBe("{not-json");
+  });
+
+  it("bounds the completed outcome index to the 100 most recent outcomes", async () => {
+    const root = await makeRoot();
+    const completed = await createTaskLedger(root, { host: "codex" });
+    const outcomes = Array.from({ length: 105 }, (_, index) =>
+      outcomeFor(completed, {
+        id: `outcome-${index.toString().padStart(3, "0")}`,
+        createdAt: new Date(Date.UTC(2026, 6, 19, 0, index)).toISOString()
+      })
+    );
+    await writeFile(ledgerPath(root, completed.taskId), JSON.stringify({ ...completed, outcomes }));
+    await setTaskDisposition(root, completed.taskId, "complete");
+
+    const listed = await listCompletedTaskOutcomes(root);
+    expect(listed).toHaveLength(100);
+    expect(listed[0]?.id).toBe("outcome-104");
+    expect(listed.at(-1)?.id).toBe("outcome-005");
+  });
+
+  it("preserves durable completion when outcome index maintenance fails", async () => {
+    const root = await makeRoot();
+    const completed = await createTaskLedger(root, { host: "codex" });
+    await recordTaskOutcome(root, completed.taskId, outcomeFor(completed, { id: "durable-outcome" }));
+    await mkdir(join(root, ".tokengraph", "tasks", "completed-outcomes.json"));
+
+    await expect(setTaskDisposition(root, completed.taskId, "complete")).resolves.toMatchObject({
+      ledger: { status: "completed" },
+      report: expect.any(Object)
+    });
+    await expect(loadTaskLedger(root, completed.taskId)).resolves.toMatchObject({ status: "completed" });
+  });
+
   it("prunes terminal and unreachable empty ledgers older than 30 days while preserving active open ledgers", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
@@ -808,7 +859,9 @@ describe("task lifecycle and retention", () => {
     const paused = await createTaskLedger(root, { host: "codex" });
     const completed = await createTaskLedger(root, { host: "codex" });
     await setTaskDisposition(root, paused.taskId, "pause");
+    await recordTaskOutcome(root, completed.taskId, outcomeFor(completed, { id: "pruned-outcome" }));
     await setTaskDisposition(root, completed.taskId, "complete");
+    expect((await listCompletedTaskOutcomes(root)).map((outcome) => outcome.id)).toContain("pruned-outcome");
 
     const result = await pruneTaskLedgers(root, new Date("2026-06-01T00:00:00.001Z"));
 
@@ -817,6 +870,19 @@ describe("task lifecycle and retention", () => {
     expect(await loadTaskLedger(root, abandoned.taskId)).toBeUndefined();
     expect(await loadTaskLedger(root, paused.taskId)).toBeUndefined();
     expect(await loadTaskLedger(root, completed.taskId)).toBeUndefined();
+    expect((await listCompletedTaskOutcomes(root)).map((outcome) => outcome.id)).not.toContain("pruned-outcome");
+  });
+
+  it("invalidates completed outcomes when outcome storage is purged", async () => {
+    const root = await makeRoot();
+    const completed = await createTaskLedger(root, { host: "codex" });
+    await recordTaskOutcome(root, completed.taskId, outcomeFor(completed, { id: "purged-outcome" }));
+    await setTaskDisposition(root, completed.taskId, "complete");
+    expect((await listCompletedTaskOutcomes(root)).map((outcome) => outcome.id)).toContain("purged-outcome");
+
+    await purgeStorageClass(root, "outcomes");
+
+    expect(await listCompletedTaskOutcomes(root)).toEqual([]);
   });
 
   it("quarantines a corrupt ledger during pruning and continues pruning another eligible ledger", async () => {

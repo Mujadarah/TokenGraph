@@ -97,6 +97,9 @@ export interface PruneTaskLedgersResult {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const COMPLETED_OUTCOMES_INDEX_SCHEMA_ID = "tokengraph-completed-outcomes-index";
+const COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION = 1;
+const MAX_COMPLETED_OUTCOMES = 100;
 const taskLedgerWriteChains = new Map<string, Promise<void>>();
 
 function assertTaskId(taskId: string): void {
@@ -112,6 +115,10 @@ function tasksDirectory(root: string): string {
 function taskLedgerPath(root: string, taskId: string): string {
   assertTaskId(taskId);
   return join(tasksDirectory(root), `${taskId}.json`);
+}
+
+function completedOutcomesIndexPath(root: string): string {
+  return join(tasksDirectory(root), "completed-outcomes.json");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -616,7 +623,50 @@ export async function recordTaskOutcome(root: string, taskId: string, outcome: T
   });
 }
 
-export async function listCompletedTaskOutcomes(root: string): Promise<TaskOutcome[]> {
+function orderOutcomes(outcomes: TaskOutcome[]): TaskOutcome[] {
+  return [...outcomes]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id))
+    .slice(0, MAX_COMPLETED_OUTCOMES);
+}
+
+async function readCompletedOutcomesIndex(root: string): Promise<TaskOutcome[] | undefined> {
+  const path = completedOutcomesIndexPath(root);
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+    if (
+      !isRecord(parsed) ||
+      parsed.schemaId !== COMPLETED_OUTCOMES_INDEX_SCHEMA_ID ||
+      parsed.schemaVersion !== COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION ||
+      !Array.isArray(parsed.outcomes)
+    ) {
+      await quarantine(path);
+      return undefined;
+    }
+    const outcomes = parsed.outcomes.map(reconstructOutcome);
+    if (outcomes.some((outcome) => outcome === undefined)) {
+      await quarantine(path);
+      return undefined;
+    }
+    return orderOutcomes(outcomes as TaskOutcome[]);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if (error instanceof SyntaxError) {
+      await quarantine(path);
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function writeCompletedOutcomesIndex(root: string, outcomes: TaskOutcome[]): Promise<void> {
+  await writeJsonAtomic(completedOutcomesIndexPath(root), {
+    schemaId: COMPLETED_OUTCOMES_INDEX_SCHEMA_ID,
+    schemaVersion: COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION,
+    outcomes: orderOutcomes(outcomes)
+  });
+}
+
+async function scanCompletedTaskOutcomes(root: string): Promise<TaskOutcome[]> {
   let files: string[];
   try {
     files = await readdir(tasksDirectory(root));
@@ -629,7 +679,37 @@ export async function listCompletedTaskOutcomes(root: string): Promise<TaskOutco
     const ledger = await loadTaskLedger(root, file.slice(0, -".json".length));
     if (ledger?.status === "completed") outcomes.push(...ledger.outcomes);
   }
-  return outcomes.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+  return orderOutcomes(outcomes);
+}
+
+async function withCompletedOutcomesIndexLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
+  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "tasks", "completed-outcomes.json");
+  return withFileLock(`${key}.lock`, operation);
+}
+
+async function updateCompletedOutcomesIndex(root: string, added: TaskOutcome[]): Promise<void> {
+  await withCompletedOutcomesIndexLock(root, async () => {
+    const cached = await readCompletedOutcomesIndex(root);
+    if (!cached) {
+      await writeCompletedOutcomesIndex(root, await scanCompletedTaskOutcomes(root));
+      return;
+    }
+    const merged = new Map(cached.map((outcome) => [`${outcome.taskId}:${outcome.id}`, outcome]));
+    for (const outcome of added) merged.set(`${outcome.taskId}:${outcome.id}`, outcome);
+    await writeCompletedOutcomesIndex(root, [...merged.values()]);
+  });
+}
+
+export async function listCompletedTaskOutcomes(root: string): Promise<TaskOutcome[]> {
+  const cached = await readCompletedOutcomesIndex(root);
+  if (cached) return cached;
+  return withCompletedOutcomesIndexLock(root, async () => {
+    const existing = await readCompletedOutcomesIndex(root);
+    if (existing) return existing;
+    const outcomes = await scanCompletedTaskOutcomes(root);
+    await writeCompletedOutcomesIndex(root, outcomes);
+    return outcomes;
+  });
 }
 
 export async function setTaskDisposition(
@@ -666,6 +746,11 @@ export async function setTaskDisposition(
     ledger.completedAt = now;
     ledger.completedReport = buildTaskReport(ledger, calibration, reportOverheadTokens);
     await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    try {
+      await updateCompletedOutcomesIndex(root, ledger.outcomes);
+    } catch {
+      // The outcomes index is derived state; the completed ledger is already durable.
+    }
     return { ledger, report: ledger.completedReport };
   });
 }
@@ -703,6 +788,15 @@ export async function pruneTaskLedgers(root: string, now = new Date()): Promise<
       await rm(taskLedgerPath(root, taskId), { force: true });
       result.pruned.push(taskId);
     }
+  }
+  if (result.pruned.length) {
+    await withCompletedOutcomesIndexLock(root, async () => {
+      const cached = await readCompletedOutcomesIndex(root);
+      if (cached) {
+        const pruned = new Set(result.pruned);
+        await writeCompletedOutcomesIndex(root, cached.filter((outcome) => !pruned.has(outcome.taskId)));
+      }
+    });
   }
   return result;
 }
