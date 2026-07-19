@@ -8,7 +8,8 @@ import { indexProject } from "../src/core/projectIndexer.js";
 import { assessChangeRisk } from "../src/core/regressionRisk.js";
 import { reviewMemories } from "../src/core/review.js";
 import { executeRun, summarizeRun, type SavedRunSummary } from "../src/core/runner.js";
-import { readExactSlice } from "../src/core/retrieval.js";
+import { deliverDelta, readExactSlice } from "../src/core/retrieval.js";
+import { artifactKey, createStableArtifact } from "../src/core/artifact.js";
 import { adviseRouting } from "../src/core/routingAdvisor.js";
 import { TASK_ESTIMATOR_VERSION, type TaskCalibration } from "../src/core/taskEstimator.js";
 import { estimateTokens } from "../src/core/token.js";
@@ -122,6 +123,12 @@ export interface BenchmarkBaselineArtifact {
   fullIndexDumpTokens: number;
 }
 
+export interface DeltaDeliveryBenchmark {
+  defaultAssumption: "no-handshake";
+  noHandshake: { knownArtifactsProvided: false; deliveredTokens: number; savedTokens: 0 };
+  handshake: { knownArtifactsProvided: true; deliveredTokens: number; savedTokens: number };
+}
+
 interface GateInput {
   taskCount: number;
   categoryCounts: Record<string, number>;
@@ -221,6 +228,21 @@ function quantile(values: number[], probability: number): number {
   if (!values.length) return 0;
   const sorted = [...values].sort((left, right) => left - right);
   return sorted[Math.max(0, Math.ceil(probability * sorted.length) - 1)]!;
+}
+
+function measureDeltaDelivery(tasks: Array<{ id: string; coreOutput: unknown }>): DeltaDeliveryBenchmark {
+  const artifacts = tasks.map((task) => createStableArtifact(`benchmark/${task.id}`, task.coreOutput, 1));
+  const expected = { handshakeId: "benchmark", hostContextId: "fixture", sequence: 0 };
+  const actual = { ...expected, sequence: 1 };
+  const noHandshake = deliverDelta(expected, actual, artifacts);
+  const handshake = deliverDelta(expected, actual, artifacts, artifacts.map(artifactKey));
+  const noHandshakeTokens = estimateTokens(JSON.stringify(noHandshake));
+  const handshakeTokens = estimateTokens(JSON.stringify(handshake));
+  return {
+    defaultAssumption: "no-handshake",
+    noHandshake: { knownArtifactsProvided: false, deliveredTokens: noHandshakeTokens, savedTokens: 0 },
+    handshake: { knownArtifactsProvided: true, deliveredTokens: handshakeTokens, savedTokens: noHandshakeTokens - handshakeTokens }
+  };
 }
 
 export function buildCalibration(observations: Array<{ category: string; residual: number }>) {
@@ -750,6 +772,7 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     baselineRequiredFileRecall: corpus.baselineRequiredFileRecall,
     sessionAccounting,
     tasks,
+    deltaDelivery: measureDeltaDelivery(tasks),
     aggregate,
     releaseGate,
     calibration,
