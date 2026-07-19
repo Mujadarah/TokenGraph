@@ -455,7 +455,7 @@ describe("evidence benchmark", () => {
     };
     const ledger = {
       schemaId: "tokengraph-task-ledger",
-      schemaVersion: 2,
+      schemaVersion: 3,
       taskId: "00000000-0000-4000-8000-000000000001",
       host: "unknown",
       status: "open",
@@ -463,6 +463,7 @@ describe("evidence benchmark", () => {
       updatedAt: event.timestamp,
       estimatorVersion: TASK_ESTIMATOR_VERSION,
       deliveredArtifacts: [],
+      outcomes: [],
       events: [event]
     } satisfies TaskLedger;
 

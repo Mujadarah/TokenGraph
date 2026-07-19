@@ -531,6 +531,7 @@ describe("built lifecycle hook process", () => {
       await recordTaskEvent(root, measured.taskId, taskEvent());
       const measuredResult = await setTaskDisposition(root, measured.taskId, "complete");
       const measuredFooter = formatTaskReportFooter(measuredResult.report!);
+      expect(measuredFooter).toContain("categories context=~0-60 (context:uncalibrated)");
       await attach(measured.taskId);
       const measuredStop = await stop({ last_assistant_message: `Done.\n\n${measuredFooter}` });
 

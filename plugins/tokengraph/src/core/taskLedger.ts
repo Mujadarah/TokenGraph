@@ -12,11 +12,12 @@ import {
 } from "./taskEstimator.js";
 import { canonicalPersistenceLockKey, withFileLock, writeJsonAtomic } from "./storage.js";
 import { getRepositoryIdentity } from "./repositoryIdentity.js";
+import type { TaskOutcome } from "./memoryCore.js";
 import type { RepositoryIdentity } from "./types.js";
 import type { ReadPolicyState } from "./retrieval.js";
 
 export const TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger" as const;
-export const TASK_LEDGER_SCHEMA_VERSION = 2 as const;
+export const TASK_LEDGER_SCHEMA_VERSION = 3 as const;
 export const TASK_LEDGER_RETENTION_DAYS = 30;
 
 export type TaskHost = "codex" | "claude" | "unknown";
@@ -58,6 +59,7 @@ export interface TaskLedger {
   routingObservation?: TaskRoutingObservation;
   readPolicy?: ReadPolicyState;
   deliveredArtifacts: string[];
+  outcomes: TaskOutcome[];
   events: TaskEvent[];
   lastDisposition?: TaskDisposition;
   completedReport?: TaskReport;
@@ -172,9 +174,45 @@ function reconstructEvent(value: unknown): TaskEvent | undefined {
   };
 }
 
+function reconstructOutcome(value: unknown): TaskOutcome | undefined {
+  if (!isRecord(value) || !Array.isArray(value.evidence)) return undefined;
+  if (
+    !isIdentifier(value.id) ||
+    !isIdentifier(value.taskId) ||
+    typeof value.summary !== "string" || value.summary.trim().length === 0 ||
+    !["verified", "proposed", "failed"].includes(String(value.status)) ||
+    !value.evidence.every((entry) => isIdentifier(entry)) ||
+    !isTimestamp(value.createdAt) ||
+    (value.staleAt !== undefined && !isTimestamp(value.staleAt)) ||
+    (value.sourceFingerprint !== undefined && !isIdentifier(value.sourceFingerprint)) ||
+    !isIdentifier(value.branch) ||
+    !isIdentifier(value.worktreeId) ||
+    !isIdentifier(value.headCommit)
+  ) return undefined;
+  return {
+    id: value.id,
+    taskId: value.taskId,
+    summary: value.summary,
+    status: value.status as TaskOutcome["status"],
+    evidence: [...value.evidence] as string[],
+    createdAt: value.createdAt,
+    ...(value.staleAt === undefined ? {} : { staleAt: value.staleAt }),
+    ...(value.sourceFingerprint === undefined ? {} : { sourceFingerprint: value.sourceFingerprint }),
+    branch: value.branch,
+    worktreeId: value.worktreeId,
+    headCommit: value.headCommit
+  };
+}
+
 function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedger | undefined {
   if (!isRecord(value) || !Array.isArray(value.events)) return undefined;
+  const legacy = value.schemaVersion === 1 || value.schemaVersion === 2;
   const events = value.events.map(reconstructEvent);
+  const outcomes = value.outcomes === undefined && legacy
+    ? []
+    : Array.isArray(value.outcomes)
+      ? value.outcomes.map(reconstructOutcome)
+      : undefined;
   const routingObservation = value.routingObservation === undefined ? undefined : reconstructRoutingObservation(value.routingObservation);
   const readPolicy = value.readPolicy === undefined ? undefined : reconstructReadPolicy(value.readPolicy);
   const deliveredArtifacts = value.deliveredArtifacts === undefined
@@ -184,7 +222,7 @@ function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedg
       : undefined;
   if (
     value.schemaId !== TASK_LEDGER_SCHEMA_ID ||
-    (value.schemaVersion !== 1 && value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION) ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION) ||
     value.taskId !== expectedTaskId ||
     !["codex", "claude", "unknown"].includes(String(value.host)) ||
     !["open", "paused", "completed", "quarantined"].includes(String(value.status)) ||
@@ -194,11 +232,13 @@ function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedg
     !isTimestamp(value.updatedAt) ||
     (value.pausedAt !== undefined && !isTimestamp(value.pausedAt)) ||
     (value.completedAt !== undefined && !isTimestamp(value.completedAt)) ||
-    value.estimatorVersion !== TASK_ESTIMATOR_VERSION ||
+    (!legacy && value.estimatorVersion !== TASK_ESTIMATOR_VERSION) ||
+    (legacy && value.estimatorVersion !== "task-estimator-v1" && value.estimatorVersion !== TASK_ESTIMATOR_VERSION) ||
     (value.repositoryIdentity !== undefined && !isRepositoryIdentity(value.repositoryIdentity)) ||
     (value.routingObservation !== undefined && routingObservation === undefined) ||
     (value.readPolicy !== undefined && readPolicy === undefined) ||
     deliveredArtifacts === undefined ||
+    outcomes === undefined || outcomes.some((outcome) => outcome === undefined) ||
     events.some((event) => event === undefined) ||
     (value.lastDisposition !== undefined && value.lastDisposition !== "pause" && value.lastDisposition !== "complete") ||
     Date.parse(value.updatedAt as string) < Date.parse(value.createdAt as string) ||
@@ -209,11 +249,12 @@ function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedg
   ) {
     return undefined;
   }
-  const completedReport =
-    value.completedReport === undefined
+  const completedReport = legacy && value.status === "completed"
+    ? undefined
+    : value.completedReport === undefined
       ? undefined
       : reconstructTaskReport(value.completedReport, expectedTaskId, events.length);
-  if (value.completedReport !== undefined && completedReport === undefined) return undefined;
+  if (!legacy && value.completedReport !== undefined && completedReport === undefined) return undefined;
   if (
     value.status === "open" &&
     (value.pausedAt !== undefined || value.completedAt !== undefined || completedReport !== undefined || value.lastDisposition !== undefined)
@@ -231,11 +272,11 @@ function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedg
   }
   if (
     value.status === "completed" &&
-    (value.completedAt === undefined || completedReport === undefined || value.lastDisposition !== "complete")
+    (value.completedAt === undefined || (!legacy && completedReport === undefined) || value.completedReport === undefined || value.lastDisposition !== "complete")
   ) {
     return undefined;
   }
-  return {
+  const ledger: TaskLedger = {
     schemaId: TASK_LEDGER_SCHEMA_ID,
     schemaVersion: TASK_LEDGER_SCHEMA_VERSION,
     taskId: expectedTaskId,
@@ -252,10 +293,13 @@ function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedg
     ...(routingObservation === undefined ? {} : { routingObservation }),
     ...(readPolicy === undefined ? {} : { readPolicy }),
     deliveredArtifacts,
+    outcomes: outcomes as TaskOutcome[],
     events: events as TaskEvent[],
     ...(value.lastDisposition === undefined ? {} : { lastDisposition: value.lastDisposition }),
     ...(completedReport === undefined ? {} : { completedReport })
   };
+  if (legacy && ledger.status === "completed") ledger.completedReport = buildTaskReport(ledger);
+  return ledger;
 }
 
 function isRepositoryIdentity(value: unknown): value is RepositoryIdentity {
@@ -382,6 +426,7 @@ export async function createTaskLedger(root: string, options: CreateTaskLedgerOp
     estimatorVersion: TASK_ESTIMATOR_VERSION,
     repositoryIdentity,
     deliveredArtifacts: [],
+    outcomes: [],
     events: []
   };
   await enqueueLedgerOperation(root, taskId, async () => {
@@ -431,9 +476,12 @@ export async function loadTaskLedger(root: string, taskId: string): Promise<Task
       await quarantine(path);
       return undefined;
     }
-    if (!ledger.repositoryIdentity || (isRecord(parsed) && parsed.schemaVersion === 1)) {
-      ledger.repositoryIdentity = await getRepositoryIdentity(root);
+    if (!ledger.repositoryIdentity || (isRecord(parsed) && (parsed.schemaVersion === 1 || parsed.schemaVersion === 2))) {
+      ledger.repositoryIdentity ??= await getRepositoryIdentity(root);
       ledger.schemaVersion = TASK_LEDGER_SCHEMA_VERSION;
+      ledger.estimatorVersion = TASK_ESTIMATOR_VERSION;
+      ledger.outcomes ??= [];
+      if (ledger.status === "completed") ledger.completedReport = buildTaskReport(ledger);
       await writeJsonAtomic(path, ledger);
     }
     return ledger;
