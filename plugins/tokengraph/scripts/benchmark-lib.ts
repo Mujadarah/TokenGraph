@@ -58,7 +58,19 @@ export interface BenchmarkTask {
   expectedTests: string[];
   allowRawReads?: boolean;
   targetedRawReadsAllowed: boolean;
+  expectedRouting: "activate" | "bypass";
   requiresExactSlice?: boolean;
+}
+
+export interface RouterShadowSummary {
+  observationCount: number;
+  beneficialTaskCount: number;
+  boundedTaskCount: number;
+  falseBypassCount: number;
+  falseActivationCount: number;
+  falseBypassRate: number | null;
+  falseActivationRate: number | null;
+  categoryCounts: Record<string, { observations: number; beneficial: number; bounded: number; activated: number; bypassed: number }>;
 }
 
 export interface BenchmarkCorpus {
@@ -187,6 +199,7 @@ export function validateCorpus(value: unknown): { tasks: BenchmarkTask[]; errors
       !candidate.forbiddenFalsePositiveFiles.every((entry) => typeof entry === "string") ||
       !Array.isArray(candidate.expectedTests) ||
       !candidate.expectedTests.every((entry) => typeof entry === "string") ||
+      (candidate.expectedRouting !== "activate" && candidate.expectedRouting !== "bypass") ||
       (candidate.allowRawReads !== undefined && typeof candidate.allowRawReads !== "boolean") ||
       (candidate.requiresExactSlice !== undefined && typeof candidate.requiresExactSlice !== "boolean") ||
       typeof candidate.targetedRawReadsAllowed !== "boolean"
@@ -222,6 +235,37 @@ export function median(values: number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
+export function summarizeRouterShadow(tasks: Array<{
+  category: string;
+  expectedRouting: "activate" | "bypass";
+  routing: { useTokenGraph: boolean };
+}>): RouterShadowSummary {
+  const beneficial = tasks.filter((task) => task.expectedRouting === "activate");
+  const bounded = tasks.filter((task) => task.expectedRouting === "bypass");
+  const falseBypassCount = beneficial.filter((task) => !task.routing.useTokenGraph).length;
+  const falseActivationCount = bounded.filter((task) => task.routing.useTokenGraph).length;
+  const categories = [...new Set([...BENCHMARK_CATEGORIES, ...tasks.map((task) => task.category)])].sort();
+  return {
+    observationCount: tasks.length,
+    beneficialTaskCount: beneficial.length,
+    boundedTaskCount: bounded.length,
+    falseBypassCount,
+    falseActivationCount,
+    falseBypassRate: beneficial.length ? falseBypassCount / beneficial.length : null,
+    falseActivationRate: bounded.length ? falseActivationCount / bounded.length : null,
+    categoryCounts: Object.fromEntries(categories.map((category) => {
+      const categoryTasks = tasks.filter((task) => task.category === category);
+      return [category, {
+        observations: categoryTasks.length,
+        beneficial: categoryTasks.filter((task) => task.expectedRouting === "activate").length,
+        bounded: categoryTasks.filter((task) => task.expectedRouting === "bypass").length,
+        activated: categoryTasks.filter((task) => task.routing.useTokenGraph).length,
+        bypassed: categoryTasks.filter((task) => !task.routing.useTokenGraph).length
+      }];
+    }))
+  };
 }
 
 function quantile(values: number[], probability: number): number {
@@ -634,13 +678,19 @@ async function evaluateTask(
     ...(!rawReadPolicyPreserved ? ["Raw-read fallback guidance violated the task policy."] : []),
     ...(missingExpectedTests.length ? [`Expected tests not recommended: ${missingExpectedTests.join(", ")}.`] : [])
   ];
+  const routing = adviseRouting({ task: task.query });
   return {
     id: task.id,
     category: task.category,
     query: task.query,
+    expectedRouting: task.expectedRouting,
     targetedRawReadsAllowed: task.targetedRawReadsAllowed,
     flow,
-    routing: adviseRouting({ task: task.query }),
+    routing,
+    routingTruth: {
+      falseBypass: task.expectedRouting === "activate" && !routing.useTokenGraph,
+      falseActivation: task.expectedRouting === "bypass" && routing.useTokenGraph
+    },
     coreOutput: result.coreOutput,
     accounting: {
       coreOutputCount: lifecycleCalls.length,
@@ -756,6 +806,7 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     taskFailures: tasks.filter((task) => task.metrics.qualityResult === "failed").map((task) => task.id)
   };
   const releaseGate = evaluateReleaseGate({ ...aggregate, baselineRequiredFileRecall: corpus.baselineRequiredFileRecall });
+  const routerShadow = summarizeRouterShadow(tasks);
   const observations = tasks.map((task) => ({ category: task.category, residual: task.metrics.calibrationResidual }));
   const calibration = buildCalibration(observations);
   const taskCalibration: TaskCalibration = Object.fromEntries(
@@ -772,6 +823,7 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     baselineRequiredFileRecall: corpus.baselineRequiredFileRecall,
     sessionAccounting,
     tasks,
+    routerShadow,
     deltaDelivery: measureDeltaDelivery(tasks),
     aggregate,
     releaseGate,

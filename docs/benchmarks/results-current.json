@@ -5,8 +5,8 @@
   "evidenceVersion": "fixture-evidence-v2",
   "aggregate": {
     "taskCount": 30,
-    "activatedTaskCount": 28,
-    "bypassedTaskCount": 2,
+    "activatedTaskCount": 27,
+    "bypassedTaskCount": 3,
     "categoryCounts": {
       "change-risk": 4,
       "code-routing": 5,
@@ -16,16 +16,34 @@
       "release-packaging": 4,
       "sql-security": 5
     },
-    "medianNetSavings": 183.53333333333333,
-    "medianExecutionInclusiveNetSavings": 183.53333333333333,
+    "medianNetSavings": 182.53333333333333,
+    "medianExecutionInclusiveNetSavings": 182.53333333333333,
     "primarySavingsMetric": "execution-inclusive",
-    "primaryMedianNetSavings": 183.53333333333333,
-    "executionInclusiveMedian": 183.53333333333333,
+    "primaryMedianNetSavings": 182.53333333333333,
+    "executionInclusiveMedian": 182.53333333333333,
     "executionInclusiveP25": 91.53333333333333,
-    "nonNegativeActivatedRate": 0.8214285714285714,
+    "nonNegativeActivatedRate": 0.8148148148148148,
     "criticalConstraintPreservationRate": 1,
     "requiredFileRecall": 1,
     "baselineLabel": "category-appropriate"
+  },
+  "routerShadow": {
+    "observationCount": 30,
+    "beneficialTaskCount": 27,
+    "boundedTaskCount": 3,
+    "falseBypassCount": 0,
+    "falseActivationCount": 0,
+    "falseBypassRate": 0,
+    "falseActivationRate": 0,
+    "categoryCounts": {
+      "change-risk": { "observations": 4, "beneficial": 4, "bounded": 0, "activated": 4, "bypassed": 0 },
+      "code-routing": { "observations": 5, "beneficial": 3, "bounded": 2, "activated": 3, "bypassed": 2 },
+      "compression": { "observations": 4, "beneficial": 4, "bounded": 0, "activated": 4, "bypassed": 0 },
+      "debugging": { "observations": 4, "beneficial": 3, "bounded": 1, "activated": 3, "bypassed": 1 },
+      "memory-wiki": { "observations": 4, "beneficial": 4, "bounded": 0, "activated": 4, "bypassed": 0 },
+      "release-packaging": { "observations": 4, "beneficial": 4, "bounded": 0, "activated": 4, "bypassed": 0 },
+      "sql-security": { "observations": 5, "beneficial": 5, "bounded": 0, "activated": 5, "bypassed": 0 }
+    }
   },
   "deltaDelivery": {
     "defaultAssumption": "no-handshake",

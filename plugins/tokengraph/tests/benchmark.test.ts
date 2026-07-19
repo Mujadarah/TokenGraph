@@ -73,6 +73,7 @@ describe("evidence benchmark", () => {
     expect(result.tasks).toHaveLength(30);
     expect(new Set(result.tasks.map((task) => task.query)).size).toBe(30);
     for (const task of result.tasks) {
+      expect(task.expectedRouting).toMatch(/^(activate|bypass)$/);
       expect(task.constraints).toEqual(task.criticalConstraints);
       for (const path of task.requiredFiles) {
         await expect(access(resolve("tests", "fixtures", "evidence-project", path))).resolves.toBeUndefined();
@@ -109,7 +110,34 @@ describe("evidence benchmark", () => {
     });
     expect(report.deltaDelivery.noHandshake.deliveredTokens).toBeGreaterThan(report.deltaDelivery.handshake.deliveredTokens);
     expect(report.deltaDelivery.handshake.savedTokens).toBeGreaterThan(0);
+    expect(report.routerShadow).toMatchObject({
+      beneficialTaskCount: 27,
+      boundedTaskCount: 3,
+      falseBypassCount: 0,
+      falseActivationCount: 0,
+      falseBypassRate: 0,
+      falseActivationRate: 0,
+      observationCount: 30
+    });
+    expect(Object.keys(report.routerShadow.categoryCounts)).toEqual([...BENCHMARK_CATEGORIES].sort());
+    expect(report.tasks.filter((task) => task.expectedRouting === "bypass").map((task) => task.id)).toEqual([
+      "code-routing-01",
+      "code-routing-04",
+      "debugging-01"
+    ]);
   });
+
+  it("uses independent truth-specific denominators for false router decisions", async () => {
+    const falseBypassCorpus = await corpus();
+    falseBypassCorpus.tasks.find((task: { id: string }) => task.id === "code-routing-02").query = "Where is the getPatient implementation?";
+    const falseBypass = await evaluateBenchmark(falseBypassCorpus, resolve("tests", "fixtures", "evidence-project"));
+    expect(falseBypass.routerShadow).toMatchObject({ falseBypassCount: 1, falseBypassRate: 1 / 27 });
+
+    const falseActivationCorpus = await corpus();
+    falseActivationCorpus.tasks.find((task: { id: string }) => task.id === "code-routing-01").query = "Trace architecture dependencies for the patient route";
+    const falseActivation = await evaluateBenchmark(falseActivationCorpus, resolve("tests", "fixtures", "evidence-project"));
+    expect(falseActivation.routerShadow).toMatchObject({ falseActivationCount: 1, falseActivationRate: 1 / 3 });
+  }, 15_000);
 
   it("keeps core evidence and accounting independent from mutated gold labels", async () => {
     const loaded = await corpus();
@@ -278,13 +306,13 @@ describe("evidence benchmark", () => {
       expect(task.accounting.completionFooter).toMatch(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, .+ confidence\); quality .+; categories .+\.$/);
     }
     expect(report.sessionAccounting).toMatchObject({ taskCount: 30, toolDefinitionCount: 8 });
-    expect(report.aggregate).toMatchObject({ activatedTaskCount: 28, bypassedTaskCount: 2, nonNegativeActivatedRate: expect.any(Number) });
+    expect(report.aggregate).toMatchObject({ activatedTaskCount: 27, bypassedTaskCount: 3, nonNegativeActivatedRate: expect.any(Number) });
     expect(report.aggregate.taskFailures).toEqual([]);
     expect(report.aggregate.activationCoverage).toMatchObject({
       "code-routing": { activated: 3, bypassed: 2, total: 5, rate: 0.6 },
-      debugging: { activated: 4, bypassed: 0, total: 4, rate: 1 }
+      debugging: { activated: 3, bypassed: 1, total: 4, rate: 0.75 }
     });
-    expect(report.tasks.filter((task) => !task.routing.useTokenGraph).map((task) => task.id)).toEqual(["code-routing-01", "code-routing-04"]);
+    expect(report.tasks.filter((task) => !task.routing.useTokenGraph).map((task) => task.id)).toEqual(["code-routing-01", "code-routing-04", "debugging-01"]);
     expect(report.sessionAccounting.discovery.tools).toHaveLength(8);
     expect(report.sessionAccounting.amortizedDiscoverySetupTokens * report.sessionAccounting.taskCount)
       .toBe(report.sessionAccounting.discoverySetupTokens);
@@ -325,6 +353,7 @@ describe("evidence benchmark", () => {
       corpusVersion: string;
       evidenceVersion: string;
       deltaDelivery: typeof report.deltaDelivery;
+      routerShadow: typeof report.routerShadow;
       aggregate: {
         taskCount: number;
         medianExecutionInclusiveNetSavings: number;
@@ -339,6 +368,7 @@ describe("evidence benchmark", () => {
       corpusVersion: report.corpusVersion,
       evidenceVersion: report.evidenceVersion,
       deltaDelivery: report.deltaDelivery,
+      routerShadow: report.routerShadow,
       aggregate: {
         taskCount: report.aggregate.taskCount,
         medianExecutionInclusiveNetSavings: expect.any(Number),
