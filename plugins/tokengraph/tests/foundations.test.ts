@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { getRepositoryIdentity, repositoryStateDirectory, resolveRepositoryStateDirectory } from "../src/core/repositoryIdentity.js";
+import { composeMemoryContext } from "../src/core/memoryCore.js";
 import { assertStorageReplacementAllowed, enforceStorageClassQuotas, enforceStorageQuota, filterUntrustedSourceText, hardenStoragePermissions, isConfinedStoragePath, purgeStorageClass, purgeTokenGraphStorage, storageClassUsage, storageUsage } from "../src/core/storagePolicy.js";
 
 const execFile = promisify(execFileCallback);
@@ -33,6 +34,31 @@ describe("repository identity and storage foundations", () => {
     expect(identity.worktreeId).toMatch(/^[a-f0-9]{64}$/);
     expect(identity.headCommit).toMatch(/^[a-f0-9]{40}$/);
     expect(await resolveRepositoryStateDirectory(root)).toBe(repositoryStateDirectory(root, resolve(root, ".git")));
+  });
+
+  it("keeps task outcomes on their real Git worktree and branch while sharing repository decisions", async () => {
+    const root = await makeRoot();
+    const featureRoot = `${root}-feature`;
+    roots.push(featureRoot);
+    await execFile("git", ["init", "-q", "-b", "main", root]);
+    await writeFile(join(root, "README.md"), "fixture\n");
+    await execFile("git", ["-C", root, "add", "README.md"]);
+    await execFile("git", ["-C", root, "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "commit", "-qm", "init"]);
+    await execFile("git", ["-C", root, "branch", "feature"]);
+    await execFile("git", ["-C", root, "worktree", "add", "-q", featureRoot, "feature"]);
+
+    const main = await getRepositoryIdentity(root);
+    const feature = await getRepositoryIdentity(featureRoot);
+    const outcomes = [{
+      id: "main-outcome", taskId: "task", summary: "Main-only truth", status: "verified" as const,
+      evidence: ["test"], createdAt: "2026-01-02", branch: main.branch,
+      worktreeId: main.worktreeId, headCommit: main.headCommit
+    }];
+    const shared = ["Repository-scoped reviewed decision"];
+    expect(composeMemoryContext({ repositoryId: main.repositoryId, branch: main.branch, worktreeId: main.worktreeId, outcomes, reviewedDecisions: shared }).outcomes).toHaveLength(1);
+    const featureContext = composeMemoryContext({ repositoryId: feature.repositoryId, branch: feature.branch, worktreeId: feature.worktreeId, outcomes, reviewedDecisions: shared });
+    expect(featureContext.outcomes).toEqual([]);
+    expect(featureContext.reviewedDecisions).toEqual(shared);
   });
 
   it("keeps quota, permissions, purge, confinement, and injection filtering explicit", async () => {

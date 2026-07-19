@@ -92,10 +92,12 @@ describe("bundled skill contracts", () => {
     expect(body).toMatch(/exact taskId/i);
     expect(body).toMatch(/never.*completed.*taskId/is);
     expect(body).toMatch(/lifecycle hook.*normal Stop/i);
+    expect(body).toMatch(/knownArtifacts[\s\S]*id@hash[\s\S]*prior response/i);
+    expect(body).toMatch(/omit.*knownArtifacts[\s\S]*resend/i);
   });
 
   const specialized: Record<string, RegExp[]> = {
-    "graph-context-retrieval": [/When not to use/i, /mode: "overview"/, /mode: "search"/, /mode: "symbol"/, /mode: "sql"/, /mode: "wiki"/, /targeted raw reads/i, /confidence/i],
+    "graph-context-retrieval": [/When not to use/i, /mode: "overview"/, /mode: "search"/, /mode: "symbol"/, /mode: "sql"/, /mode: "wiki"/, /targeted raw reads/i, /confidence/i, /knownArtifacts[\s\S]*id@hash[\s\S]*prior response/i, /omit.*knownArtifacts[\s\S]*resend/i],
     "context-compression": [/When not to use/i, /mode: "output"/, /mode: "context"/, /omissions/i, /constraints/i, /targeted raw reads/i, /omittedLineCount/i, /token estimate/i, /context mode.*confidence/is],
     "token-budget-optimizer": [/When not to use/i, /profile/i, /budgets/i, /task policy/i, /no fixed.*defaults/i, /tokengraph_query_context/, /tokengraph_compress/, /overhead/i, /estimated savings/i, /exact claims/i],
     "root-cause-debugger": [/When not to use/i, /mode: "output"/, /mode: "failure"/, /original failure text/i, /exactly once/i, /returned compressed evidence/i, /not the consumer/i, /tokengraph_query_context/, /facts/i, /hypotheses/i, /regression evidence/i],

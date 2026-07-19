@@ -10,6 +10,10 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      # Zip entry timestamps use local calendar fields; pin UTC so a rebuild
+      # on any machine reproduces the CI asset byte-for-byte.
+      TZ: UTC
     defaults:
       run:
         working-directory: plugins/tokengraph
@@ -62,10 +66,18 @@ jobs:
           set -euo pipefail
           archive=$(node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync("bundle-package.json", "utf8")); if (!value.archivePath) throw new Error("bundle package did not report archivePath"); process.stdout.write(value.archivePath);')
           checksum="${archive}.sha256"
-          sha256sum "$archive" | tee "$checksum"
+          # Write the checksum against the bare filename so users can run
+          # "sha256sum -c" next to the downloaded asset and no runner paths
+          # leak into published files.
+          (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" > "$(basename "$checksum")")
+          cat "$checksum"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
 
+      # The release is created as a DRAFT on purpose: a maintainer reviews the
+      # asset and gate evidence, then clicks Publish. Do not forget that final
+      # step - until it happens, users installing from the latest release get
+      # the previous version.
       - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

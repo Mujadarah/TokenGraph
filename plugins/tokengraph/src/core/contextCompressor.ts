@@ -210,6 +210,6 @@ export async function compressContext(input: ContextCompressionInput): Promise<C
     recommendedFirstReads,
     omissions,
     confidence,
-    estimatedTokens: estimateSavings(originalForEstimate, compactForEstimate)
+    estimatedTokens: estimateSavings(originalForEstimate, compactForEstimate, "provided-context")
   };
 }

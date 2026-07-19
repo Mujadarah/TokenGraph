@@ -1,6 +1,6 @@
 import { compressOutput } from "./compressor.js";
 import { buildContextPlan } from "./planner.js";
-import { estimateTokens, tokenize } from "./token.js";
+import { tokenize } from "./token.js";
 import type { FailureTraceKind, FailureTraceReport, ImportEdge, MemoryEntry, ProjectIndex, RankedFile, RankedSqlObject, TokenSavingProfile } from "./types.js";
 
 const PATH_PATTERN = /(?:[A-Za-z]:[\\/])?[\w@./\\[\]-]+\.(?:ts|tsx|js|jsx|sql)(?::\d+:\d+)?/g;
@@ -204,10 +204,6 @@ export async function traceFailure(input: {
     recommendedFirstReads: firstReads,
     recommendedCommands: recommendedCommands(input.kind, detectedTests, detectedPaths, plan.relevantTests),
     confidence,
-    tokenEstimate: {
-      original: estimateTokens(input.text),
-      compressed: compressedOutput.estimatedTokens.compressed,
-      avoided: compressedOutput.estimatedTokens.avoided
-    }
+    tokenEstimate: compressedOutput.estimatedTokens
   };
 }

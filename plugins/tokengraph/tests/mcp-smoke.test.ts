@@ -879,6 +879,19 @@ describe("TokenGraph MCP stdio server", () => {
       hasIndex: true
     });
 
+    const savings = await request(55, "tools/call", {
+      name: "tokengraph_show_token_savings",
+      arguments: { root }
+    });
+    expect(savings.structuredContent).toMatchObject({
+      baseline: "full-index-dump",
+      baselineTokens: expect.any(Number),
+      compactTokens: expect.any(Number),
+      avoidedVsBaseline: expect.any(Number),
+      unit: "estimated-tokens"
+    });
+    expect(savings.structuredContent).not.toHaveProperty("avoided");
+
     await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummaryNew() { return null; }");
     const incremented = await request(54, "tools/call", {
       name: "tokengraph_index_project",
@@ -1131,7 +1144,7 @@ describe("TokenGraph MCP stdio server", () => {
       recommendedFirstReads: expect.arrayContaining([expect.objectContaining({ path: "services/patientService.ts", startLine: 1 })])
     });
     expect((compressed.structuredContent as { omissions: string[] }).omissions.join("\n")).toMatch(/omitted/i);
-    expect((compressed.structuredContent as { estimatedTokens: { avoided: number } }).estimatedTokens.avoided).toBeGreaterThan(0);
+    expect((compressed.structuredContent as { estimatedTokens: { avoidedVsBaseline: number } }).estimatedTokens.avoidedVsBaseline).toBeGreaterThan(0);
     expect((compressed.structuredContent as { confidence: string }).confidence).toMatch(/medium|high/);
   });
 

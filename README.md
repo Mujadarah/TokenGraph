@@ -34,7 +34,7 @@ codex
 TOKENGRAPH_WORKSPACE_ROOT="$PWD" codex
 ```
 
-Start a new task after installation or configuration changes. In Codex Desktop, the task must receive MCP Roots from the host or the app must be launched with `TOKENGRAPH_WORKSPACE_ROOT` already configured. TokenGraph deliberately stays blocked rather than trusting an arbitrary tool argument.
+Start a new task after installation or configuration changes. In Codex Desktop, the task should receive MCP Roots from the host or the app should be launched with `TOKENGRAPH_WORKSPACE_ROOT` already configured. During development launches, the process working directory is the final host-derived fallback only when the server is not running from an installed plugin directory. Installed plugin launches deliberately stay blocked rather than trusting an arbitrary tool argument.
 
 ### Claude Code
 
@@ -102,9 +102,11 @@ TokenGraph exposes eight compact intent-level tools by default and 42 tools on t
 
 See the [source plugin guide](plugins/tokengraph/README.md) for the complete tool catalog.
 
+TokenGraph indexes TypeScript, JavaScript, SQL, and Markdown by default. Pinned Tree-sitter WASM grammars for Python, Go, Rust, and Java ship with the plugin, but their indexing remains dark until a complete passing B6 paired evaluation records promotion evidence.
+
 ## Current behavior and evidence
 
-Every measured task has one canonical completion footer backed by a task ledger. JSON-only MCP successes return one serialized JSON `TextContent` item; `tokengraph_export_project_map` remains the documented resource-link exception. Wiki and memory updates use source-linked review-before-apply proposals: listing and proposing do not mutate derived knowledge. Approval requires at least one workspace-relative path whose canonical LF-normalized SHA-256 fingerprint is revalidated; stable logical ids remain expiring, attested/unverifiable snapshots and never become current or high-confidence. ID-only and legacy bare-fingerprint proposals cannot be approved, and stale or expired proposals fail.
+Every measured task has one canonical completion footer backed by a task ledger. JSON-only MCP successes return one serialized JSON `TextContent` item; `tokengraph_export_project_map` remains the documented resource-link exception. Diagnostic token estimates identify their baseline in the response: `full-index-dump`, `task-files-and-memories`, `provided-context`, or `provided-output`. They are not substitutes for the execution-inclusive benchmark. Wiki and memory updates use source-linked review-before-apply proposals: listing and proposing do not mutate derived knowledge. Approval requires at least one workspace-relative path whose canonical LF-normalized SHA-256 fingerprint is revalidated; stable logical ids remain expiring, attested/unverifiable snapshots and never become current or high-confidence. ID-only and legacy bare-fingerprint proposals cannot be approved, and stale or expired proposals fail.
 
 The checked-in 30-task benchmark preserves 100% of critical constraints, has zero critical false negatives, and reaches 100% required-file recall. Two narrowly bounded code tasks bypass at Stage 0 and are not booked as savings. Across the 28 activated tasks, the primary execution-inclusive median is +196.5 estimated tokens, the nearest-rank p25 is +102.5, and 23 tasks (82.1%) are non-negative, so the frozen deterministic release gate passes. The baseline is category-appropriate: minimal expert raw reads for code, SQL, risk, memory, and release tasks, and real noisy runner captures for debugging and compression. Memory/wiki remains negative in three of four fixtures and change risk in two of four; negative tails are not hidden. Every category still has fewer than 10 observations, so calibration confidence remains low. These fixture estimates are not provider billing counts, autonomous-agent patch-quality evidence, or universal Codex/Claude proof; enforced routing still requires a complete passing B6 paired host evaluation.
 
