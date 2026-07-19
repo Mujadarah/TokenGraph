@@ -13,7 +13,7 @@ export interface RepositoryIdentity {
 
 export interface EvidenceStatement {
   text: string;
-  evidenceClass: "indexed" | "capsule" | "exact-slice" | "runtime" | "heuristic" | "untrusted";
+  evidenceClass: "exact" | "derived" | "indexed" | "capsule" | "exact-slice" | "runtime" | "heuristic" | "untrusted";
   confidence: "low" | "medium" | "high";
   source: string;
   untrustedSourceText?: string;

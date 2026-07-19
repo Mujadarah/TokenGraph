@@ -41,7 +41,7 @@ import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } f
 import { adviseRouting, failOpenRouting } from "./core/routingAdvisor.js";
 import { isValidatedPromotion, loadRoutingControl } from "./core/routingControl.js";
 import { getRepositoryIdentity, getRepositorySetupWarnings } from "./core/repositoryIdentity.js";
-import { buildRetrievalCapsule, capsuleArtifact, escalateReadPolicy, rankFilesBm25, readExactSlice, recommendExactRead, startReadPolicyResponse } from "./core/retrieval.js";
+import { buildEvidenceBackedSliceRecommendation, buildRetrievalCapsule, capsuleArtifact, escalateReadPolicy, rankFilesBm25, readExactSlice, recommendExactRead, startReadPolicyResponse } from "./core/retrieval.js";
 import { loadRun, summarizeRun } from "./core/runner.js";
 import { assertStorageReplacementAllowed, enforceStorageClassQuotas } from "./core/storagePolicy.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
@@ -625,7 +625,7 @@ function recommendedExactRead(plan: ContextPlan, project: ProjectIndex) {
   if (!first || first.startLine === undefined || first.endLine === undefined) return undefined;
   const file = project.files.find((candidate) => candidate.path === first.path);
   if (!file) return undefined;
-  return { mode: "slice" as const, file: first.path, startLine: first.startLine, endLine: first.endLine, contentHash: file.contentHash };
+  return buildEvidenceBackedSliceRecommendation(first.path, first.startLine, first.endLine, file.contentHash);
 }
 
 export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWorkspaceProvider } = {}): McpServer {
@@ -835,8 +835,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         repositoryId: identity.repositoryId,
         sourceFingerprint: project.fingerprint,
         sections: [
-          { id: "frameworks", text: project.frameworks.join(", ") },
-          { id: "first-reads", text: plan.recommendedFirstReads.map((file) => file.path).join("\n") }
+          { id: "frameworks", text: project.frameworks.join(", "), evidenceClass: "indexed", confidence: "high", source: "index:project-frameworks" },
+          { id: "first-reads", text: plan.recommendedFirstReads.map((file) => file.path).join("\n"), evidenceClass: "derived", confidence: "high", source: "planner:recommended-first-reads" }
         ]
       }, Math.max(150, Math.min(config.memory.projectBriefTargetTokens, config.memory.projectBriefMaxTokens)));
       const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost()) });
@@ -854,13 +854,17 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const memoryContext = composeMemoryContext({
         repositoryId: identity.repositoryId,
         worktreeId: identity.worktreeId,
+        branch: identity.branch,
         sourceFingerprint: project.fingerprint,
         projectBrief,
         indexedFacts: project.files.slice(0, config.maxFiles).map((file) => `${file.path}:${file.language}`),
         capsules: [capsuleStableArtifact.hash],
-        reviewedDecisions: appliedKnowledge.map((entry) => `${entry.title}: ${entry.proposedContent}`),
+        reviewedDecisions: [
+          ...appliedKnowledge.map((entry) => `${entry.title}: ${entry.proposedContent}`),
+          ...memories.filter((memory) => Boolean(memory.confirmedAt)).map((memory) => `${memory.title}: ${memory.body}`)
+        ],
         maxTokens: config.memory.maxRetrievalTokens,
-        outcomes: memories.filter((memory) => Boolean(memory.confirmedAt)).map((memory) => ({ id: memory.id, taskId: memory.id, summary: memory.title, status: "verified" as const, evidence: memory.evidence, createdAt: memory.createdAt, sourceFingerprint: project.fingerprint }))
+        outcomes: []
       });
       if (memories.length) {
         const vaultNotes = projectToVault(memories.map((memory) => ({ id: memory.id, title: memory.title, body: memory.body, links: memory.linkedFiles, archived: memory.status !== "active", updatedAt: memory.updatedAt })));

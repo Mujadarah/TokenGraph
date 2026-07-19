@@ -102,6 +102,13 @@ describe("evidence benchmark", () => {
       qualityResult: expect.stringMatching(/^(passed|failed)$/),
       failureReasons: expect.any(Array)
     });
+    expect(report.deltaDelivery).toMatchObject({
+      defaultAssumption: "no-handshake",
+      noHandshake: { knownArtifactsProvided: false, savedTokens: 0, deliveredTokens: expect.any(Number) },
+      handshake: { knownArtifactsProvided: true, savedTokens: expect.any(Number), deliveredTokens: expect.any(Number) }
+    });
+    expect(report.deltaDelivery.noHandshake.deliveredTokens).toBeGreaterThan(report.deltaDelivery.handshake.deliveredTokens);
+    expect(report.deltaDelivery.handshake.savedTokens).toBeGreaterThan(0);
   });
 
   it("keeps core evidence and accounting independent from mutated gold labels", async () => {
@@ -317,6 +324,7 @@ describe("evidence benchmark", () => {
       schemaId: string;
       corpusVersion: string;
       evidenceVersion: string;
+      deltaDelivery: typeof report.deltaDelivery;
       aggregate: {
         taskCount: number;
         medianExecutionInclusiveNetSavings: number;
@@ -330,6 +338,7 @@ describe("evidence benchmark", () => {
       schemaId: "tokengraph-published-benchmark-results",
       corpusVersion: report.corpusVersion,
       evidenceVersion: report.evidenceVersion,
+      deltaDelivery: report.deltaDelivery,
       aggregate: {
         taskCount: report.aggregate.taskCount,
         medianExecutionInclusiveNetSavings: expect.any(Number),

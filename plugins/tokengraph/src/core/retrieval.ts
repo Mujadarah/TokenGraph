@@ -4,13 +4,17 @@ import { open } from "node:fs/promises";
 import { artifactKey, createStableArtifact, shouldSuppressArtifact, type StableArtifact } from "./artifact.js";
 import { canonicalHash } from "./canonical.js";
 import { resolveConfinedPath } from "./storage.js";
-import type { CodeFile, CodeSymbol, ProjectIndex } from "./types.js";
+import type { CodeFile, CodeSymbol, EvidenceStatement, ProjectIndex } from "./types.js";
+
+type FileStatement = Pick<CodeFile, "path" | "kind" | "language" | "estimatedTokens" | "contentHash"> & EvidenceStatement;
+type SymbolStatement = Pick<CodeSymbol, "name" | "kind" | "filePath" | "exported" | "startLine" | "endLine"> & EvidenceStatement;
+type ReferenceStatement = { path: string } & EvidenceStatement;
 
 export interface RetrievalCapsule {
   query: string;
-  files: Array<Pick<CodeFile, "path" | "kind" | "language" | "estimatedTokens" | "contentHash">>;
-  symbols: Array<Pick<CodeSymbol, "name" | "kind" | "filePath" | "exported" | "startLine" | "endLine">>;
-  references: string[];
+  files: FileStatement[];
+  symbols: SymbolStatement[];
+  references: ReferenceStatement[];
   hash: string;
 }
 
@@ -49,6 +53,16 @@ export interface ExactReadRecommendation {
   allowed: boolean;
   reason: string;
   state: ReadPolicyState;
+}
+
+export function buildEvidenceBackedSliceRecommendation(path: string, startLine: number, endLine: number, contentHash: string) {
+  return {
+    mode: "slice" as const, file: path, startLine, endLine, contentHash,
+    text: `Read the indexed symbol range ${path}:${startLine}-${endLine}.`,
+    evidenceClass: "derived" as const,
+    confidence: "high" as const,
+    source: `index:symbol-range:${path}@${contentHash}:${startLine}-${endLine}`
+  };
 }
 
 function terms(value: string): string[] {
@@ -98,15 +112,35 @@ export function expandGraph(index: ProjectIndex, paths: string[], depth = 1): st
 
 export function buildRetrievalCapsule(_taskId: string, query: string, index: ProjectIndex, paths: string[] = [], graphDepth = 1): RetrievalCapsule {
   const selectedPaths = new Set(paths.length ? paths : rankFilesBm25(index, query, 8).map((entry) => entry.path));
-  const files = index.files.filter((file) => selectedPaths.has(file.path)).map(({ path, kind, language, estimatedTokens, contentHash }) => ({ path, kind, language, estimatedTokens, contentHash }));
-  const symbols = index.symbols.filter((symbol) => selectedPaths.has(symbol.filePath)).map(({ name, kind, filePath, exported, startLine, endLine }) => ({ name, kind, filePath, exported, ...(startLine === undefined ? {} : { startLine }), ...(endLine === undefined ? {} : { endLine }) }));
-  const references = expandGraph(index, [...selectedPaths], graphDepth);
+  const files = index.files.filter((file) => selectedPaths.has(file.path)).map(({ path, kind, language, estimatedTokens, contentHash }) => ({
+    path, kind, language, estimatedTokens, contentHash,
+    text: `${path} is an indexed ${language} ${kind} (${estimatedTokens} estimated tokens).`,
+    evidenceClass: "indexed" as const,
+    confidence: "high" as const,
+    source: `index:file:${path}@${contentHash}`
+  }));
+  const symbols = index.symbols.filter((symbol) => selectedPaths.has(symbol.filePath)).map(({ name, kind, filePath, exported, startLine, endLine }) => ({
+    name, kind, filePath, exported,
+    ...(startLine === undefined ? {} : { startLine }),
+    ...(endLine === undefined ? {} : { endLine }),
+    text: `${name} is an indexed ${kind} in ${filePath}${startLine === undefined ? "." : ` at lines ${startLine}-${endLine ?? startLine}.`}`,
+    evidenceClass: "indexed" as const,
+    confidence: startLine === undefined ? "medium" as const : "high" as const,
+    source: `index:symbol:${filePath}:${name}${startLine === undefined ? "" : `:${startLine}-${endLine ?? startLine}`}`
+  }));
+  const references = expandGraph(index, [...selectedPaths], graphDepth).map((path) => ({
+    path,
+    text: `${path} is reachable from the selected files in the indexed import graph.`,
+    evidenceClass: "derived" as const,
+    confidence: "high" as const,
+    source: `index:import-graph:${path}`
+  }));
   const content = { query, files, symbols, references };
   return { ...content, hash: canonicalHash(content) };
 }
 
 export function capsuleArtifact(capsule: RetrievalCapsule): StableArtifact<RetrievalCapsule> {
-  return createStableArtifact("capsule/retrieval", capsule, 2);
+  return createStableArtifact("capsule/retrieval", capsule, 3);
 }
 
 export async function readExactSlice(root: string, path: string, startLine: number, endLine: number, maxBytes = 64 * 1024, expectedContentHash?: string, maxSourceBytes = 512 * 1024): Promise<{ path: string; startLine: number; endLine: number; text: string; hash: string; contentHash: string }> {

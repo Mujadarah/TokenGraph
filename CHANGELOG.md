@@ -5,6 +5,9 @@
 - Replaced ambiguous live token-savings response fields with explicit baseline labels and `avoidedVsBaseline` accounting.
 - Documented workspace trust precedence, default indexing coverage, and promotion-gated WASM language support.
 - Clarified hook-state and packaged-permission implementation locations inline.
+- Added explicit evidence class, confidence, and source provenance to retrieval capsules, project briefs, and edit-read recommendations.
+- Scoped verified task-outcome recall to the current Git branch and worktree while retaining repository-scoped reviewed decisions.
+- Documented the `knownArtifacts` retention handshake and added separate delta-delivery economics for safe resend and confirmed-hash assumptions.
 
 ## 0.21.1 - 2026-07-16
 

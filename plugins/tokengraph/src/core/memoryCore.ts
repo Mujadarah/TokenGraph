@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { filterUntrustedSourceText } from "./storagePolicy.js";
 import { estimateTokens } from "./token.js";
+import type { EvidenceStatement } from "./types.js";
 
 export type MemoryScope = "user" | "repository" | "worktree" | "task";
 
@@ -24,19 +25,23 @@ export interface TaskOutcome {
   createdAt: string;
   staleAt?: string;
   sourceFingerprint?: string;
+  branch: string;
+  worktreeId: string;
+  headCommit: string;
 }
 
 export interface ProjectBrief {
   repositoryId: string;
   sourceFingerprint: string;
   generatedAt: string;
-  sections: Array<{ id: string; text: string; estimatedTokens: number }>;
+  sections: Array<{ id: string; estimatedTokens: number } & EvidenceStatement>;
   estimatedTokens: number;
 }
 
 export interface MemoryContextInput {
   repositoryId: string;
   worktreeId?: string;
+  branch?: string;
   taskId?: string;
   sourceFingerprint?: string;
   preferences?: ScopedPreference[];
@@ -65,19 +70,22 @@ export function filterScopedPreferences(preferences: ScopedPreference[], input: 
   )).sort((a, b) => a.scope.localeCompare(b.scope) || a.key.localeCompare(b.key) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export function verifiedOutcomes(outcomes: TaskOutcome[], sourceFingerprint?: string, now = new Date()): TaskOutcome[] {
-  return outcomes.filter((outcome) => outcome.status === "verified" && !isExpired(outcome, now) && (!sourceFingerprint || !outcome.sourceFingerprint || outcome.sourceFingerprint === sourceFingerprint))
+export function verifiedOutcomes(outcomes: TaskOutcome[], scope: Pick<MemoryContextInput, "sourceFingerprint" | "branch" | "worktreeId"> = {}, now = new Date()): TaskOutcome[] {
+  return outcomes.filter((outcome) => outcome.status === "verified" && !isExpired(outcome, now) &&
+      (!scope.sourceFingerprint || !outcome.sourceFingerprint || outcome.sourceFingerprint === scope.sourceFingerprint) &&
+      (!scope.branch || outcome.branch === scope.branch) &&
+      (!scope.worktreeId || outcome.worktreeId === scope.worktreeId))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
 }
 
-export function buildAdaptiveProjectBrief(input: { repositoryId: string; sourceFingerprint: string; generatedAt?: string; sections: Array<{ id: string; text: string }> }, maxTokens = 800): ProjectBrief {
+export function buildAdaptiveProjectBrief(input: { repositoryId: string; sourceFingerprint: string; generatedAt?: string; sections: Array<{ id: string } & EvidenceStatement> }, maxTokens = 800): ProjectBrief {
   const selected: ProjectBrief["sections"] = [];
   let used = 0;
   for (const section of [...input.sections].sort((a, b) => a.id.localeCompare(b.id))) {
     const text = filterUntrustedSourceText(section.text).trim();
     const tokens = estimateTokens(text);
     if (!text || used + tokens > maxTokens) continue;
-    selected.push({ id: section.id, text, estimatedTokens: tokens });
+    selected.push({ id: section.id, text, evidenceClass: section.evidenceClass, confidence: section.confidence, source: section.source, estimatedTokens: tokens });
     used += tokens;
   }
   return { repositoryId: input.repositoryId, sourceFingerprint: input.sourceFingerprint, generatedAt: input.generatedAt ?? new Date().toISOString(), sections: selected, estimatedTokens: used };
@@ -85,7 +93,7 @@ export function buildAdaptiveProjectBrief(input: { repositoryId: string; sourceF
 
 export function composeMemoryContext(input: MemoryContextInput): { preferences: ScopedPreference[]; indexedFacts: string[]; capsules: string[]; reviewedDecisions: string[]; outcomes: TaskOutcome[]; projectBrief?: ProjectBrief; estimatedTokens: number; contextId: string } {
   const preferences = filterScopedPreferences(input.preferences ?? [], input);
-  const outcomes = verifiedOutcomes(input.outcomes ?? [], input.sourceFingerprint);
+  const outcomes = verifiedOutcomes(input.outcomes ?? [], input);
   const projectBrief = input.projectBrief && (!input.sourceFingerprint || input.projectBrief.sourceFingerprint === input.sourceFingerprint) ? input.projectBrief : undefined;
   const indexedFacts = Array.from(new Set((input.indexedFacts ?? []).filter((value) => value.trim()))).slice(0, 50);
   const capsules = Array.from(new Set((input.capsules ?? []).filter((value) => value.trim()))).slice(0, 20);
