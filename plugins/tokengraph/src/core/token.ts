@@ -1,3 +1,5 @@
+import type { TokenEstimate, TokenEstimateBaseline } from "./types.js";
+
 const DENSE_SCRIPT_CHARACTER = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u;
 const PICTOGRAPHIC_CHARACTER = /\p{Extended_Pictographic}/u;
 
@@ -17,13 +19,15 @@ export function estimateTokens(text: string): number {
   return Math.max(1, denseCharacters + Math.ceil(regularCharacters / 4));
 }
 
-export function estimateSavings(originalText: string, compressedText: string) {
-  const original = estimateTokens(originalText);
-  const compressed = estimateTokens(compressedText);
+export function estimateSavings(baselineText: string, compactText: string, baseline: TokenEstimateBaseline): TokenEstimate {
+  const baselineTokens = estimateTokens(baselineText);
+  const compactTokens = estimateTokens(compactText);
   return {
-    original,
-    compressed,
-    avoided: Math.max(0, original - compressed)
+    baseline,
+    baselineTokens,
+    compactTokens,
+    avoidedVsBaseline: Math.max(0, baselineTokens - compactTokens),
+    unit: "estimated-tokens"
   };
 }
 

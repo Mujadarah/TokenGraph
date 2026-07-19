@@ -27,6 +27,19 @@
     "requiredFileRecall": 1,
     "baselineLabel": "category-appropriate"
   },
+  "deltaDelivery": {
+    "defaultAssumption": "no-handshake",
+    "noHandshake": {
+      "knownArtifactsProvided": false,
+      "deliveredTokens": 6288,
+      "savedTokens": 0
+    },
+    "handshake": {
+      "knownArtifactsProvided": true,
+      "deliveredTokens": 846,
+      "savedTokens": 5442
+    }
+  },
   "releaseGate": {
     "passed": true,
     "failureReasons": []

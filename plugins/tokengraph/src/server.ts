@@ -41,7 +41,7 @@ import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } f
 import { adviseRouting, failOpenRouting } from "./core/routingAdvisor.js";
 import { isValidatedPromotion, loadRoutingControl } from "./core/routingControl.js";
 import { getRepositoryIdentity, getRepositorySetupWarnings } from "./core/repositoryIdentity.js";
-import { buildRetrievalCapsule, capsuleArtifact, escalateReadPolicy, rankFilesBm25, readExactSlice, recommendExactRead, startReadPolicyResponse } from "./core/retrieval.js";
+import { buildEvidenceBackedSliceRecommendation, buildRetrievalCapsule, capsuleArtifact, escalateReadPolicy, rankFilesBm25, readExactSlice, recommendExactRead, startReadPolicyResponse } from "./core/retrieval.js";
 import { loadRun, summarizeRun } from "./core/runner.js";
 import { assertStorageReplacementAllowed, enforceStorageClassQuotas } from "./core/storagePolicy.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
@@ -625,7 +625,7 @@ function recommendedExactRead(plan: ContextPlan, project: ProjectIndex) {
   if (!first || first.startLine === undefined || first.endLine === undefined) return undefined;
   const file = project.files.find((candidate) => candidate.path === first.path);
   if (!file) return undefined;
-  return { mode: "slice" as const, file: first.path, startLine: first.startLine, endLine: first.endLine, contentHash: file.contentHash };
+  return buildEvidenceBackedSliceRecommendation(first.path, first.startLine, first.endLine, file.contentHash);
 }
 
 export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWorkspaceProvider } = {}): McpServer {
@@ -835,8 +835,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         repositoryId: identity.repositoryId,
         sourceFingerprint: project.fingerprint,
         sections: [
-          { id: "frameworks", text: project.frameworks.join(", ") },
-          { id: "first-reads", text: plan.recommendedFirstReads.map((file) => file.path).join("\n") }
+          { id: "frameworks", text: project.frameworks.join(", "), evidenceClass: "indexed", confidence: "high", source: "index:project-frameworks" },
+          { id: "first-reads", text: plan.recommendedFirstReads.map((file) => file.path).join("\n"), evidenceClass: "derived", confidence: "high", source: "planner:recommended-first-reads" }
         ]
       }, Math.max(150, Math.min(config.memory.projectBriefTargetTokens, config.memory.projectBriefMaxTokens)));
       const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost()) });
@@ -854,13 +854,17 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const memoryContext = composeMemoryContext({
         repositoryId: identity.repositoryId,
         worktreeId: identity.worktreeId,
+        branch: identity.branch,
         sourceFingerprint: project.fingerprint,
         projectBrief,
         indexedFacts: project.files.slice(0, config.maxFiles).map((file) => `${file.path}:${file.language}`),
         capsules: [capsuleStableArtifact.hash],
-        reviewedDecisions: appliedKnowledge.map((entry) => `${entry.title}: ${entry.proposedContent}`),
+        reviewedDecisions: [
+          ...appliedKnowledge.map((entry) => `${entry.title}: ${entry.proposedContent}`),
+          ...memories.filter((memory) => Boolean(memory.confirmedAt)).map((memory) => `${memory.title}: ${memory.body}`)
+        ],
         maxTokens: config.memory.maxRetrievalTokens,
-        outcomes: memories.filter((memory) => Boolean(memory.confirmedAt)).map((memory) => ({ id: memory.id, taskId: memory.id, summary: memory.title, status: "verified" as const, evidence: memory.evidence, createdAt: memory.createdAt, sourceFingerprint: project.fingerprint }))
+        outcomes: []
       });
       if (memories.length) {
         const vaultNotes = projectToVault(memories.map((memory) => ({ id: memory.id, title: memory.title, body: memory.body, links: memory.linkedFiles, archived: memory.status !== "active", updatedAt: memory.updatedAt })));
@@ -1047,7 +1051,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       return withTaskIntent(root, taskId, async (task) => {
       const resolvedRoot = task.root;
       let result: object;
-      let estimates: { original: number; compressed: number; avoided: number };
+      let estimates: { baselineTokens: number };
       if (mode === "output") {
         const { kind, text, maxLines } = input;
         const compressed = compressOutput({ kind: kind!, text: text!, maxLines });
@@ -1072,7 +1076,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       let compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
       if (includeEstimates) {
         for (let attempt = 0; attempt < 3; attempt += 1) {
-          returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.original, compact: compactTokens, overhead: overheadTokens });
+          returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.baselineTokens, compact: compactTokens, overhead: overheadTokens });
           const measured = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
           if (measured === compactTokens) break;
           compactTokens = measured;
@@ -1081,7 +1085,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       await recordCoreEvent({
         root: resolvedRoot, taskId: task.taskId, toolName: "tokengraph_compress", category,
         operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash("sha256").update(`${"task" in input ? input.task : ""}\n${input.text ?? ""}`).digest("hex") },
-        originalTokens: estimates.original, compactTokens, overheadTokens
+        originalTokens: estimates.baselineTokens, compactTokens, overheadTokens
       });
       return ok(task.autoStarted ? { ...returnedResponse, taskId: task.taskId } : returnedResponse);
       });
@@ -2078,15 +2082,21 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     "tokengraph_show_token_savings",
     {
       title: "Show Token Savings",
-      description: "Use this to estimate how many tokens TokenGraph avoided by using the compact local index.",
+      description: "Use this to compare the compact local index with an explicitly labeled full-index-dump baseline.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({ root: z.string().optional() })
     },
     async ({ root }) => {
       const project = await ensureProject(await workspaceRoot(root));
-      const original = project.files.reduce((total, file) => total + file.estimatedTokens, 0);
-      const compact = estimateTokens(compactJson(projectMap(project)));
-      return ok({ original, compact, avoided: Math.max(0, original - compact), unit: "estimated tokens" });
+      const baselineTokens = project.files.reduce((total, file) => total + file.estimatedTokens, 0);
+      const compactTokens = estimateTokens(compactJson(projectMap(project)));
+      return ok({
+        baseline: "full-index-dump",
+        baselineTokens,
+        compactTokens,
+        avoidedVsBaseline: Math.max(0, baselineTokens - compactTokens),
+        unit: "estimated-tokens"
+      });
     }
   );
   }

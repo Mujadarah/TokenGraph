@@ -1466,7 +1466,15 @@ describe("buildContextPlan", () => {
 
     expect(plan.relevantFiles.length).toBeLessThan(6);
     expect(plan.budgetExclusions).toEqual(expect.arrayContaining([expect.stringMatching(/estimated context budget/i)]));
-    expect(plan.estimatedTokens.compressed).toBeGreaterThan(0);
+    expect(plan.estimatedTokens).toMatchObject({
+      baseline: "full-index-dump",
+      baselineTokens: expect.any(Number),
+      compactTokens: expect.any(Number),
+      avoidedVsBaseline: expect.any(Number),
+      unit: "estimated-tokens"
+    });
+    expect(plan.estimatedTokens.compactTokens).toBeGreaterThan(0);
+    expect(plan.estimatedTokens).not.toHaveProperty("avoided");
   });
 
   it("plans context from the Next.js Supabase fixture project", async () => {
@@ -1525,7 +1533,7 @@ describe("buildContextPlan", () => {
     expect(plan.relevantTests.map((item) => item.path)).toContain("services/patientService.test.ts");
     expect(plan.relevantSql.map((item) => item.name)).toContain("public.patients");
     expect(plan.relevantMemories.map((item) => item.title)).toContain("Patient summaries stay tenant scoped");
-    expect(plan.estimatedTokens.avoided).toBeGreaterThanOrEqual(0);
+    expect(plan.estimatedTokens.avoidedVsBaseline).toBeGreaterThanOrEqual(0);
     expect(plan.rawReadPolicy).toMatch(/targeted/i);
   });
 
@@ -1676,7 +1684,15 @@ describe("compressOutput", () => {
     expect(compressed.summary).toContain("patientService.test.ts");
     expect(compressed.keyLines).toContain("AssertionError: expected 2 to be 1");
     expect(compressed.keyLines).toContain("at services/patientService.test.ts:42:15");
-    expect(compressed.estimatedTokens.avoided).toBeGreaterThanOrEqual(0);
+    expect(compressed.estimatedTokens).toMatchObject({
+      baseline: "provided-output",
+      baselineTokens: expect.any(Number),
+      compactTokens: expect.any(Number),
+      avoidedVsBaseline: expect.any(Number),
+      unit: "estimated-tokens"
+    });
+    expect(compressed.estimatedTokens.avoidedVsBaseline).toBeGreaterThanOrEqual(0);
+    expect(compressed.estimatedTokens).not.toHaveProperty("avoided");
   });
 
   it("deduplicates actionable lines without quadratic Array index scans", () => {
@@ -1700,7 +1716,7 @@ describe("compressOutput", () => {
     });
 
     expect(compressed.keyLines).toContain("Tests  2 failed | 30 passed");
-    expect(compressed.estimatedTokens.avoided).toBeGreaterThanOrEqual(0);
+    expect(compressed.estimatedTokens.avoidedVsBaseline).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -1794,7 +1810,14 @@ describe("compressContext", () => {
     expect(compressed.referencedMemories).toEqual(expect.arrayContaining([expect.objectContaining({ title: "Patient RLS failures keep exact test output" })]));
     expect(compressed.recommendedFirstReads).toEqual(expect.arrayContaining([expect.objectContaining({ path: "services/patientService.ts", startLine: 1 })]));
     expect(compressed.omissions.join("\n")).toMatch(/omitted/i);
-    expect(compressed.estimatedTokens.avoided).toBeGreaterThan(0);
+    expect(compressed.estimatedTokens).toMatchObject({
+      baseline: "provided-context",
+      baselineTokens: expect.any(Number),
+      compactTokens: expect.any(Number),
+      avoidedVsBaseline: expect.any(Number),
+      unit: "estimated-tokens"
+    });
+    expect(compressed.estimatedTokens.avoidedVsBaseline).toBeGreaterThan(0);
     expect(compressed.confidence).toMatch(/medium|high/);
   });
 });
@@ -1872,7 +1895,11 @@ describe("traceFailure", () => {
       expect.arrayContaining([expect.objectContaining({ path: "services/patientService.ts", startLine: 1 })])
     );
     expect(trace.recommendedCommands).toEqual(expect.arrayContaining(["pnpm test -- services/patientService.test.ts"]));
-    expect(trace.tokenEstimate.avoided).toBeGreaterThanOrEqual(0);
+    expect(trace.tokenEstimate).toMatchObject({
+      baseline: "provided-output",
+      avoidedVsBaseline: expect.any(Number)
+    });
+    expect(trace.tokenEstimate.avoidedVsBaseline).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -2000,7 +2027,15 @@ describe("assessChangeRisk", () => {
     expect(report.affectedMemories).toEqual(expect.arrayContaining([expect.objectContaining({ title: "Patient tenant scoping is fragile" })]));
     expect(report.recommendedTests).toEqual(expect.arrayContaining(["pnpm test -- src/services/patientService.test.ts"]));
     expect(report.manualReviewWarnings.join("\n")).toMatch(/tenant isolation|RLS|audit/i);
-    expect(report.tokenEstimate.avoided).toBeGreaterThanOrEqual(0);
+    expect(report.tokenEstimate).toMatchObject({
+      baseline: "task-files-and-memories",
+      baselineTokens: expect.any(Number),
+      compactTokens: expect.any(Number),
+      avoidedVsBaseline: expect.any(Number),
+      unit: "estimated-tokens"
+    });
+    expect(report.tokenEstimate.avoidedVsBaseline).toBeGreaterThanOrEqual(0);
+    expect(report.tokenEstimate).not.toHaveProperty("avoided");
   });
 });
 

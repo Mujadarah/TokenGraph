@@ -271,6 +271,23 @@ describe("tokengraph benchmark harness and trust docs", () => {
     expect(trustText).toMatch(/does not replace code review/i);
     expect(trustText).toMatch(/does not guarantee correctness/i);
     expect(trustText).toMatch(/not a clinical, legal, or regulated-domain decision system/i);
+
+    const securityText = await readFile(resolve(repoRoot, "docs", "trust", "security.md"), "utf8");
+    const trustSources = ["CLAUDE_PROJECT_DIR", "TOKENGRAPH_WORKSPACE_ROOT", "MCP Roots", "process working directory"];
+    const trustPositions = trustSources.map((source) => securityText.indexOf(source));
+    expect(trustPositions.every((position) => position >= 0)).toBe(true);
+    expect(trustPositions).toEqual([...trustPositions].sort((left, right) => left - right));
+    expect(securityText).toMatch(/process working directory.*not running from an installed plugin directory/is);
+
+    const readme = await readFile(resolve(repoRoot, "README.md"), "utf8");
+    expect(readme).toMatch(/indexes TypeScript, JavaScript, SQL, and Markdown/i);
+    expect(readme).toMatch(/WASM.*promotion|promotion.*WASM/is);
+    expect(readme).toMatch(/process working directory.*not running from an installed plugin directory/is);
+
+    const hooksSource = await readFile(resolve("src", "hooks.ts"), "utf8");
+    expect(hooksSource).toMatch(/host plugin-data directory.*not.*workspace.*\.tokengraph/i);
+    const buildSource = await readFile(resolve("scripts", "build.mjs"), "utf8");
+    expect(buildSource).toMatch(/package-plugin\.mjs.*normalizes.*permissions/i);
   });
 });
 

@@ -90,6 +90,7 @@ await Promise.all([
 ]);
 
 // Release entry points are executable on POSIX hosts; Windows ignores this mode.
+// package-plugin.mjs normalizes packaged file permissions for deterministic archives.
 await chmod(resolve(pluginRoot, "dist", "index.js"), 0o755);
 await chmod(resolve(pluginRoot, "dist", "hooks.js"), 0o755);
 await chmod(resolve(pluginRoot, "dist", "cli.js"), 0o755);

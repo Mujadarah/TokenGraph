@@ -20648,13 +20648,15 @@ function estimateTokens(text) {
   }
   return Math.max(1, denseCharacters + Math.ceil(regularCharacters / 4));
 }
-function estimateSavings(originalText, compressedText) {
-  const original = estimateTokens(originalText);
-  const compressed = estimateTokens(compressedText);
+function estimateSavings(baselineText, compactText, baseline) {
+  const baselineTokens = estimateTokens(baselineText);
+  const compactTokens = estimateTokens(compactText);
   return {
-    original,
-    compressed,
-    avoided: Math.max(0, original - compressed)
+    baseline,
+    baselineTokens,
+    compactTokens,
+    avoidedVsBaseline: Math.max(0, baselineTokens - compactTokens),
+    unit: "estimated-tokens"
   };
 }
 function tokenize(text) {
@@ -20678,8 +20680,8 @@ function idFor(value) {
 function filterScopedPreferences(preferences, input, now = /* @__PURE__ */ new Date()) {
   return preferences.filter((preference) => !isExpired(preference, now) && (preference.scope === "user" || preference.scope === "repository" && preference.scopeId === input.repositoryId || preference.scope === "worktree" && preference.scopeId === input.worktreeId || preference.scope === "task" && preference.scopeId === input.taskId)).sort((a, b) => a.scope.localeCompare(b.scope) || a.key.localeCompare(b.key) || b.updatedAt.localeCompare(a.updatedAt));
 }
-function verifiedOutcomes(outcomes, sourceFingerprint, now = /* @__PURE__ */ new Date()) {
-  return outcomes.filter((outcome) => outcome.status === "verified" && !isExpired(outcome, now) && (!sourceFingerprint || !outcome.sourceFingerprint || outcome.sourceFingerprint === sourceFingerprint)).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+function verifiedOutcomes(outcomes, scope = {}, now = /* @__PURE__ */ new Date()) {
+  return outcomes.filter((outcome) => outcome.status === "verified" && !isExpired(outcome, now) && (!scope.sourceFingerprint || !outcome.sourceFingerprint || outcome.sourceFingerprint === scope.sourceFingerprint) && (!scope.branch || outcome.branch === scope.branch) && (!scope.worktreeId || outcome.worktreeId === scope.worktreeId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
 }
 function buildAdaptiveProjectBrief(input, maxTokens = 800) {
   const selected = [];
@@ -20688,14 +20690,14 @@ function buildAdaptiveProjectBrief(input, maxTokens = 800) {
     const text = filterUntrustedSourceText(section.text).trim();
     const tokens = estimateTokens(text);
     if (!text || used + tokens > maxTokens) continue;
-    selected.push({ id: section.id, text, estimatedTokens: tokens });
+    selected.push({ id: section.id, text, evidenceClass: section.evidenceClass, confidence: section.confidence, source: section.source, estimatedTokens: tokens });
     used += tokens;
   }
   return { repositoryId: input.repositoryId, sourceFingerprint: input.sourceFingerprint, generatedAt: input.generatedAt ?? (/* @__PURE__ */ new Date()).toISOString(), sections: selected, estimatedTokens: used };
 }
 function composeMemoryContext(input) {
   const preferences = filterScopedPreferences(input.preferences ?? [], input);
-  const outcomes = verifiedOutcomes(input.outcomes ?? [], input.sourceFingerprint);
+  const outcomes = verifiedOutcomes(input.outcomes ?? [], input);
   const projectBrief = input.projectBrief && (!input.sourceFingerprint || input.projectBrief.sourceFingerprint === input.sourceFingerprint) ? input.projectBrief : void 0;
   const indexedFacts = Array.from(new Set((input.indexedFacts ?? []).filter((value) => value.trim()))).slice(0, 50);
   const capsules = Array.from(new Set((input.capsules ?? []).filter((value) => value.trim()))).slice(0, 20);
@@ -21211,10 +21213,7 @@ async function buildContextPlan(input) {
   const compact = planText(withoutEstimate);
   return {
     ...withoutEstimate,
-    estimatedTokens: {
-      ...estimateSavings(originalContext, compact),
-      avoided: Math.max(0, estimateTokens(originalContext) - estimateTokens(compact))
-    }
+    estimatedTokens: estimateSavings(originalContext, compact, "full-index-dump")
   };
 }
 
@@ -21394,7 +21393,7 @@ ${page2.body}`)].join("\n");
     recommendedFirstReads,
     omissions,
     confidence,
-    estimatedTokens: estimateSavings(originalForEstimate, compactForEstimate)
+    estimatedTokens: estimateSavings(originalForEstimate, compactForEstimate, "provided-context")
   };
 }
 
@@ -21437,7 +21436,7 @@ function compressOutput(input) {
   const fallbackLines = keyLines.length > 0 ? keyLines : lines.filter((line) => line).slice(0, maxLines);
   const summary = fallbackLines.length ? `${input.kind} output: ${fallbackLines.slice(0, 3).join(" | ")}` : `${input.kind} output contained no actionable lines.`;
   const compressedText = [summary, ...fallbackLines].join("\n");
-  const estimatedTokens = estimateSavings(input.text, compressedText);
+  const estimatedTokens = estimateSavings(input.text, compressedText, "provided-output");
   const omittedLineCount = Math.max(0, lines.length - fallbackLines.length) + (truncatedByChars || truncatedByLines ? 1 : 0);
   return {
     kind: input.kind,
@@ -21928,6 +21927,19 @@ async function loadRoutingControl(root) {
 // src/core/retrieval.ts
 import { createHash as createHash4 } from "node:crypto";
 import { open as open2 } from "node:fs/promises";
+function buildEvidenceBackedSliceRecommendation(path, startLine, endLine, contentHash) {
+  return {
+    mode: "slice",
+    file: path,
+    startLine,
+    endLine,
+    contentHash,
+    text: `Read the indexed symbol range ${path}:${startLine}-${endLine}.`,
+    evidenceClass: "derived",
+    confidence: "high",
+    source: `index:symbol-range:${path}@${contentHash}:${startLine}-${endLine}`
+  };
+}
 function terms(value) {
   return value.toLocaleLowerCase().match(/[a-z0-9_/-]+/g) ?? [];
 }
@@ -21971,14 +21983,41 @@ function expandGraph(index, paths, depth = 1) {
 }
 function buildRetrievalCapsule(_taskId, query, index, paths = [], graphDepth = 1) {
   const selectedPaths = new Set(paths.length ? paths : rankFilesBm25(index, query, 8).map((entry) => entry.path));
-  const files = index.files.filter((file) => selectedPaths.has(file.path)).map(({ path, kind, language, estimatedTokens, contentHash }) => ({ path, kind, language, estimatedTokens, contentHash }));
-  const symbols = index.symbols.filter((symbol) => selectedPaths.has(symbol.filePath)).map(({ name, kind, filePath, exported, startLine, endLine }) => ({ name, kind, filePath, exported, ...startLine === void 0 ? {} : { startLine }, ...endLine === void 0 ? {} : { endLine } }));
-  const references = expandGraph(index, [...selectedPaths], graphDepth);
+  const files = index.files.filter((file) => selectedPaths.has(file.path)).map(({ path, kind, language, estimatedTokens, contentHash }) => ({
+    path,
+    kind,
+    language,
+    estimatedTokens,
+    contentHash,
+    text: `${path} is an indexed ${language} ${kind} (${estimatedTokens} estimated tokens).`,
+    evidenceClass: "indexed",
+    confidence: "high",
+    source: `index:file:${path}@${contentHash}`
+  }));
+  const symbols = index.symbols.filter((symbol) => selectedPaths.has(symbol.filePath)).map(({ name, kind, filePath, exported, startLine, endLine }) => ({
+    name,
+    kind,
+    filePath,
+    exported,
+    ...startLine === void 0 ? {} : { startLine },
+    ...endLine === void 0 ? {} : { endLine },
+    text: `${name} is an indexed ${kind} in ${filePath}${startLine === void 0 ? "." : ` at lines ${startLine}-${endLine ?? startLine}.`}`,
+    evidenceClass: "indexed",
+    confidence: startLine === void 0 ? "medium" : "high",
+    source: `index:symbol:${filePath}:${name}${startLine === void 0 ? "" : `:${startLine}-${endLine ?? startLine}`}`
+  }));
+  const references = expandGraph(index, [...selectedPaths], graphDepth).map((path) => ({
+    path,
+    text: `${path} is reachable from the selected files in the indexed import graph.`,
+    evidenceClass: "derived",
+    confidence: "high",
+    source: `index:import-graph:${path}`
+  }));
   const content = { query, files, symbols, references };
   return { ...content, hash: canonicalHash(content) };
 }
 function capsuleArtifact(capsule) {
-  return createStableArtifact("capsule/retrieval", capsule, 2);
+  return createStableArtifact("capsule/retrieval", capsule, 3);
 }
 async function readExactSlice(root, path, startLine, endLine, maxBytes = 64 * 1024, expectedContentHash, maxSourceBytes = 512 * 1024) {
   if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine - startLine > 500) throw new Error("Exact slice line bounds are invalid.");
@@ -24067,11 +24106,7 @@ ${input.text}`, plan.relevantSql);
     recommendedFirstReads: firstReads,
     recommendedCommands: recommendedCommands(input.kind, detectedTests, detectedPaths, plan.relevantTests),
     confidence,
-    tokenEstimate: {
-      original: estimateTokens(input.text),
-      compressed: compressedOutput.estimatedTokens.compressed,
-      avoided: compressedOutput.estimatedTokens.avoided
-    }
+    tokenEstimate: compressedOutput.estimatedTokens
   };
 }
 
@@ -24584,18 +24619,16 @@ async function assessChangeRisk(input) {
     memoryCount: memories.length,
     warningCount: warnings.length
   });
-  const original = estimateTokens(`${text}
+  const baselineText = `${text}
 ${input.project.files.map((file) => file.path).join("\n")}
 ${input.memories.map((memory) => `${memory.title}
-${memory.body}`).join("\n")}`);
-  const compressed = estimateTokens(
-    [
-      changedFiles.join("\n"),
-      code.affectedFiles.map((file) => `${file.path}: ${file.reason}`).join("\n"),
-      sql.map(sqlTextForObject).join("\n"),
-      warnings.join("\n")
-    ].join("\n")
-  );
+${memory.body}`).join("\n")}`;
+  const compactText = [
+    changedFiles.join("\n"),
+    code.affectedFiles.map((file) => `${file.path}: ${file.reason}`).join("\n"),
+    sql.map(sqlTextForObject).join("\n"),
+    warnings.join("\n")
+  ].join("\n");
   return {
     riskScore: score,
     riskLevel: riskLevel(score),
@@ -24607,11 +24640,7 @@ ${memory.body}`).join("\n")}`);
     affectedMemories: memories,
     recommendedTests: recommendedTests(code.affectedTests),
     manualReviewWarnings: warnings,
-    tokenEstimate: {
-      original,
-      compressed,
-      avoided: Math.max(0, original - compressed)
-    }
+    tokenEstimate: estimateSavings(baselineText, compactText, "task-files-and-memories")
   };
 }
 
@@ -26398,7 +26427,7 @@ function recommendedExactRead(plan, project) {
   if (!first || first.startLine === void 0 || first.endLine === void 0) return void 0;
   const file = project.files.find((candidate) => candidate.path === first.path);
   if (!file) return void 0;
-  return { mode: "slice", file: first.path, startLine: first.startLine, endLine: first.endLine, contentHash: file.contentHash };
+  return buildEvidenceBackedSliceRecommendation(first.path, first.startLine, first.endLine, file.contentHash);
 }
 function createTokenGraphServer(options = {}) {
   const toolSurface = selectedToolSurface();
@@ -26589,8 +26618,8 @@ function createTokenGraphServer(options = {}) {
         repositoryId: identity.repositoryId,
         sourceFingerprint: project.fingerprint,
         sections: [
-          { id: "frameworks", text: project.frameworks.join(", ") },
-          { id: "first-reads", text: plan.recommendedFirstReads.map((file) => file.path).join("\n") }
+          { id: "frameworks", text: project.frameworks.join(", "), evidenceClass: "indexed", confidence: "high", source: "index:project-frameworks" },
+          { id: "first-reads", text: plan.recommendedFirstReads.map((file) => file.path).join("\n"), evidenceClass: "derived", confidence: "high", source: "planner:recommended-first-reads" }
         ]
       }, Math.max(150, Math.min(config2.memory.projectBriefTargetTokens, config2.memory.projectBriefMaxTokens)));
       const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost()) });
@@ -26608,13 +26637,17 @@ function createTokenGraphServer(options = {}) {
       const memoryContext = composeMemoryContext({
         repositoryId: identity.repositoryId,
         worktreeId: identity.worktreeId,
+        branch: identity.branch,
         sourceFingerprint: project.fingerprint,
         projectBrief,
         indexedFacts: project.files.slice(0, config2.maxFiles).map((file) => `${file.path}:${file.language}`),
         capsules: [capsuleStableArtifact.hash],
-        reviewedDecisions: appliedKnowledge.map((entry) => `${entry.title}: ${entry.proposedContent}`),
+        reviewedDecisions: [
+          ...appliedKnowledge.map((entry) => `${entry.title}: ${entry.proposedContent}`),
+          ...memories.filter((memory) => Boolean(memory.confirmedAt)).map((memory) => `${memory.title}: ${memory.body}`)
+        ],
         maxTokens: config2.memory.maxRetrievalTokens,
-        outcomes: memories.filter((memory) => Boolean(memory.confirmedAt)).map((memory) => ({ id: memory.id, taskId: memory.id, summary: memory.title, status: "verified", evidence: memory.evidence, createdAt: memory.createdAt, sourceFingerprint: project.fingerprint }))
+        outcomes: []
       });
       if (memories.length) {
         const vaultNotes = projectToVault(memories.map((memory) => ({ id: memory.id, title: memory.title, body: memory.body, links: memory.linkedFiles, archived: memory.status !== "active", updatedAt: memory.updatedAt })));
@@ -26845,7 +26878,7 @@ ${text ?? ""}`, config2.maxMemories) : [];
         let compactTokens = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
         if (includeEstimates) {
           for (let attempt = 0; attempt < 3; attempt += 1) {
-            returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.original, compact: compactTokens, overhead: overheadTokens });
+            returnedResponse = compactCompressionEnvelope(mode, result, { original: estimates.baselineTokens, compact: compactTokens, overhead: overheadTokens });
             const measured = estimateTokens(compactJson(compactToolResultEnvelope(returnedResponse)));
             if (measured === compactTokens) break;
             compactTokens = measured;
@@ -26858,7 +26891,7 @@ ${text ?? ""}`, config2.maxMemories) : [];
           category,
           operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash12("sha256").update(`${"task" in input ? input.task : ""}
 ${input.text ?? ""}`).digest("hex") },
-          originalTokens: estimates.original,
+          originalTokens: estimates.baselineTokens,
           compactTokens,
           overheadTokens
         });
@@ -27824,15 +27857,21 @@ ${changedFiles.join("\n")}`, 8);
       "tokengraph_show_token_savings",
       {
         title: "Show Token Savings",
-        description: "Use this to estimate how many tokens TokenGraph avoided by using the compact local index.",
+        description: "Use this to compare the compact local index with an explicitly labeled full-index-dump baseline.",
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: object({ root: string2().optional() })
       },
       async ({ root }) => {
         const project = await ensureProject(await workspaceRoot(root));
-        const original = project.files.reduce((total, file) => total + file.estimatedTokens, 0);
-        const compact = estimateTokens(compactJson(projectMap(project)));
-        return ok({ original, compact, avoided: Math.max(0, original - compact), unit: "estimated tokens" });
+        const baselineTokens = project.files.reduce((total, file) => total + file.estimatedTokens, 0);
+        const compactTokens = estimateTokens(compactJson(projectMap(project)));
+        return ok({
+          baseline: "full-index-dump",
+          baselineTokens,
+          compactTokens,
+          avoidedVsBaseline: Math.max(0, baselineTokens - compactTokens),
+          unit: "estimated-tokens"
+        });
       }
     );
   }

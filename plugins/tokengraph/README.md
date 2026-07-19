@@ -43,7 +43,7 @@ The default `TOKENGRAPH_TOOL_SURFACE=core` surface exposes exactly eight intent-
 
 Set `TOKENGRAPH_TOOL_SURFACE=full` before starting the MCP host to add the 34 deprecated compatibility tools below. Their names, schemas, and behavior remain available during migration; prefer the core tools for new tasks.
 
-JSON-only successful tool calls return one serialized JSON `TextContent` item. `tokengraph_export_project_map` is the resource-link exception and also returns matching structured content. Compact mode is the default; explicit `responseMode: "verbose"` is for diagnostics.
+JSON-only successful tool calls return one serialized JSON `TextContent` item. `tokengraph_export_project_map` is the resource-link exception and also returns matching structured content. Compact mode is the default; explicit `responseMode: "verbose"` is for diagnostics. Diagnostic token estimates always name their baseline and expose `baselineTokens`, `compactTokens`, `avoidedVsBaseline`, and the `estimated-tokens` unit.
 
 Use `tokengraph_prepare_context` only when planning is needed. The direct query, compress, recall, and analyze tools accept an omitted `taskId`, atomically start a task ledger, and return the new id. Reuse that id for later calls. After ready setup, `root` may be omitted when host workspace resolution is stable. `tokengraph_task_report({ taskId })` defaults to complete and returns the compact `status`, `taskId`, canonical `footer`, and `reportingStatus`; request verbose mode only for report diagnostics or explicitly pause unfinished work.
 

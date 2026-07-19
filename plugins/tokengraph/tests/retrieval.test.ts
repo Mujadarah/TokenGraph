@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildRetrievalCapsule, capsuleArtifact, deliverDelta, escalateReadPolicy, expandGraph, rankFilesBm25, readExactSlice, recommendExactRead, startReadPolicyResponse } from "../src/core/retrieval.js";
+import { buildEvidenceBackedSliceRecommendation, buildRetrievalCapsule, capsuleArtifact, deliverDelta, escalateReadPolicy, expandGraph, rankFilesBm25, readExactSlice, recommendExactRead, startReadPolicyResponse } from "../src/core/retrieval.js";
 import type { ProjectIndex } from "../src/core/types.js";
 
 function index(): ProjectIndex {
@@ -23,12 +23,31 @@ describe("deterministic retrieval", () => {
     const project = index();
     expect(rankFilesBm25(project, "authenticate", 2)[0]).toMatchObject({ path: "src/auth.ts", rank: 1 });
     expect(expandGraph(project, ["src/user.ts"], 1)).toEqual(["src/auth.ts", "src/user.ts"]);
-    expect(buildRetrievalCapsule("task-1", "user", project, ["src/user.ts"], 0).references).toEqual(["src/user.ts"]);
+    expect(buildRetrievalCapsule("task-1", "user", project, ["src/user.ts"], 0).references.map((entry) => entry.path)).toEqual(["src/user.ts"]);
     const first = buildRetrievalCapsule("task-1", "authenticate", project);
     const second = buildRetrievalCapsule("task-1", "authenticate", project);
     expect(first).toEqual(second);
     expect(first.hash).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(first)).not.toContain("source text");
+    const statements = [...first.files, ...first.symbols, ...first.references];
+    expect(statements.length).toBeGreaterThan(0);
+    for (const statement of statements) {
+      expect(statement).toMatchObject({
+        text: expect.any(String),
+        evidenceClass: expect.stringMatching(/^(indexed|derived)$/),
+        confidence: expect.stringMatching(/^(medium|high)$/),
+        source: expect.any(String)
+      });
+      expect(statement.text.trim()).not.toBe("");
+      expect(statement.source.trim()).not.toBe("");
+    }
+    expect(first.files[0]).toMatchObject({
+      path: "src/auth.ts",
+      evidenceClass: "indexed",
+      confidence: "high",
+      source: "index:file:src/auth.ts@a"
+    });
+    expect(first.references[0]).toMatchObject({ path: "src/auth.ts", evidenceClass: "derived" });
 
     const otherTask = buildRetrievalCapsule("task-2", "authenticate", project);
     expect(otherTask).toEqual(first);
@@ -78,5 +97,13 @@ describe("deterministic retrieval", () => {
     expect(recommendExactRead(state)).toMatchObject({ allowed: false, reason: expect.stringMatching(/reassessment/i) });
     expect(recommendExactRead(state, { reassessed: true })).toMatchObject({ allowed: false, reason: expect.stringMatching(/evidence gap/i) });
     expect(recommendExactRead(state, { reassessed: true, evidenceGap: "Need the concrete generic constraint." })).toMatchObject({ allowed: true, state: { targetedReads: 4, requiresReassessment: false } });
+  });
+
+  it("marks editing read recommendations as derived from a hash-bound indexed range", () => {
+    expect(buildEvidenceBackedSliceRecommendation("src/auth.ts", 1, 3, "abc")).toMatchObject({
+      mode: "slice", file: "src/auth.ts", startLine: 1, endLine: 3, contentHash: "abc",
+      evidenceClass: "derived", confidence: "high",
+      source: "index:symbol-range:src/auth.ts@abc:1-3"
+    });
   });
 });

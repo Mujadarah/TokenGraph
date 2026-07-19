@@ -58,6 +58,7 @@ function sessionHash(sessionId: string): string {
 }
 
 function dataRoot(): string | undefined {
+  // Host plugin-data directory for session pointers, not workspace .tokengraph state.
   const value = process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
   return isIdentifier(value) ? resolve(value) : undefined;
 }

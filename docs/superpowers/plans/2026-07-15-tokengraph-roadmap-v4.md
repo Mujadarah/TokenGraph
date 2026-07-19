@@ -73,7 +73,7 @@
 - Modify: `plugins/tokengraph/src/core/taskEstimator.ts`, `types.ts`, `planner.ts`, `regressionRisk.ts`, `contextCompressor.ts`, benchmark scripts/tests/docs
 
 - [x] Add failing tests proving negative event totals survive and execution-inclusive values lead the footer.
-- [ ] Replace the ambiguous baseline label with explicit recommended-raw-read and full-index-dump metrics; retain both only where needed for diagnostics. Correction (2026-07-16 audit): only the benchmark harness gained a diagnostic full-index-dump field; the live tool response fields in `planner.ts`, `regressionRisk.ts`, and `contextCompressor.ts` were never relabeled and still report unlabeled full-index-dump savings. Tracked as audit task R2.1.
+- [x] Replace the ambiguous baseline label with explicit recommended-raw-read and full-index-dump metrics; retain both only where needed for diagnostics. Correction (2026-07-16 audit): only the benchmark harness initially gained a diagnostic full-index-dump field. Remediation (2026-07-19): R2.1 replaced the live generic fields with explicit `full-index-dump`, `task-files-and-memories`, `provided-context`, and `provided-output` baselines plus `avoidedVsBaseline`.
 - [x] Generate checked-in benchmark results and make CI fail when the generated docs drift.
 - [x] Commit `fix: report execution-inclusive token economics` after the full gate.
 
@@ -85,7 +85,7 @@
 
 - [x] Add failing mode-envelope and unsupported-language-count tests.
 - [x] Implement the compact mode field and exclusion summary; add hook-data-location trust/privacy documentation.
-- [ ] Correction (2026-07-16 audit): the `hooks.ts` dataRoot inline comment, the `build.mjs` cross-reference comment, the README language-coverage sentence, and the `security.md` trust-source precedence documentation (including the process-cwd fallback) were not delivered. Tracked as audit tasks R2.2-R2.4.
+- [x] Correction (2026-07-16 audit): the `hooks.ts` dataRoot inline comment, the `build.mjs` cross-reference comment, the README language-coverage sentence, and the `security.md` trust-source precedence documentation (including the process-cwd fallback) were not delivered initially. Remediation (2026-07-19): R2.2-R2.4 delivered and regression-tested each item.
 - [x] Commit `docs: clarify runtime surfaces and indexing limits` after the full gate.
 
 ### Task 6: B1 routing and canonical artifacts

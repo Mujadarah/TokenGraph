@@ -1,5 +1,5 @@
 import { checkArchitecture } from "./architectureRules.js";
-import { estimateTokens, tokenize } from "./token.js";
+import { estimateSavings, tokenize } from "./token.js";
 import type {
   ArchitectureFinding,
   ArchitectureRule,
@@ -271,15 +271,13 @@ export async function assessChangeRisk(input: {
     memoryCount: memories.length,
     warningCount: warnings.length
   });
-  const original = estimateTokens(`${text}\n${input.project.files.map((file) => file.path).join("\n")}\n${input.memories.map((memory) => `${memory.title}\n${memory.body}`).join("\n")}`);
-  const compressed = estimateTokens(
-    [
-      changedFiles.join("\n"),
-      code.affectedFiles.map((file) => `${file.path}: ${file.reason}`).join("\n"),
-      sql.map(sqlTextForObject).join("\n"),
-      warnings.join("\n")
-    ].join("\n")
-  );
+  const baselineText = `${text}\n${input.project.files.map((file) => file.path).join("\n")}\n${input.memories.map((memory) => `${memory.title}\n${memory.body}`).join("\n")}`;
+  const compactText = [
+    changedFiles.join("\n"),
+    code.affectedFiles.map((file) => `${file.path}: ${file.reason}`).join("\n"),
+    sql.map(sqlTextForObject).join("\n"),
+    warnings.join("\n")
+  ].join("\n");
   return {
     riskScore: score,
     riskLevel: riskLevel(score),
@@ -291,10 +289,6 @@ export async function assessChangeRisk(input: {
     affectedMemories: memories,
     recommendedTests: recommendedTests(code.affectedTests),
     manualReviewWarnings: warnings,
-    tokenEstimate: {
-      original,
-      compressed,
-      avoided: Math.max(0, original - compressed)
-    }
+    tokenEstimate: estimateSavings(baselineText, compactText, "task-files-and-memories")
   };
 }
