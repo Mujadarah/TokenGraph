@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import { canonicalPersistenceLockKey, quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
 import { runPath, runsDir } from "./persistence.js";
+import { createTaskOutcome, type TaskOutcome } from "./memoryCore.js";
+import type { RepositoryIdentity } from "./types.js";
 
 export interface RunnerOptions {
   root: string;
@@ -116,6 +118,25 @@ function validateCommand(command: string, interactive: boolean): void {
 
 export function redactRunnerArguments(args: string[]): string[] {
   return args.map((arg) => redact(arg));
+}
+
+export function taskOutcomeFromRun(
+  run: SavedRun,
+  taskId: string,
+  identity: RepositoryIdentity
+): TaskOutcome {
+  const command = redactRunnerArguments([run.command, ...run.args]).join(" ");
+  return createTaskOutcome({
+    id: `run-${run.runId}`,
+    taskId,
+    summary: `${command} -> ${run.status} (exit ${run.exitCode ?? "null"})`,
+    evidence: [`run:${run.runId}`, `exit-code:${run.exitCode ?? "null"}`, `runner-status:${run.status}`],
+    createdAt: run.finishedAt,
+    branch: identity.branch,
+    worktreeId: identity.worktreeId,
+    headCommit: identity.headCommit,
+    provenance: "runner"
+  });
 }
 
 function inferRunMetadata(stdout: string, stderr: string): NonNullable<SavedRun["metadata"]> | undefined {

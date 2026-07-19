@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -6,10 +7,69 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_TOKEN_GRAPH_CONFIG, saveTokenGraphConfig } from "../src/core/config.js";
+import { createTaskLedger, loadTaskLedger, setTaskDisposition } from "../src/core/taskLedger.js";
 
 const execFileAsync = promisify(execFile);
 
 describe("tokengraph run CLI", () => {
+  it("links a real failed command to an active task as a verified scoped outcome", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-cli-task-outcome-"));
+    try {
+      const ledger = await createTaskLedger(root, { host: "codex" });
+      const result = await execFileAsync(process.execPath, [
+        resolve("dist", "cli.js"), "run", "--root", root, "--task-id", ledger.taskId,
+        "--", process.execPath, "-e", "process.exit(7)"
+      ], { cwd: process.cwd() }).catch((error: unknown) => error as { stdout: string });
+
+      expect(JSON.parse(result.stdout)).toMatchObject({ status: "failed", exitCode: 7 });
+      const stored = await loadTaskLedger(root, ledger.taskId);
+      expect(stored?.outcomes).toEqual([
+        expect.objectContaining({
+          taskId: ledger.taskId,
+          status: "verified",
+          branch: expect.any(String),
+          worktreeId: expect.any(String),
+          headCommit: expect.any(String),
+          evidence: expect.arrayContaining([expect.stringMatching(/^run:/), "exit-code:7", "runner-status:failed"])
+        })
+      ]);
+      expect(stored?.outcomes[0]?.summary).not.toMatch(/stdout|stderr/i);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects invalid task linkage before spawning the command", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-cli-task-guard-"));
+    try {
+      const paused = await createTaskLedger(root, { host: "codex" });
+      await setTaskDisposition(root, paused.taskId, "pause");
+      const completed = await createTaskLedger(root, { host: "codex" });
+      await setTaskDisposition(root, completed.taskId, "complete");
+      const wrongBranch = await createTaskLedger(root, { host: "codex" });
+      const wrongBranchPath = join(root, ".tokengraph", "tasks", `${wrongBranch.taskId}.json`);
+      const wrongBranchStored = JSON.parse(await readFile(wrongBranchPath, "utf8")) as { repositoryIdentity: { branch: string } };
+      wrongBranchStored.repositoryIdentity.branch = `${wrongBranchStored.repositoryIdentity.branch}-other`;
+      await writeFile(wrongBranchPath, JSON.stringify(wrongBranchStored));
+
+      for (const [label, taskId] of [
+        ["missing", randomUUID()],
+        ["paused", paused.taskId],
+        ["completed", completed.taskId],
+        ["wrong-branch", wrongBranch.taskId]
+      ]) {
+        const marker = join(root, `${label}.marker`);
+        await expect(execFileAsync(process.execPath, [
+          resolve("dist", "cli.js"), "run", "--root", root, "--task-id", taskId,
+          "--", process.execPath, "-e", `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'spawned')`
+        ], { cwd: process.cwd() })).rejects.toMatchObject({ stderr: expect.stringMatching(/task|ledger|branch/i) });
+        await expect(access(marker)).rejects.toThrow();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("evaluates a complete host-trace manifest and persists only passing promotion evidence", async () => {
     const root = await mkdtemp(join(tmpdir(), "tokengraph-cli-eval-"));
     try {
