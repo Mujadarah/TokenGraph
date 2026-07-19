@@ -275,7 +275,7 @@ describe("evidence benchmark", () => {
       expect(task.metrics.compactTokens).toBe(task.accounting.lifecycleCalls.reduce((total, call) => total + call.requestTokens + call.responseTokens, 0));
       expect(task.metrics.toolOverheadTokens).toBe(task.accounting.amortizedDiscoverySetupTokens);
       expect(task.metrics.rawTokens).toBe(task.accounting.rawBaselineTokens);
-      expect(task.accounting.completionFooter).toMatch(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, .+ confidence\); quality .+\.$/);
+      expect(task.accounting.completionFooter).toMatch(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, .+ confidence\); quality .+; categories .+\.$/);
     }
     expect(report.sessionAccounting).toMatchObject({ taskCount: 30, toolDefinitionCount: 8 });
     expect(report.aggregate).toMatchObject({ activatedTaskCount: 28, bypassedTaskCount: 2, nonNegativeActivatedRate: expect.any(Number) });
@@ -405,7 +405,7 @@ describe("evidence benchmark", () => {
 
     expect(calibration).toMatchObject({
       schemaVersion: 1,
-      estimatorVersion: "task-estimator-v1",
+      estimatorVersion: "task-estimator-v2",
       categories: {
         compression: {
           observations: 10,
@@ -472,6 +472,14 @@ describe("evidence benchmark", () => {
     expect(accepted.estimate.range).toEqual(uncalibrated.estimate.range);
     expect(accepted.estimate.confidence).toBe("low");
     expect(accepted.estimate.basis).toEqual([`${category}:uncalibrated`]);
+    expect(accepted.categories).toEqual([{
+      category,
+      eventCount: 1,
+      range: { low: 0, likely: 100, high: 120, unit: "estimated_tokens" },
+      confidence: "low",
+      basis: [`${category}:uncalibrated`],
+      overhead: 20
+    }]);
   });
 
   it("uses polarity-safe exact constraint predicates", () => {

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Linked explicitly selected active tasks to privacy-minimal verified runner outcomes while keeping agent and inferred claims proposed.
+- Added sorted category-level ranges, confidence, overhead, and calibration bases to verbose task reports and the canonical compact footer.
+- Added schema-v4 deterministic Git commit-distance metadata and shared task-type weighting without filesystem-time ranking inputs.
+- Documented runner redaction limits, plaintext capture placement, complete capture avoidance, sensitive-output guidance, and future local-encryption readiness.
 - Replaced ambiguous live token-savings response fields with explicit baseline labels and `avoidedVsBaseline` accounting.
 - Documented workspace trust precedence, default indexing coverage, and promotion-gated WASM language support.
 - Clarified hook-state and packaged-permission implementation locations inline.

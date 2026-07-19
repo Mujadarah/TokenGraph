@@ -450,7 +450,19 @@ describe("TokenGraph MCP stdio server", () => {
     const report = reportCall.structuredContent as {
       status: string;
       taskId: string;
-      report: { taskId: string; eventCount: number; estimate: { overhead: number } };
+      report: {
+        taskId: string;
+        eventCount: number;
+        estimate: { overhead: number };
+        categories: Array<{
+          category: string;
+          eventCount: number;
+          range: { low: number; likely: number; high: number; unit: string };
+          confidence: string;
+          overhead: number;
+          basis: string[];
+        }>;
+      };
       footer: string;
       reportingStatus: string;
     };
@@ -461,6 +473,19 @@ describe("TokenGraph MCP stdio server", () => {
       footer: expect.stringMatching(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, (?:low|medium|high) confidence\); quality (?:passed|warning|not evaluated); categories .+\.$/),
       reportingStatus: "ready"
     });
+    expect(report.report.categories.map((entry) => entry.category)).toEqual(
+      [...report.report.categories.map((entry) => entry.category)].sort((a, b) => a.localeCompare(b))
+    );
+    for (const category of report.report.categories) {
+      expect(category).toMatchObject({
+        category: expect.any(String),
+        eventCount: expect.any(Number),
+        range: { low: expect.any(Number), likely: expect.any(Number), high: expect.any(Number), unit: "estimated_tokens" },
+        confidence: expect.stringMatching(/^(low|medium|high)$/),
+        overhead: expect.any(Number),
+        basis: expect.any(Array)
+      });
+    }
     const suggestionsBeforeTerminalRetry = await listKnowledgeSuggestions(firstRoot);
     const completedMutation = await request(9058, "tools/call", {
       name: "tokengraph_propose_knowledge",

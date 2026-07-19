@@ -787,14 +787,16 @@ function sortJson(value: unknown): unknown {
 }
 
 function stableProjectDump(project: ProjectIndex): unknown {
+  const stableSizes = new Map(project.files.map((file) => [file.path, file.size]));
   return {
     ...project,
+    root: undefined,
     scannedAt: undefined,
     repositoryIdentity: undefined,
     scanMetadata: {
       files: Object.fromEntries(Object.entries(project.scanMetadata?.files ?? {}).map(([path, file]) => [path, {
         path: file.path,
-        size: file.size,
+        size: stableSizes.get(path),
         contentHash: file.contentHash,
         language: file.language,
         extension: file.extension,
