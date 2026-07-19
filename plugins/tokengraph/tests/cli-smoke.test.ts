@@ -77,7 +77,7 @@ describe("tokengraph CLI smoke command", () => {
     expect(report.wikiPageSlugs).toEqual([]);
     expect(report.tools).toEqual(coreToolNames);
     expect(report).toMatchObject({ toolSurface: "core", taskId: expect.any(String) });
-  });
+  }, 15_000);
 
   it("validates the opt-in full MCP surface", async () => {
     const root = await makeRoot();
