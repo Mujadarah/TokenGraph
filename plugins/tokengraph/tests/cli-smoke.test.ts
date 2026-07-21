@@ -297,9 +297,19 @@ describe("tokengraph benchmark harness and trust docs", () => {
     expect(securityText).toMatch(/process working directory.*not running from an installed plugin directory/is);
 
     const readme = await readFile(resolve(repoRoot, "README.md"), "utf8");
+    const pluginReadme = await readFile(resolve("README.md"), "utf8");
     expect(readme).toMatch(/indexes TypeScript, JavaScript, SQL, and Markdown/i);
     expect(readme).toMatch(/WASM.*promotion|promotion.*WASM/is);
     expect(readme).toMatch(/process working directory.*not running from an installed plugin directory/is);
+    for (const text of [readme, pluginReadme]) {
+      expect(text).toMatch(/none\s*\|\s*low\s*\|\s*medium\s*\|\s*high/i);
+      expect(text).toMatch(/four.*exact.*slice.*685|685.*four.*exact.*slice/is);
+      expect(text).toMatch(/fixture.*real-host|real-host.*fixture/is);
+      expect(text).toMatch(/2026-07-19-tokengraph-codex-manifest\.json/);
+      expect(text).toMatch(/2026-07-19-tokengraph-codex-report\.md/);
+      expect(text).toMatch(/promotion.*disabled|enforcement.*disabled/is);
+      expect(text).toMatch(/one repository.*does not\s+satisfy.*multi-repository B6/is);
+    }
 
     const hooksSource = await readFile(resolve("src", "hooks.ts"), "utf8");
     expect(hooksSource).toMatch(/host plugin-data directory.*not.*workspace.*\.tokengraph/i);
@@ -474,7 +484,7 @@ describe("tokengraph release package command", () => {
     );
     const generatedReadme = await readFile(resolve(report.packageDir, "README.md"), "utf8");
     expect(generatedReadme.match(/The default surface exposes eight compact tools/g)).toHaveLength(1);
-    expect(generatedReadme.match(/\+196\.5-token execution-inclusive median/g)).toHaveLength(1);
+    expect(generatedReadme.match(/\+174\.5-token execution-inclusive median/g)).toHaveLength(1);
     await expect(access(resolve(report.packageDir, "src"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "tests"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "node_modules"))).rejects.toThrow();
@@ -589,6 +599,12 @@ describe("tokengraph release package command", () => {
         "package.json"
       ])
     );
+    const releaseReadme = await readFile(resolve(releaseRoot, "README.md"), "utf8");
+    expect(releaseReadme).toMatch(/none\s*\|\s*low\s*\|\s*medium\s*\|\s*high/i);
+    expect(releaseReadme).toMatch(/four.*exact.*slice.*685|685.*four.*exact.*slice/is);
+    expect(releaseReadme).toMatch(/fixture.*real-host|real-host.*fixture/is);
+    expect(releaseReadme).toMatch(/promotion.*disabled|enforcement.*disabled/is);
+    expect(releaseReadme).toMatch(/one repository.*does not\s+satisfy.*multi-repository B6/is);
     await expect(access(resolve(releaseRoot, "src"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "tests"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "scripts"))).rejects.toThrow();

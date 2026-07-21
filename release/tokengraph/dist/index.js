@@ -20471,7 +20471,8 @@ async function clearProjectState(root) {
 }
 
 // src/core/artifact.ts
-function createStableArtifact(id, content, artifactSchemaVersion = 1, hashContext = {}) {
+var CURRENT_ARTIFACT_SCHEMA_VERSION = 5;
+function createStableArtifact(id, content, artifactSchemaVersion = CURRENT_ARTIFACT_SCHEMA_VERSION, hashContext = {}) {
   const normalized = canonicalize(content);
   const normalizedContext = canonicalize(hashContext);
   return {
@@ -21908,12 +21909,20 @@ var CORE_TOOL_METADATA = {
 
 // src/core/routingAdvisor.ts
 function failOpenRouting(reason = "routing-unavailable") {
-  return { useTokenGraph: false, stage: 0, reason, expectedOverheadTokens: 0, expectedBenefit: 0, enforced: false };
+  return { useTokenGraph: false, stage: 0, reason, expectedOverheadTokens: 0, expectedBenefit: "none", enforced: false };
+}
+var broadTaskPattern = /\b(repository|architecture|migration|security|debug|regression|dependencies|all files|risk)\b/i;
+var localActionPattern = /\b(fix|change|update|rename|format|show|find|locate|where is)\b/i;
+var relativeSourceLocationPattern = /(?:^|\s|["'`(])((?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.\[\]-]+\.(?:cjs|js|jsx|json|md|mjs|sql|ts|tsx|yaml|yml))(?::\d+(?::\d+)?)?/gi;
+function boundedExactLocationTask(task) {
+  if (!localActionPattern.test(task) || broadTaskPattern.test(task)) return false;
+  const locations = [...task.matchAll(relativeSourceLocationPattern)].map((match) => match[1]);
+  return locations.length === 1;
 }
 function boundedTask(task) {
   const normalized = task.trim();
   const singleUsageUpdate = /^update\s+[A-Za-z_$][\w$]*\s+usage\s+in\s+[A-Za-z_$][\w$]*[.!?]?$/i.test(normalized);
-  return normalized.length > 0 && normalized.length <= 180 && (/\b(what is|where is|show me|rename|format|explain)\b/i.test(normalized) || /^(find|locate)\b/i.test(normalized) || singleUsageUpdate) && !/\b(repository|architecture|migration|security|debug|regression|dependencies|all files)\b/i.test(normalized);
+  return normalized.length > 0 && normalized.length <= 180 && (/\b(what is|where is|show me|rename|format|explain)\b/i.test(normalized) || /^(find|locate)\b/i.test(normalized) || singleUsageUpdate || boundedExactLocationTask(normalized)) && !broadTaskPattern.test(normalized);
 }
 function adviseRouting(input) {
   const mode = input.routingMode ?? "shadow";
@@ -21923,14 +21932,15 @@ function adviseRouting(input) {
   if (killSwitch) return failOpenRouting("routing kill switch");
   const bypass = killSwitch || forcedBypass || mode !== "always-activate" && !forcedOn && boundedTask(input.task);
   const useTokenGraph = !bypass && (mode === "always-activate" || forcedOn || !boundedTask(input.task));
-  const stage = input.indexAvailable ? 1 : 0;
+  const stage = bypass ? 0 : input.indexAvailable ? 1 : 0;
   const reason = forcedOn ? "routing override force-on" : forcedBypass ? "routing override force-bypass" : bypass ? "bounded-task" : stage === 1 ? "indexed-discovery" : "context-discovery";
+  const expectedBenefit = !useTokenGraph ? "none" : stage === 1 ? "high" : "medium";
   return {
     useTokenGraph,
     stage,
     reason,
     expectedOverheadTokens: useTokenGraph ? stage === 1 ? 25 : 80 : 0,
-    expectedBenefit: useTokenGraph ? stage === 1 ? 160 : 120 : 0,
+    expectedBenefit,
     enforced: !forcedBypass && Boolean(input.promotion?.enforcementEnabled) && (mode === "enforced" || mode === "always-activate" || forcedOn)
   };
 }
@@ -21940,10 +21950,12 @@ import { readFile as readFile8 } from "node:fs/promises";
 var CURRENT_ROUTING_CONTROL_SCHEMA = 1;
 var REQUIRED_PROMOTION_GATES = [
   "minimumSamples",
+  "realHostEvidence",
   "qualityNonInferiority",
   "tokenSuperiority",
   "resources",
   "routerRates",
+  "routerLatency",
   "executionMedian",
   "executionP25",
   "nonNegativeActivated"
@@ -21959,8 +21971,8 @@ function isValidatedPromotion(value) {
   const hasRequiredGates = Boolean(gateRecord) && REQUIRED_PROMOTION_GATES.every((name) => typeof gateRecord?.[name] === "boolean") && Object.keys(gateRecord ?? {}).length === REQUIRED_PROMOTION_GATES.length;
   const allGatesPass = hasRequiredGates && gates.every((gate) => gate === true);
   const categoryCounts = candidate.categoryCounts && typeof candidate.categoryCounts === "object" ? Object.values(candidate.categoryCounts) : [];
-  const evidencePasses = categoryCounts.length > 0 && categoryCounts.every((count) => Number.isInteger(count) && count >= 10) && typeof candidate.falseBypassRate === "number" && Number.isFinite(candidate.falseBypassRate) && candidate.falseBypassRate >= 0 && candidate.falseBypassRate < 0.1 && typeof candidate.falseActivationRate === "number" && Number.isFinite(candidate.falseActivationRate) && candidate.falseActivationRate >= 0 && candidate.falseActivationRate < 0.1 && typeof candidate.executionInclusiveMedian === "number" && Number.isFinite(candidate.executionInclusiveMedian) && candidate.executionInclusiveMedian > 0 && typeof candidate.executionInclusiveP25 === "number" && Number.isFinite(candidate.executionInclusiveP25) && candidate.executionInclusiveP25 >= 0 && typeof candidate.nonNegativeActivatedRate === "number" && Number.isFinite(candidate.nonNegativeActivatedRate) && candidate.nonNegativeActivatedRate >= 0.8 && candidate.nonNegativeActivatedRate <= 1;
-  return candidate.schemaVersion === 1 && typeof candidate.generatedAt === "string" && typeof candidate.enforcementEnabled === "boolean" && hasRequiredGates && (!candidate.enforcementEnabled || allGatesPass && evidencePasses);
+  const evidencePasses = categoryCounts.length > 0 && categoryCounts.every((count) => Number.isInteger(count) && count >= 10) && candidate.evidenceSource === "real-host" && candidate.reviewed === true && Number.isInteger(candidate.beneficialCount) && candidate.beneficialCount > 0 && Number.isInteger(candidate.boundedCount) && candidate.boundedCount > 0 && typeof candidate.falseBypassRate === "number" && Number.isFinite(candidate.falseBypassRate) && candidate.falseBypassRate >= 0 && candidate.falseBypassRate < 0.1 && typeof candidate.falseActivationRate === "number" && Number.isFinite(candidate.falseActivationRate) && candidate.falseActivationRate >= 0 && candidate.falseActivationRate < 0.1 && typeof candidate.stage0LatencyMs === "number" && Number.isFinite(candidate.stage0LatencyMs) && candidate.stage0LatencyMs >= 0 && typeof candidate.activationLatencyMs === "number" && Number.isFinite(candidate.activationLatencyMs) && candidate.activationLatencyMs > candidate.stage0LatencyMs && Number.isInteger(candidate.stage0LatencySamples) && candidate.stage0LatencySamples > 0 && Number.isInteger(candidate.activationLatencySamples) && candidate.activationLatencySamples > 0 && candidate.stage0FasterThanActivation === true && typeof candidate.executionInclusiveMedian === "number" && Number.isFinite(candidate.executionInclusiveMedian) && candidate.executionInclusiveMedian > 0 && typeof candidate.executionInclusiveP25 === "number" && Number.isFinite(candidate.executionInclusiveP25) && candidate.executionInclusiveP25 >= 0 && typeof candidate.nonNegativeActivatedRate === "number" && Number.isFinite(candidate.nonNegativeActivatedRate) && candidate.nonNegativeActivatedRate >= 0.8 && candidate.nonNegativeActivatedRate <= 1;
+  return candidate.schemaVersion === 2 && typeof candidate.generatedAt === "string" && typeof candidate.enforcementEnabled === "boolean" && hasRequiredGates && evidencePasses && (!candidate.enforcementEnabled || allGatesPass);
 }
 function normalize(value) {
   const candidate = value && typeof value === "object" ? value : {};
@@ -22096,7 +22108,7 @@ function buildRetrievalCapsule(_taskId, query, index, paths = [], graphDepth = 1
   return { ...content, hash: canonicalHash(content) };
 }
 function capsuleArtifact(capsule) {
-  return createStableArtifact("capsule/retrieval", capsule, 4);
+  return createStableArtifact("capsule/retrieval", capsule, 5);
 }
 async function readExactSlice(root, path, startLine, endLine, maxBytes = 64 * 1024, expectedContentHash, maxSourceBytes = 512 * 1024) {
   if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine - startLine > 500) throw new Error("Exact slice line bounds are invalid.");
