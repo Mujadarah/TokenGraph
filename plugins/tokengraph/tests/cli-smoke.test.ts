@@ -482,6 +482,9 @@ describe("tokengraph release package command", () => {
         "package.json"
       ])
     );
+    for (const file of report.files.filter((path: string) => /\.(?:c?js|json|md)$/i.test(path))) {
+      expect(await readFile(resolve(report.packageDir, file), "utf8"), file).not.toMatch(/[^\x00-\x7F]/);
+    }
     const generatedReadme = await readFile(resolve(report.packageDir, "README.md"), "utf8");
     expect(generatedReadme.match(/The default surface exposes eight compact tools/g)).toHaveLength(1);
     expect(generatedReadme.match(/\+174\.5-token execution-inclusive median/g)).toHaveLength(1);

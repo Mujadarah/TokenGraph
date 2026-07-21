@@ -16658,10 +16658,10 @@ var Protocol = class {
   }
   /**
   * Drop consult for inbound messages whose transport did not classify them
-  * at the edge — long-lived channels such as stdio, where a role class may
+  * at the edge \u2014 long-lived channels such as stdio, where a role class may
   * need to decline traffic the negotiated era has no answer for (the
   * client-side inbound-request drop on modern-era connections: the
-  * 2026-07-28 era has no server→client request channel, and on stdio the
+  * 2026-07-28 era has no server\u2192client request channel, and on stdio the
   * client must never write JSON-RPC responses).
   *
   * Consulted ONLY when the transport supplied no
@@ -16669,7 +16669,7 @@ var Protocol = class {
   * never reaches the hook. Returning `'drop'` discards the message without
   * writing any response (requests are surfaced via `onerror`). The base
   * implementation returns `undefined`: unclassified traffic keeps today's
-  * dispatch path unchanged. Era selection never happens here — era is
+  * dispatch path unchanged. Era selection never happens here \u2014 era is
   * instance state, owned by the serving entry that constructed and
   * connected the instance.
   */
@@ -16678,7 +16678,7 @@ var Protocol = class {
   /**
   * The per-request `_meta` envelope this instance attaches to every outgoing
   * request and notification, when one applies. The base implementation
-  * returns `undefined` (no envelope — the 2025-era posture, so legacy-era
+  * returns `undefined` (no envelope \u2014 the 2025-era posture, so legacy-era
   * outbound traffic is byte-identical to a build without this seam).
   * `Client` overrides it on a connection that negotiated a modern (2026-07-28+)
   * era to return the reserved protocol-version / client-info /
@@ -16690,7 +16690,7 @@ var Protocol = class {
   /**
   * Attach this instance's outbound `_meta` envelope (when one is configured)
   * to a request or notification. A no-op when the seam returns `undefined`
-  * — the message returns by reference, so the legacy-era wire stays
+  * \u2014 the message returns by reference, so the legacy-era wire stays
   * byte-identical. User-supplied `_meta` keys are spread last so they win
   * over the auto-attached envelope keys.
   */
@@ -16810,7 +16810,7 @@ var Protocol = class {
   }
   /**
   * Transport-close hook. Subclass overrides MUST call `super._onclose()`
-  * after their own cleanup — base teardown (response-handler settlement,
+  * after their own cleanup \u2014 base teardown (response-handler settlement,
   * timeout clearing, in-flight request abort) does not run otherwise.
   */
   _onclose() {
@@ -16836,7 +16836,7 @@ var Protocol = class {
   }
   /**
   * Inbound-notification dispatch. Subclass overrides MUST delegate
-  * unmatched traffic to `super._onnotification(rawNotification, extra)` —
+  * unmatched traffic to `super._onnotification(rawNotification, extra)` \u2014
   * an override that consumes only what it owns and falls through to base
   * dispatch for everything else.
   */
@@ -16994,7 +16994,7 @@ var Protocol = class {
   }
   /**
   * Inbound-response dispatch. Subclass overrides MUST delegate unmatched
-  * traffic to `super._onresponse(response)` — an override that consumes
+  * traffic to `super._onresponse(response)` \u2014 an override that consumes
   * only what it owns and falls through to base dispatch for everything
   * else.
   */
@@ -17029,7 +17029,7 @@ var Protocol = class {
     return this._requestWithSchemaViaCodec(codec, request, validate, schemaOrOptions);
   }
   /**
-  * The wire codec for this instance's negotiated era — the phase-2 truth:
+  * The wire codec for this instance's negotiated era \u2014 the phase-2 truth:
   * everything an established connection sends and receives resolves
   * through it. Legacy until a version has been negotiated.
   */
@@ -17039,8 +17039,8 @@ var Protocol = class {
   /**
   * Protected accessor for the instance's negotiated wire codec, for role
   * classes (Client/Server/McpServer) routing era-dependent behavior
-  * through the codec's function-only surface — `samplingResultVariant`,
-  * `outboundEnvelope`, `projectCallToolResult` — instead of branching on
+  * through the codec's function-only surface \u2014 `samplingResultVariant`,
+  * `outboundEnvelope`, `projectCallToolResult` \u2014 instead of branching on
   * the protocol version themselves.
   */
   _wireCodec() {
@@ -17049,9 +17049,9 @@ var Protocol = class {
   /**
   * Outbound codec resolution: while the negotiated version is still unset
   * (the negotiation window), lifecycle messages are bootstrap-pinned BY
-  * METHOD — they self-identify their era (`initialize` IS the legacy
+  * METHOD \u2014 they self-identify their era (`initialize` IS the legacy
   * handshake, `server/discover` IS the modern probe). Once a version has
-  * been negotiated, the instance era is authoritative for everything — a
+  * been negotiated, the instance era is authoritative for everything \u2014 a
   * negotiated session never re-routes a method onto the other era.
   */
   _resolveOutboundCodec(method) {
@@ -17062,7 +17062,7 @@ var Protocol = class {
     return this._negotiatedWireCodec();
   }
   /**
-  * Era gate for outbound requests — deletions are physical in BOTH
+  * Era gate for outbound requests \u2014 deletions are physical in BOTH
   * directions: sending a spec method that the resolved era does not define
   * dies locally with a typed error before anything reaches the transport.
   * Methods outside the spec universe are consumer-owned extension methods
@@ -17079,9 +17079,9 @@ var Protocol = class {
   * validation instead of the era registry's method-keyed entry.
   *
   * This is the internal implementation used by SDK methods whose result
-  * schema cannot be expressed as a method-keyed registry entry — the one
+  * schema cannot be expressed as a method-keyed registry entry \u2014 the one
   * surviving case is `server.createMessage`, whose result schema depends
-  * on the REQUEST params (tools vs no tools) — and by callers passing
+  * on the REQUEST params (tools vs no tools) \u2014 and by callers passing
   * explicit compatibility schemas. Spec methods are still era-gated here:
   * an explicit schema never smuggles a deleted method onto the wire.
   */
@@ -17092,7 +17092,7 @@ var Protocol = class {
   }
   /**
   * The request funnel proper, keyed by the resolved era codec: the codec
-  * owns result decoding (raw-first `resultType` discrimination — V-1 —
+  * owns result decoding (raw-first `resultType` discrimination \u2014 V-1 \u2014
   * and the era's lift posture) before the schema validation step.
   */
   _requestWithSchemaViaCodec(codec, request, resultSchema, options) {
@@ -17218,7 +17218,7 @@ var Protocol = class {
     return this._notificationViaCodec(this._resolveOutboundCodec(notification.method), notification, options);
   }
   /**
-  * The notification funnel proper, keyed by the resolved era codec —
+  * The notification funnel proper, keyed by the resolved era codec \u2014
   * direct sends and related notifications (`ctx.mcpReq.notify`) alike
   * resolve through the instance's negotiated era at send time.
   */
@@ -17588,7 +17588,7 @@ var StdioListenRouter = class {
   *
   * - For a subscription-gated change notification, returns one stamped copy
   *   per subscription that opted in to it (an empty array means it is
-  *   dropped — the modern era never delivers an un-requested change type).
+  *   dropped \u2014 the modern era never delivers an un-requested change type).
   * - For any other outbound message, returns `'passthrough'` (the entry
   *   forwards it as-is).
   */
@@ -17606,8 +17606,8 @@ var StdioListenRouter = class {
   }
   /**
   * Server-side graceful teardown of every active subscription: returns the
-  * empty `subscriptions/listen` JSON-RPC result for each subscription id —
-  * the spec's graceful-close signal — for the entry to emit before closing
+  * empty `subscriptions/listen` JSON-RPC result for each subscription id \u2014
+  * the spec's graceful-close signal \u2014 for the entry to emit before closing
   * the wire. Clears the set so nothing further is delivered.
   */
   teardownAll() {
@@ -17946,7 +17946,7 @@ var Server = class extends Protocol {
   }
   /**
   * Whether this instance is bound to a 2026-07-28-or-later protocol
-  * revision. Era is instance state — a serving entry (`createMcpHandler`,
+  * revision. Era is instance state \u2014 a serving entry (`createMcpHandler`,
   * `serveStdio`) marks the instance modern at construction; a 2025-era
   * `initialize` handshake binds it legacy. The multi-round-trip seam reads
   * this directly: there is no per-request era consult.
@@ -17958,10 +17958,10 @@ var Server = class extends Protocol {
   * Invokes a handler for one of the multi-round-trip methods and applies
   * the input-required seam:
   *
-  * - a `UrlElicitationRequiredError` (or any 2025-style server→client
+  * - a `UrlElicitationRequiredError` (or any 2025-style server\u2192client
   *   request idiom) escaping the handler on a request served on the
   *   2026-07-28 era fails LOUDLY with a clear steer to
-  *   `inputRequired.elicitUrl(...)` — the `-32042` error never reaches the
+  *   `inputRequired.elicitUrl(...)` \u2014 the `-32042` error never reaches the
   *   2026-07-28 wire and the throw is not silently converted. Requests
   *   served on the 2025 era keep today's `-32042` behavior byte-exact (the
   *   error is rethrown unchanged).
@@ -18037,9 +18037,9 @@ var Server = class extends Protocol {
     return this._servedModernEra() ? ctx.mcpReq.envelope?.[CLIENT_CAPABILITIES_META_KEY] : this._clientCapabilities;
   }
   /**
-  * Guard for the push-style server→client request APIs ({@linkcode createMessage},
+  * Guard for the push-style server\u2192client request APIs ({@linkcode createMessage},
   * {@linkcode elicitInput}, {@linkcode listRoots}, {@linkcode ping}) on a
-  * modern-era instance: the 2026-07-28 revision has no server→client request
+  * modern-era instance: the 2026-07-28 revision has no server\u2192client request
   * channel, so the call fails before any wire traffic with a typed error
   * whose message steers to `inputRequired(...)`. The base era gate would
   * also reject it; this guard runs first to carry the steer.
@@ -18150,7 +18150,7 @@ var Server = class extends Protocol {
   * @deprecated Read client identity from the per-request handler context instead: on
   * 2026-07-28 (per-request envelope) requests `ctx.mcpReq.envelope` carries the client's
   * declared capabilities, while on 2025-era connections this accessor keeps returning the
-  * `initialize`-scoped value. The accessor remains functional — instances serving the
+  * `initialize`-scoped value. The accessor remains functional \u2014 instances serving the
   * 2026-07-28 era are backfilled per request from the validated envelope.
   */
   getClientCapabilities() {
@@ -18162,7 +18162,7 @@ var Server = class extends Protocol {
   * @deprecated Read client identity from the per-request handler context instead: on
   * 2026-07-28 (per-request envelope) requests `ctx.mcpReq.envelope` carries the client's
   * name and version, while on 2025-era connections this accessor keeps returning the
-  * `initialize`-scoped value. The accessor remains functional — instances serving the
+  * `initialize`-scoped value. The accessor remains functional \u2014 instances serving the
   * 2026-07-28 era are backfilled per request from the validated envelope.
   */
   getClientVersion() {
@@ -18176,7 +18176,7 @@ var Server = class extends Protocol {
   * @deprecated Read the protocol revision from the per-request handler context instead: on
   * 2026-07-28 (per-request envelope) requests `ctx.mcpReq.envelope` names the revision the
   * request was sent for, while on 2025-era connections this accessor keeps returning the
-  * `initialize`-negotiated version. The accessor remains functional — instances serving the
+  * `initialize`-negotiated version. The accessor remains functional \u2014 instances serving the
   * 2026-07-28 era report that revision.
   */
   getNegotiatedProtocolVersion() {
@@ -18184,17 +18184,17 @@ var Server = class extends Protocol {
   }
   /**
   * Project a `tools/call` result through this instance's negotiated wire
-  * codec — the era-agnostic SEP-2106 §4.3 TextContent auto-append, plus on
-  * the 2025 era the `{result:…}` wrap when `structuredContent` is a
+  * codec \u2014 the era-agnostic SEP-2106 \u00A74.3 TextContent auto-append, plus on
+  * the 2025 era the `{result:\u2026}` wrap when `structuredContent` is a
   * non-object value or the advertised `outputSchema` had a non-object root.
   * Identity for object-shaped `structuredContent` on the 2026 era.
   *
   * `McpServer`'s built-in `tools/call` handler routes through this method.
-  * Low-level `setRequestHandler('tools/call', …)` authors call it
+  * Low-level `setRequestHandler('tools/call', \u2026)` authors call it
   * themselves so the projection lives in one place (the codec) and the
   * server-side handler stays era-blind.
   *
-  * This is the only codec function exposed on `Server` — the full
+  * This is the only codec function exposed on `Server` \u2014 the full
   * `WireCodec` is intentionally not part of the public surface.
   */
   projectCallToolResult(result, advertisedOutputSchema) {
@@ -18252,7 +18252,7 @@ var Server = class extends Protocol {
   * @param options Optional request options.
   * @returns The result of the elicitation request.
   *
-  * @deprecated Throws on a 2026-07-28-era request — use {@link index.inputRequired | inputRequired} (multi-round-trip)
+  * @deprecated Throws on a 2026-07-28-era request \u2014 use {@link index.inputRequired | inputRequired} (multi-round-trip)
   * instead. The 2025 push-style server-to-client request model is replaced by input_required
   * results in the 2026-07-28 protocol. If your factory serves both eras, this only works on the
   * legacy path.
@@ -18313,7 +18313,7 @@ var Server = class extends Protocol {
   * notification for the specified elicitation ID.
   *
   * The notification (and the `elicitationId` it references) exists only on protocol revision
-  * 2025-11-25 — the 2026-07-28 draft removed both. On a connection negotiated at 2026-07-28 the
+  * 2025-11-25 \u2014 the 2026-07-28 draft removed both. On a connection negotiated at 2026-07-28 the
   * returned callback rejects with a typed local error before anything reaches the transport
   * (the method is not part of that revision's wire registry).
   *
@@ -18332,7 +18332,7 @@ var Server = class extends Protocol {
   * Requests the list of roots from the client.
   *
   * @deprecated Deprecated as of protocol version 2026-07-28 (SEP-2577).
-  * Throws on a 2026-07-28-era request — use {@link index.inputRequired | inputRequired} (multi-round-trip) instead,
+  * Throws on a 2026-07-28-era request \u2014 use {@link index.inputRequired | inputRequired} (multi-round-trip) instead,
   * or migrate to passing paths via tool parameters, resource URIs, or configuration. The 2025
   * push-style server-to-client request model is replaced by input_required results in the
   * 2026-07-28 protocol. If your factory serves both eras, this only works on the legacy path.
