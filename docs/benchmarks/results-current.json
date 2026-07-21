@@ -69,6 +69,60 @@
       "savedTokens": 5442
     }
   },
+  "realHostEvaluation": {
+    "manifestPath": "docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-manifest.json",
+    "reportPath": "docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-report.json",
+    "evidenceSource": "real-host",
+    "reviewed": true,
+    "scope": {
+      "repositoryCount": 1,
+      "categoryCount": 1,
+      "taskCount": 1,
+      "pairCount": 5,
+      "traceCount": 10,
+      "retainedFailureCount": 0
+    },
+    "model": {
+      "identifier": "gpt-5.6-sol",
+      "versionOrDate": "2026-07-19"
+    },
+    "host": {
+      "name": "codex",
+      "version": "codex-cli 0.145.0-alpha.27"
+    },
+    "plugin": {
+      "version": "0.21.1",
+      "commit": "2f2076df7a310efb546d824293464a99b4ec1861"
+    },
+    "repositoryCommit": "11129c2b262e5bdd282c153e9940a0c7d3620262",
+    "hostUsage": {
+      "inputTokens": 18029573,
+      "cachedInputTokens": 17122816,
+      "outputTokens": 154673,
+      "reasoningOutputTokens": 66904,
+      "onTokens": 8500992,
+      "offTokens": 9683254
+    },
+    "routerRates": {
+      "falseBypassRate": 0,
+      "falseActivationRate": null,
+      "beneficialCount": 5,
+      "boundedCount": 0,
+      "stage0LatencyMs": 0.07689999975264072,
+      "activationLatencyMs": 2155.53740000003
+    },
+    "pairedIntervals": {
+      "tokenDifference": { "estimate": -236452.4, "lower": -1032264.2, "upper": 425846.6, "samples": 5 },
+      "qualityDifference": { "estimate": 0, "lower": 0, "upper": 0, "samples": 5 },
+      "executionInclusiveSavings": { "estimate": 236452.4, "lower": -425846.6, "upper": 1032365.6, "samples": 5 }
+    },
+    "promotion": {
+      "enforcementEnabled": false,
+      "failureReasons": [
+        "router-shadow-sample-incomplete"
+      ]
+    }
+  },
   "releaseGate": {
     "passed": true,
     "failureReasons": []

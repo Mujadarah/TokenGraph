@@ -35,6 +35,30 @@ Execution-inclusive category results (bypassed tasks remain visible at zero but 
 
 The release gate treats execution-inclusive savings as the primary eligibility metric. Exact source slices are charged only for the four checked-in tasks whose natural implementation outcome requires a hash-bound source span; other tasks do not fabricate reads after compact evidence is sufficient. Negative tails remain visible, especially in memory/wiki and change-risk tasks.
 
+## Real-host paired evaluation
+
+The separately reported real-host evaluation contains five counterbalanced
+ON/OFF pairs for one implementation task in one repository and one category.
+All ten Codex host turns and acceptance commands passed. The reviewed manifest
+uses exact host-reported usage from `gpt-5.6-sol` on Codex CLI
+`0.145.0-alpha.27`: 18,029,573 input tokens, including 17,122,816 cached input
+tokens, and 154,673 output tokens. These values are not combined with the
+fixture estimates above.
+
+The ON conditions used 8,500,992 total tokens and OFF used 9,683,254. Median
+paired execution-inclusive savings are +236,452.4 tokens, but the paired
+interval crosses zero (-425,846.6 to +1,032,365.6), p25 is -557,686, and only
+three of five activated pairs are non-negative. Stage 0 routing latency is
+approximately 0.077 ms versus 2,155.5 ms activation latency.
+
+Promotion remains disabled. Five beneficial observations produce a zero
+false-bypass rate, but the protocol contains no bounded-task denominator and
+only five of the required ten category samples. The recorded failure is
+`router-shadow-sample-incomplete`; this one-repository result does not satisfy
+multi-repository B6 validation. See the checked
+`docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-manifest.json`
+and `docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-report.md`.
+
 Every category remains low-confidence and does not activate calibration. These are repeatable fixture estimates, not exact billed tokens, autonomous-agent patch-quality evidence, or universal Codex/Claude results.
 
 2026-07-19 accounting note: these current results were regenerated after the estimator began charging the category-qualified completion footer. This is a deterministic accounting update; it does not add host evaluation evidence or change the R4 routing-promotion state.
