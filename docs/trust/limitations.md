@@ -6,7 +6,7 @@ SQL parsing is not business understanding. Memory can become stale. Token saving
 
 Compression can omit low-priority details, so TokenGraph should recommend targeted raw reads when confidence is low or when security, migration, public API, or failure details matter.
 
-The benchmark's primary release gate is execution-inclusive. As of v0.21.1 the checked-in fixture run passes it (+196.5-token activated-task median, +102.5-token p25, 82.1% non-negative activated tasks), but this remains synthetic single-fixture evidence: downstream exact-slice reads are charged only on tasks that declare an unresolved evidence gap (none in the current corpus do), and no paired real-host evaluation has run yet. Small self-contained tasks can still cost more tokens than bounded raw reads; the routing advisor's bypass exists for exactly those cases, and agents should still skip TokenGraph intents for tiny self-contained work.
+The benchmark's primary release gate is execution-inclusive. The current checked-in fixture run passes it with a +174.5-token activated-task median, +40.5-token p25, and 81.5% non-negative activated tasks. Four tasks charge one hash-validated exact source slice each, totaling 711 estimated tokens. This remains synthetic single-fixture evidence. The first real-host evaluation ran five paired ON/OFF trials in one repository, but it did not pass every frozen promotion gate. Enforcement therefore remains disabled pending eligible reviewed schema-v3 evidence. Small bounded tasks can still cost more tokens than raw reads and should bypass TokenGraph at Stage 0.
 
 TokenGraph is not a clinical, legal, or regulated-domain decision system.
 

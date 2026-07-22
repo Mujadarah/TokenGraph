@@ -10,4 +10,8 @@ The default eight tools use compact mode envelopes with an explicit `mode` and `
 
 When no host workspace root is injected, TokenGraph may use the process working directory only when launched outside the plugin root; launching from the plugin root remains blocked until the host supplies an explicit trusted workspace.
 
+## Deterministic serialization
+
+In canonical persisted artifacts, an omitted field means the value is unknown. A JSON `null` means the value is known to be absent. Undefined values are never emitted.
+
 Users can delete indexes and memories. Memory can become stale, deprecated, or deleted. Deprecated memories are excluded from normal recall, and deleted memories require explicit audit mode.
