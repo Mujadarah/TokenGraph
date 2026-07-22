@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFile);
 describe("tokengraph run CLI", () => {
   it("prints evaluate-host help without starting a host run", async () => {
     const result = await execFileAsync(process.execPath, [resolve("dist", "cli.js"), "evaluate-host", "--help"], { cwd: process.cwd() });
-    expect(result.stdout).toMatch(/evaluate-host.*--protocol.*--dry-run/is);
+    expect(result.stdout).toMatch(/evaluate-host.*--controller-root.*--protocol.*--dry-run/is);
   });
 
   it("links a real failed command to an active task as a verified scoped outcome", async () => {

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -31,7 +31,7 @@ function protocol(repositoryCommit: string, prompt = "Where is src/a.ts? Do not 
     plugin: { version: "0.21.1", commit: repositoryCommit },
     promptTemplate: { identifier: "host-test-v1", template: "{{task}}" },
     tokenGraphMcp: { command: "node", args: ["dist/index.js"] },
-    acceptance: { verifierScript: "acceptance.mjs" },
+    acceptance: { verifierScript: "docs/benchmarks/host-evaluations/verifiers/acceptance.mjs", verifierCommit: repositoryCommit },
     toolConfiguration: { surface: "core" },
     cacheState: "empty",
     indexState: "cold",
@@ -159,20 +159,22 @@ describe("paired Codex host adapter", () => {
       await writeFile(join(root, "README.md"), "fixture\n");
       await mkdir(join(root, "dist"));
       await writeFile(join(root, "dist", "index.js"), "// fixture MCP runtime\n");
-      await execFileAsync("git", ["add", "README.md", "dist/index.js"], { cwd: root });
+      const verifierDirectory = join(root, "docs", "benchmarks", "host-evaluations", "verifiers");
+      const verifier = join(verifierDirectory, "acceptance.mjs");
+      const failedVerifier = join(verifierDirectory, "acceptance-fail.mjs");
+      const verifierSource = "import { existsSync } from 'node:fs'; process.exit(existsSync('README.md') ? 0 : 1);\n";
+      await mkdir(verifierDirectory, { recursive: true });
+      await writeFile(verifier, verifierSource);
+      await writeFile(failedVerifier, "process.exit(1);\n");
+      await execFileAsync("git", ["add", "README.md", "dist/index.js", "docs/benchmarks/host-evaluations/verifiers"], { cwd: root });
       await execFileAsync("git", ["-c", "user.name=TokenGraph", "-c", "user.email=tokengraph@example.invalid", "commit", "-m", "fixture"], { cwd: root });
       const { stdout: commit } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root });
       const hostScript = join(root, "fake-host.mjs");
       const cwdLog = join(root, "host-cwds.txt");
       const argvLog = join(root, "host-argv.jsonl");
-      const verifier = join(root, "acceptance.mjs");
-      const failedVerifier = join(root, "acceptance-fail.mjs");
       const sharedDependencies = join(root, "shared-dependencies");
       await mkdir(sharedDependencies);
       await writeFile(join(sharedDependencies, "sentinel.txt"), "preserve\n");
-      const verifierSource = "import { existsSync } from 'node:fs'; process.exit(existsSync('README.md') ? 0 : 1);\n";
-      await writeFile(verifier, verifierSource);
-      await writeFile(failedVerifier, "process.exit(1);\n");
       await writeFile(hostScript, [
         "import { appendFileSync } from 'node:fs';",
         "import { spawnSync } from 'node:child_process';",
@@ -232,6 +234,109 @@ describe("paired Codex host adapter", () => {
         commandHash: createHash("sha256").update(verifierSource).digest("hex")
       });
 
+      const controllerRoot = await mkdtemp(join(tmpdir(), "tokengraph-paired-host-controller-"));
+      try {
+        await execFileAsync("git", ["init"], { cwd: controllerRoot });
+        await mkdir(join(controllerRoot, "dist"));
+        await mkdir(join(controllerRoot, "docs", "benchmarks", "host-evaluations", "verifiers"), { recursive: true });
+        await writeFile(join(controllerRoot, "dist", "index.js"), "// separately attested MCP runtime\n");
+        await writeFile(join(controllerRoot, "docs", "benchmarks", "host-evaluations", "verifiers", "acceptance.mjs"), verifierSource);
+        await execFileAsync("git", ["add", "dist/index.js", "docs/benchmarks/host-evaluations/verifiers/acceptance.mjs"], { cwd: controllerRoot });
+        await execFileAsync("git", ["-c", "user.name=TokenGraph", "-c", "user.email=tokengraph@example.invalid", "commit", "-m", "controller fixture"], { cwd: controllerRoot });
+        const { stdout: controllerCommit } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: controllerRoot });
+        const externalProtocol = {
+          ...protocol(commit.trim()),
+          evaluationId: "paired-host-external-controller",
+          plugin: { version: "0.21.1", commit: controllerCommit.trim() },
+          acceptance: {
+            verifierScript: "docs/benchmarks/host-evaluations/verifiers/acceptance.mjs",
+            verifierCommit: controllerCommit.trim()
+          }
+        };
+
+        const external = await runPairedHostEvaluation({
+          root,
+          controllerRoot,
+          protocol: externalProtocol,
+          outputManifest: "artifacts/external-manifest.json",
+          hostExecutable: process.execPath,
+          hostArgumentsPrefix: [hostScript, cwdLog, argvLog],
+          timeoutMs: 10_000
+        });
+
+        expect(external.manifest?.repositoryCommit).toBe(commit.trim());
+        expect(external.manifest?.plugin.commit).toBe(controllerCommit.trim());
+        expect(JSON.parse(await readFile(join(controllerRoot, "artifacts", "external-manifest.json"), "utf8"))).toMatchObject({
+          repositoryCommit: commit.trim(),
+          plugin: { commit: controllerCommit.trim() }
+        });
+        await expect(readFile(join(root, "artifacts", "external-manifest.json"), "utf8")).rejects.toThrow();
+        const externalArguments = (await readFile(argvLog, "utf8")).trim().split(/\r?\n/).slice(-2).map((line) => JSON.parse(line) as string[]);
+        const externalOnArguments = externalArguments.find((args) => args.some((arg) => arg.startsWith("mcp_servers.tokengraph.args=")))!;
+        const externalMcpArguments = externalOnArguments.find((arg) => arg.startsWith("mcp_servers.tokengraph.args="))!;
+        expect(JSON.parse(externalMcpArguments.slice(externalMcpArguments.indexOf("=") + 1))).toEqual([join(controllerRoot, "dist", "index.js")]);
+      } finally {
+        await rm(controllerRoot, { recursive: true, force: true });
+      }
+
+      await expect(runPairedHostEvaluation({
+        root,
+        protocol: {
+          ...protocol(commit.trim()),
+          evaluationId: "paired-host-disallowed-verifier",
+          acceptance: { verifierScript: "dist/index.js", verifierCommit: commit.trim() }
+        },
+        outputManifest: "artifacts/disallowed-verifier-manifest.json",
+        hostExecutable: process.execPath,
+        hostArgumentsPrefix: [hostScript, cwdLog, argvLog],
+        timeoutMs: 10_000
+      })).rejects.toThrow(/approved verifier location/i);
+
+      await writeFile(verifier, "process.exit(0);\n");
+      const dirtyVerifierRun = await runPairedHostEvaluation({
+        root,
+        protocol: { ...protocol(commit.trim()), evaluationId: "paired-host-dirty-verifier" },
+        outputManifest: "artifacts/dirty-verifier-manifest.json",
+        hostExecutable: process.execPath,
+        hostArgumentsPrefix: [hostScript, cwdLog, argvLog],
+        timeoutMs: 10_000
+      });
+      expect(dirtyVerifierRun.manifest?.traces.every((trace) => trace.acceptance?.commandHash === createHash("sha256").update(verifierSource).digest("hex"))).toBe(true);
+      await writeFile(verifier, verifierSource);
+
+      const untrackedVerifier = join(verifierDirectory, "untracked.mjs");
+      await writeFile(untrackedVerifier, "process.exit(0);\n");
+      await expect(runPairedHostEvaluation({
+        root,
+        protocol: {
+          ...protocol(commit.trim()),
+          evaluationId: "paired-host-untracked-verifier",
+          acceptance: { verifierScript: "docs/benchmarks/host-evaluations/verifiers/untracked.mjs", verifierCommit: commit.trim() }
+        },
+        outputManifest: "artifacts/untracked-verifier-manifest.json",
+        hostExecutable: process.execPath,
+        hostArgumentsPrefix: [hostScript, cwdLog, argvLog],
+        timeoutMs: 10_000
+      })).rejects.toThrow(/verifier is not tracked by the attested verifier commit/i);
+      await rm(untrackedVerifier, { force: true });
+
+      const escapedManifestTarget = await mkdtemp(join(tmpdir(), "tokengraph-paired-host-manifest-escape-"));
+      const escapedManifestLink = join(root, "escaped-artifacts");
+      try {
+        await symlink(escapedManifestTarget, escapedManifestLink, process.platform === "win32" ? "junction" : "dir");
+        await expect(runPairedHostEvaluation({
+          root,
+          protocol: { ...protocol(commit.trim()), evaluationId: "paired-host-output-symlink" },
+          outputManifest: "escaped-artifacts/reviewed-manifest.json",
+          hostExecutable: process.execPath,
+          hostArgumentsPrefix: [hostScript, cwdLog, argvLog],
+          timeoutMs: 10_000
+        })).rejects.toThrow(/symbolic-link|junction/i);
+      } finally {
+        await rm(escapedManifestLink, { force: true });
+        await rm(escapedManifestTarget, { recursive: true, force: true });
+      }
+
       await writeFile(join(root, "dist", "index.js"), "// uncommitted runtime drift\n");
       await expect(runPairedHostEvaluation({
         root,
@@ -274,7 +379,7 @@ describe("paired Codex host adapter", () => {
       const failedAcceptanceProtocol = {
         ...protocol(commit.trim()),
         evaluationId: "paired-host-acceptance-failed",
-        acceptance: { verifierScript: "acceptance-fail.mjs" }
+        acceptance: { verifierScript: "docs/benchmarks/host-evaluations/verifiers/acceptance-fail.mjs", verifierCommit: commit.trim() }
       };
       const failedAcceptance = await runPairedHostEvaluation({
         root,

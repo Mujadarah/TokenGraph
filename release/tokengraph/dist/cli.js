@@ -1236,7 +1236,7 @@ async function persistPromotionReport(root, report) {
 // src/core/pairedHost.ts
 import { spawn as spawn2 } from "node:child_process";
 import { createHash as createHash3, randomUUID as randomUUID3 } from "node:crypto";
-import { access as access2, chmod as chmod3, mkdir as mkdir3, open as open2, readFile as readFile8, realpath as realpath3, rm as rm4, stat as stat2, symlink, writeFile as writeFile2 } from "node:fs/promises";
+import { access as access2, chmod as chmod3, mkdir as mkdir3, open as open2, readFile as readFile8, rm as rm4, symlink, writeFile as writeFile2 } from "node:fs/promises";
 import { dirname as dirname3, isAbsolute as isAbsolute4, relative as relative4, resolve as resolve5, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -1282,6 +1282,8 @@ function adviseRouting(input) {
 var MAX_PROCESS_OUTPUT_BYTES = 16 * 1024 * 1024;
 var ACCEPTANCE_COMMAND = "node .tokengraph-controller/acceptance.mjs";
 var ALLOWED_MCP_ENVIRONMENT = /* @__PURE__ */ new Set(["TOKENGRAPH_TOOL_SURFACE"]);
+var APPROVED_VERIFIER_DIRECTORY = "docs/benchmarks/host-evaluations/verifiers";
+var APPROVED_VERIFIER_FILE = "plugins/tokengraph/scripts/paired-host-acceptance.mjs";
 function hashNumber(value) {
   return Number.parseInt(createHash3("sha256").update(value).digest("hex").slice(0, 12), 16);
 }
@@ -1440,7 +1442,7 @@ function assertProtocol(value) {
     throw new Error("Paired host protocol schema is invalid.");
   }
   const typed = value;
-  if (typed.reviewed !== void 0 && typeof typed.reviewed !== "boolean" || !typed.tasks.length || new Set(typed.tasks.map((task) => task.taskId)).size !== typed.tasks.length || typeof typed.model.identifier !== "string" || !typed.model.identifier || typeof typed.model.versionOrDate !== "string" || !typed.model.versionOrDate || typeof typed.reasoningLevel !== "string" || !typed.reasoningLevel || typed.approvalPolicy !== "never" || typed.windowsSandbox !== "elevated" || typeof typed.repositoryCommit !== "string" || !/^[a-f0-9]{7,40}$/i.test(typed.repositoryCommit) || typeof typed.plugin.version !== "string" || !typed.plugin.version || typeof typed.plugin.commit !== "string" || !/^[a-f0-9]{40}$/i.test(typed.plugin.commit) || typeof typed.promptTemplate.identifier !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(typed.promptTemplate.identifier) || typeof typed.promptTemplate.template !== "string" || typed.promptTemplate.template.length > 2e4 || !typed.promptTemplate.template.includes("{{task}}") || typeof typed.tokenGraphMcp.command !== "string" || !approvedNodeCommand(typed.tokenGraphMcp.command) || !Array.isArray(typed.tokenGraphMcp.args) || typed.tokenGraphMcp.args.some((entry) => typeof entry !== "string") || typeof typed.acceptance.verifierScript !== "string" || !typed.acceptance.verifierScript || isAbsolute4(typed.acceptance.verifierScript) || typed.acceptance.verifierScript.split(/[\\/]/).includes("..") || !/\.[cm]?js$/i.test(typed.acceptance.verifierScript) || typed.dependencySource !== void 0 && (typeof typed.dependencySource !== "string" || isAbsolute4(typed.dependencySource) || typed.dependencySource.split(/[\\/]/).includes("..")) || typeof typed.cacheState !== "string" || !typed.cacheState || !["cold", "warm"].includes(typed.indexState) || !typed.toolConfiguration || typeof typed.toolConfiguration !== "object" || Array.isArray(typed.toolConfiguration) || containsAbsolutePath(typed.toolConfiguration) || typed.tokenGraphMcp.env && Object.entries(typed.tokenGraphMcp.env).some(([key, entry]) => !ALLOWED_MCP_ENVIRONMENT.has(key) || key === "TOKENGRAPH_TOOL_SURFACE" && entry !== "core" && entry !== "full") || !Number.isInteger(typed.protocol.runsPerTask) || typed.protocol.runsPerTask < 1 || !Number.isInteger(typed.protocol.minimumPerCategorySamples) || typed.protocol.minimumPerCategorySamples < 10 || ![typed.protocol.qualityNonInferiorityMargin, typed.protocol.tokenSuperiorityMinimum, typed.protocol.resourceLimit, typed.protocol.executionMedianMinimum, typed.protocol.executionP25Minimum].every((entry) => typeof entry === "number" && Number.isFinite(entry) && entry >= 0) || typeof typed.protocol.routerRateMaximum !== "number" || !Number.isFinite(typed.protocol.routerRateMaximum) || typed.protocol.routerRateMaximum <= 0 || typed.protocol.routerRateMaximum > 0.1 || typed.protocol.stage0LatencyMaximumMs !== 5 || typeof typed.protocol.nonNegativeActivatedMinimum !== "number" || !Number.isFinite(typed.protocol.nonNegativeActivatedMinimum) || typed.protocol.nonNegativeActivatedMinimum < 0.8 || typed.protocol.nonNegativeActivatedMinimum > 1 || typed.tasks.some((task) => typeof task.taskId !== "string" || !/^[a-z0-9][a-z0-9-]{1,63}$/.test(task.taskId) || typeof task.category !== "string" || !/^[a-z0-9][a-z0-9-]{1,31}$/.test(task.category) || typeof task.prompt !== "string" || !task.prompt || task.prompt.length > 5e4 || !["none", "low", "medium", "high"].includes(task.expectedBenefit) || !["activate", "bypass"].includes(task.expectedRouting) || task.expectedRouting === "bypass" !== (task.expectedBenefit === "none"))) {
+  if (typed.reviewed !== void 0 && typeof typed.reviewed !== "boolean" || !typed.tasks.length || new Set(typed.tasks.map((task) => task.taskId)).size !== typed.tasks.length || typeof typed.model.identifier !== "string" || !typed.model.identifier || typeof typed.model.versionOrDate !== "string" || !typed.model.versionOrDate || typeof typed.reasoningLevel !== "string" || !typed.reasoningLevel || typed.approvalPolicy !== "never" || typed.windowsSandbox !== "elevated" || typeof typed.repositoryCommit !== "string" || !/^[a-f0-9]{7,40}$/i.test(typed.repositoryCommit) || typeof typed.plugin.version !== "string" || !typed.plugin.version || typeof typed.plugin.commit !== "string" || !/^[a-f0-9]{40}$/i.test(typed.plugin.commit) || typeof typed.promptTemplate.identifier !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(typed.promptTemplate.identifier) || typeof typed.promptTemplate.template !== "string" || typed.promptTemplate.template.length > 2e4 || !typed.promptTemplate.template.includes("{{task}}") || typeof typed.tokenGraphMcp.command !== "string" || !approvedNodeCommand(typed.tokenGraphMcp.command) || !Array.isArray(typed.tokenGraphMcp.args) || typed.tokenGraphMcp.args.some((entry) => typeof entry !== "string") || typeof typed.acceptance.verifierScript !== "string" || !typed.acceptance.verifierScript || isAbsolute4(typed.acceptance.verifierScript) || typed.acceptance.verifierScript.split(/[\\/]/).includes("..") || !/\.[cm]?js$/i.test(typed.acceptance.verifierScript) || typeof typed.acceptance.verifierCommit !== "string" || !/^[a-f0-9]{40}$/i.test(typed.acceptance.verifierCommit) || typed.dependencySource !== void 0 && (typeof typed.dependencySource !== "string" || isAbsolute4(typed.dependencySource) || typed.dependencySource.split(/[\\/]/).includes("..")) || typeof typed.cacheState !== "string" || !typed.cacheState || !["cold", "warm"].includes(typed.indexState) || !typed.toolConfiguration || typeof typed.toolConfiguration !== "object" || Array.isArray(typed.toolConfiguration) || containsAbsolutePath(typed.toolConfiguration) || typed.tokenGraphMcp.env && Object.entries(typed.tokenGraphMcp.env).some(([key, entry]) => !ALLOWED_MCP_ENVIRONMENT.has(key) || key === "TOKENGRAPH_TOOL_SURFACE" && entry !== "core" && entry !== "full") || !Number.isInteger(typed.protocol.runsPerTask) || typed.protocol.runsPerTask < 1 || !Number.isInteger(typed.protocol.minimumPerCategorySamples) || typed.protocol.minimumPerCategorySamples < 10 || ![typed.protocol.qualityNonInferiorityMargin, typed.protocol.tokenSuperiorityMinimum, typed.protocol.resourceLimit, typed.protocol.executionMedianMinimum, typed.protocol.executionP25Minimum].every((entry) => typeof entry === "number" && Number.isFinite(entry) && entry >= 0) || typeof typed.protocol.routerRateMaximum !== "number" || !Number.isFinite(typed.protocol.routerRateMaximum) || typed.protocol.routerRateMaximum <= 0 || typed.protocol.routerRateMaximum > 0.1 || typed.protocol.stage0LatencyMaximumMs !== 5 || typeof typed.protocol.nonNegativeActivatedMinimum !== "number" || !Number.isFinite(typed.protocol.nonNegativeActivatedMinimum) || typed.protocol.nonNegativeActivatedMinimum < 0.8 || typed.protocol.nonNegativeActivatedMinimum > 1 || typed.tasks.some((task) => typeof task.taskId !== "string" || !/^[a-z0-9][a-z0-9-]{1,63}$/.test(task.taskId) || typeof task.category !== "string" || !/^[a-z0-9][a-z0-9-]{1,31}$/.test(task.category) || typeof task.prompt !== "string" || !task.prompt || task.prompt.length > 5e4 || !["none", "low", "medium", "high"].includes(task.expectedBenefit) || !["activate", "bypass"].includes(task.expectedRouting) || task.expectedRouting === "bypass" !== (task.expectedBenefit === "none"))) {
     throw new Error("Paired host protocol fields are invalid.");
   }
   return typed;
@@ -1589,15 +1591,33 @@ function permissionFilesystem(gitCommonDirectory2, dependencySource, mcpRuntimeP
   ];
   return `{${rules.join(",")}}`;
 }
-async function verifierSource(root, verifierScript) {
+function samePath(left, right) {
+  const normalizedLeft = resolve5(left);
+  const normalizedRight = resolve5(right);
+  return process.platform === "win32" ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase() : normalizedLeft === normalizedRight;
+}
+function approvedVerifierPath(root, candidate) {
+  return beneath(resolve5(root, APPROVED_VERIFIER_DIRECTORY), candidate) || samePath(resolve5(root, APPROVED_VERIFIER_FILE), candidate);
+}
+async function verifierSource(root, verifierScript, verifierCommit) {
   const requested = resolve5(root, verifierScript);
   if (!beneath(root, requested)) throw new Error("Acceptance verifier escaped the supplied evaluation root.");
-  const canonical = await realpath3(requested);
-  if (!beneath(root, canonical)) throw new Error("Acceptance verifier resolves outside the supplied evaluation root.");
-  const metadata = await stat2(canonical);
-  if (!metadata.isFile() || metadata.size > 1024 * 1024) throw new Error("Acceptance verifier must be a bounded regular file.");
-  const content = await readFile8(canonical);
-  return { path: canonical, content, commandHash: sha256(content) };
+  if (!approvedVerifierPath(root, requested)) throw new Error("Acceptance verifier must use an approved verifier location.");
+  const exactVerifierCommit = await git2(root, ["rev-parse", `${verifierCommit}^{commit}`]);
+  if (exactVerifierCommit.toLowerCase() !== verifierCommit.toLowerCase()) throw new Error("Protocol verifier commit is not exact.");
+  const verifierGitPath = relative4(root, requested).split(sep).join("/");
+  const trackedVerifier = await runProcess("git", ["cat-file", "-e", `${exactVerifierCommit}:${verifierGitPath}`], root, 3e4);
+  if (trackedVerifier.spawnFailed || trackedVerifier.exitCode !== 0) throw new Error("Acceptance verifier is not tracked by the attested verifier commit.");
+  const verifierType = await runProcess("git", ["cat-file", "-t", `${exactVerifierCommit}:${verifierGitPath}`], root, 3e4);
+  if (verifierType.spawnFailed || verifierType.exitCode !== 0 || verifierType.stdout.trim() !== "blob") throw new Error("Acceptance verifier must be an attested regular-file blob.");
+  const verifierSize = await runProcess("git", ["cat-file", "-s", `${exactVerifierCommit}:${verifierGitPath}`], root, 3e4);
+  const size = Number.parseInt(verifierSize.stdout.trim(), 10);
+  if (verifierSize.spawnFailed || verifierSize.exitCode !== 0 || !Number.isSafeInteger(size) || size < 1 || size > 1024 * 1024) throw new Error("Acceptance verifier must be a bounded regular-file blob.");
+  const verifierBlob = await runProcess("git", ["cat-file", "-p", `${exactVerifierCommit}:${verifierGitPath}`], root, 3e4);
+  if (verifierBlob.spawnFailed || verifierBlob.exitCode !== 0) throw new Error("Acceptance verifier blob could not be read from its attested commit.");
+  const content = Buffer.from(verifierBlob.stdout, "utf8");
+  if (content.byteLength !== size) throw new Error("Acceptance verifier blob size did not match its attested metadata.");
+  return { path: requested, content, commandHash: sha256(content) };
 }
 async function installVerifier(worktree, verifier) {
   const directory = resolve5(worktree, ".tokengraph-controller");
@@ -1731,6 +1751,7 @@ async function recoverStaleWorktree(root, worktreeRoot, worktree, rawPath, norma
 }
 async function runPairedHostEvaluation(options) {
   const root = resolve5(options.root);
+  const controllerRoot = resolve5(options.controllerRoot ?? options.root);
   const protocol = assertProtocol(options.protocol);
   const commit = await git2(root, ["rev-parse", `${protocol.repositoryCommit}^{commit}`]);
   if (!commit.toLowerCase().startsWith(protocol.repositoryCommit.toLowerCase())) throw new Error("Protocol repository commit is not exact.");
@@ -1738,14 +1759,17 @@ async function runPairedHostEvaluation(options) {
   const hostExecutable = options.hostExecutable ?? "codex";
   const hostArgumentsPrefix = options.hostArgumentsPrefix ?? [];
   const hostEnvironment = isolatedHostEnvironment();
-  const verifier = await verifierSource(root, protocol.acceptance.verifierScript);
+  const pluginCommit = await git2(controllerRoot, ["rev-parse", `${protocol.plugin.commit}^{commit}`]);
+  if (pluginCommit.toLowerCase() !== protocol.plugin.commit.toLowerCase()) throw new Error("Protocol plugin commit is not exact.");
+  const verifier = await verifierSource(controllerRoot, protocol.acceptance.verifierScript, protocol.acceptance.verifierCommit);
   const version = await runProcess(hostExecutable, [...hostArgumentsPrefix, "--version"], root, 1e4, void 0, hostEnvironment);
   if (version.spawnFailed || version.exitCode !== 0 || !/^codex-cli\s+\S+/i.test(version.stdout.trim())) throw new Error("Codex host version could not be verified.");
   const hostVersion = version.stdout.trim();
   if (options.dryRun) return { manifest: null, plan, hostVersion };
   if (!options.outputManifest) throw new Error("An output manifest path is required for a live host evaluation.");
-  const outputManifest = isAbsolute4(options.outputManifest) ? resolve5(options.outputManifest) : resolve5(root, options.outputManifest);
-  if (!beneath(root, outputManifest)) throw new Error("Reviewed manifest must remain beneath the evaluation root.");
+  const outputManifest = isAbsolute4(options.outputManifest) ? resolve5(options.outputManifest) : resolve5(controllerRoot, options.outputManifest);
+  if (!beneath(controllerRoot, outputManifest)) throw new Error("Reviewed manifest must remain beneath the controller root.");
+  await assertNoSymbolicLinkComponents(outputManifest);
   await ensureLocalRunExclusion(root);
   const evaluationRoot = resolve5(root, ".tokengraph", "runs", "paired-host", protocol.evaluationId);
   const worktreeRoot = resolve5(evaluationRoot, "worktrees");
@@ -1759,16 +1783,14 @@ async function runPairedHostEvaluation(options) {
   const gitCommonValue = await git2(root, ["rev-parse", "--git-common-dir"]);
   const gitCommonDirectory2 = isAbsolute4(gitCommonValue) ? resolve5(gitCommonValue) : resolve5(root, gitCommonValue);
   const dependencySource = protocol.dependencySource ? resolve5(root, protocol.dependencySource) : void 0;
-  const resolvedMcp = resolveMcp(root, protocol.tokenGraphMcp);
-  const pluginCommit = await git2(root, ["rev-parse", `${protocol.plugin.commit}^{commit}`]);
-  if (pluginCommit.toLowerCase() !== protocol.plugin.commit.toLowerCase()) throw new Error("Protocol plugin commit is not exact.");
+  const resolvedMcp = resolveMcp(controllerRoot, protocol.tokenGraphMcp);
   const mcpRuntimePaths = resolvedMcp.args.filter(isAbsolute4);
   for (const runtimePath of mcpRuntimePaths) {
-    if (!beneath(root, runtimePath)) throw new Error("TokenGraph MCP runtime must remain beneath the evaluation root.");
-    const runtimeGitPath = relative4(root, runtimePath).split(sep).join("/");
-    const trackedRuntime = await runProcess("git", ["cat-file", "-e", `${pluginCommit}:${runtimeGitPath}`], root, 3e4);
+    if (!beneath(controllerRoot, runtimePath)) throw new Error("TokenGraph MCP runtime must remain beneath the controller root.");
+    const runtimeGitPath = relative4(controllerRoot, runtimePath).split(sep).join("/");
+    const trackedRuntime = await runProcess("git", ["cat-file", "-e", `${pluginCommit}:${runtimeGitPath}`], controllerRoot, 3e4);
     if (trackedRuntime.spawnFailed || trackedRuntime.exitCode !== 0) throw new Error("TokenGraph MCP runtime is not tracked by the attested plugin commit.");
-    const runtimeDiff = await runProcess("git", ["diff", "--quiet", pluginCommit, "--", runtimeGitPath], root, 3e4);
+    const runtimeDiff = await runProcess("git", ["diff", "--quiet", pluginCommit, "--", runtimeGitPath], controllerRoot, 3e4);
     if (runtimeDiff.spawnFailed || runtimeDiff.exitCode !== 0) throw new Error("TokenGraph MCP runtime does not match the attested plugin commit.");
   }
   for (const run of plan) {
@@ -2347,7 +2369,7 @@ function optionValue(args, name) {
 async function main(argv) {
   if (argv[0] === "evaluate-host") {
     const options2 = argv.slice(1);
-    const usage2 = "Usage: tokengraph evaluate-host [--root <path>] --protocol <path> [--output-manifest <path>] [--codex <executable>] [--timeout-ms <n>] [--dry-run]";
+    const usage2 = "Usage: tokengraph evaluate-host [--root <path>] [--controller-root <path>] --protocol <path> [--output-manifest <path>] [--codex <executable>] [--timeout-ms <n>] [--dry-run]";
     if (options2.includes("--help")) {
       process.stdout.write(`${usage2}
 `);
@@ -2360,6 +2382,7 @@ async function main(argv) {
     if (!Number.isFinite(timeoutMs2) || timeoutMs2 < 1) throw new Error("evaluate-host --timeout-ms must be a positive number.");
     const result = await runPairedHostEvaluation({
       root: root2,
+      ...optionValue(options2, "--controller-root") ? { controllerRoot: optionValue(options2, "--controller-root") } : {},
       protocol: await loadPairedHostProtocol(protocolPath),
       ...optionValue(options2, "--output-manifest") ? { outputManifest: optionValue(options2, "--output-manifest") } : {},
       ...optionValue(options2, "--codex") ? { hostExecutable: optionValue(options2, "--codex") } : {},

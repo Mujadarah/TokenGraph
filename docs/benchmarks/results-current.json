@@ -141,6 +141,56 @@
       ]
     }
   },
+  "multiRepositoryRealHostCoverage": {
+    "targetRepositoryCount": 3,
+    "completedRepositoryCount": 3,
+    "completedCategoryCount": 3,
+    "completedPairCount": 15,
+    "completedTraceCount": 30,
+    "coverageComplete": true,
+    "promotionComplete": false,
+    "evaluations": [
+      {
+        "repository": "Mujadarah/TokenGraph",
+        "category": "code",
+        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json",
+        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.json",
+        "pairCount": 5,
+        "traceCount": 10,
+        "acceptancePassed": 10,
+        "acceptanceFailed": 0,
+        "enforcementEnabled": false
+      },
+      {
+        "repository": "mattpocock/ts-reset",
+        "category": "type-system",
+        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-manifest.json",
+        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.json",
+        "pairCount": 5,
+        "traceCount": 10,
+        "acceptancePassed": 10,
+        "acceptanceFailed": 0,
+        "enforcementEnabled": false
+      },
+      {
+        "repository": "imbhargav5/nextbase-nextjs-supabase-starter",
+        "category": "frontend",
+        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-manifest.json",
+        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-report.json",
+        "pairCount": 5,
+        "traceCount": 10,
+        "acceptancePassed": 10,
+        "acceptanceFailed": 0,
+        "enforcementEnabled": false
+      }
+    ],
+    "finalDecision": {
+      "routingMode": "shadow",
+      "b7PolyglotIndexing": "dark",
+      "reason": "The three-repository coverage target is met, but the frozen promotion gates do not all pass."
+    },
+    "remaining": "No repository coverage gap; frozen promotion gates still fail."
+  },
   "releaseGate": {
     "passed": true,
     "failureReasons": []

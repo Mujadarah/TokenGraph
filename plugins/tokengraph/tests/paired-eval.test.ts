@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { counterbalancedConditions, evaluateManifest, evaluatePaired, loadEvaluationManifest, pairedBootstrap, parseEvaluationManifest } from "../src/core/pairedEval.js";
@@ -308,6 +308,34 @@ describe("paired evaluation", () => {
     const manifest = await loadEvaluationManifest(resolve(evidenceRoot, "2026-07-22-tokengraph-codex-manifest.json"));
     const checkedReport = JSON.parse(await readFile(resolve(evidenceRoot, "2026-07-22-tokengraph-codex-report.json"), "utf8"));
 
+    expect(manifest).toMatchObject({ schemaVersion: 3, evidenceSource: "real-host", reviewed: true });
+    expect(checkedReport).toEqual(evaluateManifest(manifest));
+  });
+
+  it("reproduces the checked-in ts-reset schema-v3 host evaluation decision", async () => {
+    const evidenceRoot = resolve("..", "..", "docs", "benchmarks", "host-evaluations");
+    const manifest = await loadEvaluationManifest(resolve(evidenceRoot, "2026-07-22-ts-reset-codex-manifest.json"));
+    const checkedReport = JSON.parse(await readFile(resolve(evidenceRoot, "2026-07-22-ts-reset-codex-report.json"), "utf8"));
+
+    expect(manifest).toMatchObject({ schemaVersion: 3, evidenceSource: "real-host", reviewed: true });
+    expect(checkedReport).toEqual(evaluateManifest(manifest));
+  });
+
+  it("pins the ts-reset verifier to the inferred type of a bare Map constructor", async () => {
+    const verifier = await readFile(resolve("..", "..", "docs", "benchmarks", "host-evaluations", "verifiers", "2026-07-22-ts-reset-map-constructor.mjs"), "utf8");
+
+    expect(verifier).toMatch(/const bare = new Map\(\);/);
+    expect(verifier).toMatch(/Expect<Equal<typeof bare, Map<unknown, unknown>>>/);
+    expect(verifier).not.toMatch(/BareValue/);
+  });
+
+  it("reproduces the checked-in Nextbase schema-v3 host evaluation decision", async () => {
+    const evidenceRoot = resolve("..", "..", "docs", "benchmarks", "host-evaluations");
+    const manifest = await loadEvaluationManifest(resolve(evidenceRoot, "2026-07-22-nextbase-codex-manifest.json"));
+    const reportPath = resolve(evidenceRoot, "2026-07-22-nextbase-codex-report.json");
+
+    await expect(access(reportPath)).resolves.toBeUndefined();
+    const checkedReport = JSON.parse(await readFile(reportPath, "utf8"));
     expect(manifest).toMatchObject({ schemaVersion: 3, evidenceSource: "real-host", reviewed: true });
     expect(checkedReport).toEqual(evaluateManifest(manifest));
   });

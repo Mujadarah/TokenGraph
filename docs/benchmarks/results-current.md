@@ -64,6 +64,44 @@ multi-repository B6 validation. See the checked
 `docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json`
 and `docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.md`.
 
+The second eligible repository campaign evaluated `mattpocock/ts-reset` at a
+pinned commit. Its five counterbalanced pairs also completed all ten host turns
+and acceptance checks. ON used 4,140,943 total tokens and OFF used 4,790,975.
+The paired execution-inclusive savings estimate is +130,006.4 tokens with an
+interval of -222,194.2 to +458,705.6; the median is +371,094, p25 is -257,068,
+and three of five activated pairs are non-negative. Median Stage 0 latency was
+approximately 0.0389 ms and false bypasses were 0/5.
+
+Promotion remains disabled for this result too. It passes reviewed schema-v3
+evidence, quality non-inferiority, routing latency, and execution median, but
+fails minimum samples, token superiority, resources, complete router rates,
+execution p25, and the 80% non-negative threshold. This individual category
+contains five of the required ten samples and no bounded-task denominator; the
+aggregate multi-repository decision follows the third report below. See the checked
+`docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-manifest.json` and
+`docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.md`.
+
+The third eligible campaign evaluated
+`imbhargav5/nextbase-nextjs-supabase-starter` at a pinned commit. Its five
+counterbalanced pairs completed all ten host turns and acceptance checks. ON
+used 4,090,125 total tokens and OFF used 3,581,441. The paired
+execution-inclusive savings estimate is -101,736.8 tokens with an interval of
+-384,554.2 to +155,548.2; the median is -10,884, p25 is -211,447, and two of
+five activated pairs are non-negative. Median Stage 0 latency was approximately
+0.0209 ms and false bypasses were 0/5.
+
+Promotion remains disabled for this result. It passes reviewed schema-v3
+evidence, quality non-inferiority, and routing latency, but fails minimum
+samples, token superiority, resources, complete router rates, execution median,
+execution p25, and the 80% non-negative threshold. See the checked
+`docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-manifest.json` and
+`docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-report.md`.
+
+The multi-repository B6 coverage target is now met: three repositories, three
+categories, fifteen pairs, thirty accepted traces, and no retained failure in
+the eligible manifests. The frozen promotion gates still do not all pass, so
+routing remains in shadow mode and B7 polyglot indexing remains dark.
+
 Every category remains low-confidence and does not activate calibration. These are repeatable fixture estimates, not exact billed tokens, autonomous-agent patch-quality evidence, or universal Codex/Claude results.
 
 2026-07-19 accounting note: these current results were regenerated after the estimator began charging the category-qualified completion footer. This is a deterministic accounting update; it does not add host evaluation evidence or change the R4 routing-promotion state.

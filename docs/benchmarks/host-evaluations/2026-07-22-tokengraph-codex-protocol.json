@@ -30,7 +30,8 @@
   },
   "dependencySource": "plugins/tokengraph/node_modules",
   "acceptance": {
-    "verifierScript": "plugins/tokengraph/scripts/paired-host-acceptance.mjs"
+    "verifierScript": "plugins/tokengraph/scripts/paired-host-acceptance.mjs",
+    "verifierCommit": "934c5c1114668e4d5161f2314f67f593e294044d"
   },
   "toolConfiguration": {
     "on": "local-tokengraph-mcp-only",

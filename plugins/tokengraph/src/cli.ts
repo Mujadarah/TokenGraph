@@ -15,7 +15,7 @@ function optionValue(args: string[], name: string): string | undefined {
 async function main(argv: string[]): Promise<void> {
   if (argv[0] === "evaluate-host") {
     const options = argv.slice(1);
-    const usage = "Usage: tokengraph evaluate-host [--root <path>] --protocol <path> [--output-manifest <path>] [--codex <executable>] [--timeout-ms <n>] [--dry-run]";
+    const usage = "Usage: tokengraph evaluate-host [--root <path>] [--controller-root <path>] --protocol <path> [--output-manifest <path>] [--codex <executable>] [--timeout-ms <n>] [--dry-run]";
     if (options.includes("--help")) {
       process.stdout.write(`${usage}\n`);
       return;
@@ -27,6 +27,7 @@ async function main(argv: string[]): Promise<void> {
     if (!Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error("evaluate-host --timeout-ms must be a positive number.");
     const result = await runPairedHostEvaluation({
       root,
+      ...(optionValue(options, "--controller-root") ? { controllerRoot: optionValue(options, "--controller-root") } : {}),
       protocol: await loadPairedHostProtocol(protocolPath),
       ...(optionValue(options, "--output-manifest") ? { outputManifest: optionValue(options, "--output-manifest") } : {}),
       ...(optionValue(options, "--codex") ? { hostExecutable: optionValue(options, "--codex") } : {}),

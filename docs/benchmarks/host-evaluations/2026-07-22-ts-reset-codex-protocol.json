@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 2,
+  "evaluationId": "ts-reset-20260722b",
+  "seed": "tokengraph-ts-reset-real-host-v2",
+  "reviewed": true,
+  "model": {
+    "identifier": "gpt-5.6-sol",
+    "versionOrDate": "2026-07-22"
+  },
+  "reasoningLevel": "high",
+  "approvalPolicy": "never",
+  "windowsSandbox": "elevated",
+  "repositoryCommit": "cfc8c1a992650eb17f75fef526dc9185c312dac2",
+  "plugin": {
+    "version": "0.22.0",
+    "commit": "5821e84a3ec66a719c49b3d770ecbf9ce26247e0"
+  },
+  "promptTemplate": {
+    "identifier": "tokengraph-external-bounded-fix-v1",
+    "template": "Work only in the provided repository worktree. Use an available repository context tool before editing: if tokengraph_prepare_context exists, call it once with the task text; otherwise use normal host repository tools. Then complete this bounded task:\n\n{{task}}\n\nKeep the change focused. Dependencies are pre-provisioned; do not install or modify dependencies. Add the specified regression coverage and run focused tests plus typecheck. Do not commit or push."
+  },
+  "tokenGraphMcp": {
+    "command": "node",
+    "args": [
+      "release/tokengraph/dist/index.js"
+    ],
+    "env": {
+      "TOKENGRAPH_TOOL_SURFACE": "core"
+    }
+  },
+  "dependencySource": "node_modules",
+  "acceptance": {
+    "verifierScript": "docs/benchmarks/host-evaluations/verifiers/2026-07-22-ts-reset-map-constructor.mjs",
+    "verifierCommit": "841b539e3b042cb2792d455e1c6027d64acd7920"
+  },
+  "toolConfiguration": {
+    "on": "local-tokengraph-mcp-only",
+    "off": "host-repository-tools-only",
+    "surface": "core",
+    "approvalPolicy": "never",
+    "windowsSandbox": "elevated",
+    "permissions": "root-deny-worktree-write-controller-read-dependencies-read-network-disabled",
+    "subprocessEnvironment": "inherit-none-platform-runtime-and-evaluation-temp-only",
+    "dependencies": "lockfile-matched-root-node-modules-junction",
+    "acceptance": "final-attested-hidden-read-only-verifier",
+    "controller": "separately-attested-controller-root",
+    "userConfig": "ignored"
+  },
+  "cacheState": "empty-per-condition-worktree",
+  "indexState": "cold",
+  "protocol": {
+    "runsPerTask": 5,
+    "minimumPerCategorySamples": 10,
+    "qualityNonInferiorityMargin": 0.02,
+    "tokenSuperiorityMinimum": 1,
+    "resourceLimit": 2,
+    "routerRateMaximum": 0.1,
+    "stage0LatencyMaximumMs": 5,
+    "executionMedianMinimum": 0,
+    "executionP25Minimum": 0,
+    "nonNegativeActivatedMinimum": 0.8
+  },
+  "tasks": [
+    {
+      "taskId": "map-constructor-context",
+      "category": "type-system",
+      "prompt": "Fix the no-argument MapConstructor override so new Map() can contextually satisfy Map<string, boolean> in a function argument, an annotated assignment, and a satisfies expression, while an uncontextualized empty Map still defaults to Map<unknown, unknown> and populated Map construction keeps its existing inference. Add compile-time regression cases for all four behaviors without unrelated refactoring.",
+      "expectedBenefit": "medium",
+      "expectedRouting": "activate",
+      "expectedQuality": 1
+    }
+  ]
+}
