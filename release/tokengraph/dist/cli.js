@@ -1654,11 +1654,22 @@ function emptyProcessResult() {
 }
 async function cleanupWorktree(root, worktreeRoot, worktree) {
   if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe worktree cleanup.");
-  await git2(root, ["worktree", "remove", "--force", worktree]).catch(async () => {
+  try {
+    await git2(root, ["worktree", "remove", "--force", worktree]);
+  } catch {
     if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe worktree cleanup.");
     await rm4(worktree, { recursive: true, force: true });
     await git2(root, ["worktree", "prune"]);
-  });
+    return;
+  }
+  try {
+    await access2(worktree);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe residual cleanup.");
+  await rm4(worktree, { recursive: true, force: true });
 }
 async function durableRunArtifacts(rawPath, normalizedPath, run) {
   try {

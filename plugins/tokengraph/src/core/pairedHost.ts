@@ -524,11 +524,22 @@ function emptyProcessResult(): ProcessResult {
 
 async function cleanupWorktree(root: string, worktreeRoot: string, worktree: string): Promise<void> {
   if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe worktree cleanup.");
-  await git(root, ["worktree", "remove", "--force", worktree]).catch(async () => {
+  try {
+    await git(root, ["worktree", "remove", "--force", worktree]);
+  } catch {
     if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe worktree cleanup.");
     await rm(worktree, { recursive: true, force: true });
     await git(root, ["worktree", "prune"]);
-  });
+    return;
+  }
+  try {
+    await access(worktree);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe residual cleanup.");
+  await rm(worktree, { recursive: true, force: true });
 }
 
 async function durableRunArtifacts(rawPath: string, normalizedPath: string, run: PlannedHostRun): Promise<boolean> {

@@ -184,6 +184,7 @@ describe("paired Codex host adapter", () => {
       else process.env.TOKENGRAPH_TEST_SECRET_SENTINEL = previousSecret;
       expect(result.manifest?.traces).toHaveLength(2);
       expect(result.manifest?.traces.every((trace) => trace.acceptance?.status === "passed" && trace.quality === 1 && !trace.failed)).toBe(true);
+      expect(await readdir(join(root, ".tokengraph", "runs", "paired-host", "paired-host-test", "worktrees"))).toEqual([]);
       const worktreeCwds = (await readFile(cwdLog, "utf8")).trim().split(/\r?\n/);
       expect(new Set(worktreeCwds).size).toBe(2);
       const hostArguments = await readFile(argvLog, "utf8");
