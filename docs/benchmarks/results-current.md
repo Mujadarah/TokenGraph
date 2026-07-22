@@ -37,27 +37,32 @@ The release gate treats execution-inclusive savings as the primary eligibility m
 
 ## Real-host paired evaluation
 
-The separately reported real-host evaluation contains five counterbalanced
-ON/OFF pairs for one implementation task in one repository and one category.
-All ten Codex host turns and acceptance commands passed. The reviewed manifest
+The corrected 2026-07-22 evaluation contains five counterbalanced ON/OFF pairs
+for one implementation task in one repository and one category. All ten Codex
+host turns and acceptance commands passed. The reviewed schema-v3 manifest
 uses exact host-reported usage from `gpt-5.6-sol` on Codex CLI
-`0.145.0-alpha.27`: 18,029,573 input tokens, including 17,122,816 cached input
-tokens, and 154,673 output tokens. These values are not combined with the
+`0.145.0-alpha.30`: 26,183,135 input tokens, including 25,191,424 cached input
+tokens, and 168,284 output tokens. These values are not combined with the
 fixture estimates above.
 
-The ON conditions used 8,500,992 total tokens and OFF used 9,683,254. Median
-paired execution-inclusive savings are +236,452.4 tokens, but the paired
-interval crosses zero (-425,846.6 to +1,032,365.6), p25 is -557,686, and only
-three of five activated pairs are non-negative. Stage 0 routing latency is
-approximately 0.077 ms versus 2,155.5 ms activation latency.
+The ON conditions used 11,057,367 total tokens and OFF used 15,294,052. The
+paired execution-inclusive savings estimate is +847,337 tokens, but the paired
+interval crosses zero (-244,224.4 to +2,199,729.6), the median is -52,798, p25
+is -291,203, and only two of five activated pairs are non-negative. Median
+Stage 0 routing latency is approximately 0.0175 ms, within the frozen 5 ms
+ceiling and faster than the 1,713.6 ms activation median.
 
-Promotion remains disabled. Five beneficial observations produce a zero
-false-bypass rate, but the protocol contains no bounded-task denominator and
-only five of the required ten category samples. The recorded failure is
-`router-shadow-sample-incomplete`; this one-repository result does not satisfy
+Promotion remains disabled. Reviewed schema-v3 evidence, quality
+non-inferiority, and both latency checks pass. Minimum samples, token
+superiority, resource limits, router rates, execution median, execution p25,
+and the 80% non-negative activated threshold fail. Five beneficial
+observations produce a zero false-bypass rate, but the protocol contains no
+bounded-task denominator and only five of the required ten category samples.
+The structural failure is `router-shadow-sample-incomplete`; enforcement stays
+off and B7 remains inactive. This one-repository result does not satisfy
 multi-repository B6 validation. See the checked
-`docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-manifest.json`
-and `docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-report.md`.
+`docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json`
+and `docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.md`.
 
 Every category remains low-confidence and does not activate calibration. These are repeatable fixture estimates, not exact billed tokens, autonomous-agent patch-quality evidence, or universal Codex/Claude results.
 
