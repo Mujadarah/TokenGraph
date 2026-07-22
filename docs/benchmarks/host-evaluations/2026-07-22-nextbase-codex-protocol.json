@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 2,
+  "evaluationId": "nextbase-20260722",
+  "seed": "tokengraph-nextbase-real-host-v1",
+  "reviewed": true,
+  "model": {
+    "identifier": "gpt-5.6-sol",
+    "versionOrDate": "2026-07-22"
+  },
+  "reasoningLevel": "high",
+  "approvalPolicy": "never",
+  "windowsSandbox": "elevated",
+  "repositoryCommit": "d1e7923957b9a9aa996c3bb8c7aaca9938db3b11",
+  "plugin": {
+    "version": "0.22.0",
+    "commit": "5821e84a3ec66a719c49b3d770ecbf9ce26247e0"
+  },
+  "promptTemplate": {
+    "identifier": "tokengraph-external-bounded-fix-v1",
+    "template": "Work only in the provided repository worktree. Use an available repository context tool before editing: if tokengraph_prepare_context exists, call it once with the task text; otherwise use normal host repository tools. Then complete this bounded task:\n\n{{task}}\n\nKeep the change focused. Dependencies are pre-provisioned; do not install or modify dependencies. Add the specified regression coverage and run focused tests plus typecheck. Do not commit or push."
+  },
+  "tokenGraphMcp": {
+    "command": "node",
+    "args": [
+      "release/tokengraph/dist/index.js"
+    ],
+    "env": {
+      "TOKENGRAPH_TOOL_SURFACE": "core"
+    }
+  },
+  "dependencySource": "node_modules",
+  "acceptance": {
+    "verifierScript": "docs/benchmarks/host-evaluations/verifiers/2026-07-22-nextbase-validation-fallback.mjs"
+  },
+  "toolConfiguration": {
+    "on": "local-tokengraph-mcp-only",
+    "off": "host-repository-tools-only",
+    "surface": "core",
+    "approvalPolicy": "never",
+    "windowsSandbox": "elevated",
+    "permissions": "root-deny-worktree-write-controller-read-dependencies-read-network-disabled",
+    "subprocessEnvironment": "inherit-none-platform-runtime-and-evaluation-temp-only",
+    "dependencies": "lockfile-matched-root-node-modules-junction",
+    "acceptance": "final-attested-hidden-read-only-verifier",
+    "controller": "separately-attested-controller-root",
+    "userConfig": "ignored"
+  },
+  "cacheState": "empty-per-condition-worktree",
+  "indexState": "cold",
+  "protocol": {
+    "runsPerTask": 5,
+    "minimumPerCategorySamples": 10,
+    "qualityNonInferiorityMargin": 0.02,
+    "tokenSuperiorityMinimum": 1,
+    "resourceLimit": 2,
+    "routerRateMaximum": 0.1,
+    "stage0LatencyMaximumMs": 5,
+    "executionMedianMinimum": 0,
+    "executionP25Minimum": 0,
+    "nonNegativeActivatedMinimum": 0.8
+  },
+  "tasks": [
+    {
+      "taskId": "validation-fallback",
+      "category": "frontend",
+      "prompt": "Fix getErrorMessage for ValidationError so a fielded error with an empty message returns the field plus the existing Validation failed fallback, for example email: Validation failed. Preserve non-empty fielded messages and fieldless validation behavior. Add a focused unit regression test for the empty-message fielded case without unrelated refactoring.",
+      "expectedBenefit": "medium",
+      "expectedRouting": "activate",
+      "expectedQuality": 1
+    }
+  ]
+}
