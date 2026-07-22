@@ -157,6 +157,27 @@ describe("paired evaluation", () => {
     expect(report.enforcementEnabled).toBe(false);
   });
 
+  it("uses the arithmetic median for an even number of latency samples", () => {
+    const manifest = realHostManifest();
+    let onIndex = 0;
+    for (const trace of manifest.traces) {
+      if (trace.condition === "on" && "routing" in trace && trace.routing) {
+        trace.routing.routingLatencyMs = onIndex < 9 ? 1 : onIndex === 9 ? 5 : 100;
+        if (trace.routing.decision === "activate") trace.routing.activationLatencyMs = 200;
+        onIndex += 1;
+      }
+    }
+    const report = evaluateManifest(parseEvaluationManifest(manifest));
+    expect(report.routerRates).toMatchObject({
+      stage0LatencyMs: 52.5,
+      activationLatencyMs: 200,
+      stage0FasterThanActivation: true,
+      stage0WithinBudget: false
+    });
+    expect(report.gates.routerLatency).toBe(false);
+    expect(report.enforcementEnabled).toBe(false);
+  });
+
   it("keeps schema-v1 and schema-v2 fixture evidence non-promoting", () => {
     const legacy = parseEvaluationManifest({
       schemaVersion: 1,

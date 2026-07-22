@@ -104,7 +104,24 @@ describe("paired Codex host adapter", () => {
     const lateError = parseCodexJsonl([...events.slice(0, 1), events[2], { type: "error", message: "secret" }].map((event) => JSON.stringify(event)).join("\n"), {
       modelIdentifier: "gpt-5", hostVersion: "codex-cli 1", acceptanceCommand, acceptanceCommandHash
     });
-    expect(lateError).toMatchObject({ finalStatus: "failed", failureClass: "host-stream-error", acceptance: { status: "passed" } });
+    expect(lateError).toMatchObject({ finalStatus: "failed", failureClass: "host-stream-error", acceptance: { status: "failed" } });
+
+    const terminalBeforeAcceptance = parseCodexJsonl([
+      events[2],
+      events[0]
+    ].map((event) => JSON.stringify(event)).join("\n"), {
+      modelIdentifier: "gpt-5", hostVersion: "codex-cli 1", acceptanceCommand, acceptanceCommandHash
+    });
+    expect(terminalBeforeAcceptance.acceptance).toEqual({ status: "failed", commandHash: acceptanceCommandHash });
+
+    const startedAfterAcceptance = parseCodexJsonl([
+      events[0],
+      { type: "item.started", item: { id: "late", type: "command_execution", command: "node mutate.mjs" } },
+      events[2]
+    ].map((event) => JSON.stringify(event)).join("\n"), {
+      modelIdentifier: "gpt-5", hostVersion: "codex-cli 1", acceptanceCommand, acceptanceCommandHash
+    });
+    expect(startedAfterAcceptance.acceptance).toEqual({ status: "failed", commandHash: acceptanceCommandHash });
   });
 
   it("normalizes host spawn failures instead of rejecting the process wrapper", async () => {
@@ -223,6 +240,20 @@ describe("paired Codex host adapter", () => {
         timeoutMs: 10_000
       })).rejects.toThrow(/runtime does not match the attested plugin commit/i);
       await writeFile(join(root, "dist", "index.js"), "// fixture MCP runtime\n");
+      await writeFile(join(root, "untracked-runtime.js"), "// untracked runtime\n");
+      await expect(runPairedHostEvaluation({
+        root,
+        protocol: {
+          ...protocol(commit.trim()),
+          evaluationId: "paired-host-untracked-runtime",
+          tokenGraphMcp: { command: process.execPath, args: ["untracked-runtime.js"] }
+        },
+        outputManifest: "artifacts/untracked-runtime-manifest.json",
+        hostExecutable: process.execPath,
+        hostArgumentsPrefix: [hostScript, cwdLog, argvLog],
+        timeoutMs: 10_000
+      })).rejects.toThrow(/runtime is not tracked by the attested plugin commit/i);
+      await rm(join(root, "untracked-runtime.js"), { force: true });
 
       const failedAcceptanceProtocol = {
         ...protocol(commit.trim()),
@@ -250,7 +281,7 @@ describe("paired Codex host adapter", () => {
         hostArgumentsPrefix: [hostScript, cwdLog, argvLog, "LATE_ERROR"],
         timeoutMs: 10_000
       });
-      expect(lateError.manifest?.traces.every((trace) => trace.failed && trace.quality === 0 && trace.acceptance?.status === "passed")).toBe(true);
+      expect(lateError.manifest?.traces.every((trace) => trace.failed && trace.quality === 0 && trace.acceptance?.status === "failed")).toBe(true);
 
       const slowHostScript = join(root, "slow-host.mjs");
       await writeFile(slowHostScript, [
@@ -353,6 +384,49 @@ describe("paired Codex host adapter", () => {
       await execFileAsync("git", ["worktree", "remove", "--force", nonDurableWorktree], { cwd: root });
       await rm(nonDurableNormalized, { recursive: true, force: true });
 
+      const mismatchedProtocol = { ...protocol(commit.trim()), evaluationId: "paired-host-mismatched-stale" };
+      const mismatchedRun = planPairedHostRuns(mismatchedProtocol.tasks, 1, mismatchedProtocol.seed)[0]!;
+      const mismatchedName = `task-1-repeat-1-${mismatchedRun.condition}`;
+      const mismatchedRoot = join(root, ".tokengraph", "runs", "paired-host", mismatchedProtocol.evaluationId);
+      const mismatchedWorktree = join(mismatchedRoot, "worktrees", mismatchedName);
+      const mismatchedExecutionId = "mismatched-execution";
+      await mkdir(join(mismatchedRoot, "raw"), { recursive: true });
+      await mkdir(join(mismatchedRoot, "normalized"), { recursive: true });
+      await execFileAsync("git", ["worktree", "add", "--detach", mismatchedWorktree, commit.trim()], { cwd: root });
+      await mkdir(join(mismatchedWorktree, ".tokengraph-controller"), { recursive: true });
+      await writeFile(join(mismatchedWorktree, ".tokengraph-controller", "run.json"), JSON.stringify({
+        schemaVersion: 1,
+        evaluationId: mismatchedProtocol.evaluationId,
+        executionId: mismatchedExecutionId,
+        repositoryCommit: commit.trim(),
+        taskId: mismatchedRun.taskId,
+        repeat: mismatchedRun.repeat,
+        condition: mismatchedRun.condition
+      }));
+      await writeFile(join(mismatchedRoot, "raw", `${mismatchedName}.jsonl`), "new raw\n");
+      await writeFile(join(mismatchedRoot, "normalized", `${mismatchedName}.json`), JSON.stringify({
+        schemaVersion: 2,
+        durable: true,
+        evaluationId: mismatchedProtocol.evaluationId,
+        executionId: mismatchedExecutionId,
+        repositoryCommit: commit.trim(),
+        rawSha256: createHash("sha256").update("old raw\n").digest("hex"),
+        taskId: mismatchedRun.taskId,
+        repeat: mismatchedRun.repeat,
+        condition: mismatchedRun.condition
+      }));
+      await expect(runPairedHostEvaluation({
+        root,
+        protocol: mismatchedProtocol,
+        outputManifest: "artifacts/mismatched-stale-manifest.json",
+        hostExecutable: process.execPath,
+        hostArgumentsPrefix: [hostScript, cwdLog, argvLog],
+        timeoutMs: 10_000
+      })).rejects.toThrow(/non-durable stale worktree/i);
+      expect(await readdir(join(mismatchedRoot, "worktrees"))).toEqual([mismatchedName]);
+      await execFileAsync("git", ["worktree", "remove", "--force", mismatchedWorktree], { cwd: root });
+      await rm(mismatchedRoot, { recursive: true, force: true });
+
       const durableStaleProtocol = { ...protocol(commit.trim()), evaluationId: "paired-host-durable-stale" };
       const durableStaleRun = planPairedHostRuns(durableStaleProtocol.tasks, 1, durableStaleProtocol.seed)[0]!;
       const durableStaleName = `task-1-repeat-1-${durableStaleRun.condition}`;
@@ -361,10 +435,26 @@ describe("paired Codex host adapter", () => {
       await mkdir(join(durableStaleRoot, "raw"), { recursive: true });
       await mkdir(join(durableStaleRoot, "normalized"), { recursive: true });
       await execFileAsync("git", ["worktree", "add", "--detach", durableStaleWorktree, commit.trim()], { cwd: root });
-      await writeFile(join(durableStaleRoot, "raw", `${durableStaleName}.jsonl`), "historical raw\n");
+      const durableExecutionId = "durable-execution";
+      const durableRaw = "historical raw\n";
+      await mkdir(join(durableStaleWorktree, ".tokengraph-controller"), { recursive: true });
+      await writeFile(join(durableStaleWorktree, ".tokengraph-controller", "run.json"), JSON.stringify({
+        schemaVersion: 1,
+        evaluationId: durableStaleProtocol.evaluationId,
+        executionId: durableExecutionId,
+        repositoryCommit: commit.trim(),
+        taskId: durableStaleRun.taskId,
+        repeat: durableStaleRun.repeat,
+        condition: durableStaleRun.condition
+      }));
+      await writeFile(join(durableStaleRoot, "raw", `${durableStaleName}.jsonl`), durableRaw);
       await writeFile(join(durableStaleRoot, "normalized", `${durableStaleName}.json`), JSON.stringify({
         schemaVersion: 2,
         durable: true,
+        evaluationId: durableStaleProtocol.evaluationId,
+        executionId: durableExecutionId,
+        repositoryCommit: commit.trim(),
+        rawSha256: createHash("sha256").update(durableRaw).digest("hex"),
         taskId: durableStaleRun.taskId,
         repeat: durableStaleRun.repeat,
         condition: durableStaleRun.condition
@@ -382,5 +472,5 @@ describe("paired Codex host adapter", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 60_000);
 });

@@ -145,6 +145,13 @@ function quantile(values: number[], fraction: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * fraction))]!;
 }
 
+function median(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1]! + sorted[middle]!) / 2 : sorted[middle]!;
+}
+
 function random(seed: number): () => number {
   let state = seed || 1;
   return () => {
@@ -302,7 +309,7 @@ export function evaluatePaired(tasks: EvaluationTask[], traces: HostTrace[], opt
   const activatedPairs = pairs.filter(({ on }) => validShadowObservation(on.routing) && on.routing.decision === "activate");
   const activatedExecutionSavings = activatedPairs.map(({ on, off }) => (off.executionInclusiveTokens ?? off.tokens) - (on.executionInclusiveTokens ?? on.tokens));
   const executionSorted = [...activatedExecutionSavings].sort((a, b) => a - b);
-  const executionMedian = executionSorted.length ? executionSorted[Math.floor((executionSorted.length - 1) * 0.5)]! : 0;
+  const executionMedian = median(executionSorted);
   const executionP25 = executionSorted.length ? executionSorted[Math.floor((executionSorted.length - 1) * 0.25)]! : 0;
   const nonNegativeActivatedRate = activatedExecutionSavings.length ? activatedExecutionSavings.filter((value) => value >= 0).length / activatedExecutionSavings.length : 0;
   const routerObservations = pairs.flatMap(({ on }) => validShadowObservation(on.routing) && on.routing.expectedRouting ? [on.routing] : []);
@@ -314,8 +321,8 @@ export function evaluatePaired(tasks: EvaluationTask[], traces: HostTrace[], opt
   const falseActivationRate = boundedObservations.length ? boundedObservations.filter((observation) => observation.falseActivation).length / boundedObservations.length : null;
   const stage0Latencies = routerObservations.flatMap((observation) => typeof observation.routingLatencyMs === "number" ? [observation.routingLatencyMs] : []);
   const activationLatencies = routerObservations.flatMap((observation) => typeof observation.activationLatencyMs === "number" ? [observation.activationLatencyMs] : []);
-  const stage0LatencyMs = stage0Latencies.length ? quantile(stage0Latencies, 0.5) : null;
-  const activationLatencyMs = activationLatencies.length ? quantile(activationLatencies, 0.5) : null;
+  const stage0LatencyMs = stage0Latencies.length ? median(stage0Latencies) : null;
+  const activationLatencyMs = activationLatencies.length ? median(activationLatencies) : null;
   const stage0FasterThanActivation = stage0LatencyMs !== null && activationLatencyMs !== null && stage0LatencyMs < activationLatencyMs;
   const stage0LatencyMaximumMs = schemaVersion === 3 ? options.stage0LatencyMaximumMs ?? null : null;
   const stage0WithinBudget = stage0LatencyMs !== null && stage0LatencyMaximumMs !== null && stage0LatencyMs <= stage0LatencyMaximumMs;

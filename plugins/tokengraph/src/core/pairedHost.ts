@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { access, chmod, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -160,6 +160,8 @@ export function parseCodexJsonl(raw: string, options: { modelIdentifier: string;
   let acceptanceMatches = 0;
   let acceptanceCommandPassed = false;
   let acceptanceInvalidated = false;
+  let acceptanceCompletedAt: number | undefined;
+  let successfulTerminalAt: number | undefined;
   const startedMcpCalls = new Map<string, number>();
 
   for (const [index, line] of lines.entries()) {
@@ -172,6 +174,10 @@ export function parseCodexJsonl(raw: string, options: { modelIdentifier: string;
       throw new Error("Codex JSONL contains an invalid host event.");
     }
     const item = record(event.item);
+    if (event.type === "item.started" && item) {
+      const mutationCapable = item.type !== "agent_message" && item.type !== "reasoning" && item.type !== "todo_list";
+      if (acceptanceCompletedAt !== undefined && mutationCapable) acceptanceInvalidated = true;
+    }
     if (event.type === "item.started" && item?.type === "mcp_tool_call" && typeof item.id === "string") {
       startedMcpCalls.set(item.id, options.lineElapsedMs?.[index] ?? index);
     }
@@ -182,6 +188,7 @@ export function parseCodexJsonl(raw: string, options: { modelIdentifier: string;
       if (matchesAcceptance) {
         acceptanceMatches += 1;
         acceptanceCommandPassed = item.status === "completed" && item.exit_code === 0;
+        acceptanceCompletedAt = index;
       }
       if (item.type === "command_execution" || item.type === "mcp_tool_call") toolCalls += 1;
       if (item.type === "command_execution" && rawReadCommand(item.command)) fallbackRawReads += 1;
@@ -204,7 +211,10 @@ export function parseCodexJsonl(raw: string, options: { modelIdentifier: string;
         throw new Error("Codex completed without exact host-reported usage.");
       }
       usage = { inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens, totalTokens: inputTokens + outputTokens };
-      finalStatus = "completed";
+      if (finalStatus !== "failed") {
+        finalStatus = "completed";
+        successfulTerminalAt = index;
+      }
     } else if (event.type === "turn.failed") {
       finalStatus = "failed";
       failureClass = "host-turn-failed";
@@ -225,7 +235,8 @@ export function parseCodexJsonl(raw: string, options: { modelIdentifier: string;
     ...(failureClass ? { failureClass } : {}),
     ...(options.acceptanceCommand && options.acceptanceCommandHash ? {
       acceptance: {
-        status: acceptanceMatches === 1 && acceptanceCommandPassed && !acceptanceInvalidated ? "passed" as const : "failed" as const,
+        status: acceptanceMatches === 1 && acceptanceCommandPassed && !acceptanceInvalidated && finalStatus === "completed" &&
+          acceptanceCompletedAt !== undefined && successfulTerminalAt !== undefined && successfulTerminalAt > acceptanceCompletedAt ? "passed" as const : "failed" as const,
         commandHash: options.acceptanceCommandHash
       }
     } : {}),
@@ -543,25 +554,44 @@ async function cleanupWorktree(root: string, worktreeRoot: string, worktree: str
   await rm(worktree, { recursive: true, force: true });
 }
 
-async function durableRunArtifacts(rawPath: string, normalizedPath: string, run: PlannedHostRun): Promise<boolean> {
+async function durableRunArtifacts(
+  rawPath: string,
+  normalizedPath: string,
+  worktree: string,
+  run: PlannedHostRun,
+  identity: { evaluationId: string; repositoryCommit: string }
+): Promise<boolean> {
   try {
-    await readFile(rawPath, "utf8");
+    const raw = await readFile(rawPath, "utf8");
     const normalized = record(JSON.parse(await readFile(normalizedPath, "utf8")));
-    return normalized?.schemaVersion === 2 && normalized.durable === true && normalized.taskId === run.taskId &&
-      normalized.repeat === run.repeat && normalized.condition === run.condition;
+    const marker = record(JSON.parse(await readFile(resolve(worktree, ".tokengraph-controller", "run.json"), "utf8")));
+    return normalized?.schemaVersion === 2 && normalized.durable === true && marker?.schemaVersion === 1 &&
+      typeof normalized.executionId === "string" && normalized.executionId.length > 0 && marker.executionId === normalized.executionId &&
+      normalized.evaluationId === identity.evaluationId && marker.evaluationId === identity.evaluationId &&
+      normalized.repositoryCommit === identity.repositoryCommit && marker.repositoryCommit === identity.repositoryCommit &&
+      normalized.rawSha256 === sha256(raw) && normalized.taskId === run.taskId && marker.taskId === run.taskId &&
+      normalized.repeat === run.repeat && marker.repeat === run.repeat && normalized.condition === run.condition && marker.condition === run.condition;
   } catch {
     return false;
   }
 }
 
-async function recoverStaleWorktree(root: string, worktreeRoot: string, worktree: string, rawPath: string, normalizedPath: string, run: PlannedHostRun): Promise<void> {
+async function recoverStaleWorktree(
+  root: string,
+  worktreeRoot: string,
+  worktree: string,
+  rawPath: string,
+  normalizedPath: string,
+  run: PlannedHostRun,
+  identity: { evaluationId: string; repositoryCommit: string }
+): Promise<void> {
   try {
     await access(worktree);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
-  if (!await durableRunArtifacts(rawPath, normalizedPath, run)) {
+  if (!await durableRunArtifacts(rawPath, normalizedPath, worktree, run, identity)) {
     throw new Error(`Refusing to remove non-durable stale worktree for ${run.taskId} repeat ${run.repeat} ${run.condition}.`);
   }
   await cleanupWorktree(root, worktreeRoot, worktree);
@@ -604,7 +634,10 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
   const mcpRuntimePaths = resolvedMcp.args.filter(isAbsolute);
   for (const runtimePath of mcpRuntimePaths) {
     if (!beneath(root, runtimePath)) throw new Error("TokenGraph MCP runtime must remain beneath the evaluation root.");
-    const runtimeDiff = await runProcess("git", ["diff", "--quiet", pluginCommit, "--", relative(root, runtimePath)], root, 30_000);
+    const runtimeGitPath = relative(root, runtimePath).split(sep).join("/");
+    const trackedRuntime = await runProcess("git", ["cat-file", "-e", `${pluginCommit}:${runtimeGitPath}`], root, 30_000);
+    if (trackedRuntime.spawnFailed || trackedRuntime.exitCode !== 0) throw new Error("TokenGraph MCP runtime is not tracked by the attested plugin commit.");
+    const runtimeDiff = await runProcess("git", ["diff", "--quiet", pluginCommit, "--", runtimeGitPath], root, 30_000);
     if (runtimeDiff.spawnFailed || runtimeDiff.exitCode !== 0) throw new Error("TokenGraph MCP runtime does not match the attested plugin commit.");
   }
 
@@ -615,7 +648,8 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
     const rawPath = resolve(rawRoot, `${runName}.jsonl`);
     const normalizedPath = resolve(normalizedRoot, `${runName}.json`);
     if (!beneath(worktreeRoot, worktree)) throw new Error("Generated worktree escaped its verified root.");
-    await recoverStaleWorktree(root, worktreeRoot, worktree, rawPath, normalizedPath, run);
+    const runIdentity = { evaluationId: protocol.evaluationId, repositoryCommit: commit };
+    await recoverStaleWorktree(root, worktreeRoot, worktree, rawPath, normalizedPath, run, runIdentity);
     try {
       await git(root, ["worktree", "add", "--detach", worktree, commit]);
     } catch {
@@ -629,9 +663,22 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
       throw new Error(`${runName} worktree creation failed.`);
     }
     let durable = false;
+    const executionId = randomUUID();
     try {
-      let phaseFailure: "dependency-provisioning-failed" | "acceptance-provisioning-failed" | undefined;
-      if (protocol.dependencySource && dependencySource) {
+      let phaseFailure: "evidence-provisioning-failed" | "dependency-provisioning-failed" | "acceptance-provisioning-failed" | undefined;
+      try {
+        await writeJsonAtomic(resolve(worktree, ".tokengraph-controller", "run.json"), {
+          schemaVersion: 1,
+          ...runIdentity,
+          executionId,
+          taskId: run.taskId,
+          repeat: run.repeat,
+          condition: run.condition
+        });
+      } catch {
+        phaseFailure = "evidence-provisioning-failed";
+      }
+      if (!phaseFailure && protocol.dependencySource && dependencySource) {
         const dependencyTarget = resolve(worktree, protocol.dependencySource);
         try {
           if (!beneath(root, dependencySource) || !beneath(worktree, dependencyTarget)) throw new Error("Dependency provisioning escaped its verified root.");
@@ -709,6 +756,9 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
       const normalized = {
         schemaVersion: 2,
         durable: true,
+        ...runIdentity,
+        executionId,
+        rawSha256: sha256(host.stdout),
         taskId: run.taskId,
         repeat: run.repeat,
         condition: run.condition,
@@ -717,7 +767,9 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
       };
       await writeTextAtomic(rawPath, host.stdout);
       await writeJsonAtomic(normalizedPath, normalized);
-      durable = true;
+      durable = await durableRunArtifacts(rawPath, normalizedPath, worktree, run, runIdentity);
+      if (!durable) throw new Error(`${runName} evidence artifacts are not durable.`);
+      if (phaseFailure === "evidence-provisioning-failed") throw new Error(`${runName} evidence provisioning failed.`);
       if (phaseFailure === "dependency-provisioning-failed") throw new Error(`${runName} dependency provisioning failed.`);
       if (phaseFailure === "acceptance-provisioning-failed") throw new Error(`${runName} acceptance verifier provisioning failed.`);
       if (host.spawnFailed || host.timedOut || host.outputLimitExceeded || !parsed?.usage) throw new Error(`${runName} did not produce a complete exact-usage host trace.`);
