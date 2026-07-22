@@ -1731,6 +1731,7 @@ async function recoverStaleWorktree(root, worktreeRoot, worktree, rawPath, norma
 }
 async function runPairedHostEvaluation(options) {
   const root = resolve5(options.root);
+  const controllerRoot = resolve5(options.controllerRoot ?? options.root);
   const protocol = assertProtocol(options.protocol);
   const commit = await git2(root, ["rev-parse", `${protocol.repositoryCommit}^{commit}`]);
   if (!commit.toLowerCase().startsWith(protocol.repositoryCommit.toLowerCase())) throw new Error("Protocol repository commit is not exact.");
@@ -1738,14 +1739,14 @@ async function runPairedHostEvaluation(options) {
   const hostExecutable = options.hostExecutable ?? "codex";
   const hostArgumentsPrefix = options.hostArgumentsPrefix ?? [];
   const hostEnvironment = isolatedHostEnvironment();
-  const verifier = await verifierSource(root, protocol.acceptance.verifierScript);
+  const verifier = await verifierSource(controllerRoot, protocol.acceptance.verifierScript);
   const version = await runProcess(hostExecutable, [...hostArgumentsPrefix, "--version"], root, 1e4, void 0, hostEnvironment);
   if (version.spawnFailed || version.exitCode !== 0 || !/^codex-cli\s+\S+/i.test(version.stdout.trim())) throw new Error("Codex host version could not be verified.");
   const hostVersion = version.stdout.trim();
   if (options.dryRun) return { manifest: null, plan, hostVersion };
   if (!options.outputManifest) throw new Error("An output manifest path is required for a live host evaluation.");
-  const outputManifest = isAbsolute4(options.outputManifest) ? resolve5(options.outputManifest) : resolve5(root, options.outputManifest);
-  if (!beneath(root, outputManifest)) throw new Error("Reviewed manifest must remain beneath the evaluation root.");
+  const outputManifest = isAbsolute4(options.outputManifest) ? resolve5(options.outputManifest) : resolve5(controllerRoot, options.outputManifest);
+  if (!beneath(controllerRoot, outputManifest)) throw new Error("Reviewed manifest must remain beneath the controller root.");
   await ensureLocalRunExclusion(root);
   const evaluationRoot = resolve5(root, ".tokengraph", "runs", "paired-host", protocol.evaluationId);
   const worktreeRoot = resolve5(evaluationRoot, "worktrees");
@@ -1759,16 +1760,16 @@ async function runPairedHostEvaluation(options) {
   const gitCommonValue = await git2(root, ["rev-parse", "--git-common-dir"]);
   const gitCommonDirectory2 = isAbsolute4(gitCommonValue) ? resolve5(gitCommonValue) : resolve5(root, gitCommonValue);
   const dependencySource = protocol.dependencySource ? resolve5(root, protocol.dependencySource) : void 0;
-  const resolvedMcp = resolveMcp(root, protocol.tokenGraphMcp);
-  const pluginCommit = await git2(root, ["rev-parse", `${protocol.plugin.commit}^{commit}`]);
+  const resolvedMcp = resolveMcp(controllerRoot, protocol.tokenGraphMcp);
+  const pluginCommit = await git2(controllerRoot, ["rev-parse", `${protocol.plugin.commit}^{commit}`]);
   if (pluginCommit.toLowerCase() !== protocol.plugin.commit.toLowerCase()) throw new Error("Protocol plugin commit is not exact.");
   const mcpRuntimePaths = resolvedMcp.args.filter(isAbsolute4);
   for (const runtimePath of mcpRuntimePaths) {
-    if (!beneath(root, runtimePath)) throw new Error("TokenGraph MCP runtime must remain beneath the evaluation root.");
-    const runtimeGitPath = relative4(root, runtimePath).split(sep).join("/");
-    const trackedRuntime = await runProcess("git", ["cat-file", "-e", `${pluginCommit}:${runtimeGitPath}`], root, 3e4);
+    if (!beneath(controllerRoot, runtimePath)) throw new Error("TokenGraph MCP runtime must remain beneath the controller root.");
+    const runtimeGitPath = relative4(controllerRoot, runtimePath).split(sep).join("/");
+    const trackedRuntime = await runProcess("git", ["cat-file", "-e", `${pluginCommit}:${runtimeGitPath}`], controllerRoot, 3e4);
     if (trackedRuntime.spawnFailed || trackedRuntime.exitCode !== 0) throw new Error("TokenGraph MCP runtime is not tracked by the attested plugin commit.");
-    const runtimeDiff = await runProcess("git", ["diff", "--quiet", pluginCommit, "--", runtimeGitPath], root, 3e4);
+    const runtimeDiff = await runProcess("git", ["diff", "--quiet", pluginCommit, "--", runtimeGitPath], controllerRoot, 3e4);
     if (runtimeDiff.spawnFailed || runtimeDiff.exitCode !== 0) throw new Error("TokenGraph MCP runtime does not match the attested plugin commit.");
   }
   for (const run of plan) {
@@ -2347,7 +2348,7 @@ function optionValue(args, name) {
 async function main(argv) {
   if (argv[0] === "evaluate-host") {
     const options2 = argv.slice(1);
-    const usage2 = "Usage: tokengraph evaluate-host [--root <path>] --protocol <path> [--output-manifest <path>] [--codex <executable>] [--timeout-ms <n>] [--dry-run]";
+    const usage2 = "Usage: tokengraph evaluate-host [--root <path>] [--controller-root <path>] --protocol <path> [--output-manifest <path>] [--codex <executable>] [--timeout-ms <n>] [--dry-run]";
     if (options2.includes("--help")) {
       process.stdout.write(`${usage2}
 `);
@@ -2360,6 +2361,7 @@ async function main(argv) {
     if (!Number.isFinite(timeoutMs2) || timeoutMs2 < 1) throw new Error("evaluate-host --timeout-ms must be a positive number.");
     const result = await runPairedHostEvaluation({
       root: root2,
+      ...optionValue(options2, "--controller-root") ? { controllerRoot: optionValue(options2, "--controller-root") } : {},
       protocol: await loadPairedHostProtocol(protocolPath),
       ...optionValue(options2, "--output-manifest") ? { outputManifest: optionValue(options2, "--output-manifest") } : {},
       ...optionValue(options2, "--codex") ? { hostExecutable: optionValue(options2, "--codex") } : {},

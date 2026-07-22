@@ -232,6 +232,46 @@ describe("paired Codex host adapter", () => {
         commandHash: createHash("sha256").update(verifierSource).digest("hex")
       });
 
+      const controllerRoot = await mkdtemp(join(tmpdir(), "tokengraph-paired-host-controller-"));
+      try {
+        await execFileAsync("git", ["init"], { cwd: controllerRoot });
+        await mkdir(join(controllerRoot, "dist"));
+        await writeFile(join(controllerRoot, "dist", "index.js"), "// separately attested MCP runtime\n");
+        await writeFile(join(controllerRoot, "acceptance.mjs"), verifierSource);
+        await execFileAsync("git", ["add", "dist/index.js", "acceptance.mjs"], { cwd: controllerRoot });
+        await execFileAsync("git", ["-c", "user.name=TokenGraph", "-c", "user.email=tokengraph@example.invalid", "commit", "-m", "controller fixture"], { cwd: controllerRoot });
+        const { stdout: controllerCommit } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: controllerRoot });
+        const externalProtocol = {
+          ...protocol(commit.trim()),
+          evaluationId: "paired-host-external-controller",
+          plugin: { version: "0.21.1", commit: controllerCommit.trim() }
+        };
+
+        const external = await runPairedHostEvaluation({
+          root,
+          controllerRoot,
+          protocol: externalProtocol,
+          outputManifest: "artifacts/external-manifest.json",
+          hostExecutable: process.execPath,
+          hostArgumentsPrefix: [hostScript, cwdLog, argvLog],
+          timeoutMs: 10_000
+        });
+
+        expect(external.manifest?.repositoryCommit).toBe(commit.trim());
+        expect(external.manifest?.plugin.commit).toBe(controllerCommit.trim());
+        expect(JSON.parse(await readFile(join(controllerRoot, "artifacts", "external-manifest.json"), "utf8"))).toMatchObject({
+          repositoryCommit: commit.trim(),
+          plugin: { commit: controllerCommit.trim() }
+        });
+        await expect(readFile(join(root, "artifacts", "external-manifest.json"), "utf8")).rejects.toThrow();
+        const externalArguments = (await readFile(argvLog, "utf8")).trim().split(/\r?\n/).slice(-2).map((line) => JSON.parse(line) as string[]);
+        const externalOnArguments = externalArguments.find((args) => args.some((arg) => arg.startsWith("mcp_servers.tokengraph.args=")))!;
+        const externalMcpArguments = externalOnArguments.find((arg) => arg.startsWith("mcp_servers.tokengraph.args="))!;
+        expect(JSON.parse(externalMcpArguments.slice(externalMcpArguments.indexOf("=") + 1))).toEqual([join(controllerRoot, "dist", "index.js")]);
+      } finally {
+        await rm(controllerRoot, { recursive: true, force: true });
+      }
+
       await writeFile(join(root, "dist", "index.js"), "// uncommitted runtime drift\n");
       await expect(runPairedHostEvaluation({
         root,
