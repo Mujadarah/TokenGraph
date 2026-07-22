@@ -38,7 +38,7 @@ The frozen release gate uses execution-inclusive savings as the primary metric a
 - nearest-rank execution-inclusive p25 is non-negative; and
 - at least 80% of activated tasks have non-negative execution-inclusive savings.
 
-Task-level failures, bypasses, and the full execution-inclusive distribution remain visible. The current fixture passes with a +174.5-token activated-task median, +40.5-token p25, and 81.5% non-negative activated tasks after charging four hash-validated exact source slices. This deterministic gate does not by itself enable enforced routing; B6 promotion requires reviewed schema-v3 host evidence, Stage-0 median latency both below activation median and at most 5 ms, and every other paired-evaluation gate. Schema-v1 and schema-v2 evidence remains historical and non-promoting.
+Task-level failures, bypasses, and the full execution-inclusive distribution remain visible. The current fixture passes with a +174.5-token activated-task median, +40.5-token p25, and 81.5% non-negative activated tasks after charging four hash-validated exact source slices. This deterministic gate does not by itself enable enforced routing; B6 promotion requires schema-v3 host evidence to be reviewed, Stage-0 median latency both below activation median and at most 5 ms, and every other paired-evaluation gate. Schema-v1 and schema-v2 evidence remains historical and non-promoting.
 
 ## Calibration and claim boundary
 

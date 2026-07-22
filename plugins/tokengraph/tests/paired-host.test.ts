@@ -30,7 +30,7 @@ function protocol(repositoryCommit: string, prompt = "Where is src/a.ts? Do not 
     repositoryCommit,
     plugin: { version: "0.21.1", commit: repositoryCommit },
     promptTemplate: { identifier: "host-test-v1", template: "{{task}}" },
-    tokenGraphMcp: { command: process.execPath, args: ["dist/index.js"] },
+    tokenGraphMcp: { command: "node", args: ["dist/index.js"] },
     acceptance: { verifierScript: "acceptance.mjs" },
     toolConfiguration: { surface: "core" },
     cacheState: "empty",
@@ -209,7 +209,9 @@ describe("paired Codex host adapter", () => {
       const hostArguments = await readFile(argvLog, "utf8");
       const argumentSets = hostArguments.trim().split(/\r?\n/).map((line) => JSON.parse(line) as string[]);
       const onArguments = argumentSets.find((args) => args.some((arg) => arg.startsWith("mcp_servers.tokengraph.args=")))!;
+      const mcpCommandSetting = onArguments.find((arg) => arg.startsWith("mcp_servers.tokengraph.command="))!;
       const mcpArgumentsSetting = onArguments.find((arg) => arg.startsWith("mcp_servers.tokengraph.args="))!;
+      expect(JSON.parse(mcpCommandSetting.slice(mcpCommandSetting.indexOf("=") + 1))).toBe(process.execPath);
       expect(JSON.parse(mcpArgumentsSetting.slice(mcpArgumentsSetting.indexOf("=") + 1))).toEqual([join(root, "dist", "index.js")]);
       expect(hostArguments).toContain("shell_environment_policy.inherit=\\\"none\\\"");
       expect(hostArguments).toContain("permissions.tokengraph-eval.network.enabled=false");
@@ -254,6 +256,20 @@ describe("paired Codex host adapter", () => {
         timeoutMs: 10_000
       })).rejects.toThrow(/runtime is not tracked by the attested plugin commit/i);
       await rm(join(root, "untracked-runtime.js"), { force: true });
+
+      await mkdir(join(root, ".tokengraph-controller"), { recursive: true });
+      await writeFile(join(root, ".tokengraph-controller", "acceptance.mjs"), "process.exit(0);\n");
+      await execFileAsync("git", ["add", ".tokengraph-controller/acceptance.mjs"], { cwd: root });
+      await execFileAsync("git", ["-c", "user.name=TokenGraph", "-c", "user.email=tokengraph@example.invalid", "commit", "-m", "prepopulate verifier target"], { cwd: root });
+      const { stdout: prepopulatedCommit } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root });
+      await expect(runPairedHostEvaluation({
+        root,
+        protocol: { ...protocol(prepopulatedCommit.trim()), evaluationId: "paired-host-prepopulated-verifier" },
+        outputManifest: "artifacts/prepopulated-verifier-manifest.json",
+        hostExecutable: process.execPath,
+        hostArgumentsPrefix: [hostScript, cwdLog, argvLog],
+        timeoutMs: 10_000
+      })).rejects.toThrow(/acceptance verifier provisioning failed/i);
 
       const failedAcceptanceProtocol = {
         ...protocol(commit.trim()),
@@ -349,6 +365,12 @@ describe("paired Codex host adapter", () => {
         tokenGraphMcp: { command: process.execPath, args: ["dist/index.js"], env: { SECRET_TOKEN: "private" } }
       } as PairedHostProtocol;
       await expect(runPairedHostEvaluation({ root, protocol: unsafeEnvironment, dryRun: true })).rejects.toThrow(/protocol fields/i);
+
+      const unsafeMcpCommand = {
+        ...protocol(commit.trim()),
+        tokenGraphMcp: { command: join(root, "unattested-runtime.exe"), args: ["dist/index.js"] }
+      } as PairedHostProtocol;
+      await expect(runPairedHostEvaluation({ root, protocol: unsafeMcpCommand, dryRun: true })).rejects.toThrow(/protocol fields/i);
 
       const arbitraryAcceptance = {
         ...protocol(commit.trim()),

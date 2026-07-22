@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, chmod, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, open, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -8,7 +8,7 @@ import type { ExpectedBenefit, RoutingDecision } from "./artifact.js";
 import type { EvaluationTask, HostTrace, PairedEvaluationManifest, PairedEvaluationProtocol, RouterShadowObservation } from "./pairedEval.js";
 import { parseEvaluationManifest } from "./pairedEval.js";
 import { adviseRouting } from "./routingAdvisor.js";
-import { writeJsonAtomic, writeTextAtomic } from "./storage.js";
+import { assertNoSymbolicLinkComponents, writeJsonAtomic, writeTextAtomic } from "./storage.js";
 
 export interface PairedHostTask extends EvaluationTask {
   prompt: string;
@@ -274,7 +274,7 @@ function assertProtocol(value: unknown): PairedHostProtocol {
     typed.windowsSandbox !== "elevated" ||
     typeof typed.repositoryCommit !== "string" || !/^[a-f0-9]{7,40}$/i.test(typed.repositoryCommit) || typeof typed.plugin.version !== "string" || !typed.plugin.version || typeof typed.plugin.commit !== "string" || !/^[a-f0-9]{40}$/i.test(typed.plugin.commit) ||
     typeof typed.promptTemplate.identifier !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(typed.promptTemplate.identifier) || typeof typed.promptTemplate.template !== "string" || typed.promptTemplate.template.length > 20_000 || !typed.promptTemplate.template.includes("{{task}}") ||
-    typeof typed.tokenGraphMcp.command !== "string" || !typed.tokenGraphMcp.command || !Array.isArray(typed.tokenGraphMcp.args) || typed.tokenGraphMcp.args.some((entry) => typeof entry !== "string") ||
+    typeof typed.tokenGraphMcp.command !== "string" || !approvedNodeCommand(typed.tokenGraphMcp.command) || !Array.isArray(typed.tokenGraphMcp.args) || typed.tokenGraphMcp.args.some((entry) => typeof entry !== "string") ||
     typeof typed.acceptance.verifierScript !== "string" || !typed.acceptance.verifierScript || isAbsolute(typed.acceptance.verifierScript) || typed.acceptance.verifierScript.split(/[\\/]/).includes("..") || !/\.[cm]?js$/i.test(typed.acceptance.verifierScript) ||
     (typed.dependencySource !== undefined && (typeof typed.dependencySource !== "string" || isAbsolute(typed.dependencySource) || typed.dependencySource.split(/[\\/]/).includes(".."))) ||
     typeof typed.cacheState !== "string" || !typed.cacheState || !["cold", "warm"].includes(typed.indexState) ||
@@ -291,6 +291,14 @@ function assertProtocol(value: unknown): PairedHostProtocol {
     throw new Error("Paired host protocol fields are invalid.");
   }
   return typed;
+}
+
+function approvedNodeCommand(command: string): boolean {
+  if (command === "node" || (process.platform === "win32" && command.toLowerCase() === "node.exe")) return true;
+  if (!isAbsolute(command)) return false;
+  const requested = resolve(command);
+  const controllerRuntime = resolve(process.execPath);
+  return process.platform === "win32" ? requested.toLowerCase() === controllerRuntime.toLowerCase() : requested === controllerRuntime;
 }
 
 export async function loadPairedHostProtocol(path: string): Promise<PairedHostProtocol> {
@@ -457,8 +465,20 @@ async function verifierSource(root: string, verifierScript: string): Promise<{ p
 async function installVerifier(worktree: string, verifier: { content: Buffer; commandHash: string }): Promise<void> {
   const directory = resolve(worktree, ".tokengraph-controller");
   const target = resolve(directory, "acceptance.mjs");
+  await assertNoSymbolicLinkComponents(target);
   await mkdir(directory, { recursive: true });
-  await writeFile(target, verifier.content);
+  await assertNoSymbolicLinkComponents(target);
+  try {
+    const handle = await open(target, "wx", 0o400);
+    try {
+      await handle.writeFile(verifier.content);
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Acceptance verifier target already exists.");
+    throw error;
+  }
   if (sha256(await readFile(target)) !== verifier.commandHash) throw new Error("Copied acceptance verifier hash does not match its validated source.");
   await chmod(target, 0o444);
 }
@@ -469,7 +489,7 @@ function acceptancePrompt(prompt: string): string {
 
 function resolveMcp(root: string, mcp: PairedHostProtocol["tokenGraphMcp"]): PairedHostProtocol["tokenGraphMcp"] {
   return {
-    command: mcp.command,
+    command: process.execPath,
     args: mcp.args.map((arg) => arg.endsWith(".js") && !isAbsolute(arg) ? resolve(root, arg) : arg),
     ...(mcp.env ? { env: mcp.env } : {})
   };

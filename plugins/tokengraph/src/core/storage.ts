@@ -94,7 +94,7 @@ export async function writeTextAtomic(path: string, content: string): Promise<vo
   }
 }
 
-async function assertNoSymbolicLinkComponents(path: string): Promise<void> {
+export async function assertNoSymbolicLinkComponents(path: string): Promise<void> {
   const absolute = resolve(path);
   const parsed = parse(absolute);
   let current = parsed.root;

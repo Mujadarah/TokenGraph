@@ -1236,7 +1236,7 @@ async function persistPromotionReport(root, report) {
 // src/core/pairedHost.ts
 import { spawn as spawn2 } from "node:child_process";
 import { createHash as createHash3, randomUUID as randomUUID3 } from "node:crypto";
-import { access as access2, chmod as chmod3, mkdir as mkdir3, readFile as readFile8, realpath as realpath3, rm as rm4, stat as stat2, symlink, writeFile as writeFile2 } from "node:fs/promises";
+import { access as access2, chmod as chmod3, mkdir as mkdir3, open as open2, readFile as readFile8, realpath as realpath3, rm as rm4, stat as stat2, symlink, writeFile as writeFile2 } from "node:fs/promises";
 import { dirname as dirname3, isAbsolute as isAbsolute4, relative as relative4, resolve as resolve5, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -1440,10 +1440,17 @@ function assertProtocol(value) {
     throw new Error("Paired host protocol schema is invalid.");
   }
   const typed = value;
-  if (typed.reviewed !== void 0 && typeof typed.reviewed !== "boolean" || !typed.tasks.length || new Set(typed.tasks.map((task) => task.taskId)).size !== typed.tasks.length || typeof typed.model.identifier !== "string" || !typed.model.identifier || typeof typed.model.versionOrDate !== "string" || !typed.model.versionOrDate || typeof typed.reasoningLevel !== "string" || !typed.reasoningLevel || typed.approvalPolicy !== "never" || typed.windowsSandbox !== "elevated" || typeof typed.repositoryCommit !== "string" || !/^[a-f0-9]{7,40}$/i.test(typed.repositoryCommit) || typeof typed.plugin.version !== "string" || !typed.plugin.version || typeof typed.plugin.commit !== "string" || !/^[a-f0-9]{40}$/i.test(typed.plugin.commit) || typeof typed.promptTemplate.identifier !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(typed.promptTemplate.identifier) || typeof typed.promptTemplate.template !== "string" || typed.promptTemplate.template.length > 2e4 || !typed.promptTemplate.template.includes("{{task}}") || typeof typed.tokenGraphMcp.command !== "string" || !typed.tokenGraphMcp.command || !Array.isArray(typed.tokenGraphMcp.args) || typed.tokenGraphMcp.args.some((entry) => typeof entry !== "string") || typeof typed.acceptance.verifierScript !== "string" || !typed.acceptance.verifierScript || isAbsolute4(typed.acceptance.verifierScript) || typed.acceptance.verifierScript.split(/[\\/]/).includes("..") || !/\.[cm]?js$/i.test(typed.acceptance.verifierScript) || typed.dependencySource !== void 0 && (typeof typed.dependencySource !== "string" || isAbsolute4(typed.dependencySource) || typed.dependencySource.split(/[\\/]/).includes("..")) || typeof typed.cacheState !== "string" || !typed.cacheState || !["cold", "warm"].includes(typed.indexState) || !typed.toolConfiguration || typeof typed.toolConfiguration !== "object" || Array.isArray(typed.toolConfiguration) || containsAbsolutePath(typed.toolConfiguration) || typed.tokenGraphMcp.env && Object.entries(typed.tokenGraphMcp.env).some(([key, entry]) => !ALLOWED_MCP_ENVIRONMENT.has(key) || key === "TOKENGRAPH_TOOL_SURFACE" && entry !== "core" && entry !== "full") || !Number.isInteger(typed.protocol.runsPerTask) || typed.protocol.runsPerTask < 1 || !Number.isInteger(typed.protocol.minimumPerCategorySamples) || typed.protocol.minimumPerCategorySamples < 10 || ![typed.protocol.qualityNonInferiorityMargin, typed.protocol.tokenSuperiorityMinimum, typed.protocol.resourceLimit, typed.protocol.executionMedianMinimum, typed.protocol.executionP25Minimum].every((entry) => typeof entry === "number" && Number.isFinite(entry) && entry >= 0) || typeof typed.protocol.routerRateMaximum !== "number" || !Number.isFinite(typed.protocol.routerRateMaximum) || typed.protocol.routerRateMaximum <= 0 || typed.protocol.routerRateMaximum > 0.1 || typed.protocol.stage0LatencyMaximumMs !== 5 || typeof typed.protocol.nonNegativeActivatedMinimum !== "number" || !Number.isFinite(typed.protocol.nonNegativeActivatedMinimum) || typed.protocol.nonNegativeActivatedMinimum < 0.8 || typed.protocol.nonNegativeActivatedMinimum > 1 || typed.tasks.some((task) => typeof task.taskId !== "string" || !/^[a-z0-9][a-z0-9-]{1,63}$/.test(task.taskId) || typeof task.category !== "string" || !/^[a-z0-9][a-z0-9-]{1,31}$/.test(task.category) || typeof task.prompt !== "string" || !task.prompt || task.prompt.length > 5e4 || !["none", "low", "medium", "high"].includes(task.expectedBenefit) || !["activate", "bypass"].includes(task.expectedRouting) || task.expectedRouting === "bypass" !== (task.expectedBenefit === "none"))) {
+  if (typed.reviewed !== void 0 && typeof typed.reviewed !== "boolean" || !typed.tasks.length || new Set(typed.tasks.map((task) => task.taskId)).size !== typed.tasks.length || typeof typed.model.identifier !== "string" || !typed.model.identifier || typeof typed.model.versionOrDate !== "string" || !typed.model.versionOrDate || typeof typed.reasoningLevel !== "string" || !typed.reasoningLevel || typed.approvalPolicy !== "never" || typed.windowsSandbox !== "elevated" || typeof typed.repositoryCommit !== "string" || !/^[a-f0-9]{7,40}$/i.test(typed.repositoryCommit) || typeof typed.plugin.version !== "string" || !typed.plugin.version || typeof typed.plugin.commit !== "string" || !/^[a-f0-9]{40}$/i.test(typed.plugin.commit) || typeof typed.promptTemplate.identifier !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(typed.promptTemplate.identifier) || typeof typed.promptTemplate.template !== "string" || typed.promptTemplate.template.length > 2e4 || !typed.promptTemplate.template.includes("{{task}}") || typeof typed.tokenGraphMcp.command !== "string" || !approvedNodeCommand(typed.tokenGraphMcp.command) || !Array.isArray(typed.tokenGraphMcp.args) || typed.tokenGraphMcp.args.some((entry) => typeof entry !== "string") || typeof typed.acceptance.verifierScript !== "string" || !typed.acceptance.verifierScript || isAbsolute4(typed.acceptance.verifierScript) || typed.acceptance.verifierScript.split(/[\\/]/).includes("..") || !/\.[cm]?js$/i.test(typed.acceptance.verifierScript) || typed.dependencySource !== void 0 && (typeof typed.dependencySource !== "string" || isAbsolute4(typed.dependencySource) || typed.dependencySource.split(/[\\/]/).includes("..")) || typeof typed.cacheState !== "string" || !typed.cacheState || !["cold", "warm"].includes(typed.indexState) || !typed.toolConfiguration || typeof typed.toolConfiguration !== "object" || Array.isArray(typed.toolConfiguration) || containsAbsolutePath(typed.toolConfiguration) || typed.tokenGraphMcp.env && Object.entries(typed.tokenGraphMcp.env).some(([key, entry]) => !ALLOWED_MCP_ENVIRONMENT.has(key) || key === "TOKENGRAPH_TOOL_SURFACE" && entry !== "core" && entry !== "full") || !Number.isInteger(typed.protocol.runsPerTask) || typed.protocol.runsPerTask < 1 || !Number.isInteger(typed.protocol.minimumPerCategorySamples) || typed.protocol.minimumPerCategorySamples < 10 || ![typed.protocol.qualityNonInferiorityMargin, typed.protocol.tokenSuperiorityMinimum, typed.protocol.resourceLimit, typed.protocol.executionMedianMinimum, typed.protocol.executionP25Minimum].every((entry) => typeof entry === "number" && Number.isFinite(entry) && entry >= 0) || typeof typed.protocol.routerRateMaximum !== "number" || !Number.isFinite(typed.protocol.routerRateMaximum) || typed.protocol.routerRateMaximum <= 0 || typed.protocol.routerRateMaximum > 0.1 || typed.protocol.stage0LatencyMaximumMs !== 5 || typeof typed.protocol.nonNegativeActivatedMinimum !== "number" || !Number.isFinite(typed.protocol.nonNegativeActivatedMinimum) || typed.protocol.nonNegativeActivatedMinimum < 0.8 || typed.protocol.nonNegativeActivatedMinimum > 1 || typed.tasks.some((task) => typeof task.taskId !== "string" || !/^[a-z0-9][a-z0-9-]{1,63}$/.test(task.taskId) || typeof task.category !== "string" || !/^[a-z0-9][a-z0-9-]{1,31}$/.test(task.category) || typeof task.prompt !== "string" || !task.prompt || task.prompt.length > 5e4 || !["none", "low", "medium", "high"].includes(task.expectedBenefit) || !["activate", "bypass"].includes(task.expectedRouting) || task.expectedRouting === "bypass" !== (task.expectedBenefit === "none"))) {
     throw new Error("Paired host protocol fields are invalid.");
   }
   return typed;
+}
+function approvedNodeCommand(command) {
+  if (command === "node" || process.platform === "win32" && command.toLowerCase() === "node.exe") return true;
+  if (!isAbsolute4(command)) return false;
+  const requested = resolve5(command);
+  const controllerRuntime = resolve5(process.execPath);
+  return process.platform === "win32" ? requested.toLowerCase() === controllerRuntime.toLowerCase() : requested === controllerRuntime;
 }
 async function loadPairedHostProtocol(path) {
   return assertProtocol(JSON.parse(await readFile8(path, "utf8")));
@@ -1595,8 +1602,20 @@ async function verifierSource(root, verifierScript) {
 async function installVerifier(worktree, verifier) {
   const directory = resolve5(worktree, ".tokengraph-controller");
   const target = resolve5(directory, "acceptance.mjs");
+  await assertNoSymbolicLinkComponents(target);
   await mkdir3(directory, { recursive: true });
-  await writeFile2(target, verifier.content);
+  await assertNoSymbolicLinkComponents(target);
+  try {
+    const handle = await open2(target, "wx", 256);
+    try {
+      await handle.writeFile(verifier.content);
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (error.code === "EEXIST") throw new Error("Acceptance verifier target already exists.");
+    throw error;
+  }
   if (sha256(await readFile8(target)) !== verifier.commandHash) throw new Error("Copied acceptance verifier hash does not match its validated source.");
   await chmod3(target, 292);
 }
@@ -1609,7 +1628,7 @@ Do not run any command, MCP tool, or file mutation after it. A final prose respo
 }
 function resolveMcp(root, mcp) {
   return {
-    command: mcp.command,
+    command: process.execPath,
     args: mcp.args.map((arg) => arg.endsWith(".js") && !isAbsolute4(arg) ? resolve5(root, arg) : arg),
     ...mcp.env ? { env: mcp.env } : {}
   };
