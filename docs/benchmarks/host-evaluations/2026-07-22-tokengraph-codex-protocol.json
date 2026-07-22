@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 2,
+  "evaluationId": "r4-20260722c",
+  "seed": "tokengraph-r4-real-host-v2",
+  "reviewed": true,
+  "model": {
+    "identifier": "gpt-5.6-sol",
+    "versionOrDate": "2026-07-22"
+  },
+  "reasoningLevel": "high",
+  "approvalPolicy": "never",
+  "windowsSandbox": "elevated",
+  "repositoryCommit": "11129c2b262e5bdd282c153e9940a0c7d3620262",
+  "plugin": {
+    "version": "0.21.1",
+    "commit": "ec65b1c06e436755e7efcbb7bf3f7513217e57c2"
+  },
+  "promptTemplate": {
+    "identifier": "tokengraph-r4-benefit-enum-v2",
+    "template": "Work only in the provided repository worktree. Use an available repository context tool before editing: if tokengraph_prepare_context exists, call it once with the task text; otherwise use normal host repository tools. Then complete this bounded task:\n\n{{task}}\n\nKeep the change focused. Dependencies are pre-provisioned; do not install or modify dependencies. Run the focused routing and retrieval tests plus typecheck. Do not commit or push."
+  },
+  "tokenGraphMcp": {
+    "command": "node",
+    "args": [
+      "release/tokengraph/dist/index.js"
+    ],
+    "env": {
+      "TOKENGRAPH_TOOL_SURFACE": "core"
+    }
+  },
+  "dependencySource": "plugins/tokengraph/node_modules",
+  "acceptance": {
+    "verifierScript": "plugins/tokengraph/scripts/paired-host-acceptance.mjs"
+  },
+  "toolConfiguration": {
+    "on": "local-tokengraph-mcp-only",
+    "off": "host-repository-tools-only",
+    "surface": "core",
+    "approvalPolicy": "never",
+    "windowsSandbox": "elevated",
+    "permissions": "root-deny-worktree-write-controller-read-dependencies-read-network-disabled",
+    "subprocessEnvironment": "inherit-none-platform-runtime-and-evaluation-temp-only",
+    "dependencies": "lockfile-matched-node-modules-junction",
+    "acceptance": "final-attested-read-only-verifier",
+    "userConfig": "ignored"
+  },
+  "cacheState": "empty-per-condition-worktree",
+  "indexState": "cold",
+  "protocol": {
+    "runsPerTask": 5,
+    "minimumPerCategorySamples": 10,
+    "qualityNonInferiorityMargin": 0.02,
+    "tokenSuperiorityMinimum": 1,
+    "resourceLimit": 2,
+    "routerRateMaximum": 0.1,
+    "stage0LatencyMaximumMs": 5,
+    "executionMedianMinimum": 0,
+    "executionP25Minimum": 0,
+    "nonNegativeActivatedMinimum": 0.8
+  },
+  "tasks": [
+    {
+      "taskId": "benefit-enum",
+      "category": "code",
+      "prompt": "Replace RoutingDecision.expectedBenefit's numeric contract with the frozen enum none | low | medium | high. Preserve routing semantics with none for bypass, kill-switch, force-bypass, and fail-open decisions; medium for Stage 0 activation; high for Stage 1 indexed activation; and reserve low without inventing a weak-activation class. Update focused tests and public types needed by this change without unrelated refactoring.",
+      "expectedBenefit": "medium",
+      "expectedRouting": "activate",
+      "expectedQuality": 1
+    }
+  ]
+}
