@@ -220,7 +220,7 @@ Status: complete
 - Scoped project briefs, verified outcomes, deterministic Obsidian projection, supersession, archival, compaction, and injection-safe memory composition are implemented.
 - Paired host-trace evaluation reports counterbalanced bootstrap confidence intervals and keeps enforced routing disabled unless every promotion gate passes. JSON remains the default after the negative tabular-format experiment.
 - R4.1 is complete: routing publishes the frozen `none | low | medium | high` benefit enum and new retrieval artifacts use schema v5 while historical hashes remain readable.
-- R4.2 and R4.3 are complete: independent fixture truth produces denominator-correct router rates, and four edit/debug tasks charge four exact source slices totaling 685 estimated tokens.
+- R4.2 and R4.3 are complete: independent fixture truth produces denominator-correct router rates, and four edit/debug tasks charge four exact source slices totaling 711 estimated tokens.
 - R4.4 is complete as an evidence milestone, not a promotion: the first reviewed real-host run records five successful ON/OFF pairs, but enforcement remains disabled because every frozen gate did not pass. One repository does not satisfy multi-repository B6 validation.
 - The standalone release packages `web-tree-sitter@0.26.11` with pinned Python, Go, Rust, and Java grammar WASM assets and asserts zero workspace execution.
 - v0.21.0 benchmark claims use the checked-in artifact: routing median net savings 5.7 tokens and execution-inclusive median net savings -94.3 tokens, with 19/30 execution-inclusive tasks non-positive. The frozen execution-inclusive release gate failed; no corrective tag or publication was made, and these are measured fixture results rather than universal savings guarantees.

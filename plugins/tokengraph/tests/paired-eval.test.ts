@@ -23,6 +23,7 @@ function completeManifestMetadata() {
       tokenSuperiorityMinimum: 1,
       resourceLimit: 2,
       routerRateMaximum: 0.1,
+      stage0LatencyMaximumMs: 5,
       executionMedianMinimum: 0,
       executionP25Minimum: 0,
       nonNegativeActivatedMinimum: 0.8
@@ -79,7 +80,7 @@ function realHostManifest() {
     ];
   });
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     evidenceSource: "real-host",
     reviewed: true,
     generatedAt: "2026-07-19T00:00:00.000Z",
@@ -107,9 +108,9 @@ describe("paired evaluation", () => {
     expect(evaluatePaired(tasks, traces.map((trace) => trace.condition === "on" ? { ...trace, resourceUnits: 3 } : trace), { minimumCategorySamples: 3, tokenSuperiority: 1, resourceLimit: 2 }).enforcementEnabled).toBe(false);
   });
 
-  it("accepts reviewed schema-v2 real-host evidence and applies every promotion gate", () => {
+  it("accepts only reviewed schema-v3 real-host evidence and applies both latency gates", () => {
     const manifest = parseEvaluationManifest(realHostManifest());
-    expect(manifest).toMatchObject({ schemaVersion: 2, evidenceSource: "real-host", reviewed: true });
+    expect(manifest).toMatchObject({ schemaVersion: 3, evidenceSource: "real-host", reviewed: true });
     const report = evaluateManifest(manifest);
     expect(report).toMatchObject({
       evidenceSource: "real-host",
@@ -124,10 +125,36 @@ describe("paired evaluation", () => {
         activationLatencyMs: 5,
         stage0LatencySamples: 20,
         activationLatencySamples: 10,
-        stage0FasterThanActivation: true
+        stage0FasterThanActivation: true,
+        stage0LatencyMaximumMs: 5,
+        stage0WithinBudget: true
       },
       gates: { realHostEvidence: true, routerLatency: true, routerRates: true }
     });
+
+    const historicalV2 = parseEvaluationManifest({ ...realHostManifest(), schemaVersion: 2 });
+    expect(historicalV2).toMatchObject({ schemaVersion: 2, evidenceSource: "real-host", reviewed: true });
+    expect(evaluateManifest(historicalV2)).toMatchObject({ promotionEligible: false, enforcementEnabled: false });
+  });
+
+  it("fails the latency gate above the five millisecond ceiling even when Stage-0 is faster", () => {
+    const manifest = realHostManifest();
+    for (const trace of manifest.traces) {
+      if (trace.condition === "on" && "routing" in trace && trace.routing) {
+        trace.routing.routingLatencyMs = 5.01;
+        if (trace.routing.decision === "activate") trace.routing.activationLatencyMs = 6;
+      }
+    }
+    const report = evaluateManifest(parseEvaluationManifest(manifest));
+    expect(report.routerRates).toMatchObject({
+      stage0LatencyMs: 5.01,
+      activationLatencyMs: 6,
+      stage0FasterThanActivation: true,
+      stage0LatencyMaximumMs: 5,
+      stage0WithinBudget: false
+    });
+    expect(report.gates.routerLatency).toBe(false);
+    expect(report.enforcementEnabled).toBe(false);
   });
 
   it("keeps schema-v1 and schema-v2 fixture evidence non-promoting", () => {
@@ -217,6 +244,15 @@ describe("paired evaluation", () => {
       stage0LatencyMs: 0.2, activationLatencyMs: 5, stage0FasterThanActivation: true,
       stage0LatencySamples: 20, activationLatencySamples: 10,
       executionInclusiveMedian: 1, executionInclusiveP25: 0, nonNegativeActivatedRate: 0.8
+    })).toBe(false);
+    expect(isValidatedPromotion({
+      schemaVersion: 3, generatedAt: new Date().toISOString(), enforcementEnabled: true, gates,
+      evidenceSource: "real-host", reviewed: true, categoryCounts: { code: 20 },
+      beneficialCount: 10, boundedCount: 10, falseBypassRate: 0, falseActivationRate: 0,
+      stage0LatencyMs: 0.2, activationLatencyMs: 5, stage0FasterThanActivation: true,
+      stage0LatencyMaximumMs: 5, stage0WithinBudget: true,
+      stage0LatencySamples: 20, activationLatencySamples: 10,
+      executionInclusiveMedian: 1, executionInclusiveP25: 0, nonNegativeActivatedRate: 0.8
     })).toBe(true);
   });
 
@@ -233,16 +269,16 @@ describe("paired evaluation", () => {
 
     const v2 = await loadEvaluationManifest(resolve("tests", "fixtures", "paired-eval-v2.json"));
     expect(v2).toMatchObject({ schemaVersion: 2, evidenceSource: "real-host", reviewed: true });
-    expect(evaluateManifest(v2)).toMatchObject({ promotionEligible: true, enforcementEnabled: false });
+    expect(evaluateManifest(v2)).toMatchObject({ promotionEligible: false, enforcementEnabled: false });
   });
 
-  it("reproduces the checked-in real-host evaluation report", async () => {
+  it("keeps checked-in schema-v2 real-host evidence parseable but historical and non-promoting", async () => {
     const evidenceRoot = resolve("..", "..", "docs", "benchmarks", "host-evaluations");
     const manifest = await loadEvaluationManifest(resolve(evidenceRoot, "2026-07-19-tokengraph-codex-manifest.json"));
     const checkedReport = JSON.parse(await readFile(resolve(evidenceRoot, "2026-07-19-tokengraph-codex-report.json"), "utf8"));
 
     expect(manifest).toMatchObject({ schemaVersion: 2, evidenceSource: "real-host", reviewed: true });
-    expect(evaluateManifest(manifest)).toEqual(checkedReport);
+    expect(evaluateManifest(manifest)).toMatchObject({ schemaVersion: 2, promotionEligible: false, enforcementEnabled: false });
     expect(checkedReport).toMatchObject({ promotionEligible: true, enforcementEnabled: false });
   });
 });

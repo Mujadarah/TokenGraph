@@ -620,3 +620,27 @@ dirty, unmerged, detached/prunable, and current R4 entries.
 Report exact local worktree paths, local branch names, and remote branch names
 that are both clean and fully merged. Do not remove anything until the user
 explicitly approves those exact sets.
+
+## Dated correction - 2026-07-22
+
+The original frozen requirements above remain unchanged as the historical
+execution record. Review of the first implementation identified two places
+where those requirements were not strict enough. This correction supersedes
+only the affected promotion and exact-slice rules.
+
+### Stage-0 latency ceiling and evidence compatibility
+
+The relative check that Stage-0 median latency is strictly below activation
+median latency is necessary but not sufficient. Corrected schema-v3 promotion
+evidence also fixes `stage0LatencyMaximumMs` at 5 and requires Stage-0 median
+latency to be at most that ceiling. Schema-v1 and schema-v2 manifests remain
+parseable for historical inspection, but neither may promote routing.
+
+### Exact-slice locator contract
+
+An exact-slice target must use exactly one locator: `{ file, symbol }` or
+`{ file, startLine, endLine }`. Reject missing or combined locators, invalid
+ranges, unresolved symbols, files outside `requiredFiles`, and tasks whose
+targeted-read policy disallows the requested slice. The `debugging-01` fixture
+uses `services/patientService.test.ts` lines 4-6. There is no first-symbol or
+line-1 fallback for a file-only target.

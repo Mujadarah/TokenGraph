@@ -2,8 +2,9 @@
 
 ## Unreleased
 
+- R4 review correction (2026-07-22): limited promotion to reviewed schema-v3 evidence, added a 5 ms Stage-0 latency ceiling, replaced file-only exact slices with explicit symbol or line-range locators, and moved acceptance into an attested least-privilege Codex sandbox.
 - R4 evidence note (2026-07-21): recorded five reviewed real-host ON/OFF pairs with exact Codex usage and passing acceptance commands; the one-repository run remains non-promoting because coverage, token-superiority, resource, router-denominator, p25, and non-negative-rate gates did not all pass, so routing enforcement remains disabled.
-- Frozen routing benefits as `none | low | medium | high`, advanced new retrieval artifacts to schema v5, and required reviewed schema-v2 real-host evidence for any promotion.
+- Frozen routing benefits as `none | low | medium | high` and advanced new retrieval artifacts to schema v5. Required schema-v2 real-host evidence must be reviewed before enforcement; after the 2026-07-22 correction it remains historical and only reviewed schema-v3 evidence may promote routing.
 - R4 accounting note (2026-07-19): charged four hash-validated exact source slices on edit/debug benchmark tasks and published independent router truth, changing the deterministic execution-inclusive median from +183.5 to +174.5 estimated tokens and p25 from +91.5 to +40.5; enforced routing remains disabled pending eligible real-host evidence.
 - Linked explicitly selected active tasks to privacy-minimal verified runner outcomes while keeping agent and inferred claims proposed.
 - Added sorted category-level ranges, confidence, overhead, and calibration bases to verbose task reports and the canonical compact footer.

@@ -33,6 +33,8 @@ export interface RoutingPromotionReport {
   boundedCount?: number;
   stage0LatencyMs?: number;
   activationLatencyMs?: number;
+  stage0LatencyMaximumMs?: number;
+  stage0WithinBudget?: boolean;
   stage0LatencySamples?: number;
   activationLatencySamples?: number;
   stage0FasterThanActivation?: boolean;

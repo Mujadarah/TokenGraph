@@ -912,8 +912,8 @@ function isValidatedPromotion(value) {
   const hasRequiredGates = Boolean(gateRecord) && REQUIRED_PROMOTION_GATES.every((name) => typeof gateRecord?.[name] === "boolean") && Object.keys(gateRecord ?? {}).length === REQUIRED_PROMOTION_GATES.length;
   const allGatesPass = hasRequiredGates && gates.every((gate) => gate === true);
   const categoryCounts = candidate.categoryCounts && typeof candidate.categoryCounts === "object" ? Object.values(candidate.categoryCounts) : [];
-  const evidencePasses = categoryCounts.length > 0 && categoryCounts.every((count) => Number.isInteger(count) && count >= 10) && candidate.evidenceSource === "real-host" && candidate.reviewed === true && Number.isInteger(candidate.beneficialCount) && candidate.beneficialCount > 0 && Number.isInteger(candidate.boundedCount) && candidate.boundedCount > 0 && typeof candidate.falseBypassRate === "number" && Number.isFinite(candidate.falseBypassRate) && candidate.falseBypassRate >= 0 && candidate.falseBypassRate < 0.1 && typeof candidate.falseActivationRate === "number" && Number.isFinite(candidate.falseActivationRate) && candidate.falseActivationRate >= 0 && candidate.falseActivationRate < 0.1 && typeof candidate.stage0LatencyMs === "number" && Number.isFinite(candidate.stage0LatencyMs) && candidate.stage0LatencyMs >= 0 && typeof candidate.activationLatencyMs === "number" && Number.isFinite(candidate.activationLatencyMs) && candidate.activationLatencyMs > candidate.stage0LatencyMs && Number.isInteger(candidate.stage0LatencySamples) && candidate.stage0LatencySamples > 0 && Number.isInteger(candidate.activationLatencySamples) && candidate.activationLatencySamples > 0 && candidate.stage0FasterThanActivation === true && typeof candidate.executionInclusiveMedian === "number" && Number.isFinite(candidate.executionInclusiveMedian) && candidate.executionInclusiveMedian > 0 && typeof candidate.executionInclusiveP25 === "number" && Number.isFinite(candidate.executionInclusiveP25) && candidate.executionInclusiveP25 >= 0 && typeof candidate.nonNegativeActivatedRate === "number" && Number.isFinite(candidate.nonNegativeActivatedRate) && candidate.nonNegativeActivatedRate >= 0.8 && candidate.nonNegativeActivatedRate <= 1;
-  return candidate.schemaVersion === 2 && typeof candidate.generatedAt === "string" && typeof candidate.enforcementEnabled === "boolean" && hasRequiredGates && evidencePasses && (!candidate.enforcementEnabled || allGatesPass);
+  const evidencePasses = categoryCounts.length > 0 && categoryCounts.every((count) => Number.isInteger(count) && count >= 10) && candidate.evidenceSource === "real-host" && candidate.reviewed === true && Number.isInteger(candidate.beneficialCount) && candidate.beneficialCount > 0 && Number.isInteger(candidate.boundedCount) && candidate.boundedCount > 0 && typeof candidate.falseBypassRate === "number" && Number.isFinite(candidate.falseBypassRate) && candidate.falseBypassRate >= 0 && candidate.falseBypassRate < 0.1 && typeof candidate.falseActivationRate === "number" && Number.isFinite(candidate.falseActivationRate) && candidate.falseActivationRate >= 0 && candidate.falseActivationRate < 0.1 && typeof candidate.stage0LatencyMs === "number" && Number.isFinite(candidate.stage0LatencyMs) && candidate.stage0LatencyMs >= 0 && typeof candidate.activationLatencyMs === "number" && Number.isFinite(candidate.activationLatencyMs) && candidate.activationLatencyMs > candidate.stage0LatencyMs && candidate.stage0LatencyMaximumMs === 5 && candidate.stage0LatencyMs <= candidate.stage0LatencyMaximumMs && candidate.stage0WithinBudget === true && Number.isInteger(candidate.stage0LatencySamples) && candidate.stage0LatencySamples > 0 && Number.isInteger(candidate.activationLatencySamples) && candidate.activationLatencySamples > 0 && candidate.stage0FasterThanActivation === true && typeof candidate.executionInclusiveMedian === "number" && Number.isFinite(candidate.executionInclusiveMedian) && candidate.executionInclusiveMedian > 0 && typeof candidate.executionInclusiveP25 === "number" && Number.isFinite(candidate.executionInclusiveP25) && candidate.executionInclusiveP25 >= 0 && typeof candidate.nonNegativeActivatedRate === "number" && Number.isFinite(candidate.nonNegativeActivatedRate) && candidate.nonNegativeActivatedRate >= 0.8 && candidate.nonNegativeActivatedRate <= 1;
+  return candidate.schemaVersion === 3 && typeof candidate.generatedAt === "string" && typeof candidate.enforcementEnabled === "boolean" && hasRequiredGates && evidencePasses && (!candidate.enforcementEnabled || allGatesPass);
 }
 function normalize(value) {
   const candidate = value && typeof value === "object" ? value : {};
@@ -1012,17 +1012,17 @@ function validateRealHostTrace(trace) {
     throw new Error("Bypass traces cannot claim activation latency.");
   }
 }
-function validProtocol(value) {
+function validProtocol(value, schemaVersion) {
   if (!value || typeof value !== "object") return false;
   const candidate = value;
-  return Number.isInteger(candidate.runsPerTask) && candidate.runsPerTask >= 1 && Number.isInteger(candidate.minimumPerCategorySamples) && candidate.minimumPerCategorySamples >= 10 && typeof candidate.qualityNonInferiorityMargin === "number" && Number.isFinite(candidate.qualityNonInferiorityMargin) && candidate.qualityNonInferiorityMargin >= 0 && typeof candidate.tokenSuperiorityMinimum === "number" && Number.isFinite(candidate.tokenSuperiorityMinimum) && candidate.tokenSuperiorityMinimum >= 0 && typeof candidate.resourceLimit === "number" && Number.isFinite(candidate.resourceLimit) && candidate.resourceLimit >= 0 && typeof candidate.routerRateMaximum === "number" && Number.isFinite(candidate.routerRateMaximum) && candidate.routerRateMaximum > 0 && candidate.routerRateMaximum <= 0.1 && typeof candidate.executionMedianMinimum === "number" && Number.isFinite(candidate.executionMedianMinimum) && candidate.executionMedianMinimum >= 0 && typeof candidate.executionP25Minimum === "number" && Number.isFinite(candidate.executionP25Minimum) && candidate.executionP25Minimum >= 0 && typeof candidate.nonNegativeActivatedMinimum === "number" && Number.isFinite(candidate.nonNegativeActivatedMinimum) && candidate.nonNegativeActivatedMinimum >= 0.8 && candidate.nonNegativeActivatedMinimum <= 1;
+  return Number.isInteger(candidate.runsPerTask) && candidate.runsPerTask >= 1 && Number.isInteger(candidate.minimumPerCategorySamples) && candidate.minimumPerCategorySamples >= 10 && typeof candidate.qualityNonInferiorityMargin === "number" && Number.isFinite(candidate.qualityNonInferiorityMargin) && candidate.qualityNonInferiorityMargin >= 0 && typeof candidate.tokenSuperiorityMinimum === "number" && Number.isFinite(candidate.tokenSuperiorityMinimum) && candidate.tokenSuperiorityMinimum >= 0 && typeof candidate.resourceLimit === "number" && Number.isFinite(candidate.resourceLimit) && candidate.resourceLimit >= 0 && typeof candidate.routerRateMaximum === "number" && Number.isFinite(candidate.routerRateMaximum) && candidate.routerRateMaximum > 0 && candidate.routerRateMaximum <= 0.1 && (schemaVersion !== 3 || candidate.stage0LatencyMaximumMs === 5) && typeof candidate.executionMedianMinimum === "number" && Number.isFinite(candidate.executionMedianMinimum) && candidate.executionMedianMinimum >= 0 && typeof candidate.executionP25Minimum === "number" && Number.isFinite(candidate.executionP25Minimum) && candidate.executionP25Minimum >= 0 && typeof candidate.nonNegativeActivatedMinimum === "number" && Number.isFinite(candidate.nonNegativeActivatedMinimum) && candidate.nonNegativeActivatedMinimum >= 0.8 && candidate.nonNegativeActivatedMinimum <= 1;
 }
 function evaluatePaired(tasks, traces, options = {}) {
   for (const trace of traces) validateTrace(trace);
   const schemaVersion = options.schemaVersion ?? 1;
   const evidenceSource = options.evidenceSource ?? "fixture";
   const reviewed = options.reviewed === true;
-  const promotionEligible = schemaVersion === 2 && evidenceSource === "real-host" && reviewed;
+  const promotionEligible = schemaVersion === 3 && evidenceSource === "real-host" && reviewed;
   const runsPerTask = options.runsPerTask ?? 1;
   const byTaskAndRepeat = /* @__PURE__ */ new Map();
   for (const trace of traces) {
@@ -1044,7 +1044,7 @@ function evaluatePaired(tasks, traces, options = {}) {
       }
       if (onTraces.length !== 1 || offTraces.length !== 1) failures.push(`${task.taskId}:repeat-${repeat}:duplicate-condition`);
       if (on.category !== task.category || off.category !== task.category) failures.push(`${task.taskId}:repeat-${repeat}:category-mismatch`);
-      if (schemaVersion === 2 && (on.conditionOrder !== off.conditionOrder || on.acceptance?.commandHash !== off.acceptance?.commandHash)) failures.push(`${task.taskId}:repeat-${repeat}:provenance-mismatch`);
+      if (schemaVersion >= 2 && (on.conditionOrder !== off.conditionOrder || on.acceptance?.commandHash !== off.acceptance?.commandHash)) failures.push(`${task.taskId}:repeat-${repeat}:provenance-mismatch`);
       if (on.timedOut || off.timedOut || on.failed || off.failed || on.acceptance?.status === "failed" || off.acceptance?.status === "failed") failures.push(`${task.taskId}:failure-or-timeout`);
       pairs.push({ task, on, off });
     }
@@ -1082,6 +1082,8 @@ function evaluatePaired(tasks, traces, options = {}) {
   const stage0LatencyMs = stage0Latencies.length ? quantile(stage0Latencies, 0.5) : null;
   const activationLatencyMs = activationLatencies.length ? quantile(activationLatencies, 0.5) : null;
   const stage0FasterThanActivation = stage0LatencyMs !== null && activationLatencyMs !== null && stage0LatencyMs < activationLatencyMs;
+  const stage0LatencyMaximumMs = schemaVersion === 3 ? options.stage0LatencyMaximumMs ?? null : null;
+  const stage0WithinBudget = stage0LatencyMs !== null && stage0LatencyMaximumMs !== null && stage0LatencyMs <= stage0LatencyMaximumMs;
   const qualityMargin = options.qualityMargin ?? 0.02;
   const qualityNonInferiority = qualityDifference.lower >= -qualityMargin;
   const tokenSuperiority = tokenDifference.upper <= -(options.tokenSuperiority ?? 1);
@@ -1096,7 +1098,7 @@ function evaluatePaired(tasks, traces, options = {}) {
     tokenSuperiority,
     resources,
     routerRates: beneficialObservations.length > 0 && boundedObservations.length > 0 && Object.values(routerCategoryCounts).every((count) => count >= 10) && falseBypassRate !== null && falseBypassRate < routerRateMaximum && falseActivationRate !== null && falseActivationRate < routerRateMaximum,
-    routerLatency: stage0FasterThanActivation,
+    routerLatency: stage0FasterThanActivation && stage0WithinBudget,
     executionMedian: executionMedian > (options.executionMedianMinimum ?? 0),
     executionP25: executionP25 >= (options.executionP25Minimum ?? 0),
     nonNegativeActivated: nonNegativeActivatedRate >= (options.nonNegativeActivatedMinimum ?? 0.8)
@@ -1121,6 +1123,8 @@ function evaluatePaired(tasks, traces, options = {}) {
       categoryCounts: routerCategoryCounts,
       stage0LatencyMs,
       activationLatencyMs,
+      stage0LatencyMaximumMs,
+      stage0WithinBudget,
       stage0LatencySamples: stage0Latencies.length,
       activationLatencySamples: activationLatencies.length,
       stage0FasterThanActivation
@@ -1143,6 +1147,7 @@ function evaluateManifest(manifest) {
     tokenSuperiority: protocol.tokenSuperiorityMinimum,
     resourceLimit: protocol.resourceLimit,
     routerRateMaximum: protocol.routerRateMaximum,
+    stage0LatencyMaximumMs: protocol.stage0LatencyMaximumMs,
     executionMedianMinimum: protocol.executionMedianMinimum,
     executionP25Minimum: protocol.executionP25Minimum,
     nonNegativeActivatedMinimum: protocol.nonNegativeActivatedMinimum
@@ -1154,11 +1159,11 @@ function parseEvaluationManifest(value) {
   const model = candidate.model && typeof candidate.model === "object" ? candidate.model : void 0;
   const host = candidate.host && typeof candidate.host === "object" ? candidate.host : void 0;
   const plugin = candidate.plugin && typeof candidate.plugin === "object" ? candidate.plugin : void 0;
-  if (candidate.schemaVersion !== 1 && candidate.schemaVersion !== 2 || typeof candidate.generatedAt !== "string" || typeof candidate.seed !== "string" || !model || typeof model.identifier !== "string" || !model.identifier || typeof model.versionOrDate !== "string" || !model.versionOrDate || typeof candidate.reasoningLevel !== "string" || !candidate.reasoningLevel || !host || typeof host.name !== "string" || !host.name || typeof host.version !== "string" || !host.version || !plugin || typeof plugin.version !== "string" || !plugin.version || typeof plugin.commit !== "string" || !plugin.commit || typeof candidate.repositoryCommit !== "string" || !candidate.repositoryCommit || typeof candidate.promptTemplate !== "string" || !candidate.promptTemplate || !candidate.toolConfiguration || typeof candidate.toolConfiguration !== "object" || Array.isArray(candidate.toolConfiguration) || typeof candidate.cacheState !== "string" || !candidate.cacheState || candidate.indexState !== "cold" && candidate.indexState !== "warm" || !validProtocol(candidate.protocol) || !Array.isArray(candidate.tasks) || !Array.isArray(candidate.traces)) throw new Error("Evaluation manifest schema is invalid.");
+  if (candidate.schemaVersion !== 1 && candidate.schemaVersion !== 2 && candidate.schemaVersion !== 3 || typeof candidate.generatedAt !== "string" || typeof candidate.seed !== "string" || !model || typeof model.identifier !== "string" || !model.identifier || typeof model.versionOrDate !== "string" || !model.versionOrDate || typeof candidate.reasoningLevel !== "string" || !candidate.reasoningLevel || !host || typeof host.name !== "string" || !host.name || typeof host.version !== "string" || !host.version || !plugin || typeof plugin.version !== "string" || !plugin.version || typeof plugin.commit !== "string" || !plugin.commit || typeof candidate.repositoryCommit !== "string" || !candidate.repositoryCommit || typeof candidate.promptTemplate !== "string" || !candidate.promptTemplate || !candidate.toolConfiguration || typeof candidate.toolConfiguration !== "object" || Array.isArray(candidate.toolConfiguration) || typeof candidate.cacheState !== "string" || !candidate.cacheState || candidate.indexState !== "cold" && candidate.indexState !== "warm" || !validProtocol(candidate.protocol, candidate.schemaVersion) || !Array.isArray(candidate.tasks) || !Array.isArray(candidate.traces)) throw new Error("Evaluation manifest schema is invalid.");
   const tasks = candidate.tasks.filter((task) => Boolean(task && typeof task.taskId === "string" && typeof task.category === "string"));
   const traces = candidate.traces.filter((trace) => Boolean(trace && typeof trace.taskId === "string" && typeof trace.category === "string"));
   if (tasks.length !== candidate.tasks.length || traces.length !== candidate.traces.length) throw new Error("Evaluation manifest contains malformed tasks or traces.");
-  if (candidate.schemaVersion === 2) {
+  if (candidate.schemaVersion >= 2) {
     if (candidate.evidenceSource !== "fixture" && candidate.evidenceSource !== "real-host" || typeof candidate.reviewed !== "boolean" || !isSha256(candidate.promptTemplateHash)) {
       throw new Error("Evaluation manifest schema-v2 provenance is invalid.");
     }
@@ -1168,9 +1173,9 @@ function parseEvaluationManifest(value) {
   }
   return {
     schemaVersion: candidate.schemaVersion,
-    evidenceSource: candidate.schemaVersion === 2 ? candidate.evidenceSource : "fixture",
-    reviewed: candidate.schemaVersion === 2 ? candidate.reviewed : false,
-    ...candidate.schemaVersion === 2 ? { promptTemplateHash: candidate.promptTemplateHash } : {},
+    evidenceSource: candidate.schemaVersion >= 2 ? candidate.evidenceSource : "fixture",
+    reviewed: candidate.schemaVersion >= 2 ? candidate.reviewed : false,
+    ...candidate.schemaVersion >= 2 ? { promptTemplateHash: candidate.promptTemplateHash } : {},
     generatedAt: candidate.generatedAt,
     seed: candidate.seed,
     model: { identifier: model.identifier, versionOrDate: model.versionOrDate },
@@ -1192,7 +1197,7 @@ async function loadEvaluationManifest(path) {
 }
 async function persistPromotionReport(root, report) {
   const promotion = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
     enforcementEnabled: report.enforcementEnabled,
     ...report.promotionEligible ? { evidenceSource: "real-host", reviewed: true } : {},
@@ -1203,6 +1208,8 @@ async function persistPromotionReport(root, report) {
     boundedCount: report.routerRates.boundedCount,
     ...report.routerRates.stage0LatencyMs !== null ? { stage0LatencyMs: report.routerRates.stage0LatencyMs } : {},
     ...report.routerRates.activationLatencyMs !== null ? { activationLatencyMs: report.routerRates.activationLatencyMs } : {},
+    ...report.routerRates.stage0LatencyMaximumMs !== null ? { stage0LatencyMaximumMs: report.routerRates.stage0LatencyMaximumMs } : {},
+    stage0WithinBudget: report.routerRates.stage0WithinBudget,
     stage0LatencySamples: report.routerRates.stage0LatencySamples,
     activationLatencySamples: report.routerRates.activationLatencySamples,
     stage0FasterThanActivation: report.routerRates.stage0FasterThanActivation,
@@ -1223,7 +1230,7 @@ async function persistPromotionReport(root, report) {
 // src/core/pairedHost.ts
 import { spawn as spawn2 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
-import { access as access2, mkdir as mkdir3, readFile as readFile8, rm as rm4, symlink, writeFile as writeFile2 } from "node:fs/promises";
+import { access as access2, chmod as chmod3, mkdir as mkdir3, readFile as readFile8, realpath as realpath3, rm as rm4, stat as stat2, symlink, writeFile as writeFile2 } from "node:fs/promises";
 import { dirname as dirname3, isAbsolute as isAbsolute4, relative as relative4, resolve as resolve5, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -1267,6 +1274,8 @@ function adviseRouting(input) {
 
 // src/core/pairedHost.ts
 var MAX_PROCESS_OUTPUT_BYTES = 16 * 1024 * 1024;
+var ACCEPTANCE_COMMAND = "node .tokengraph-controller/acceptance.mjs";
+var ALLOWED_MCP_ENVIRONMENT = /* @__PURE__ */ new Set(["TOKENGRAPH_TOOL_SURFACE"]);
 function hashNumber(value) {
   return Number.parseInt(createHash3("sha256").update(value).digest("hex").slice(0, 12), 16);
 }
@@ -1307,6 +1316,12 @@ function routingFromToolResult(item) {
 function rawReadCommand(command) {
   return typeof command === "string" && /(?:^|\s)(?:Get-Content|type|cat|sed\s+-n)(?:\s|$)/i.test(command);
 }
+function matchesAcceptanceCommand(recorded, expected) {
+  if (typeof recorded !== "string" || expected === void 0) return false;
+  if (recorded === expected) return true;
+  const windowsWrapper = recorded.match(/^"[a-z]:\\windows\\system32\\windowspowershell\\v1\.0\\powershell\.exe" -Command '([^'\r\n]*)'$/i);
+  return windowsWrapper?.[1] === expected;
+}
 function parseCodexJsonl(raw, options) {
   const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
   let usage2;
@@ -1316,6 +1331,9 @@ function parseCodexJsonl(raw, options) {
   let fallbackRawReads = 0;
   let routing;
   let activationLatencyMs;
+  let acceptanceMatches = 0;
+  let acceptanceCommandPassed = false;
+  let acceptanceInvalidated = false;
   const startedMcpCalls = /* @__PURE__ */ new Map();
   for (const [index, line] of lines.entries()) {
     let event;
@@ -1331,6 +1349,13 @@ function parseCodexJsonl(raw, options) {
       startedMcpCalls.set(item.id, options.lineElapsedMs?.[index] ?? index);
     }
     if (event.type === "item.completed" && item) {
+      const mutationCapable = item.type !== "agent_message" && item.type !== "reasoning" && item.type !== "todo_list";
+      const matchesAcceptance = item.type === "command_execution" && matchesAcceptanceCommand(item.command, options.acceptanceCommand);
+      if (acceptanceMatches > 0 && mutationCapable) acceptanceInvalidated = true;
+      if (matchesAcceptance) {
+        acceptanceMatches += 1;
+        acceptanceCommandPassed = item.status === "completed" && item.exit_code === 0;
+      }
       if (item.type === "command_execution" || item.type === "mcp_tool_call") toolCalls += 1;
       if (item.type === "command_execution" && rawReadCommand(item.command)) fallbackRawReads += 1;
       const observedRouting = routingFromToolResult(item);
@@ -1371,6 +1396,12 @@ function parseCodexJsonl(raw, options) {
     fallbackRawReads,
     finalStatus,
     ...failureClass ? { failureClass } : {},
+    ...options.acceptanceCommand && options.acceptanceCommandHash ? {
+      acceptance: {
+        status: acceptanceMatches === 1 && acceptanceCommandPassed && !acceptanceInvalidated ? "passed" : "failed",
+        commandHash: options.acceptanceCommandHash
+      }
+    } : {},
     ...routing ? { routing } : {},
     ...activationLatencyMs !== void 0 ? { activationLatencyMs } : {}
   };
@@ -1389,11 +1420,11 @@ function planPairedHostRuns(tasks, runsPerTask, seed) {
 }
 function assertProtocol(value) {
   const candidate = record(value);
-  if (!candidate || candidate.schemaVersion !== 1 || typeof candidate.evaluationId !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(candidate.evaluationId) || typeof candidate.seed !== "string" || !candidate.seed || !record(candidate.model) || !record(candidate.plugin) || !record(candidate.promptTemplate) || !record(candidate.tokenGraphMcp) || !record(candidate.acceptance) || !record(candidate.protocol) || !Array.isArray(candidate.tasks) || candidate.tasks.some((task) => !record(task))) {
+  if (!candidate || candidate.schemaVersion !== 2 || typeof candidate.evaluationId !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(candidate.evaluationId) || typeof candidate.seed !== "string" || !candidate.seed || !record(candidate.model) || !record(candidate.plugin) || !record(candidate.promptTemplate) || !record(candidate.tokenGraphMcp) || !record(candidate.acceptance) || !record(candidate.protocol) || !Array.isArray(candidate.tasks) || candidate.tasks.some((task) => !record(task))) {
     throw new Error("Paired host protocol schema is invalid.");
   }
   const typed = value;
-  if (typed.reviewed !== void 0 && typeof typed.reviewed !== "boolean" || !typed.tasks.length || new Set(typed.tasks.map((task) => task.taskId)).size !== typed.tasks.length || typeof typed.model.identifier !== "string" || !typed.model.identifier || typeof typed.model.versionOrDate !== "string" || !typed.model.versionOrDate || typeof typed.reasoningLevel !== "string" || !typed.reasoningLevel || !["read-only", "workspace-write"].includes(typed.sandbox) || typed.approvalPolicy !== "never" || typed.windowsSandbox !== "elevated" || typeof typed.repositoryCommit !== "string" || !/^[a-f0-9]{7,40}$/i.test(typed.repositoryCommit) || typeof typed.plugin.version !== "string" || !typed.plugin.version || typeof typed.plugin.commit !== "string" || !/^[a-f0-9]{40}$/i.test(typed.plugin.commit) || typeof typed.promptTemplate.identifier !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(typed.promptTemplate.identifier) || typeof typed.promptTemplate.template !== "string" || typed.promptTemplate.template.length > 2e4 || !typed.promptTemplate.template.includes("{{task}}") || typeof typed.tokenGraphMcp.command !== "string" || !typed.tokenGraphMcp.command || !Array.isArray(typed.tokenGraphMcp.args) || typed.tokenGraphMcp.args.some((entry) => typeof entry !== "string") || typeof typed.acceptance.command !== "string" || !typed.acceptance.command || !Array.isArray(typed.acceptance.args) || typed.acceptance.args.some((entry) => typeof entry !== "string") || typed.dependencySource !== void 0 && (typeof typed.dependencySource !== "string" || isAbsolute4(typed.dependencySource) || typed.dependencySource.split(/[\\/]/).includes("..")) || typeof typed.cacheState !== "string" || !typed.cacheState || !["cold", "warm"].includes(typed.indexState) || !typed.toolConfiguration || typeof typed.toolConfiguration !== "object" || Array.isArray(typed.toolConfiguration) || containsAbsolutePath(typed.toolConfiguration) || typed.tokenGraphMcp.env && Object.entries(typed.tokenGraphMcp.env).some(([key, entry]) => !/^[A-Z_][A-Z0-9_]*$/.test(key) || typeof entry !== "string") || !Number.isInteger(typed.protocol.runsPerTask) || typed.protocol.runsPerTask < 1 || !Number.isInteger(typed.protocol.minimumPerCategorySamples) || typed.protocol.minimumPerCategorySamples < 10 || ![typed.protocol.qualityNonInferiorityMargin, typed.protocol.tokenSuperiorityMinimum, typed.protocol.resourceLimit, typed.protocol.executionMedianMinimum, typed.protocol.executionP25Minimum].every((entry) => typeof entry === "number" && Number.isFinite(entry) && entry >= 0) || typeof typed.protocol.routerRateMaximum !== "number" || !Number.isFinite(typed.protocol.routerRateMaximum) || typed.protocol.routerRateMaximum <= 0 || typed.protocol.routerRateMaximum > 0.1 || typeof typed.protocol.nonNegativeActivatedMinimum !== "number" || !Number.isFinite(typed.protocol.nonNegativeActivatedMinimum) || typed.protocol.nonNegativeActivatedMinimum < 0.8 || typed.protocol.nonNegativeActivatedMinimum > 1 || typed.tasks.some((task) => typeof task.taskId !== "string" || !/^[a-z0-9][a-z0-9-]{1,63}$/.test(task.taskId) || typeof task.category !== "string" || !/^[a-z0-9][a-z0-9-]{1,31}$/.test(task.category) || typeof task.prompt !== "string" || !task.prompt || task.prompt.length > 5e4 || !["none", "low", "medium", "high"].includes(task.expectedBenefit) || !["activate", "bypass"].includes(task.expectedRouting) || task.expectedRouting === "bypass" !== (task.expectedBenefit === "none"))) {
+  if (typed.reviewed !== void 0 && typeof typed.reviewed !== "boolean" || !typed.tasks.length || new Set(typed.tasks.map((task) => task.taskId)).size !== typed.tasks.length || typeof typed.model.identifier !== "string" || !typed.model.identifier || typeof typed.model.versionOrDate !== "string" || !typed.model.versionOrDate || typeof typed.reasoningLevel !== "string" || !typed.reasoningLevel || typed.approvalPolicy !== "never" || typed.windowsSandbox !== "elevated" || typeof typed.repositoryCommit !== "string" || !/^[a-f0-9]{7,40}$/i.test(typed.repositoryCommit) || typeof typed.plugin.version !== "string" || !typed.plugin.version || typeof typed.plugin.commit !== "string" || !/^[a-f0-9]{40}$/i.test(typed.plugin.commit) || typeof typed.promptTemplate.identifier !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(typed.promptTemplate.identifier) || typeof typed.promptTemplate.template !== "string" || typed.promptTemplate.template.length > 2e4 || !typed.promptTemplate.template.includes("{{task}}") || typeof typed.tokenGraphMcp.command !== "string" || !typed.tokenGraphMcp.command || !Array.isArray(typed.tokenGraphMcp.args) || typed.tokenGraphMcp.args.some((entry) => typeof entry !== "string") || typeof typed.acceptance.verifierScript !== "string" || !typed.acceptance.verifierScript || isAbsolute4(typed.acceptance.verifierScript) || typed.acceptance.verifierScript.split(/[\\/]/).includes("..") || !/\.[cm]?js$/i.test(typed.acceptance.verifierScript) || typed.dependencySource !== void 0 && (typeof typed.dependencySource !== "string" || isAbsolute4(typed.dependencySource) || typed.dependencySource.split(/[\\/]/).includes("..")) || typeof typed.cacheState !== "string" || !typed.cacheState || !["cold", "warm"].includes(typed.indexState) || !typed.toolConfiguration || typeof typed.toolConfiguration !== "object" || Array.isArray(typed.toolConfiguration) || containsAbsolutePath(typed.toolConfiguration) || typed.tokenGraphMcp.env && Object.entries(typed.tokenGraphMcp.env).some(([key, entry]) => !ALLOWED_MCP_ENVIRONMENT.has(key) || key === "TOKENGRAPH_TOOL_SURFACE" && entry !== "core" && entry !== "full") || !Number.isInteger(typed.protocol.runsPerTask) || typed.protocol.runsPerTask < 1 || !Number.isInteger(typed.protocol.minimumPerCategorySamples) || typed.protocol.minimumPerCategorySamples < 10 || ![typed.protocol.qualityNonInferiorityMargin, typed.protocol.tokenSuperiorityMinimum, typed.protocol.resourceLimit, typed.protocol.executionMedianMinimum, typed.protocol.executionP25Minimum].every((entry) => typeof entry === "number" && Number.isFinite(entry) && entry >= 0) || typeof typed.protocol.routerRateMaximum !== "number" || !Number.isFinite(typed.protocol.routerRateMaximum) || typed.protocol.routerRateMaximum <= 0 || typed.protocol.routerRateMaximum > 0.1 || typed.protocol.stage0LatencyMaximumMs !== 5 || typeof typed.protocol.nonNegativeActivatedMinimum !== "number" || !Number.isFinite(typed.protocol.nonNegativeActivatedMinimum) || typed.protocol.nonNegativeActivatedMinimum < 0.8 || typed.protocol.nonNegativeActivatedMinimum > 1 || typed.tasks.some((task) => typeof task.taskId !== "string" || !/^[a-z0-9][a-z0-9-]{1,63}$/.test(task.taskId) || typeof task.category !== "string" || !/^[a-z0-9][a-z0-9-]{1,31}$/.test(task.category) || typeof task.prompt !== "string" || !task.prompt || task.prompt.length > 5e4 || !["none", "low", "medium", "high"].includes(task.expectedBenefit) || !["activate", "bypass"].includes(task.expectedRouting) || task.expectedRouting === "bypass" !== (task.expectedBenefit === "none"))) {
     throw new Error("Paired host protocol fields are invalid.");
   }
   return typed;
@@ -1405,8 +1436,8 @@ function beneath(root, candidate) {
   const child = relative4(resolve5(root), resolve5(candidate));
   return child.length > 0 && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute4(child);
 }
-async function runProcess(command, args, cwd, timeoutMs, stdin, environment) {
-  return await new Promise((resolvePromise, rejectPromise) => {
+async function runBoundedProcess(command, args, cwd, timeoutMs, stdin, environment) {
+  return await new Promise((resolvePromise) => {
     const startedAt = performance.now();
     const child = spawn2(command, args, { cwd, env: environment, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -1417,6 +1448,7 @@ async function runProcess(command, args, cwd, timeoutMs, stdin, environment) {
     let outputLimitExceeded = false;
     let outputBytes = 0;
     let forceKillTimer;
+    let settled = false;
     const terminate = () => {
       child.kill("SIGTERM");
       forceKillTimer ??= setTimeout(() => child.kill("SIGKILL"), 2e3);
@@ -1450,21 +1482,26 @@ async function runProcess(command, args, cwd, timeoutMs, stdin, environment) {
         terminate();
       }
     });
-    child.once("error", (error) => {
+    child.once("error", () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
-      rejectPromise(error);
+      resolvePromise({ exitCode: null, signal: null, stdout, stderr: "", timedOut, outputLimitExceeded, lineElapsedMs, durationMs: performance.now() - startedAt, spawnFailed: true });
     });
     child.once("exit", (exitCode, signal) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       if (pendingLine.trim()) lineElapsedMs.push(performance.now() - startedAt);
-      resolvePromise({ exitCode, signal, stdout, stderr, timedOut, outputLimitExceeded, lineElapsedMs, durationMs: performance.now() - startedAt });
+      resolvePromise({ exitCode, signal, stdout, stderr, timedOut, outputLimitExceeded, lineElapsedMs, durationMs: performance.now() - startedAt, spawnFailed: false });
     });
     if (stdin !== void 0) child.stdin.end(stdin);
     else child.stdin.end();
   });
 }
+var runProcess = runBoundedProcess;
 function isolatedHostEnvironment() {
   const environment = { ...process.env };
   for (const name of ["CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "CODEX_PERMISSION_PROFILE", "CODEX_SHELL", "CODEX_THREAD_ID"]) delete environment[name];
@@ -1490,6 +1527,68 @@ function tomlString(value) {
 }
 function tomlArray(values) {
   return `[${values.map(tomlString).join(",")}]`;
+}
+function tomlInlineTable(entries) {
+  return `{${entries.map(([key, value]) => `${tomlString(key)}=${tomlString(value)}`).join(",")}}`;
+}
+function modelShellEnvironment(worktree) {
+  const temporaryDirectory = resolve5(worktree, ".tokengraph-tmp");
+  const pathValue = process.env.PATH ?? process.env.Path ?? dirname3(process.execPath);
+  const environment = process.platform === "win32" ? {
+    PATH: pathValue,
+    PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
+    SYSTEMROOT: process.env.SYSTEMROOT ?? process.env.SystemRoot ?? "C:\\Windows",
+    WINDIR: process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows",
+    COMSPEC: process.env.COMSPEC ?? process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe",
+    TEMP: temporaryDirectory,
+    TMP: temporaryDirectory
+  } : {
+    PATH: pathValue,
+    HOME: resolve5(worktree, ".tokengraph-home"),
+    TMPDIR: temporaryDirectory,
+    LANG: "C.UTF-8"
+  };
+  return environment;
+}
+function permissionFilesystem(gitCommonDirectory2, dependencySource) {
+  const workspaceRules = tomlInlineTable([
+    [".", "write"],
+    [".git", "read"],
+    [".tokengraph-controller", "read"]
+  ]);
+  const rules = [
+    `${tomlString(":root")}=${tomlString("deny")}`,
+    `${tomlString(":minimal")}=${tomlString("read")}`,
+    `${tomlString(":workspace_roots")}=${workspaceRules}`,
+    `${tomlString(gitCommonDirectory2)}=${tomlString("read")}`,
+    ...dependencySource ? [`${tomlString(dependencySource)}=${tomlString("read")}`] : []
+  ];
+  return `{${rules.join(",")}}`;
+}
+async function verifierSource(root, verifierScript) {
+  const requested = resolve5(root, verifierScript);
+  if (!beneath(root, requested)) throw new Error("Acceptance verifier escaped the supplied evaluation root.");
+  const canonical = await realpath3(requested);
+  if (!beneath(root, canonical)) throw new Error("Acceptance verifier resolves outside the supplied evaluation root.");
+  const metadata = await stat2(canonical);
+  if (!metadata.isFile() || metadata.size > 1024 * 1024) throw new Error("Acceptance verifier must be a bounded regular file.");
+  const content = await readFile8(canonical);
+  return { path: canonical, content, commandHash: sha256(content) };
+}
+async function installVerifier(worktree, verifier) {
+  const directory = resolve5(worktree, ".tokengraph-controller");
+  const target = resolve5(directory, "acceptance.mjs");
+  await mkdir3(directory, { recursive: true });
+  await writeFile2(target, verifier.content);
+  if (sha256(await readFile8(target)) !== verifier.commandHash) throw new Error("Copied acceptance verifier hash does not match its validated source.");
+  await chmod3(target, 292);
+}
+function acceptancePrompt(prompt) {
+  return `${prompt}
+
+After completing all edits and checks, run exactly this as the final mutation-capable command: ${ACCEPTANCE_COMMAND}
+Do not run any command, MCP tool, or file mutation after it. A final prose response is allowed.
+`;
 }
 function resolveMcp(root, mcp) {
   return {
@@ -1523,9 +1622,10 @@ function routingObservation(task, measured, parsed) {
     falseActivation: task.expectedRouting === "bypass" && decision === "activate"
   };
 }
-function reviewedTrace(run, task, parsed, acceptance, commandHash, measuredRouting) {
+function reviewedTrace(run, task, parsed, hostSucceeded, commandHash, measuredRouting) {
   if (!parsed.usage) throw new Error("Cannot emit a reviewed trace without exact host usage.");
-  const acceptancePassed = acceptance.exitCode === 0 && !acceptance.timedOut;
+  const acceptancePassed = parsed.acceptance?.status === "passed" && parsed.acceptance.commandHash === commandHash;
+  const successful = hostSucceeded && parsed.finalStatus === "completed" && acceptancePassed;
   return {
     taskId: run.taskId,
     category: run.category,
@@ -1542,12 +1642,44 @@ function reviewedTrace(run, task, parsed, acceptance, commandHash, measuredRouti
     reasoningOutputTokens: parsed.usage.reasoningOutputTokens,
     toolCalls: parsed.toolCalls,
     fallbackRawReads: parsed.fallbackRawReads,
-    quality: acceptancePassed ? 1 : 0,
+    quality: successful ? 1 : 0,
     timedOut: false,
-    failed: parsed.finalStatus !== "completed" || !acceptancePassed,
+    failed: !successful,
     resourceUnits: parsed.toolCalls,
     ...run.condition === "on" && measuredRouting ? { routing: routingObservation(task, measuredRouting, parsed) } : {}
   };
+}
+function emptyProcessResult() {
+  return { exitCode: null, signal: null, stdout: "", stderr: "", timedOut: false, outputLimitExceeded: false, lineElapsedMs: [], durationMs: 0, spawnFailed: false };
+}
+async function cleanupWorktree(root, worktreeRoot, worktree) {
+  if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe worktree cleanup.");
+  await git2(root, ["worktree", "remove", "--force", worktree]).catch(async () => {
+    if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe worktree cleanup.");
+    await rm4(worktree, { recursive: true, force: true });
+    await git2(root, ["worktree", "prune"]);
+  });
+}
+async function durableRunArtifacts(rawPath, normalizedPath, run) {
+  try {
+    await readFile8(rawPath, "utf8");
+    const normalized = record(JSON.parse(await readFile8(normalizedPath, "utf8")));
+    return normalized?.schemaVersion === 2 && normalized.durable === true && normalized.taskId === run.taskId && normalized.repeat === run.repeat && normalized.condition === run.condition;
+  } catch {
+    return false;
+  }
+}
+async function recoverStaleWorktree(root, worktreeRoot, worktree, rawPath, normalizedPath, run) {
+  try {
+    await access2(worktree);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  if (!await durableRunArtifacts(rawPath, normalizedPath, run)) {
+    throw new Error(`Refusing to remove non-durable stale worktree for ${run.taskId} repeat ${run.repeat} ${run.condition}.`);
+  }
+  await cleanupWorktree(root, worktreeRoot, worktree);
 }
 async function runPairedHostEvaluation(options) {
   const root = resolve5(options.root);
@@ -1558,11 +1690,14 @@ async function runPairedHostEvaluation(options) {
   const hostExecutable = options.hostExecutable ?? "codex";
   const hostArgumentsPrefix = options.hostArgumentsPrefix ?? [];
   const hostEnvironment = isolatedHostEnvironment();
+  const verifier = await verifierSource(root, protocol.acceptance.verifierScript);
   const version = await runProcess(hostExecutable, [...hostArgumentsPrefix, "--version"], root, 1e4, void 0, hostEnvironment);
-  if (version.exitCode !== 0 || !/^codex-cli\s+\S+/i.test(version.stdout.trim())) throw new Error("Codex host version could not be verified.");
+  if (version.spawnFailed || version.exitCode !== 0 || !/^codex-cli\s+\S+/i.test(version.stdout.trim())) throw new Error("Codex host version could not be verified.");
   const hostVersion = version.stdout.trim();
   if (options.dryRun) return { manifest: null, plan, hostVersion };
   if (!options.outputManifest) throw new Error("An output manifest path is required for a live host evaluation.");
+  const outputManifest = isAbsolute4(options.outputManifest) ? resolve5(options.outputManifest) : resolve5(root, options.outputManifest);
+  if (!beneath(root, outputManifest)) throw new Error("Reviewed manifest must remain beneath the evaluation root.");
   await ensureLocalRunExclusion(root);
   const evaluationRoot = resolve5(root, ".tokengraph", "runs", "paired-host", protocol.evaluationId);
   const worktreeRoot = resolve5(evaluationRoot, "worktrees");
@@ -1573,25 +1708,61 @@ async function runPairedHostEvaluation(options) {
   await mkdir3(rawRoot, { recursive: true });
   await mkdir3(normalizedRoot, { recursive: true });
   const traces = [];
-  const acceptanceHash = sha256(JSON.stringify([protocol.acceptance.command, ...protocol.acceptance.args]));
-  const acceptanceArgs = protocol.acceptance.args.map((arg) => /\.[cm]?js$/i.test(arg) && !isAbsolute4(arg) ? resolve5(root, arg) : arg);
-  const resolvedMcp = resolveMcp(root, protocol.tokenGraphMcp);
+  const gitCommonValue = await git2(root, ["rev-parse", "--git-common-dir"]);
+  const gitCommonDirectory2 = isAbsolute4(gitCommonValue) ? resolve5(gitCommonValue) : resolve5(root, gitCommonValue);
+  const dependencySource = protocol.dependencySource ? resolve5(root, protocol.dependencySource) : void 0;
   for (const run of plan) {
     const task = protocol.tasks.find((candidate) => candidate.taskId === run.taskId);
     const runName = `${run.taskId}-repeat-${run.repeat}-${run.condition}`;
     const worktree = resolve5(worktreeRoot, runName);
+    const rawPath = resolve5(rawRoot, `${runName}.jsonl`);
+    const normalizedPath = resolve5(normalizedRoot, `${runName}.json`);
     if (!beneath(worktreeRoot, worktree)) throw new Error("Generated worktree escaped its verified root.");
-    await git2(root, ["worktree", "add", "--detach", worktree, commit]);
+    await recoverStaleWorktree(root, worktreeRoot, worktree, rawPath, normalizedPath, run);
+    try {
+      await git2(root, ["worktree", "add", "--detach", worktree, commit]);
+    } catch {
+      const normalized = {
+        schemaVersion: 2,
+        durable: true,
+        taskId: run.taskId,
+        repeat: run.repeat,
+        condition: run.condition,
+        host: { exitCode: null, timedOut: false, outputLimitExceeded: false, durationMs: 0, finalStatus: "failed", failureClass: "worktree-create-failed" },
+        acceptance: { status: "failed", commandHash: verifier.commandHash }
+      };
+      await writeTextAtomic(rawPath, "");
+      await writeJsonAtomic(normalizedPath, normalized);
+      throw new Error(`${runName} worktree creation failed.`);
+    }
     let durable = false;
     try {
-      if (protocol.dependencySource) {
-        const dependencySource = resolve5(root, protocol.dependencySource);
+      let phaseFailure;
+      if (protocol.dependencySource && dependencySource) {
         const dependencyTarget = resolve5(worktree, protocol.dependencySource);
-        if (!beneath(root, dependencySource) || !beneath(worktree, dependencyTarget)) throw new Error("Dependency provisioning escaped its verified root.");
-        await access2(dependencySource);
-        await mkdir3(dirname3(dependencyTarget), { recursive: true });
-        await symlink(dependencySource, dependencyTarget, process.platform === "win32" ? "junction" : "dir");
+        try {
+          if (!beneath(root, dependencySource) || !beneath(worktree, dependencyTarget)) throw new Error("Dependency provisioning escaped its verified root.");
+          await access2(dependencySource);
+          await mkdir3(dirname3(dependencyTarget), { recursive: true });
+          await symlink(dependencySource, dependencyTarget, process.platform === "win32" ? "junction" : "dir");
+        } catch {
+          phaseFailure = "dependency-provisioning-failed";
+        }
       }
+      if (!phaseFailure) {
+        try {
+          await installVerifier(worktree, verifier);
+          await mkdir3(resolve5(worktree, ".tokengraph-tmp"), { recursive: true });
+          if (process.platform !== "win32") await mkdir3(resolve5(worktree, ".tokengraph-home"), { recursive: true });
+        } catch {
+          phaseFailure = "acceptance-provisioning-failed";
+        }
+      }
+      const resolvedMcp = resolveMcp(worktree, protocol.tokenGraphMcp);
+      let host = emptyProcessResult();
+      let parsed;
+      let parseFailure;
+      const measuredRouting = run.condition === "on" ? measureRouting(task, protocol.indexState) : void 0;
       const args = [
         ...hostArgumentsPrefix,
         "exec",
@@ -1600,8 +1771,6 @@ async function runPairedHostEvaluation(options) {
         "--ignore-user-config",
         "--model",
         protocol.model.identifier,
-        "--sandbox",
-        protocol.sandbox,
         "--cd",
         worktree,
         "--config",
@@ -1609,60 +1778,73 @@ async function runPairedHostEvaluation(options) {
         "--config",
         `approval_policy=${tomlString(protocol.approvalPolicy)}`,
         "--config",
-        `windows.sandbox=${tomlString(protocol.windowsSandbox)}`
+        `windows.sandbox=${tomlString(protocol.windowsSandbox)}`,
+        "--config",
+        `default_permissions=${tomlString("tokengraph-eval")}`,
+        "--config",
+        `permissions.tokengraph-eval.filesystem=${permissionFilesystem(gitCommonDirectory2, dependencySource)}`,
+        "--config",
+        "permissions.tokengraph-eval.network.enabled=false",
+        "--config",
+        `shell_environment_policy.inherit=${tomlString("none")}`,
+        "--config",
+        `shell_environment_policy.set=${tomlInlineTable(Object.entries(modelShellEnvironment(worktree)).sort(([left], [right]) => left.localeCompare(right)))}`
       ];
       if (run.condition === "on") {
         args.push("--config", `mcp_servers.tokengraph.command=${tomlString(resolvedMcp.command)}`);
         args.push("--config", `mcp_servers.tokengraph.args=${tomlArray(resolvedMcp.args)}`);
-        if (resolvedMcp.env) {
-          const env = `{${Object.entries(resolvedMcp.env).sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => `${key}=${tomlString(value)}`).join(",")}}`;
-          args.push("--config", `mcp_servers.tokengraph.env=${env}`);
-        }
+        const mcpEnvironment = { ...resolvedMcp.env ?? {}, TOKENGRAPH_WORKSPACE_ROOT: worktree };
+        args.push("--config", `mcp_servers.tokengraph.env=${tomlInlineTable(Object.entries(mcpEnvironment).sort(([left], [right]) => left.localeCompare(right)))}`);
       }
       args.push("-");
-      const measuredRouting = run.condition === "on" ? measureRouting(task, protocol.indexState) : void 0;
-      const host = await runProcess(hostExecutable, args, worktree, options.timeoutMs ?? 30 * 6e4, `${renderPrompt(protocol.promptTemplate.template, task)}
-`, hostEnvironment);
-      const rawPath = resolve5(rawRoot, `${runName}.jsonl`);
-      await writeFile2(rawPath, host.stdout);
-      let parsed;
-      let parseFailure;
-      try {
-        parsed = parseCodexJsonl(host.stdout, {
-          modelIdentifier: protocol.model.identifier,
-          hostVersion,
-          allowMissingUsageOnFailure: true,
-          lineElapsedMs: host.lineElapsedMs
-        });
-      } catch {
-        parseFailure = "invalid-host-stream";
+      if (!phaseFailure) {
+        host = await runProcess(hostExecutable, args, worktree, options.timeoutMs ?? 30 * 6e4, acceptancePrompt(renderPrompt(protocol.promptTemplate.template, task)), hostEnvironment);
+        try {
+          parsed = parseCodexJsonl(host.stdout, {
+            modelIdentifier: protocol.model.identifier,
+            hostVersion,
+            allowMissingUsageOnFailure: true,
+            lineElapsedMs: host.lineElapsedMs,
+            acceptanceCommand: ACCEPTANCE_COMMAND,
+            acceptanceCommandHash: verifier.commandHash
+          });
+        } catch {
+          parseFailure = "invalid-host-stream";
+        }
       }
-      const acceptance = await runProcess(protocol.acceptance.command, acceptanceArgs, worktree, Math.min(options.timeoutMs ?? 30 * 6e4, 10 * 6e4));
+      let trace;
+      let routingFailure;
+      if (!phaseFailure && !host.spawnFailed && !host.timedOut && !host.outputLimitExceeded && parsed?.usage) {
+        try {
+          trace = reviewedTrace(run, task, parsed, host.exitCode === 0, verifier.commandHash, measuredRouting);
+        } catch {
+          routingFailure = "routing-evidence-invalid";
+        }
+      }
+      const failureClass = phaseFailure ?? (host.spawnFailed ? "host-spawn-failed" : void 0) ?? (host.timedOut ? "host-timeout" : void 0) ?? (host.outputLimitExceeded ? "host-output-limit" : void 0) ?? parseFailure ?? routingFailure ?? parsed?.failureClass ?? (host.exitCode !== 0 ? "host-exit-nonzero" : void 0) ?? null;
       const normalized = {
-        schemaVersion: 1,
+        schemaVersion: 2,
+        durable: true,
         taskId: run.taskId,
         repeat: run.repeat,
         condition: run.condition,
-        host: { exitCode: host.exitCode, timedOut: host.timedOut, outputLimitExceeded: host.outputLimitExceeded, durationMs: host.durationMs, finalStatus: parsed?.finalStatus ?? "failed", failureClass: parsed?.failureClass ?? parseFailure ?? null },
-        acceptance: { exitCode: acceptance.exitCode, timedOut: acceptance.timedOut, commandHash: acceptanceHash }
+        host: { exitCode: host.exitCode, timedOut: host.timedOut, outputLimitExceeded: host.outputLimitExceeded, durationMs: host.durationMs, finalStatus: parsed?.finalStatus ?? "failed", failureClass },
+        acceptance: { status: parsed?.acceptance?.status ?? "failed", commandHash: verifier.commandHash }
       };
-      await writeFile2(resolve5(normalizedRoot, `${runName}.json`), `${JSON.stringify(normalized, null, 2)}
-`);
+      await writeTextAtomic(rawPath, host.stdout);
+      await writeJsonAtomic(normalizedPath, normalized);
       durable = true;
-      if (host.timedOut || host.outputLimitExceeded || host.exitCode !== 0 || !parsed?.usage) throw new Error(`${runName} did not produce a complete exact-usage host trace.`);
-      traces.push(reviewedTrace(run, task, parsed, acceptance, acceptanceHash, measuredRouting));
+      if (phaseFailure === "dependency-provisioning-failed") throw new Error(`${runName} dependency provisioning failed.`);
+      if (phaseFailure === "acceptance-provisioning-failed") throw new Error(`${runName} acceptance verifier provisioning failed.`);
+      if (host.spawnFailed || host.timedOut || host.outputLimitExceeded || !parsed?.usage) throw new Error(`${runName} did not produce a complete exact-usage host trace.`);
+      if (routingFailure || !trace) throw new Error(`${runName} routing evidence is invalid.`);
+      traces.push(trace);
     } finally {
-      if (durable) {
-        await git2(root, ["worktree", "remove", "--force", worktree]).catch(async () => {
-          if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe worktree cleanup.");
-          await rm4(worktree, { recursive: true, force: true });
-          await git2(root, ["worktree", "prune"]);
-        });
-      }
+      if (durable) await cleanupWorktree(root, worktreeRoot, worktree);
     }
   }
   const manifest = parseEvaluationManifest({
-    schemaVersion: 2,
+    schemaVersion: 3,
     evidenceSource: "real-host",
     reviewed: protocol.reviewed === true,
     generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -1681,11 +1863,8 @@ async function runPairedHostEvaluation(options) {
     tasks: protocol.tasks.map(({ taskId, category, expectedQuality }) => ({ taskId, category, ...expectedQuality !== void 0 ? { expectedQuality } : {} })),
     traces
   });
-  const outputManifest = resolve5(options.outputManifest);
-  if (!beneath(root, outputManifest)) throw new Error("Reviewed manifest must remain beneath the evaluation root.");
   await mkdir3(dirname3(outputManifest), { recursive: true });
-  await writeFile2(outputManifest, `${JSON.stringify(manifest, null, 2)}
-`);
+  await writeJsonAtomic(outputManifest, manifest);
   return { manifest, plan, hostVersion };
 }
 

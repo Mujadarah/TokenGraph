@@ -123,13 +123,13 @@ describe("tokengraph run CLI", () => {
       });
       const manifestPath = join(root, "manifest.json");
       await writeFile(manifestPath, JSON.stringify({
-        schemaVersion: 2, evidenceSource: "real-host", reviewed: true,
+        schemaVersion: 3, evidenceSource: "real-host", reviewed: true,
         generatedAt: "2026-07-16T00:00:00.000Z", seed: "cli-eval",
         model: { identifier: "gpt-5", versionOrDate: "2026-07-16" }, reasoningLevel: "high",
         host: { name: "codex", version: "1.0.0" }, plugin: { version: "0.21.0", commit: "a".repeat(40) },
-        repositoryCommit: "b".repeat(40), promptTemplate: "paired-eval-v2", promptTemplateHash: "d".repeat(64), toolConfiguration: { surface: "core" },
+        repositoryCommit: "b".repeat(40), promptTemplate: "paired-eval-v3", promptTemplateHash: "d".repeat(64), toolConfiguration: { surface: "core" },
         cacheState: "empty", indexState: "cold",
-        protocol: { runsPerTask: 1, minimumPerCategorySamples: 10, qualityNonInferiorityMargin: 0.02, tokenSuperiorityMinimum: 1, resourceLimit: 2, routerRateMaximum: 0.1, executionMedianMinimum: 0, executionP25Minimum: 0, nonNegativeActivatedMinimum: 0.8 },
+        protocol: { runsPerTask: 1, minimumPerCategorySamples: 10, qualityNonInferiorityMargin: 0.02, tokenSuperiorityMinimum: 1, resourceLimit: 2, routerRateMaximum: 0.1, stage0LatencyMaximumMs: 5, executionMedianMinimum: 0, executionP25Minimum: 0, nonNegativeActivatedMinimum: 0.8 },
         tasks, traces
       }));
       const evaluated = await execFileAsync(process.execPath, [

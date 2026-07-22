@@ -60,7 +60,9 @@ export interface BenchmarkTask {
   targetedRawReadsAllowed: boolean;
   expectedRouting: "activate" | "bypass";
   requiresExactSlice?: boolean;
-  exactSliceTarget?: { file: string; symbol?: string };
+  exactSliceTarget?:
+    | { file: string; symbol: string; startLine?: never; endLine?: never }
+    | { file: string; symbol?: never; startLine: number; endLine: number };
 }
 
 export interface RouterShadowSummary {
@@ -203,12 +205,7 @@ export function validateCorpus(value: unknown): { tasks: BenchmarkTask[]; errors
       (candidate.expectedRouting !== "activate" && candidate.expectedRouting !== "bypass") ||
       (candidate.allowRawReads !== undefined && typeof candidate.allowRawReads !== "boolean") ||
       (candidate.requiresExactSlice !== undefined && typeof candidate.requiresExactSlice !== "boolean") ||
-      (candidate.exactSliceTarget !== undefined && (
-        !isRecord(candidate.exactSliceTarget) ||
-        typeof candidate.exactSliceTarget.file !== "string" ||
-        !candidate.exactSliceTarget.file.trim() ||
-        (candidate.exactSliceTarget.symbol !== undefined && (typeof candidate.exactSliceTarget.symbol !== "string" || !candidate.exactSliceTarget.symbol.trim()))
-      )) ||
+      (candidate.exactSliceTarget !== undefined && (!isRecord(candidate.exactSliceTarget) || typeof candidate.exactSliceTarget.file !== "string" || !candidate.exactSliceTarget.file.trim())) ||
       typeof candidate.targetedRawReadsAllowed !== "boolean"
     ) {
       errors.push(`Task at index ${index} is malformed.`);
@@ -217,8 +214,28 @@ export function validateCorpus(value: unknown): { tasks: BenchmarkTask[]; errors
     const task = candidate as unknown as BenchmarkTask;
     if (task.requiresExactSlice && !task.exactSliceTarget) {
       errors.push(`Task ${task.id} requires an exact slice target.`);
-    } else if (task.requiresExactSlice && !task.requiredFiles.includes(task.exactSliceTarget!.file)) {
-      errors.push(`Task ${task.id} exact slice target must be one of its required files.`);
+    } else if (task.requiresExactSlice && task.exactSliceTarget) {
+      const target = task.exactSliceTarget as Record<string, unknown>;
+      const hasSymbolProperty = Object.prototype.hasOwnProperty.call(target, "symbol");
+      const hasStartLine = Object.prototype.hasOwnProperty.call(target, "startLine");
+      const hasEndLine = Object.prototype.hasOwnProperty.call(target, "endLine");
+      const hasAnyLine = hasStartLine || hasEndLine;
+      const hasValidSymbol = hasSymbolProperty && typeof target.symbol === "string" && target.symbol.trim().length > 0;
+      const hasValidRange = Number.isSafeInteger(target.startLine) && Number.isSafeInteger(target.endLine) &&
+        (target.startLine as number) >= 1 && (target.endLine as number) >= (target.startLine as number);
+      const symbolForm = hasValidSymbol && !hasAnyLine;
+      const rangeForm = !hasSymbolProperty && hasStartLine && hasEndLine && hasValidRange;
+      if (hasSymbolProperty && hasAnyLine) {
+        errors.push(`Task ${task.id} exact slice target must use exactly one locator form: symbol or line range.`);
+      } else if (!hasSymbolProperty && hasAnyLine && !rangeForm) {
+        errors.push(`Task ${task.id} exact slice line range is invalid.`);
+      } else if (!symbolForm && !rangeForm) {
+        errors.push(`Task ${task.id} exact slice target must use exactly one locator form: symbol or line range.`);
+      } else if (!task.requiredFiles.includes(task.exactSliceTarget.file)) {
+        errors.push(`Task ${task.id} exact slice target must be one of its required files.`);
+      } else if (!task.targetedRawReadsAllowed || task.allowRawReads === false) {
+        errors.push(`Task ${task.id} requires exact-slice targeted reads but targeted reads are disallowed.`);
+      }
     } else if (!task.requiresExactSlice && task.exactSliceTarget) {
       errors.push(`Task ${task.id} has an exact slice target without requiring an exact slice.`);
     }
@@ -581,15 +598,16 @@ async function evaluateTask(
     .map(async (path, index) => {
       if (!indexedPaths.has(path)) throw new Error(`Exact slice target ${path} is not indexed for ${task.id}.`);
       const indexedFile = project.files.find((file) => file.path === path)!;
-      const symbol = project.symbols
-        .filter((candidate) => candidate.filePath === path &&
-          (!task.exactSliceTarget?.symbol || candidate.name === task.exactSliceTarget.symbol) &&
+      const target = task.exactSliceTarget!;
+      const symbol = "symbol" in target ? project.symbols
+        .filter((candidate) => candidate.filePath === path && candidate.name === target.symbol &&
           Number.isInteger(candidate.startLine) && Number.isInteger(candidate.endLine))
-        .sort((left, right) => left.startLine! - right.startLine! || left.endLine! - right.endLine!)[0];
-      if (task.exactSliceTarget?.symbol && !symbol) throw new Error(`Exact slice symbol ${task.exactSliceTarget.symbol} is not indexed in ${path} for ${task.id}.`);
-      const startLine = symbol?.startLine ?? 1;
-      const endLine = symbol?.endLine ?? startLine;
+        .sort((left, right) => left.startLine! - right.startLine! || left.endLine! - right.endLine!)[0] : undefined;
+      if ("symbol" in target && !symbol) throw new Error(`Exact slice symbol ${target.symbol} is not indexed in ${path} for ${task.id}.`);
+      const startLine = "symbol" in target ? symbol!.startLine! : target.startLine;
+      const endLine = "symbol" in target ? symbol!.endLine! : target.endLine;
       const slice = await readExactSlice(root, path, startLine, endLine, 64 * 1024, indexedFile.contentHash);
+      if (slice.startLine !== startLine || slice.endLine !== endLine) throw new Error(`Exact slice range fidelity failed for ${path} in ${task.id}.`);
       const targetedRequest = request(taskOrdinal * 100 + 50 + index, "tokengraph_query_context", {
         taskId,
         mode: "slice",

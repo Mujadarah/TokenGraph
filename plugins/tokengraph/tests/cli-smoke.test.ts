@@ -228,7 +228,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
     expect(report.exactSliceAccounting).toEqual({
       taskCount: 4,
       targetedReadCallCount: 4,
-      targetedReadTokens: 685,
+      targetedReadTokens: 711,
       taskIds: ["code-routing-02", "debugging-01", "debugging-03", "debugging-04"]
     });
     expect(report.releaseGate).toMatchObject({ passed: true, failureReasons: [] });
@@ -303,7 +303,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
     expect(readme).toMatch(/process working directory.*not running from an installed plugin directory/is);
     for (const text of [readme, pluginReadme]) {
       expect(text).toMatch(/none\s*\|\s*low\s*\|\s*medium\s*\|\s*high/i);
-      expect(text).toMatch(/four.*exact.*slice.*685|685.*four.*exact.*slice/is);
+      expect(text).toMatch(/four.*exact.*slice.*711|711.*four.*exact.*slice/is);
       expect(text).toMatch(/fixture.*real-host|real-host.*fixture/is);
       expect(text).toMatch(/2026-07-19-tokengraph-codex-manifest\.json/);
       expect(text).toMatch(/2026-07-19-tokengraph-codex-report\.md/);

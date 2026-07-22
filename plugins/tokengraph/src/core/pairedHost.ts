@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -8,6 +8,7 @@ import type { ExpectedBenefit, RoutingDecision } from "./artifact.js";
 import type { EvaluationTask, HostTrace, PairedEvaluationManifest, PairedEvaluationProtocol, RouterShadowObservation } from "./pairedEval.js";
 import { parseEvaluationManifest } from "./pairedEval.js";
 import { adviseRouting } from "./routingAdvisor.js";
+import { writeJsonAtomic, writeTextAtomic } from "./storage.js";
 
 export interface PairedHostTask extends EvaluationTask {
   prompt: string;
@@ -16,7 +17,7 @@ export interface PairedHostTask extends EvaluationTask {
 }
 
 export interface PairedHostProtocol {
-  schemaVersion: 1;
+  schemaVersion: 2;
   evaluationId: string;
   seed: string;
   reviewed?: boolean;
@@ -24,13 +25,12 @@ export interface PairedHostProtocol {
   reasoningLevel: string;
   approvalPolicy: "never";
   windowsSandbox: "elevated";
-  sandbox: "read-only" | "workspace-write";
   repositoryCommit: string;
   plugin: { version: string; commit: string };
   promptTemplate: { identifier: string; template: string };
   tokenGraphMcp: { command: string; args: string[]; env?: Record<string, string> };
   dependencySource?: string;
-  acceptance: { command: string; args: string[] };
+  acceptance: { verifierScript: string };
   toolConfiguration: Record<string, unknown>;
   cacheState: string;
   indexState: "cold" | "warm";
@@ -62,9 +62,10 @@ export interface ParsedCodexJsonl {
   failureClass?: "host-turn-failed" | "host-stream-error" | "invalid-host-stream";
   routing?: RoutingDecision;
   activationLatencyMs?: number;
+  acceptance?: { status: "passed" | "failed"; commandHash: string };
 }
 
-interface ProcessResult {
+export interface ProcessResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
@@ -73,9 +74,12 @@ interface ProcessResult {
   outputLimitExceeded: boolean;
   lineElapsedMs: number[];
   durationMs: number;
+  spawnFailed: boolean;
 }
 
 const MAX_PROCESS_OUTPUT_BYTES = 16 * 1024 * 1024;
+const ACCEPTANCE_COMMAND = "node .tokengraph-controller/acceptance.mjs";
+const ALLOWED_MCP_ENVIRONMENT = new Set(["TOKENGRAPH_TOOL_SURFACE"]);
 
 export interface RunPairedHostOptions {
   root: string;
@@ -91,7 +95,7 @@ function hashNumber(value: string): number {
   return Number.parseInt(createHash("sha256").update(value).digest("hex").slice(0, 12), 16);
 }
 
-function sha256(value: string): string {
+function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
@@ -137,7 +141,14 @@ function rawReadCommand(command: unknown): boolean {
   return typeof command === "string" && /(?:^|\s)(?:Get-Content|type|cat|sed\s+-n)(?:\s|$)/i.test(command);
 }
 
-export function parseCodexJsonl(raw: string, options: { modelIdentifier: string; hostVersion: string; allowMissingUsageOnFailure?: boolean; lineElapsedMs?: number[] }): ParsedCodexJsonl {
+function matchesAcceptanceCommand(recorded: unknown, expected: string | undefined): boolean {
+  if (typeof recorded !== "string" || expected === undefined) return false;
+  if (recorded === expected) return true;
+  const windowsWrapper = recorded.match(/^"[a-z]:\\windows\\system32\\windowspowershell\\v1\.0\\powershell\.exe" -Command '([^'\r\n]*)'$/i);
+  return windowsWrapper?.[1] === expected;
+}
+
+export function parseCodexJsonl(raw: string, options: { modelIdentifier: string; hostVersion: string; allowMissingUsageOnFailure?: boolean; lineElapsedMs?: number[]; acceptanceCommand?: string; acceptanceCommandHash?: string }): ParsedCodexJsonl {
   const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
   let usage: ParsedCodexJsonl["usage"];
   let finalStatus: "completed" | "failed" | undefined;
@@ -146,6 +157,9 @@ export function parseCodexJsonl(raw: string, options: { modelIdentifier: string;
   let fallbackRawReads = 0;
   let routing: RoutingDecision | undefined;
   let activationLatencyMs: number | undefined;
+  let acceptanceMatches = 0;
+  let acceptanceCommandPassed = false;
+  let acceptanceInvalidated = false;
   const startedMcpCalls = new Map<string, number>();
 
   for (const [index, line] of lines.entries()) {
@@ -162,6 +176,13 @@ export function parseCodexJsonl(raw: string, options: { modelIdentifier: string;
       startedMcpCalls.set(item.id, options.lineElapsedMs?.[index] ?? index);
     }
     if (event.type === "item.completed" && item) {
+      const mutationCapable = item.type !== "agent_message" && item.type !== "reasoning" && item.type !== "todo_list";
+      const matchesAcceptance = item.type === "command_execution" && matchesAcceptanceCommand(item.command, options.acceptanceCommand);
+      if (acceptanceMatches > 0 && mutationCapable) acceptanceInvalidated = true;
+      if (matchesAcceptance) {
+        acceptanceMatches += 1;
+        acceptanceCommandPassed = item.status === "completed" && item.exit_code === 0;
+      }
       if (item.type === "command_execution" || item.type === "mcp_tool_call") toolCalls += 1;
       if (item.type === "command_execution" && rawReadCommand(item.command)) fallbackRawReads += 1;
       const observedRouting = routingFromToolResult(item);
@@ -202,6 +223,12 @@ export function parseCodexJsonl(raw: string, options: { modelIdentifier: string;
     fallbackRawReads,
     finalStatus,
     ...(failureClass ? { failureClass } : {}),
+    ...(options.acceptanceCommand && options.acceptanceCommandHash ? {
+      acceptance: {
+        status: acceptanceMatches === 1 && acceptanceCommandPassed && !acceptanceInvalidated ? "passed" as const : "failed" as const,
+        commandHash: options.acceptanceCommandHash
+      }
+    } : {}),
     ...(routing ? { routing } : {}),
     ...(activationLatencyMs !== undefined ? { activationLatencyMs } : {})
   };
@@ -222,7 +249,7 @@ export function planPairedHostRuns(tasks: EvaluationTask[], runsPerTask: number,
 
 function assertProtocol(value: unknown): PairedHostProtocol {
   const candidate = record(value);
-  if (!candidate || candidate.schemaVersion !== 1 || typeof candidate.evaluationId !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(candidate.evaluationId) ||
+  if (!candidate || candidate.schemaVersion !== 2 || typeof candidate.evaluationId !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(candidate.evaluationId) ||
     typeof candidate.seed !== "string" || !candidate.seed || !record(candidate.model) || !record(candidate.plugin) || !record(candidate.promptTemplate) ||
     !record(candidate.tokenGraphMcp) || !record(candidate.acceptance) || !record(candidate.protocol) || !Array.isArray(candidate.tasks) || candidate.tasks.some((task) => !record(task))) {
     throw new Error("Paired host protocol schema is invalid.");
@@ -231,22 +258,23 @@ function assertProtocol(value: unknown): PairedHostProtocol {
   if ((typed.reviewed !== undefined && typeof typed.reviewed !== "boolean") ||
     !typed.tasks.length || new Set(typed.tasks.map((task) => task.taskId)).size !== typed.tasks.length ||
     typeof typed.model.identifier !== "string" || !typed.model.identifier || typeof typed.model.versionOrDate !== "string" || !typed.model.versionOrDate ||
-    typeof typed.reasoningLevel !== "string" || !typed.reasoningLevel || !["read-only", "workspace-write"].includes(typed.sandbox) ||
+    typeof typed.reasoningLevel !== "string" || !typed.reasoningLevel ||
     typed.approvalPolicy !== "never" ||
     typed.windowsSandbox !== "elevated" ||
     typeof typed.repositoryCommit !== "string" || !/^[a-f0-9]{7,40}$/i.test(typed.repositoryCommit) || typeof typed.plugin.version !== "string" || !typed.plugin.version || typeof typed.plugin.commit !== "string" || !/^[a-f0-9]{40}$/i.test(typed.plugin.commit) ||
     typeof typed.promptTemplate.identifier !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(typed.promptTemplate.identifier) || typeof typed.promptTemplate.template !== "string" || typed.promptTemplate.template.length > 20_000 || !typed.promptTemplate.template.includes("{{task}}") ||
     typeof typed.tokenGraphMcp.command !== "string" || !typed.tokenGraphMcp.command || !Array.isArray(typed.tokenGraphMcp.args) || typed.tokenGraphMcp.args.some((entry) => typeof entry !== "string") ||
-    typeof typed.acceptance.command !== "string" || !typed.acceptance.command || !Array.isArray(typed.acceptance.args) || typed.acceptance.args.some((entry) => typeof entry !== "string") ||
+    typeof typed.acceptance.verifierScript !== "string" || !typed.acceptance.verifierScript || isAbsolute(typed.acceptance.verifierScript) || typed.acceptance.verifierScript.split(/[\\/]/).includes("..") || !/\.[cm]?js$/i.test(typed.acceptance.verifierScript) ||
     (typed.dependencySource !== undefined && (typeof typed.dependencySource !== "string" || isAbsolute(typed.dependencySource) || typed.dependencySource.split(/[\\/]/).includes(".."))) ||
     typeof typed.cacheState !== "string" || !typed.cacheState || !["cold", "warm"].includes(typed.indexState) ||
     !typed.toolConfiguration || typeof typed.toolConfiguration !== "object" || Array.isArray(typed.toolConfiguration) || containsAbsolutePath(typed.toolConfiguration) ||
-    (typed.tokenGraphMcp.env && Object.entries(typed.tokenGraphMcp.env).some(([key, entry]) => !/^[A-Z_][A-Z0-9_]*$/.test(key) || typeof entry !== "string")) ||
+    (typed.tokenGraphMcp.env && Object.entries(typed.tokenGraphMcp.env).some(([key, entry]) => !ALLOWED_MCP_ENVIRONMENT.has(key) || (key === "TOKENGRAPH_TOOL_SURFACE" && entry !== "core" && entry !== "full"))) ||
     !Number.isInteger(typed.protocol.runsPerTask) || typed.protocol.runsPerTask < 1 ||
     !Number.isInteger(typed.protocol.minimumPerCategorySamples) || typed.protocol.minimumPerCategorySamples < 10 ||
     ![typed.protocol.qualityNonInferiorityMargin, typed.protocol.tokenSuperiorityMinimum, typed.protocol.resourceLimit, typed.protocol.executionMedianMinimum, typed.protocol.executionP25Minimum]
       .every((entry) => typeof entry === "number" && Number.isFinite(entry) && entry >= 0) ||
     typeof typed.protocol.routerRateMaximum !== "number" || !Number.isFinite(typed.protocol.routerRateMaximum) || typed.protocol.routerRateMaximum <= 0 || typed.protocol.routerRateMaximum > 0.1 ||
+    typed.protocol.stage0LatencyMaximumMs !== 5 ||
     typeof typed.protocol.nonNegativeActivatedMinimum !== "number" || !Number.isFinite(typed.protocol.nonNegativeActivatedMinimum) || typed.protocol.nonNegativeActivatedMinimum < 0.8 || typed.protocol.nonNegativeActivatedMinimum > 1 ||
     typed.tasks.some((task) => typeof task.taskId !== "string" || !/^[a-z0-9][a-z0-9-]{1,63}$/.test(task.taskId) || typeof task.category !== "string" || !/^[a-z0-9][a-z0-9-]{1,31}$/.test(task.category) || typeof task.prompt !== "string" || !task.prompt || task.prompt.length > 50_000 || !["none", "low", "medium", "high"].includes(task.expectedBenefit) || !["activate", "bypass"].includes(task.expectedRouting) || ((task.expectedRouting === "bypass") !== (task.expectedBenefit === "none")))) {
     throw new Error("Paired host protocol fields are invalid.");
@@ -263,8 +291,8 @@ function beneath(root: string, candidate: string): boolean {
   return child.length > 0 && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
 }
 
-async function runProcess(command: string, args: string[], cwd: string, timeoutMs: number, stdin?: string, environment?: NodeJS.ProcessEnv): Promise<ProcessResult> {
-  return await new Promise((resolvePromise, rejectPromise) => {
+export async function runBoundedProcess(command: string, args: string[], cwd: string, timeoutMs: number, stdin?: string, environment?: NodeJS.ProcessEnv): Promise<ProcessResult> {
+  return await new Promise((resolvePromise) => {
     const startedAt = performance.now();
     const child = spawn(command, args, { cwd, env: environment, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -275,6 +303,7 @@ async function runProcess(command: string, args: string[], cwd: string, timeoutM
     let outputLimitExceeded = false;
     let outputBytes = 0;
     let forceKillTimer: NodeJS.Timeout | undefined;
+    let settled = false;
     const terminate = () => {
       child.kill("SIGTERM");
       forceKillTimer ??= setTimeout(() => child.kill("SIGKILL"), 2_000);
@@ -308,16 +337,26 @@ async function runProcess(command: string, args: string[], cwd: string, timeoutM
         terminate();
       }
     });
-    child.once("error", (error) => { clearTimeout(timer); if (forceKillTimer) clearTimeout(forceKillTimer); rejectPromise(error); });
+    child.once("error", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      resolvePromise({ exitCode: null, signal: null, stdout, stderr: "", timedOut, outputLimitExceeded, lineElapsedMs, durationMs: performance.now() - startedAt, spawnFailed: true });
+    });
     child.once("exit", (exitCode, signal) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       if (pendingLine.trim()) lineElapsedMs.push(performance.now() - startedAt);
-      resolvePromise({ exitCode, signal, stdout, stderr, timedOut, outputLimitExceeded, lineElapsedMs, durationMs: performance.now() - startedAt });
+      resolvePromise({ exitCode, signal, stdout, stderr, timedOut, outputLimitExceeded, lineElapsedMs, durationMs: performance.now() - startedAt, spawnFailed: false });
     });
     if (stdin !== undefined) child.stdin.end(stdin); else child.stdin.end();
   });
 }
+
+const runProcess = runBoundedProcess;
 
 function isolatedHostEnvironment(): NodeJS.ProcessEnv {
   const environment = { ...process.env };
@@ -348,6 +387,72 @@ function tomlString(value: string): string {
 
 function tomlArray(values: string[]): string {
   return `[${values.map(tomlString).join(",")}]`;
+}
+
+function tomlInlineTable(entries: Array<[string, string]>): string {
+  return `{${entries.map(([key, value]) => `${tomlString(key)}=${tomlString(value)}`).join(",")}}`;
+}
+
+function modelShellEnvironment(worktree: string): Record<string, string> {
+  const temporaryDirectory = resolve(worktree, ".tokengraph-tmp");
+  const pathValue = process.env.PATH ?? process.env.Path ?? dirname(process.execPath);
+  const environment: Record<string, string> = process.platform === "win32"
+    ? {
+        PATH: pathValue,
+        PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
+        SYSTEMROOT: process.env.SYSTEMROOT ?? process.env.SystemRoot ?? "C:\\Windows",
+        WINDIR: process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows",
+        COMSPEC: process.env.COMSPEC ?? process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe",
+        TEMP: temporaryDirectory,
+        TMP: temporaryDirectory
+      }
+    : {
+        PATH: pathValue,
+        HOME: resolve(worktree, ".tokengraph-home"),
+        TMPDIR: temporaryDirectory,
+        LANG: "C.UTF-8"
+      };
+  return environment;
+}
+
+function permissionFilesystem(gitCommonDirectory: string, dependencySource?: string): string {
+  const workspaceRules = tomlInlineTable([
+    [".", "write"],
+    [".git", "read"],
+    [".tokengraph-controller", "read"]
+  ]);
+  const rules = [
+    `${tomlString(":root")}=${tomlString("deny")}`,
+    `${tomlString(":minimal")}=${tomlString("read")}`,
+    `${tomlString(":workspace_roots")}=${workspaceRules}`,
+    `${tomlString(gitCommonDirectory)}=${tomlString("read")}`,
+    ...(dependencySource ? [`${tomlString(dependencySource)}=${tomlString("read")}`] : [])
+  ];
+  return `{${rules.join(",")}}`;
+}
+
+async function verifierSource(root: string, verifierScript: string): Promise<{ path: string; content: Buffer; commandHash: string }> {
+  const requested = resolve(root, verifierScript);
+  if (!beneath(root, requested)) throw new Error("Acceptance verifier escaped the supplied evaluation root.");
+  const canonical = await realpath(requested);
+  if (!beneath(root, canonical)) throw new Error("Acceptance verifier resolves outside the supplied evaluation root.");
+  const metadata = await stat(canonical);
+  if (!metadata.isFile() || metadata.size > 1024 * 1024) throw new Error("Acceptance verifier must be a bounded regular file.");
+  const content = await readFile(canonical);
+  return { path: canonical, content, commandHash: sha256(content) };
+}
+
+async function installVerifier(worktree: string, verifier: { content: Buffer; commandHash: string }): Promise<void> {
+  const directory = resolve(worktree, ".tokengraph-controller");
+  const target = resolve(directory, "acceptance.mjs");
+  await mkdir(directory, { recursive: true });
+  await writeFile(target, verifier.content);
+  if (sha256(await readFile(target)) !== verifier.commandHash) throw new Error("Copied acceptance verifier hash does not match its validated source.");
+  await chmod(target, 0o444);
+}
+
+function acceptancePrompt(prompt: string): string {
+  return `${prompt}\n\nAfter completing all edits and checks, run exactly this as the final mutation-capable command: ${ACCEPTANCE_COMMAND}\nDo not run any command, MCP tool, or file mutation after it. A final prose response is allowed.\n`;
 }
 
 function resolveMcp(root: string, mcp: PairedHostProtocol["tokenGraphMcp"]): PairedHostProtocol["tokenGraphMcp"] {
@@ -385,9 +490,10 @@ function routingObservation(task: PairedHostTask, measured: { decision: RoutingD
   };
 }
 
-function reviewedTrace(run: PlannedHostRun, task: PairedHostTask, parsed: ParsedCodexJsonl, acceptance: ProcessResult, commandHash: string, measuredRouting?: { decision: RoutingDecision; latencyMs: number }): HostTrace {
+function reviewedTrace(run: PlannedHostRun, task: PairedHostTask, parsed: ParsedCodexJsonl, hostSucceeded: boolean, commandHash: string, measuredRouting?: { decision: RoutingDecision; latencyMs: number }): HostTrace {
   if (!parsed.usage) throw new Error("Cannot emit a reviewed trace without exact host usage.");
-  const acceptancePassed = acceptance.exitCode === 0 && !acceptance.timedOut;
+  const acceptancePassed = parsed.acceptance?.status === "passed" && parsed.acceptance.commandHash === commandHash;
+  const successful = hostSucceeded && parsed.finalStatus === "completed" && acceptancePassed;
   return {
     taskId: run.taskId,
     category: run.category,
@@ -404,12 +510,49 @@ function reviewedTrace(run: PlannedHostRun, task: PairedHostTask, parsed: Parsed
     reasoningOutputTokens: parsed.usage.reasoningOutputTokens,
     toolCalls: parsed.toolCalls,
     fallbackRawReads: parsed.fallbackRawReads,
-    quality: acceptancePassed ? 1 : 0,
+    quality: successful ? 1 : 0,
     timedOut: false,
-    failed: parsed.finalStatus !== "completed" || !acceptancePassed,
+    failed: !successful,
     resourceUnits: parsed.toolCalls,
     ...(run.condition === "on" && measuredRouting ? { routing: routingObservation(task, measuredRouting, parsed) } : {})
   };
+}
+
+function emptyProcessResult(): ProcessResult {
+  return { exitCode: null, signal: null, stdout: "", stderr: "", timedOut: false, outputLimitExceeded: false, lineElapsedMs: [], durationMs: 0, spawnFailed: false };
+}
+
+async function cleanupWorktree(root: string, worktreeRoot: string, worktree: string): Promise<void> {
+  if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe worktree cleanup.");
+  await git(root, ["worktree", "remove", "--force", worktree]).catch(async () => {
+    if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe worktree cleanup.");
+    await rm(worktree, { recursive: true, force: true });
+    await git(root, ["worktree", "prune"]);
+  });
+}
+
+async function durableRunArtifacts(rawPath: string, normalizedPath: string, run: PlannedHostRun): Promise<boolean> {
+  try {
+    await readFile(rawPath, "utf8");
+    const normalized = record(JSON.parse(await readFile(normalizedPath, "utf8")));
+    return normalized?.schemaVersion === 2 && normalized.durable === true && normalized.taskId === run.taskId &&
+      normalized.repeat === run.repeat && normalized.condition === run.condition;
+  } catch {
+    return false;
+  }
+}
+
+async function recoverStaleWorktree(root: string, worktreeRoot: string, worktree: string, rawPath: string, normalizedPath: string, run: PlannedHostRun): Promise<void> {
+  try {
+    await access(worktree);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (!await durableRunArtifacts(rawPath, normalizedPath, run)) {
+    throw new Error(`Refusing to remove non-durable stale worktree for ${run.taskId} repeat ${run.repeat} ${run.condition}.`);
+  }
+  await cleanupWorktree(root, worktreeRoot, worktree);
 }
 
 export async function runPairedHostEvaluation(options: RunPairedHostOptions): Promise<{ manifest: PairedEvaluationManifest | null; plan: PlannedHostRun[]; hostVersion: string }> {
@@ -421,11 +564,14 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
   const hostExecutable = options.hostExecutable ?? "codex";
   const hostArgumentsPrefix = options.hostArgumentsPrefix ?? [];
   const hostEnvironment = isolatedHostEnvironment();
+  const verifier = await verifierSource(root, protocol.acceptance.verifierScript);
   const version = await runProcess(hostExecutable, [...hostArgumentsPrefix, "--version"], root, 10_000, undefined, hostEnvironment);
-  if (version.exitCode !== 0 || !/^codex-cli\s+\S+/i.test(version.stdout.trim())) throw new Error("Codex host version could not be verified.");
+  if (version.spawnFailed || version.exitCode !== 0 || !/^codex-cli\s+\S+/i.test(version.stdout.trim())) throw new Error("Codex host version could not be verified.");
   const hostVersion = version.stdout.trim();
   if (options.dryRun) return { manifest: null, plan, hostVersion };
   if (!options.outputManifest) throw new Error("An output manifest path is required for a live host evaluation.");
+  const outputManifest = isAbsolute(options.outputManifest) ? resolve(options.outputManifest) : resolve(root, options.outputManifest);
+  if (!beneath(root, outputManifest)) throw new Error("Reviewed manifest must remain beneath the evaluation root.");
 
   await ensureLocalRunExclusion(root);
   const evaluationRoot = resolve(root, ".tokengraph", "runs", "paired-host", protocol.evaluationId);
@@ -437,87 +583,133 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
   await mkdir(rawRoot, { recursive: true });
   await mkdir(normalizedRoot, { recursive: true });
   const traces: HostTrace[] = [];
-  const acceptanceHash = sha256(JSON.stringify([protocol.acceptance.command, ...protocol.acceptance.args]));
-  const acceptanceArgs = protocol.acceptance.args.map((arg) => /\.[cm]?js$/i.test(arg) && !isAbsolute(arg) ? resolve(root, arg) : arg);
-  const resolvedMcp = resolveMcp(root, protocol.tokenGraphMcp);
+  const gitCommonValue = await git(root, ["rev-parse", "--git-common-dir"]);
+  const gitCommonDirectory = isAbsolute(gitCommonValue) ? resolve(gitCommonValue) : resolve(root, gitCommonValue);
+  const dependencySource = protocol.dependencySource ? resolve(root, protocol.dependencySource) : undefined;
 
   for (const run of plan) {
     const task = protocol.tasks.find((candidate) => candidate.taskId === run.taskId)!;
     const runName = `${run.taskId}-repeat-${run.repeat}-${run.condition}`;
     const worktree = resolve(worktreeRoot, runName);
+    const rawPath = resolve(rawRoot, `${runName}.jsonl`);
+    const normalizedPath = resolve(normalizedRoot, `${runName}.json`);
     if (!beneath(worktreeRoot, worktree)) throw new Error("Generated worktree escaped its verified root.");
-    await git(root, ["worktree", "add", "--detach", worktree, commit]);
+    await recoverStaleWorktree(root, worktreeRoot, worktree, rawPath, normalizedPath, run);
+    try {
+      await git(root, ["worktree", "add", "--detach", worktree, commit]);
+    } catch {
+      const normalized = {
+        schemaVersion: 2, durable: true, taskId: run.taskId, repeat: run.repeat, condition: run.condition,
+        host: { exitCode: null, timedOut: false, outputLimitExceeded: false, durationMs: 0, finalStatus: "failed", failureClass: "worktree-create-failed" },
+        acceptance: { status: "failed", commandHash: verifier.commandHash }
+      };
+      await writeTextAtomic(rawPath, "");
+      await writeJsonAtomic(normalizedPath, normalized);
+      throw new Error(`${runName} worktree creation failed.`);
+    }
     let durable = false;
     try {
-      if (protocol.dependencySource) {
-        const dependencySource = resolve(root, protocol.dependencySource);
+      let phaseFailure: "dependency-provisioning-failed" | "acceptance-provisioning-failed" | undefined;
+      if (protocol.dependencySource && dependencySource) {
         const dependencyTarget = resolve(worktree, protocol.dependencySource);
-        if (!beneath(root, dependencySource) || !beneath(worktree, dependencyTarget)) throw new Error("Dependency provisioning escaped its verified root.");
-        await access(dependencySource);
-        await mkdir(dirname(dependencyTarget), { recursive: true });
-        await symlink(dependencySource, dependencyTarget, process.platform === "win32" ? "junction" : "dir");
+        try {
+          if (!beneath(root, dependencySource) || !beneath(worktree, dependencyTarget)) throw new Error("Dependency provisioning escaped its verified root.");
+          await access(dependencySource);
+          await mkdir(dirname(dependencyTarget), { recursive: true });
+          await symlink(dependencySource, dependencyTarget, process.platform === "win32" ? "junction" : "dir");
+        } catch {
+          phaseFailure = "dependency-provisioning-failed";
+        }
       }
+      if (!phaseFailure) {
+        try {
+          await installVerifier(worktree, verifier);
+          await mkdir(resolve(worktree, ".tokengraph-tmp"), { recursive: true });
+          if (process.platform !== "win32") await mkdir(resolve(worktree, ".tokengraph-home"), { recursive: true });
+        } catch {
+          phaseFailure = "acceptance-provisioning-failed";
+        }
+      }
+      const resolvedMcp = resolveMcp(worktree, protocol.tokenGraphMcp);
+      let host = emptyProcessResult();
+      let parsed: ParsedCodexJsonl | undefined;
+      let parseFailure: "invalid-host-stream" | undefined;
+      const measuredRouting = run.condition === "on" ? measureRouting(task, protocol.indexState) : undefined;
       const args = [
         ...hostArgumentsPrefix,
         "exec", "--json", "--ephemeral", "--ignore-user-config",
         "--model", protocol.model.identifier,
-        "--sandbox", protocol.sandbox,
         "--cd", worktree,
         "--config", `model_reasoning_effort=${tomlString(protocol.reasoningLevel)}`,
         "--config", `approval_policy=${tomlString(protocol.approvalPolicy)}`,
-        "--config", `windows.sandbox=${tomlString(protocol.windowsSandbox)}`
+        "--config", `windows.sandbox=${tomlString(protocol.windowsSandbox)}`,
+        "--config", `default_permissions=${tomlString("tokengraph-eval")}`,
+        "--config", `permissions.tokengraph-eval.filesystem=${permissionFilesystem(gitCommonDirectory, dependencySource)}`,
+        "--config", "permissions.tokengraph-eval.network.enabled=false",
+        "--config", `shell_environment_policy.inherit=${tomlString("none")}`,
+        "--config", `shell_environment_policy.set=${tomlInlineTable(Object.entries(modelShellEnvironment(worktree)).sort(([left], [right]) => left.localeCompare(right)))}`
       ];
       if (run.condition === "on") {
         args.push("--config", `mcp_servers.tokengraph.command=${tomlString(resolvedMcp.command)}`);
         args.push("--config", `mcp_servers.tokengraph.args=${tomlArray(resolvedMcp.args)}`);
-        if (resolvedMcp.env) {
-          const env = `{${Object.entries(resolvedMcp.env).sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => `${key}=${tomlString(value)}`).join(",")}}`;
-          args.push("--config", `mcp_servers.tokengraph.env=${env}`);
-        }
+        const mcpEnvironment = { ...(resolvedMcp.env ?? {}), TOKENGRAPH_WORKSPACE_ROOT: worktree };
+        args.push("--config", `mcp_servers.tokengraph.env=${tomlInlineTable(Object.entries(mcpEnvironment).sort(([left], [right]) => left.localeCompare(right)))}`);
       }
       args.push("-");
-      const measuredRouting = run.condition === "on" ? measureRouting(task, protocol.indexState) : undefined;
-      const host = await runProcess(hostExecutable, args, worktree, options.timeoutMs ?? 30 * 60_000, `${renderPrompt(protocol.promptTemplate.template, task)}\n`, hostEnvironment);
-      const rawPath = resolve(rawRoot, `${runName}.jsonl`);
-      await writeFile(rawPath, host.stdout);
-      let parsed: ParsedCodexJsonl | undefined;
-      let parseFailure: "invalid-host-stream" | undefined;
-      try {
-        parsed = parseCodexJsonl(host.stdout, {
-          modelIdentifier: protocol.model.identifier,
-          hostVersion,
-          allowMissingUsageOnFailure: true,
-          lineElapsedMs: host.lineElapsedMs
-        });
-      } catch {
-        parseFailure = "invalid-host-stream";
+      if (!phaseFailure) {
+        host = await runProcess(hostExecutable, args, worktree, options.timeoutMs ?? 30 * 60_000, acceptancePrompt(renderPrompt(protocol.promptTemplate.template, task)), hostEnvironment);
+        try {
+          parsed = parseCodexJsonl(host.stdout, {
+            modelIdentifier: protocol.model.identifier,
+            hostVersion,
+            allowMissingUsageOnFailure: true,
+            lineElapsedMs: host.lineElapsedMs,
+            acceptanceCommand: ACCEPTANCE_COMMAND,
+            acceptanceCommandHash: verifier.commandHash
+          });
+        } catch {
+          parseFailure = "invalid-host-stream";
+        }
       }
-      const acceptance = await runProcess(protocol.acceptance.command, acceptanceArgs, worktree, Math.min(options.timeoutMs ?? 30 * 60_000, 10 * 60_000));
+      let trace: HostTrace | undefined;
+      let routingFailure: "routing-evidence-invalid" | undefined;
+      if (!phaseFailure && !host.spawnFailed && !host.timedOut && !host.outputLimitExceeded && parsed?.usage) {
+        try {
+          trace = reviewedTrace(run, task, parsed, host.exitCode === 0, verifier.commandHash, measuredRouting);
+        } catch {
+          routingFailure = "routing-evidence-invalid";
+        }
+      }
+      const failureClass = phaseFailure ??
+        (host.spawnFailed ? "host-spawn-failed" : undefined) ??
+        (host.timedOut ? "host-timeout" : undefined) ??
+        (host.outputLimitExceeded ? "host-output-limit" : undefined) ??
+        parseFailure ?? routingFailure ?? parsed?.failureClass ??
+        (host.exitCode !== 0 ? "host-exit-nonzero" : undefined) ?? null;
       const normalized = {
-        schemaVersion: 1,
+        schemaVersion: 2,
+        durable: true,
         taskId: run.taskId,
         repeat: run.repeat,
         condition: run.condition,
-        host: { exitCode: host.exitCode, timedOut: host.timedOut, outputLimitExceeded: host.outputLimitExceeded, durationMs: host.durationMs, finalStatus: parsed?.finalStatus ?? "failed", failureClass: parsed?.failureClass ?? parseFailure ?? null },
-        acceptance: { exitCode: acceptance.exitCode, timedOut: acceptance.timedOut, commandHash: acceptanceHash }
+        host: { exitCode: host.exitCode, timedOut: host.timedOut, outputLimitExceeded: host.outputLimitExceeded, durationMs: host.durationMs, finalStatus: parsed?.finalStatus ?? "failed", failureClass },
+        acceptance: { status: parsed?.acceptance?.status ?? "failed", commandHash: verifier.commandHash }
       };
-      await writeFile(resolve(normalizedRoot, `${runName}.json`), `${JSON.stringify(normalized, null, 2)}\n`);
+      await writeTextAtomic(rawPath, host.stdout);
+      await writeJsonAtomic(normalizedPath, normalized);
       durable = true;
-      if (host.timedOut || host.outputLimitExceeded || host.exitCode !== 0 || !parsed?.usage) throw new Error(`${runName} did not produce a complete exact-usage host trace.`);
-      traces.push(reviewedTrace(run, task, parsed, acceptance, acceptanceHash, measuredRouting));
+      if (phaseFailure === "dependency-provisioning-failed") throw new Error(`${runName} dependency provisioning failed.`);
+      if (phaseFailure === "acceptance-provisioning-failed") throw new Error(`${runName} acceptance verifier provisioning failed.`);
+      if (host.spawnFailed || host.timedOut || host.outputLimitExceeded || !parsed?.usage) throw new Error(`${runName} did not produce a complete exact-usage host trace.`);
+      if (routingFailure || !trace) throw new Error(`${runName} routing evidence is invalid.`);
+      traces.push(trace);
     } finally {
-      if (durable) {
-        await git(root, ["worktree", "remove", "--force", worktree]).catch(async () => {
-          if (!beneath(worktreeRoot, worktree)) throw new Error("Refusing unsafe worktree cleanup.");
-          await rm(worktree, { recursive: true, force: true });
-          await git(root, ["worktree", "prune"]);
-        });
-      }
+      if (durable) await cleanupWorktree(root, worktreeRoot, worktree);
     }
   }
 
   const manifest = parseEvaluationManifest({
-    schemaVersion: 2,
+    schemaVersion: 3,
     evidenceSource: "real-host",
     reviewed: protocol.reviewed === true,
     generatedAt: new Date().toISOString(),
@@ -536,9 +728,7 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
     tasks: protocol.tasks.map(({ taskId, category, expectedQuality }) => ({ taskId, category, ...(expectedQuality !== undefined ? { expectedQuality } : {}) })),
     traces
   });
-  const outputManifest = resolve(options.outputManifest);
-  if (!beneath(root, outputManifest)) throw new Error("Reviewed manifest must remain beneath the evaluation root.");
   await mkdir(dirname(outputManifest), { recursive: true });
-  await writeFile(outputManifest, `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeJsonAtomic(outputManifest, manifest);
   return { manifest, plan, hostVersion };
 }

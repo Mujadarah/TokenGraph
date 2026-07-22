@@ -17,7 +17,7 @@ The current deterministic `evidence-v1` corpus produces:
 - Baseline: category-appropriate acquisition. Code, SQL, risk, memory, and release tasks use an already-minimal expert selection of raw reads; debugging and compression use the real noisy command output captured by the runner.
 - Routing: 27 tasks activate TokenGraph and three bounded tasks bypass at Stage 0, including the exact file-and-line debugging task. Against independent fixture truth labels, false-bypass and false-activation rates are both 0/27 and 0/3 respectively. All 30 shadow observations and per-category coverage remain published in `results-current.json`. Bypasses are not booked as savings.
 - Delta delivery: the default no-handshake assumption resends 6,288 estimated tokens and books zero delta savings. When the host explicitly confirms every prior `id@hash`, the same fixture delivers 846 tokens and measures 5,442 estimated tokens saved. The handshake scenario is reported separately and is not part of the release-gate savings.
-- Exact implementation evidence: four edit/debug tasks perform one hash-validated source slice each, charging four targeted-read calls and 685 estimated tokens in total.
+- Exact implementation evidence: four edit/debug tasks perform one hash-validated source slice each, charging four targeted-read calls and 711 estimated tokens in total.
 - Primary execution-inclusive median: +174.5 tokens; nearest-rank 25th percentile: +40.5; 22 of 27 activated tasks are non-negative (81.5%).
 - Frozen execution-inclusive release gate: pass.
 

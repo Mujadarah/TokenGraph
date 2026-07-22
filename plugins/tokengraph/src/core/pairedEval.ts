@@ -55,7 +55,7 @@ export interface ConfidenceInterval {
 }
 
 export interface PairedEvaluationReport {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   evidenceSource: "fixture" | "real-host";
   reviewed: boolean;
   promotionEligible: boolean;
@@ -85,6 +85,8 @@ export interface PairedEvaluationReport {
     categoryCounts: Record<string, number>;
     stage0LatencyMs: number | null;
     activationLatencyMs: number | null;
+    stage0LatencyMaximumMs: number | null;
+    stage0WithinBudget: boolean;
     stage0LatencySamples: number;
     activationLatencySamples: number;
     stage0FasterThanActivation: boolean;
@@ -96,7 +98,7 @@ export interface PairedEvaluationReport {
 }
 
 export interface PairedEvaluationManifest {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   evidenceSource: "fixture" | "real-host";
   reviewed: boolean;
   promptTemplateHash?: string;
@@ -123,6 +125,7 @@ export interface PairedEvaluationProtocol {
   tokenSuperiorityMinimum: number;
   resourceLimit: number;
   routerRateMaximum: number;
+  stage0LatencyMaximumMs?: number;
   executionMedianMinimum: number;
   executionP25Minimum: number;
   nonNegativeActivatedMinimum: number;
@@ -221,7 +224,7 @@ function validateRealHostTrace(trace: HostTrace): void {
   }
 }
 
-function validProtocol(value: unknown): value is PairedEvaluationProtocol {
+function validProtocol(value: unknown, schemaVersion: 1 | 2 | 3): value is PairedEvaluationProtocol {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<PairedEvaluationProtocol>;
   return Number.isInteger(candidate.runsPerTask) && candidate.runsPerTask! >= 1 &&
@@ -230,6 +233,7 @@ function validProtocol(value: unknown): value is PairedEvaluationProtocol {
     typeof candidate.tokenSuperiorityMinimum === "number" && Number.isFinite(candidate.tokenSuperiorityMinimum) && candidate.tokenSuperiorityMinimum >= 0 &&
     typeof candidate.resourceLimit === "number" && Number.isFinite(candidate.resourceLimit) && candidate.resourceLimit >= 0 &&
     typeof candidate.routerRateMaximum === "number" && Number.isFinite(candidate.routerRateMaximum) && candidate.routerRateMaximum > 0 && candidate.routerRateMaximum <= 0.1 &&
+    (schemaVersion !== 3 || candidate.stage0LatencyMaximumMs === 5) &&
     typeof candidate.executionMedianMinimum === "number" && Number.isFinite(candidate.executionMedianMinimum) && candidate.executionMedianMinimum >= 0 &&
     typeof candidate.executionP25Minimum === "number" && Number.isFinite(candidate.executionP25Minimum) && candidate.executionP25Minimum >= 0 &&
     typeof candidate.nonNegativeActivatedMinimum === "number" && Number.isFinite(candidate.nonNegativeActivatedMinimum) && candidate.nonNegativeActivatedMinimum >= 0.8 && candidate.nonNegativeActivatedMinimum <= 1;
@@ -244,10 +248,11 @@ interface PairedEvaluationOptions {
   executionMedianMinimum?: number;
   executionP25Minimum?: number;
   nonNegativeActivatedMinimum?: number;
-  schemaVersion?: 1 | 2;
+  schemaVersion?: 1 | 2 | 3;
   evidenceSource?: "fixture" | "real-host";
   reviewed?: boolean;
   runsPerTask?: number;
+  stage0LatencyMaximumMs?: number;
 }
 
 export function evaluatePaired(tasks: EvaluationTask[], traces: HostTrace[], options: PairedEvaluationOptions = {}): PairedEvaluationReport {
@@ -255,7 +260,7 @@ export function evaluatePaired(tasks: EvaluationTask[], traces: HostTrace[], opt
   const schemaVersion = options.schemaVersion ?? 1;
   const evidenceSource = options.evidenceSource ?? "fixture";
   const reviewed = options.reviewed === true;
-  const promotionEligible = schemaVersion === 2 && evidenceSource === "real-host" && reviewed;
+  const promotionEligible = schemaVersion === 3 && evidenceSource === "real-host" && reviewed;
   const runsPerTask = options.runsPerTask ?? 1;
   const byTaskAndRepeat = new Map<string, HostTrace[]>();
   for (const trace of traces) {
@@ -274,7 +279,7 @@ export function evaluatePaired(tasks: EvaluationTask[], traces: HostTrace[], opt
       if (!on || !off) { failures.push(`${task.taskId}:repeat-${repeat}:missing-pair`); continue; }
       if (onTraces.length !== 1 || offTraces.length !== 1) failures.push(`${task.taskId}:repeat-${repeat}:duplicate-condition`);
       if (on.category !== task.category || off.category !== task.category) failures.push(`${task.taskId}:repeat-${repeat}:category-mismatch`);
-      if (schemaVersion === 2 && (on.conditionOrder !== off.conditionOrder || on.acceptance?.commandHash !== off.acceptance?.commandHash)) failures.push(`${task.taskId}:repeat-${repeat}:provenance-mismatch`);
+      if (schemaVersion >= 2 && (on.conditionOrder !== off.conditionOrder || on.acceptance?.commandHash !== off.acceptance?.commandHash)) failures.push(`${task.taskId}:repeat-${repeat}:provenance-mismatch`);
       if (on.timedOut || off.timedOut || on.failed || off.failed || on.acceptance?.status === "failed" || off.acceptance?.status === "failed") failures.push(`${task.taskId}:failure-or-timeout`);
       pairs.push({ task, on, off });
     }
@@ -312,6 +317,8 @@ export function evaluatePaired(tasks: EvaluationTask[], traces: HostTrace[], opt
   const stage0LatencyMs = stage0Latencies.length ? quantile(stage0Latencies, 0.5) : null;
   const activationLatencyMs = activationLatencies.length ? quantile(activationLatencies, 0.5) : null;
   const stage0FasterThanActivation = stage0LatencyMs !== null && activationLatencyMs !== null && stage0LatencyMs < activationLatencyMs;
+  const stage0LatencyMaximumMs = schemaVersion === 3 ? options.stage0LatencyMaximumMs ?? null : null;
+  const stage0WithinBudget = stage0LatencyMs !== null && stage0LatencyMaximumMs !== null && stage0LatencyMs <= stage0LatencyMaximumMs;
   const qualityMargin = options.qualityMargin ?? 0.02;
   const qualityNonInferiority = qualityDifference.lower >= -qualityMargin;
   const tokenSuperiority = tokenDifference.upper <= -(options.tokenSuperiority ?? 1);
@@ -326,7 +333,7 @@ export function evaluatePaired(tasks: EvaluationTask[], traces: HostTrace[], opt
     tokenSuperiority,
     resources,
     routerRates: beneficialObservations.length > 0 && boundedObservations.length > 0 && Object.values(routerCategoryCounts).every((count) => count >= 10) && falseBypassRate !== null && falseBypassRate < routerRateMaximum && falseActivationRate !== null && falseActivationRate < routerRateMaximum,
-    routerLatency: stage0FasterThanActivation,
+    routerLatency: stage0FasterThanActivation && stage0WithinBudget,
     executionMedian: executionMedian > (options.executionMedianMinimum ?? 0),
     executionP25: executionP25 >= (options.executionP25Minimum ?? 0),
     nonNegativeActivated: nonNegativeActivatedRate >= (options.nonNegativeActivatedMinimum ?? 0.8)
@@ -351,6 +358,8 @@ export function evaluatePaired(tasks: EvaluationTask[], traces: HostTrace[], opt
       categoryCounts: routerCategoryCounts,
       stage0LatencyMs,
       activationLatencyMs,
+      stage0LatencyMaximumMs,
+      stage0WithinBudget,
       stage0LatencySamples: stage0Latencies.length,
       activationLatencySamples: activationLatencies.length,
       stage0FasterThanActivation
@@ -374,6 +383,7 @@ export function evaluateManifest(manifest: PairedEvaluationManifest): PairedEval
     tokenSuperiority: protocol.tokenSuperiorityMinimum,
     resourceLimit: protocol.resourceLimit,
     routerRateMaximum: protocol.routerRateMaximum,
+    stage0LatencyMaximumMs: protocol.stage0LatencyMaximumMs,
     executionMedianMinimum: protocol.executionMedianMinimum,
     executionP25Minimum: protocol.executionP25Minimum,
     nonNegativeActivatedMinimum: protocol.nonNegativeActivatedMinimum
@@ -387,7 +397,7 @@ export function parseEvaluationManifest(value: unknown): PairedEvaluationManifes
   const host = candidate.host && typeof candidate.host === "object" ? candidate.host : undefined;
   const plugin = candidate.plugin && typeof candidate.plugin === "object" ? candidate.plugin : undefined;
   if (
-    (candidate.schemaVersion !== 1 && candidate.schemaVersion !== 2) || typeof candidate.generatedAt !== "string" || typeof candidate.seed !== "string" ||
+    (candidate.schemaVersion !== 1 && candidate.schemaVersion !== 2 && candidate.schemaVersion !== 3) || typeof candidate.generatedAt !== "string" || typeof candidate.seed !== "string" ||
     !model || typeof model.identifier !== "string" || !model.identifier || typeof model.versionOrDate !== "string" || !model.versionOrDate ||
     typeof candidate.reasoningLevel !== "string" || !candidate.reasoningLevel ||
     !host || typeof host.name !== "string" || !host.name || typeof host.version !== "string" || !host.version ||
@@ -397,13 +407,13 @@ export function parseEvaluationManifest(value: unknown): PairedEvaluationManifes
     !candidate.toolConfiguration || typeof candidate.toolConfiguration !== "object" || Array.isArray(candidate.toolConfiguration) ||
     typeof candidate.cacheState !== "string" || !candidate.cacheState ||
     (candidate.indexState !== "cold" && candidate.indexState !== "warm") ||
-    !validProtocol(candidate.protocol) ||
+    !validProtocol(candidate.protocol, candidate.schemaVersion) ||
     !Array.isArray(candidate.tasks) || !Array.isArray(candidate.traces)
   ) throw new Error("Evaluation manifest schema is invalid.");
   const tasks = candidate.tasks.filter((task): task is EvaluationTask => Boolean(task && typeof task.taskId === "string" && typeof task.category === "string"));
   const traces = candidate.traces.filter((trace): trace is HostTrace => Boolean(trace && typeof trace.taskId === "string" && typeof trace.category === "string"));
   if (tasks.length !== candidate.tasks.length || traces.length !== candidate.traces.length) throw new Error("Evaluation manifest contains malformed tasks or traces.");
-  if (candidate.schemaVersion === 2) {
+  if (candidate.schemaVersion >= 2) {
     if ((candidate.evidenceSource !== "fixture" && candidate.evidenceSource !== "real-host") || typeof candidate.reviewed !== "boolean" || !isSha256(candidate.promptTemplateHash)) {
       throw new Error("Evaluation manifest schema-v2 provenance is invalid.");
     }
@@ -413,9 +423,9 @@ export function parseEvaluationManifest(value: unknown): PairedEvaluationManifes
   }
   return {
     schemaVersion: candidate.schemaVersion,
-    evidenceSource: candidate.schemaVersion === 2 ? candidate.evidenceSource! : "fixture",
-    reviewed: candidate.schemaVersion === 2 ? candidate.reviewed! : false,
-    ...(candidate.schemaVersion === 2 ? { promptTemplateHash: candidate.promptTemplateHash! } : {}),
+    evidenceSource: candidate.schemaVersion >= 2 ? candidate.evidenceSource! : "fixture",
+    reviewed: candidate.schemaVersion >= 2 ? candidate.reviewed! : false,
+    ...(candidate.schemaVersion >= 2 ? { promptTemplateHash: candidate.promptTemplateHash! } : {}),
     generatedAt: candidate.generatedAt,
     seed: candidate.seed,
     model: { identifier: model.identifier, versionOrDate: model.versionOrDate },
@@ -439,7 +449,7 @@ export async function loadEvaluationManifest(path: string): Promise<PairedEvalua
 
 export async function persistPromotionReport(root: string, report: PairedEvaluationReport): Promise<RoutingPromotionReport> {
   const promotion: RoutingPromotionReport = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt: new Date().toISOString(),
     enforcementEnabled: report.enforcementEnabled,
     ...(report.promotionEligible ? { evidenceSource: "real-host" as const, reviewed: true as const } : {}),
@@ -450,6 +460,8 @@ export async function persistPromotionReport(root: string, report: PairedEvaluat
     boundedCount: report.routerRates.boundedCount,
     ...(report.routerRates.stage0LatencyMs !== null ? { stage0LatencyMs: report.routerRates.stage0LatencyMs } : {}),
     ...(report.routerRates.activationLatencyMs !== null ? { activationLatencyMs: report.routerRates.activationLatencyMs } : {}),
+    ...(report.routerRates.stage0LatencyMaximumMs !== null ? { stage0LatencyMaximumMs: report.routerRates.stage0LatencyMaximumMs } : {}),
+    stage0WithinBudget: report.routerRates.stage0WithinBudget,
     stage0LatencySamples: report.routerRates.stage0LatencySamples,
     activationLatencySamples: report.routerRates.activationLatencySamples,
     stage0FasterThanActivation: report.routerRates.stage0FasterThanActivation,

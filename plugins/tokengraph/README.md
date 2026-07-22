@@ -116,7 +116,7 @@ Deterministic fixture economics and real-host evidence are distinct. The
 30-task fixture benchmark has 27 activated tasks and three unbooked Stage 0
 bypasses, with a +174.5-token execution-inclusive median and +40.5-token p25.
 Four edit/debug tasks charge one hash-validated exact source slice each, for
-685 estimated tokens total. These are fixture estimates, not provider billing.
+711 estimated tokens total. These are fixture estimates, not provider billing.
 
 The first reviewed real-host evaluation completed five counterbalanced ON/OFF
 pairs with no host or acceptance failures, but promotion and enforcement are

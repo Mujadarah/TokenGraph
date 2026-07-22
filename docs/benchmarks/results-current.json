@@ -30,7 +30,7 @@
   "exactSliceAccounting": {
     "taskCount": 4,
     "targetedReadCallCount": 4,
-    "targetedReadTokens": 685,
+    "targetedReadTokens": 711,
     "taskIds": [
       "code-routing-02",
       "debugging-01",

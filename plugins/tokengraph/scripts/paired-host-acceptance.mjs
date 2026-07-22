@@ -5,32 +5,30 @@ import { resolve } from "node:path";
 
 const pluginRoot = resolve(process.cwd(), "plugins", "tokengraph");
 
-function pnpmInvocation(args) {
-  if (process.platform !== "win32") return { command: "pnpm", args };
-  const appData = process.env.APPDATA;
-  if (!appData) throw new Error("APPDATA is unavailable; cannot locate pnpm.");
-  return {
-    command: process.execPath,
-    args: [resolve(appData, "npm", "node_modules", "pnpm", "bin", "pnpm.cjs"), ...args]
-  };
+function nodeInvocation(args) {
+  return { command: process.execPath, args };
 }
 
-function runPnpm(args) {
-  const invocation = pnpmInvocation(args);
+function runNode(args) {
+  const invocation = nodeInvocation(args);
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(invocation.command, invocation.args, { cwd: pluginRoot, stdio: "ignore", windowsHide: true });
+    const child = spawn(invocation.command, invocation.args, {
+      cwd: pluginRoot,
+      env: { ...process.env, NODE_DISABLE_COMPILE_CACHE: "1" },
+      stdio: "ignore",
+      windowsHide: true
+    });
     child.once("error", rejectPromise);
     child.once("exit", (code, signal) => {
       if (code === 0) resolvePromise();
-      else rejectPromise(new Error(`pnpm ${args.join(" ")} failed with ${signal ?? `exit code ${code}`}.`));
+      else rejectPromise(new Error(`node ${args.join(" ")} failed with ${signal ?? `exit code ${code}`}.`));
     });
   });
 }
 
-const dependenciesReady = await Promise.all([
-  access(resolve(pluginRoot, "node_modules", "vitest", "vitest.mjs")),
-  access(resolve(pluginRoot, "node_modules", "typescript", "bin", "tsc"))
-]).then(() => true, () => false);
-if (!dependenciesReady) await runPnpm(["install", "--offline", "--frozen-lockfile"]);
-await runPnpm(["vitest", "run", "tests/routing-artifact.test.ts", "tests/retrieval.test.ts"]);
-await runPnpm(["typecheck"]);
+const vitest = resolve(pluginRoot, "node_modules", "vitest", "vitest.mjs");
+const tsc = resolve(pluginRoot, "node_modules", "typescript", "bin", "tsc");
+await Promise.all([access(vitest), access(tsc)]);
+await runNode([vitest, "run", "tests/routing-artifact.test.ts", "tests/retrieval.test.ts", "--configLoader", "runner"]);
+await runNode([tsc, "-p", "tsconfig.json", "--noEmit"]);
+await runNode([tsc, "-p", "tsconfig.test.json", "--noEmit"]);

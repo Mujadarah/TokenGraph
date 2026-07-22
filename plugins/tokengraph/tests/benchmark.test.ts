@@ -88,6 +88,11 @@ describe("evidence benchmark", () => {
       "debugging-03",
       "debugging-04"
     ]);
+    expect(result.tasks.find((task) => task.id === "debugging-01")?.exactSliceTarget).toEqual({
+      file: "services/patientService.test.ts",
+      startLine: 4,
+      endLine: 6
+    });
   });
 
   it("rejects incomplete or ungrounded exact-slice corpus contracts", async () => {
@@ -97,8 +102,52 @@ describe("evidence benchmark", () => {
 
     const outsideRequiredFiles = await corpus();
     outsideRequiredFiles.tasks[0].requiresExactSlice = true;
-    outsideRequiredFiles.tasks[0].exactSliceTarget = { file: "src/audit.ts" };
+    outsideRequiredFiles.tasks[0].exactSliceTarget = { file: "src/audit.ts", symbol: "audit" };
     expect(validateCorpus(outsideRequiredFiles).errors).toEqual(expect.arrayContaining([expect.stringMatching(/required files/i)]));
+
+    const fileOnly = await corpus();
+    fileOnly.tasks[0].requiresExactSlice = true;
+    fileOnly.tasks[0].exactSliceTarget = { file: fileOnly.tasks[0].requiredFiles[0] };
+    expect(validateCorpus(fileOnly).errors).toEqual(expect.arrayContaining([expect.stringMatching(/locator|symbol|line range/i)]));
+
+    const conflictingLocators = await corpus();
+    conflictingLocators.tasks[0].requiresExactSlice = true;
+    conflictingLocators.tasks[0].exactSliceTarget = {
+      file: conflictingLocators.tasks[0].requiredFiles[0],
+      symbol: "PatientPage",
+      startLine: 1,
+      endLine: 2
+    };
+    expect(validateCorpus(conflictingLocators).errors).toEqual(expect.arrayContaining([expect.stringMatching(/locator|both/i)]));
+
+    const invalidRange = await corpus();
+    invalidRange.tasks[0].requiresExactSlice = true;
+    invalidRange.tasks[0].exactSliceTarget = { file: invalidRange.tasks[0].requiredFiles[0], startLine: 6, endLine: 4 };
+    expect(validateCorpus(invalidRange).errors).toEqual(expect.arrayContaining([expect.stringMatching(/range/i)]));
+
+    const invalidCombinedLocator = await corpus();
+    invalidCombinedLocator.tasks[0].requiresExactSlice = true;
+    invalidCombinedLocator.tasks[0].exactSliceTarget = { file: invalidCombinedLocator.tasks[0].requiredFiles[0], symbol: "", startLine: 1, endLine: 2 };
+    expect(validateCorpus(invalidCombinedLocator).errors).toEqual(expect.arrayContaining([expect.stringMatching(/locator|both/i)]));
+
+    const targetedReadsDisallowed = await corpus();
+    targetedReadsDisallowed.tasks[0].requiresExactSlice = true;
+    targetedReadsDisallowed.tasks[0].targetedRawReadsAllowed = false;
+    targetedReadsDisallowed.tasks[0].exactSliceTarget = { file: targetedReadsDisallowed.tasks[0].requiredFiles[0], startLine: 1, endLine: 2 };
+    expect(validateCorpus(targetedReadsDisallowed).errors).toEqual(expect.arrayContaining([expect.stringMatching(/targeted reads/i)]));
+
+    const allRawReadsDisallowed = await corpus();
+    allRawReadsDisallowed.tasks[0].requiresExactSlice = true;
+    allRawReadsDisallowed.tasks[0].allowRawReads = false;
+    allRawReadsDisallowed.tasks[0].exactSliceTarget = { file: allRawReadsDisallowed.tasks[0].requiredFiles[0], startLine: 1, endLine: 2 };
+    expect(validateCorpus(allRawReadsDisallowed).errors).toEqual(expect.arrayContaining([expect.stringMatching(/targeted reads/i)]));
+  });
+
+  it("rejects an exact-slice symbol that the current index cannot resolve", async () => {
+    const loaded = await corpus();
+    loaded.tasks[0].requiresExactSlice = true;
+    loaded.tasks[0].exactSliceTarget = { file: loaded.tasks[0].requiredFiles[0], symbol: "MissingIndexedSymbol" };
+    await expect(evaluateBenchmark(loaded, resolve("tests", "fixtures", "evidence-project"))).rejects.toThrow(/symbol.*not indexed/i);
   });
 
   it("evaluates distinct scenarios through real core routing functions", async () => {
@@ -135,6 +184,15 @@ describe("evidence benchmark", () => {
     });
     expect(report.exactSliceAccounting.targetedReadCallCount).toBeGreaterThanOrEqual(4);
     expect(report.exactSliceAccounting.targetedReadTokens).toBeGreaterThan(0);
+    const debuggingSlice = report.tasks.find((task) => task.id === "debugging-01")?.accounting.targetedReadCalls[0];
+    expect(debuggingSlice?.request.params.arguments).toMatchObject({
+      file: "services/patientService.test.ts",
+      startLine: 4,
+      endLine: 6
+    });
+    const debuggingPayload = JSON.parse(debuggingSlice!.response.content[0]!.text) as { result: { text: string } };
+    const debuggingSource = (await readFile(resolve("tests", "fixtures", "evidence-project", "services/patientService.test.ts"), "utf8")).replace(/\r\n?/g, "\n").split("\n");
+    expect(debuggingPayload.result.text).toBe(debuggingSource.slice(3, 6).join("\n"));
     expect(report.routerShadow).toMatchObject({
       beneficialTaskCount: 27,
       boundedTaskCount: 3,

@@ -258,7 +258,9 @@
       "expectedRouting": "bypass",
       "requiresExactSlice": true,
       "exactSliceTarget": {
-        "file": "services/patientService.test.ts"
+        "file": "services/patientService.test.ts",
+        "startLine": 4,
+        "endLine": 6
       }
     },
     {

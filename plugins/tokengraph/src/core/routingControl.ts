@@ -40,13 +40,15 @@ export function isValidatedPromotion(value: unknown): value is RoutingPromotionR
     typeof candidate.falseActivationRate === "number" && Number.isFinite(candidate.falseActivationRate) && candidate.falseActivationRate >= 0 && candidate.falseActivationRate < 0.1 &&
     typeof candidate.stage0LatencyMs === "number" && Number.isFinite(candidate.stage0LatencyMs) && candidate.stage0LatencyMs >= 0 &&
     typeof candidate.activationLatencyMs === "number" && Number.isFinite(candidate.activationLatencyMs) && candidate.activationLatencyMs > candidate.stage0LatencyMs &&
+    candidate.stage0LatencyMaximumMs === 5 && candidate.stage0LatencyMs <= candidate.stage0LatencyMaximumMs &&
+    candidate.stage0WithinBudget === true &&
     Number.isInteger(candidate.stage0LatencySamples) && candidate.stage0LatencySamples! > 0 &&
     Number.isInteger(candidate.activationLatencySamples) && candidate.activationLatencySamples! > 0 &&
     candidate.stage0FasterThanActivation === true &&
     typeof candidate.executionInclusiveMedian === "number" && Number.isFinite(candidate.executionInclusiveMedian) && candidate.executionInclusiveMedian > 0 &&
     typeof candidate.executionInclusiveP25 === "number" && Number.isFinite(candidate.executionInclusiveP25) && candidate.executionInclusiveP25 >= 0 &&
     typeof candidate.nonNegativeActivatedRate === "number" && Number.isFinite(candidate.nonNegativeActivatedRate) && candidate.nonNegativeActivatedRate >= 0.8 && candidate.nonNegativeActivatedRate <= 1;
-  return candidate.schemaVersion === 2 && typeof candidate.generatedAt === "string" && typeof candidate.enforcementEnabled === "boolean" && hasRequiredGates && evidencePasses && (!candidate.enforcementEnabled || allGatesPass);
+  return candidate.schemaVersion === 3 && typeof candidate.generatedAt === "string" && typeof candidate.enforcementEnabled === "boolean" && hasRequiredGates && evidencePasses && (!candidate.enforcementEnabled || allGatesPass);
 }
 
 function normalize(value: unknown): RoutingControl {
