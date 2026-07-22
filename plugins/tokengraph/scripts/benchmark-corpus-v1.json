@@ -24,7 +24,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must preserve the patient detail route contract."
-      ]
+      ],
+      "expectedRouting": "bypass"
     },
     {
       "id": "code-routing-02",
@@ -46,7 +47,13 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must keep tenant_id in the patient result."
-      ]
+      ],
+      "expectedRouting": "activate",
+      "requiresExactSlice": true,
+      "exactSliceTarget": {
+        "file": "services/patientService.ts",
+        "symbol": "getPatient"
+      }
     },
     {
       "id": "code-routing-03",
@@ -69,7 +76,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must not remove the audit call from patientService."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "code-routing-04",
@@ -91,7 +99,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must preserve the patient.read audit action."
-      ]
+      ],
+      "expectedRouting": "bypass"
     },
     {
       "id": "code-routing-05",
@@ -113,7 +122,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must reject missing tenant authorization."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "sql-security-01",
@@ -134,7 +144,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must preserve row level security for authenticated patient reads."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "sql-security-02",
@@ -153,7 +164,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must keep audit_events tenant isolation enforced by auth.uid."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "sql-security-03",
@@ -175,7 +187,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must not weaken the patients tenant select policy."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "sql-security-04",
@@ -195,7 +208,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must preserve authenticated role checks on both policies."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "sql-security-05",
@@ -217,7 +231,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must retain an index on patients tenant_id."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "debugging-01",
@@ -239,7 +254,14 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must keep tenant-scoped behavior while fixing the failure."
-      ]
+      ],
+      "expectedRouting": "bypass",
+      "requiresExactSlice": true,
+      "exactSliceTarget": {
+        "file": "services/patientService.test.ts",
+        "startLine": 4,
+        "endLine": 6
+      }
     },
     {
       "id": "debugging-02",
@@ -258,7 +280,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must not bypass tenant authorization to silence the error."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "debugging-03",
@@ -280,7 +303,13 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must preserve the page route and service boundary."
-      ]
+      ],
+      "expectedRouting": "activate",
+      "requiresExactSlice": true,
+      "exactSliceTarget": {
+        "file": "app/patients/[id]/page.tsx",
+        "symbol": "PatientPage"
+      }
     },
     {
       "id": "debugging-04",
@@ -302,7 +331,13 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must restore audit evidence without exposing patient secrets."
-      ]
+      ],
+      "expectedRouting": "activate",
+      "requiresExactSlice": true,
+      "exactSliceTarget": {
+        "file": "services/patientService.ts",
+        "symbol": "getPatient"
+      }
     },
     {
       "id": "change-risk-01",
@@ -325,7 +360,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must include downstream route and focused tests in risk review."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "change-risk-02",
@@ -346,7 +382,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must flag tenant isolation for manual security review."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "change-risk-03",
@@ -366,7 +403,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must include the patient page consumer in affected scope."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "change-risk-04",
@@ -386,7 +424,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must recommend package validation before release."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "compression-01",
@@ -408,7 +447,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must preserve the exact failing test path services/patientService.test.ts."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "compression-02",
@@ -427,7 +467,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must preserve the security warning about tenant_id and auth.uid."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "compression-03",
@@ -446,7 +487,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must preserve app/patients/[id]/page.tsx:3 raw reference."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "compression-04",
@@ -466,7 +508,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must preserve scripts/validate-plugin.mjs and scripts/smoke.mjs failure paths."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "memory-wiki-01",
@@ -486,7 +529,8 @@
       "targetedRawReadsAllowed": false,
       "constraints": [
         "Must treat only confirmed evidence as high confidence."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "memory-wiki-02",
@@ -509,7 +553,8 @@
       "targetedRawReadsAllowed": false,
       "constraints": [
         "Must reference compact wiki background before broad raw reads."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "memory-wiki-03",
@@ -529,7 +574,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must keep stale memory at low confidence until reviewed."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "memory-wiki-04",
@@ -549,7 +595,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must link claims to checked-in fixture evidence."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "release-packaging-01",
@@ -569,7 +616,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must ship dist/index.js and install metadata only as declared."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "release-packaging-02",
@@ -589,7 +637,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must require both smoke and validate-plugin gates."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "release-packaging-03",
@@ -610,7 +659,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must not publish without deterministic validation."
-      ]
+      ],
+      "expectedRouting": "activate"
     },
     {
       "id": "release-packaging-04",
@@ -629,7 +679,8 @@
       "targetedRawReadsAllowed": true,
       "constraints": [
         "Must keep the bundled runtime entry at dist/index.js."
-      ]
+      ],
+      "expectedRouting": "activate"
     }
   ]
 }

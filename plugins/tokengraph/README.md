@@ -104,6 +104,27 @@ Legacy architecture and review:
 - `tokengraph_assess_change_risk`
 - `tokengraph_export_project_map`
 
+## Routing and evidence
+
+The frozen routing benefit contract is `none | low | medium | high`. Bypass,
+kill-switch, force-bypass, and fail-open decisions use `none`; Stage 0
+activation uses the recommended `medium`; Stage 1 indexed activation uses
+`high`; and `low` remains reserved. Decisions stay in shadow mode unless every
+reviewed real-host promotion gate passes.
+
+Deterministic fixture economics and real-host evidence are distinct. The
+30-task fixture benchmark has 27 activated tasks and three unbooked Stage 0
+bypasses, with a +174.5-token execution-inclusive median and +40.5-token p25.
+Four edit/debug tasks charge one hash-validated exact source slice each, for
+711 estimated tokens total. These are fixture estimates, not provider billing.
+
+The first reviewed real-host evaluation completed five counterbalanced ON/OFF
+pairs with no host or acceptance failures, but promotion and enforcement are
+disabled because every frozen gate did not pass. This one repository does not
+satisfy multi-repository B6 validation. See the repository
+`docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-manifest.json`
+and `docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-report.md`.
+
 ## Packaging contract
 
 The installable plugin contains host manifests, MCP configuration, `hooks/hooks.json`, pinned standalone Tree-sitter WASM grammar assets, the bundled `dist/index.js`, `dist/cli.js`, and `dist/hooks.js` entries, skills, README, package metadata, and license. It excludes source, tests, scripts, development dependencies, local state, `dist/server.js`, and `dist/core/`.

@@ -199,6 +199,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
         metrics: Record<string, unknown>;
       }>;
       aggregate: { taskCount: number; categoryCounts: Record<string, number>; medianNetSavings: number; criticalConstraintPreservationRate: number; criticalFalseNegativeCount: number; requiredFileRecall: number; taskFailures: string[] };
+      exactSliceAccounting: { taskCount: number; targetedReadCallCount: number; targetedReadTokens: number; taskIds: string[] };
       releaseGate: { passed: boolean; failureReasons: string[] };
       calibration: { categories: Record<string, { observations: number; confidence: string }> };
     };
@@ -219,10 +220,16 @@ describe("tokengraph benchmark harness and trust docs", () => {
       criticalConstraintPreservationRate: 1,
       criticalFalseNegativeCount: 0,
       requiredFileRecall: 1,
-      medianNetSavings: 183.53333333333333,
-      executionInclusiveP25: 91.53333333333333,
+      medianNetSavings: 182.53333333333333,
+      executionInclusiveP25: 40.53333333333333,
       nonNegativeActivatedRate: expect.any(Number),
       taskFailures: []
+    });
+    expect(report.exactSliceAccounting).toEqual({
+      taskCount: 4,
+      targetedReadCallCount: 4,
+      targetedReadTokens: 711,
+      taskIds: ["code-routing-02", "debugging-01", "debugging-03", "debugging-04"]
     });
     expect(report.releaseGate).toMatchObject({ passed: true, failureReasons: [] });
     for (const task of report.tasks) {
@@ -249,11 +256,11 @@ describe("tokengraph benchmark harness and trust docs", () => {
       await expect(access(resolve(repoRoot, "docs", "benchmarks", file))).resolves.toBeUndefined();
     }
     const benchmarkResults = await readFile(resolve(repoRoot, "docs", "benchmarks", "results-current.md"), "utf8");
-    expect(benchmarkResults).toMatch(/23 of 28 activated tasks are non-negative/i);
-    expect(benchmarkResults).toMatch(/execution-inclusive median.*\+183\.5/i);
+    expect(benchmarkResults).toMatch(/22 of 27 activated tasks are non-negative/i);
+    expect(benchmarkResults).toMatch(/execution-inclusive median.*\+174\.5/i);
     expect(benchmarkResults).toMatch(/low-confidence/i);
     const benchmarkMethodology = await readFile(resolve(repoRoot, "docs", "benchmarks", "methodology.md"), "utf8");
-    expect(benchmarkMethodology).toMatch(/\+183\.5-token activated-task median.*\+91\.5-token p25/i);
+    expect(benchmarkMethodology).toMatch(/\+174\.5-token activated-task median.*\+40\.5-token p25/i);
 
     const trustFiles = ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"];
     const trustText = (
@@ -290,9 +297,19 @@ describe("tokengraph benchmark harness and trust docs", () => {
     expect(securityText).toMatch(/process working directory.*not running from an installed plugin directory/is);
 
     const readme = await readFile(resolve(repoRoot, "README.md"), "utf8");
+    const pluginReadme = await readFile(resolve("README.md"), "utf8");
     expect(readme).toMatch(/indexes TypeScript, JavaScript, SQL, and Markdown/i);
     expect(readme).toMatch(/WASM.*promotion|promotion.*WASM/is);
     expect(readme).toMatch(/process working directory.*not running from an installed plugin directory/is);
+    for (const text of [readme, pluginReadme]) {
+      expect(text).toMatch(/none\s*\|\s*low\s*\|\s*medium\s*\|\s*high/i);
+      expect(text).toMatch(/four.*exact.*slice.*711|711.*four.*exact.*slice/is);
+      expect(text).toMatch(/fixture.*real-host|real-host.*fixture/is);
+      expect(text).toMatch(/2026-07-19-tokengraph-codex-manifest\.json/);
+      expect(text).toMatch(/2026-07-19-tokengraph-codex-report\.md/);
+      expect(text).toMatch(/promotion.*disabled|enforcement.*disabled/is);
+      expect(text).toMatch(/one repository.*does not\s+satisfy.*multi-repository B6/is);
+    }
 
     const hooksSource = await readFile(resolve("src", "hooks.ts"), "utf8");
     expect(hooksSource).toMatch(/host plugin-data directory.*not.*workspace.*\.tokengraph/i);
@@ -465,9 +482,12 @@ describe("tokengraph release package command", () => {
         "package.json"
       ])
     );
+    for (const file of report.files.filter((path: string) => /\.(?:c?js|json|md)$/i.test(path))) {
+      expect(await readFile(resolve(report.packageDir, file), "utf8"), file).not.toMatch(/[^\x00-\x7F]/);
+    }
     const generatedReadme = await readFile(resolve(report.packageDir, "README.md"), "utf8");
     expect(generatedReadme.match(/The default surface exposes eight compact tools/g)).toHaveLength(1);
-    expect(generatedReadme.match(/\+196\.5-token execution-inclusive median/g)).toHaveLength(1);
+    expect(generatedReadme.match(/\+174\.5-token execution-inclusive median/g)).toHaveLength(1);
     await expect(access(resolve(report.packageDir, "src"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "tests"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "node_modules"))).rejects.toThrow();
@@ -582,6 +602,12 @@ describe("tokengraph release package command", () => {
         "package.json"
       ])
     );
+    const releaseReadme = await readFile(resolve(releaseRoot, "README.md"), "utf8");
+    expect(releaseReadme).toMatch(/none\s*\|\s*low\s*\|\s*medium\s*\|\s*high/i);
+    expect(releaseReadme).toMatch(/four.*exact.*slice.*685|685.*four.*exact.*slice/is);
+    expect(releaseReadme).toMatch(/fixture.*real-host|real-host.*fixture/is);
+    expect(releaseReadme).toMatch(/promotion.*disabled|enforcement.*disabled/is);
+    expect(releaseReadme).toMatch(/one repository.*does not\s+satisfy.*multi-repository B6/is);
     await expect(access(resolve(releaseRoot, "src"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "tests"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "scripts"))).rejects.toThrow();

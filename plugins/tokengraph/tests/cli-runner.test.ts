@@ -12,6 +12,11 @@ import { createTaskLedger, loadTaskLedger, setTaskDisposition } from "../src/cor
 const execFileAsync = promisify(execFile);
 
 describe("tokengraph run CLI", () => {
+  it("prints evaluate-host help without starting a host run", async () => {
+    const result = await execFileAsync(process.execPath, [resolve("dist", "cli.js"), "evaluate-host", "--help"], { cwd: process.cwd() });
+    expect(result.stdout).toMatch(/evaluate-host.*--protocol.*--dry-run/is);
+  });
+
   it("links a real failed command to an active task as a verified scoped outcome", async () => {
     const root = await mkdtemp(join(tmpdir(), "tokengraph-cli-task-outcome-"));
     try {
@@ -91,19 +96,40 @@ describe("tokengraph run CLI", () => {
   it("evaluates a complete host-trace manifest and persists only passing promotion evidence", async () => {
     const root = await mkdtemp(join(tmpdir(), "tokengraph-cli-eval-"));
     try {
-      const tasks = Array.from({ length: 10 }, (_, index) => ({ taskId: `task-${index}`, category: "code" }));
-      const traces = tasks.flatMap((task) => [
-        { taskId: task.taskId, category: task.category, condition: "on", tokens: 80, executionInclusiveTokens: 80, quality: 1, timedOut: false, failed: false, resourceUnits: 1, routing: { mode: "shadow", decision: "activate", stage: 0, reason: "context-discovery", expectedOverheadTokens: 80, falseBypass: false, falseActivation: false } },
-        { taskId: task.taskId, category: task.category, condition: "off", tokens: 100, executionInclusiveTokens: 100, quality: 1, timedOut: false, failed: false, resourceUnits: 1 }
-      ]);
+      const tasks = Array.from({ length: 20 }, (_, index) => ({ taskId: `task-${index}`, category: "code" }));
+      const traces = tasks.flatMap((task, index) => {
+        const expectedRouting = index < 10 ? "activate" : "bypass";
+        const shared = {
+          taskId: task.taskId, category: task.category, repeat: 1,
+          conditionOrder: index % 2 === 0 ? "on-first" : "off-first", usageSource: "host",
+          acceptance: { status: "passed", commandHash: "c".repeat(64) },
+          quality: 1, timedOut: false, failed: false, resourceUnits: 1
+        };
+        return [
+          {
+            ...shared, condition: "on", tokens: 80, executionInclusiveTokens: 80,
+            inputTokens: 70, cachedInputTokens: 10, outputTokens: 10, reasoningOutputTokens: 2, toolCalls: 1, fallbackRawReads: 0,
+            routing: {
+              mode: "shadow", decision: expectedRouting, stage: 0,
+              reason: expectedRouting === "activate" ? "context-discovery" : "bounded-task",
+              expectedOverheadTokens: expectedRouting === "activate" ? 80 : 0,
+              expectedBenefit: expectedRouting === "activate" ? "medium" : "none", expectedRouting,
+              routingLatencyMs: 0.2, ...(expectedRouting === "activate" ? { activationLatencyMs: 5 } : {}),
+              falseBypass: false, falseActivation: false
+            }
+          },
+          { ...shared, condition: "off", tokens: 100, executionInclusiveTokens: 100, inputTokens: 90, cachedInputTokens: 10, outputTokens: 10, reasoningOutputTokens: 2, toolCalls: 1, fallbackRawReads: 1 }
+        ];
+      });
       const manifestPath = join(root, "manifest.json");
       await writeFile(manifestPath, JSON.stringify({
-        schemaVersion: 1, generatedAt: "2026-07-16T00:00:00.000Z", seed: "cli-eval",
+        schemaVersion: 3, evidenceSource: "real-host", reviewed: true,
+        generatedAt: "2026-07-16T00:00:00.000Z", seed: "cli-eval",
         model: { identifier: "gpt-5", versionOrDate: "2026-07-16" }, reasoningLevel: "high",
         host: { name: "codex", version: "1.0.0" }, plugin: { version: "0.21.0", commit: "a".repeat(40) },
-        repositoryCommit: "b".repeat(40), promptTemplate: "paired-eval-v1", toolConfiguration: { surface: "core" },
+        repositoryCommit: "b".repeat(40), promptTemplate: "paired-eval-v3", promptTemplateHash: "d".repeat(64), toolConfiguration: { surface: "core" },
         cacheState: "empty", indexState: "cold",
-        protocol: { runsPerTask: 1, minimumPerCategorySamples: 10, qualityNonInferiorityMargin: 0.02, tokenSuperiorityMinimum: 1, resourceLimit: 2, routerRateMaximum: 0.1, executionMedianMinimum: 0, executionP25Minimum: 0, nonNegativeActivatedMinimum: 0.8 },
+        protocol: { runsPerTask: 1, minimumPerCategorySamples: 10, qualityNonInferiorityMargin: 0.02, tokenSuperiorityMinimum: 1, resourceLimit: 2, routerRateMaximum: 0.1, stage0LatencyMaximumMs: 5, executionMedianMinimum: 0, executionP25Minimum: 0, nonNegativeActivatedMinimum: 0.8 },
         tasks, traces
       }));
       const evaluated = await execFileAsync(process.execPath, [

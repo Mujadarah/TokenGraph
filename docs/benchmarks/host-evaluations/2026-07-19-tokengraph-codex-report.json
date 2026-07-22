@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 2,
+  "evidenceSource": "real-host",
+  "reviewed": true,
+  "promotionEligible": true,
+  "taskCount": 5,
+  "categoryCounts": {
+    "code": 5
+  },
+  "tokenDifference": {
+    "estimate": -236452.4,
+    "lower": -1032264.2,
+    "upper": 425846.6,
+    "samples": 5
+  },
+  "qualityDifference": {
+    "estimate": 0,
+    "lower": 0,
+    "upper": 0,
+    "samples": 5
+  },
+  "executionInclusiveSavings": {
+    "estimate": 236452.4,
+    "lower": -425846.6,
+    "upper": 1032365.6,
+    "samples": 5
+  },
+  "gates": {
+    "minimumSamples": false,
+    "realHostEvidence": true,
+    "qualityNonInferiority": true,
+    "tokenSuperiority": false,
+    "resources": false,
+    "routerRates": false,
+    "routerLatency": true,
+    "executionMedian": true,
+    "executionP25": false,
+    "nonNegativeActivated": false
+  },
+  "routerRates": {
+    "falseBypassRate": 0,
+    "falseActivationRate": null,
+    "beneficialCount": 5,
+    "boundedCount": 0,
+    "observationCount": 5,
+    "categoryCounts": {
+      "code": 5
+    },
+    "stage0LatencyMs": 0.07689999975264072,
+    "activationLatencyMs": 2155.53740000003,
+    "stage0LatencySamples": 5,
+    "activationLatencySamples": 5,
+    "stage0FasterThanActivation": true
+  },
+  "executionInclusive": {
+    "median": 102525,
+    "p25": -557686,
+    "nonNegativeActivatedRate": 0.6
+  },
+  "categoryIntervals": {
+    "code": {
+      "tokenDifference": {
+        "estimate": -236452.4,
+        "lower": -1032365.6,
+        "upper": 425846.6,
+        "samples": 5
+      },
+      "qualityDifference": {
+        "estimate": 0,
+        "lower": 0,
+        "upper": 0,
+        "samples": 5
+      },
+      "executionInclusiveSavings": {
+        "estimate": 236452.4,
+        "lower": -425745.2,
+        "upper": 1032264.2,
+        "samples": 5
+      }
+    }
+  },
+  "enforcementEnabled": false,
+  "failures": [
+    "router-shadow-sample-incomplete"
+  ]
+}

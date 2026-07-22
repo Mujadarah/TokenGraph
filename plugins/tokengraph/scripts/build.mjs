@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { build } from "esbuild";
+import ts from "typescript";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -24,9 +25,55 @@ function run(command, args) {
   });
 }
 
+function escapeNonAsciiComments(text) {
+  const sourceFile = ts.createSourceFile("bundle.js", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const ranges = [];
+  const collectRanges = (comments = []) => {
+    for (const comment of comments) {
+      ranges.push([comment.pos, comment.end]);
+    }
+  };
+  const visit = (node) => {
+    collectRanges(ts.getLeadingCommentRanges(text, node.pos));
+    collectRanges(ts.getTrailingCommentRanges(text, node.end));
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  ranges.sort((left, right) => left[0] - right[0]);
+  const mergedRanges = [];
+  for (const range of ranges) {
+    const previous = mergedRanges.at(-1);
+    if (previous && range[0] <= previous[1]) {
+      previous[1] = Math.max(previous[1], range[1]);
+    } else {
+      mergedRanges.push([...range]);
+    }
+  }
+
+  const chunks = [];
+  let cursor = 0;
+  for (const [start, end] of mergedRanges) {
+    chunks.push(text.slice(cursor, start));
+    chunks.push(
+      text.slice(start, end).replace(/[^\x00-\x7F]/gu, (character) => {
+        const codePoint = character.codePointAt(0).toString(16).toUpperCase();
+        return codePoint.length <= 4 ? `\\u${codePoint.padStart(4, "0")}` : `\\u{${codePoint}}`;
+      })
+    );
+    cursor = end;
+  }
+
+  chunks.push(text.slice(cursor));
+  return chunks.join("");
+}
+
 async function normalizeBundle(path) {
-  const text = await readFile(path, "utf8");
-  await writeFile(path, text.replace(/[ \t]+$/gm, ""));
+  const text = escapeNonAsciiComments(await readFile(path, "utf8")).replace(/[ \t]+$/gm, "");
+  if (/[^\x00-\x7F]/u.test(text)) {
+    throw new Error(`Non-ASCII executable text remains in ${path}`);
+  }
+  await writeFile(path, text);
 }
 
 await run(process.execPath, [resolve(pluginRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"]);

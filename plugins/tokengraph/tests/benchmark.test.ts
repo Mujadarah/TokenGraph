@@ -73,6 +73,7 @@ describe("evidence benchmark", () => {
     expect(result.tasks).toHaveLength(30);
     expect(new Set(result.tasks.map((task) => task.query)).size).toBe(30);
     for (const task of result.tasks) {
+      expect(task.expectedRouting).toMatch(/^(activate|bypass)$/);
       expect(task.constraints).toEqual(task.criticalConstraints);
       for (const path of task.requiredFiles) {
         await expect(access(resolve("tests", "fixtures", "evidence-project", path))).resolves.toBeUndefined();
@@ -81,6 +82,72 @@ describe("evidence benchmark", () => {
     for (const category of BENCHMARK_CATEGORIES) {
       expect(result.tasks.filter((task) => task.category === category).length).toBeGreaterThanOrEqual(4);
     }
+    expect(result.tasks.filter((task) => task.requiresExactSlice).map((task) => task.id)).toEqual([
+      "code-routing-02",
+      "debugging-01",
+      "debugging-03",
+      "debugging-04"
+    ]);
+    expect(result.tasks.find((task) => task.id === "debugging-01")?.exactSliceTarget).toEqual({
+      file: "services/patientService.test.ts",
+      startLine: 4,
+      endLine: 6
+    });
+  });
+
+  it("rejects incomplete or ungrounded exact-slice corpus contracts", async () => {
+    const missingTarget = await corpus();
+    missingTarget.tasks[0].requiresExactSlice = true;
+    expect(validateCorpus(missingTarget).errors).toEqual(expect.arrayContaining([expect.stringMatching(/exact slice target/i)]));
+
+    const outsideRequiredFiles = await corpus();
+    outsideRequiredFiles.tasks[0].requiresExactSlice = true;
+    outsideRequiredFiles.tasks[0].exactSliceTarget = { file: "src/audit.ts", symbol: "audit" };
+    expect(validateCorpus(outsideRequiredFiles).errors).toEqual(expect.arrayContaining([expect.stringMatching(/required files/i)]));
+
+    const fileOnly = await corpus();
+    fileOnly.tasks[0].requiresExactSlice = true;
+    fileOnly.tasks[0].exactSliceTarget = { file: fileOnly.tasks[0].requiredFiles[0] };
+    expect(validateCorpus(fileOnly).errors).toEqual(expect.arrayContaining([expect.stringMatching(/locator|symbol|line range/i)]));
+
+    const conflictingLocators = await corpus();
+    conflictingLocators.tasks[0].requiresExactSlice = true;
+    conflictingLocators.tasks[0].exactSliceTarget = {
+      file: conflictingLocators.tasks[0].requiredFiles[0],
+      symbol: "PatientPage",
+      startLine: 1,
+      endLine: 2
+    };
+    expect(validateCorpus(conflictingLocators).errors).toEqual(expect.arrayContaining([expect.stringMatching(/locator|both/i)]));
+
+    const invalidRange = await corpus();
+    invalidRange.tasks[0].requiresExactSlice = true;
+    invalidRange.tasks[0].exactSliceTarget = { file: invalidRange.tasks[0].requiredFiles[0], startLine: 6, endLine: 4 };
+    expect(validateCorpus(invalidRange).errors).toEqual(expect.arrayContaining([expect.stringMatching(/range/i)]));
+
+    const invalidCombinedLocator = await corpus();
+    invalidCombinedLocator.tasks[0].requiresExactSlice = true;
+    invalidCombinedLocator.tasks[0].exactSliceTarget = { file: invalidCombinedLocator.tasks[0].requiredFiles[0], symbol: "", startLine: 1, endLine: 2 };
+    expect(validateCorpus(invalidCombinedLocator).errors).toEqual(expect.arrayContaining([expect.stringMatching(/locator|both/i)]));
+
+    const targetedReadsDisallowed = await corpus();
+    targetedReadsDisallowed.tasks[0].requiresExactSlice = true;
+    targetedReadsDisallowed.tasks[0].targetedRawReadsAllowed = false;
+    targetedReadsDisallowed.tasks[0].exactSliceTarget = { file: targetedReadsDisallowed.tasks[0].requiredFiles[0], startLine: 1, endLine: 2 };
+    expect(validateCorpus(targetedReadsDisallowed).errors).toEqual(expect.arrayContaining([expect.stringMatching(/targeted reads/i)]));
+
+    const allRawReadsDisallowed = await corpus();
+    allRawReadsDisallowed.tasks[0].requiresExactSlice = true;
+    allRawReadsDisallowed.tasks[0].allowRawReads = false;
+    allRawReadsDisallowed.tasks[0].exactSliceTarget = { file: allRawReadsDisallowed.tasks[0].requiredFiles[0], startLine: 1, endLine: 2 };
+    expect(validateCorpus(allRawReadsDisallowed).errors).toEqual(expect.arrayContaining([expect.stringMatching(/targeted reads/i)]));
+  });
+
+  it("rejects an exact-slice symbol that the current index cannot resolve", async () => {
+    const loaded = await corpus();
+    loaded.tasks[0].requiresExactSlice = true;
+    loaded.tasks[0].exactSliceTarget = { file: loaded.tasks[0].requiredFiles[0], symbol: "MissingIndexedSymbol" };
+    await expect(evaluateBenchmark(loaded, resolve("tests", "fixtures", "evidence-project"))).rejects.toThrow(/symbol.*not indexed/i);
   });
 
   it("evaluates distinct scenarios through real core routing functions", async () => {
@@ -109,7 +176,51 @@ describe("evidence benchmark", () => {
     });
     expect(report.deltaDelivery.noHandshake.deliveredTokens).toBeGreaterThan(report.deltaDelivery.handshake.deliveredTokens);
     expect(report.deltaDelivery.handshake.savedTokens).toBeGreaterThan(0);
+    expect(report.exactSliceAccounting).toMatchObject({
+      taskCount: 4,
+      targetedReadCallCount: expect.any(Number),
+      targetedReadTokens: expect.any(Number),
+      taskIds: ["code-routing-02", "debugging-01", "debugging-03", "debugging-04"]
+    });
+    expect(report.exactSliceAccounting.targetedReadCallCount).toBeGreaterThanOrEqual(4);
+    expect(report.exactSliceAccounting.targetedReadTokens).toBeGreaterThan(0);
+    const debuggingSlice = report.tasks.find((task) => task.id === "debugging-01")?.accounting.targetedReadCalls[0];
+    expect(debuggingSlice?.request.params.arguments).toMatchObject({
+      file: "services/patientService.test.ts",
+      startLine: 4,
+      endLine: 6
+    });
+    const debuggingPayload = JSON.parse(debuggingSlice!.response.content[0]!.text) as { result: { text: string } };
+    const debuggingSource = (await readFile(resolve("tests", "fixtures", "evidence-project", "services/patientService.test.ts"), "utf8")).replace(/\r\n?/g, "\n").split("\n");
+    expect(debuggingPayload.result.text).toBe(debuggingSource.slice(3, 6).join("\n"));
+    expect(report.routerShadow).toMatchObject({
+      beneficialTaskCount: 27,
+      boundedTaskCount: 3,
+      falseBypassCount: 0,
+      falseActivationCount: 0,
+      falseBypassRate: 0,
+      falseActivationRate: 0,
+      observationCount: 30
+    });
+    expect(Object.keys(report.routerShadow.categoryCounts)).toEqual([...BENCHMARK_CATEGORIES].sort());
+    expect(report.tasks.filter((task) => task.expectedRouting === "bypass").map((task) => task.id)).toEqual([
+      "code-routing-01",
+      "code-routing-04",
+      "debugging-01"
+    ]);
   });
+
+  it("uses independent truth-specific denominators for false router decisions", async () => {
+    const falseBypassCorpus = await corpus();
+    falseBypassCorpus.tasks.find((task: { id: string }) => task.id === "code-routing-02").query = "Where is the getPatient implementation?";
+    const falseBypass = await evaluateBenchmark(falseBypassCorpus, resolve("tests", "fixtures", "evidence-project"));
+    expect(falseBypass.routerShadow).toMatchObject({ falseBypassCount: 1, falseBypassRate: 1 / 27 });
+
+    const falseActivationCorpus = await corpus();
+    falseActivationCorpus.tasks.find((task: { id: string }) => task.id === "code-routing-01").query = "Trace architecture dependencies for the patient route";
+    const falseActivation = await evaluateBenchmark(falseActivationCorpus, resolve("tests", "fixtures", "evidence-project"));
+    expect(falseActivation.routerShadow).toMatchObject({ falseActivationCount: 1, falseActivationRate: 1 / 3 });
+  }, 15_000);
 
   it("keeps core evidence and accounting independent from mutated gold labels", async () => {
     const loaded = await corpus();
@@ -256,7 +367,7 @@ describe("evidence benchmark", () => {
       expect(task.accounting.rawBaselineContentTokens).toBeGreaterThan(0);
       expect(task.metrics.rawTokens).toBeGreaterThan(task.accounting.rawBaselineContentTokens);
       expect(task.accounting.targetedReadCalls).toEqual(expect.any(Array));
-      expect(task.accounting.targetedReadCalls).toHaveLength(0);
+      expect(task.accounting.targetedReadCalls).toHaveLength(task.requiresExactSlice ? 1 : 0);
       for (const call of task.accounting.targetedReadCalls) {
         expect(call.tool).toBe("tokengraph_query_context");
         const args = call.request.params.arguments as { mode: string; file: string; startLine: number; endLine: number; contentHash: string };
@@ -278,13 +389,13 @@ describe("evidence benchmark", () => {
       expect(task.accounting.completionFooter).toMatch(/^TokenGraph: ~[-\d.]+(?: to [-\d.]+|[-][-\d.]+)? tokens saved \(estimated, .+ confidence\); quality .+; categories .+\.$/);
     }
     expect(report.sessionAccounting).toMatchObject({ taskCount: 30, toolDefinitionCount: 8 });
-    expect(report.aggregate).toMatchObject({ activatedTaskCount: 28, bypassedTaskCount: 2, nonNegativeActivatedRate: expect.any(Number) });
+    expect(report.aggregate).toMatchObject({ activatedTaskCount: 27, bypassedTaskCount: 3, nonNegativeActivatedRate: expect.any(Number) });
     expect(report.aggregate.taskFailures).toEqual([]);
     expect(report.aggregate.activationCoverage).toMatchObject({
       "code-routing": { activated: 3, bypassed: 2, total: 5, rate: 0.6 },
-      debugging: { activated: 4, bypassed: 0, total: 4, rate: 1 }
+      debugging: { activated: 3, bypassed: 1, total: 4, rate: 0.75 }
     });
-    expect(report.tasks.filter((task) => !task.routing.useTokenGraph).map((task) => task.id)).toEqual(["code-routing-01", "code-routing-04"]);
+    expect(report.tasks.filter((task) => !task.routing.useTokenGraph).map((task) => task.id)).toEqual(["code-routing-01", "code-routing-04", "debugging-01"]);
     expect(report.sessionAccounting.discovery.tools).toHaveLength(8);
     expect(report.sessionAccounting.amortizedDiscoverySetupTokens * report.sessionAccounting.taskCount)
       .toBe(report.sessionAccounting.discoverySetupTokens);
@@ -295,6 +406,7 @@ describe("evidence benchmark", () => {
   it("performs one hash-validated exact slice only when the fixture declares a post-lifecycle evidence gap", async () => {
     const loaded = await corpus();
     loaded.tasks[2].requiresExactSlice = true;
+    loaded.tasks[2].exactSliceTarget = { file: "app/patients/[id]/page.tsx", symbol: "PatientPage" };
     const report = await evaluateBenchmark(loaded, resolve("tests", "fixtures", "evidence-project"));
     const task = report.tasks.find((candidate) => candidate.id === loaded.tasks[2].id)!;
     expect(task.accounting.targetedReadCalls).toHaveLength(1);
@@ -325,6 +437,8 @@ describe("evidence benchmark", () => {
       corpusVersion: string;
       evidenceVersion: string;
       deltaDelivery: typeof report.deltaDelivery;
+      routerShadow: typeof report.routerShadow;
+      exactSliceAccounting: typeof report.exactSliceAccounting;
       aggregate: {
         taskCount: number;
         medianExecutionInclusiveNetSavings: number;
@@ -339,6 +453,8 @@ describe("evidence benchmark", () => {
       corpusVersion: report.corpusVersion,
       evidenceVersion: report.evidenceVersion,
       deltaDelivery: report.deltaDelivery,
+      routerShadow: report.routerShadow,
+      exactSliceAccounting: report.exactSliceAccounting,
       aggregate: {
         taskCount: report.aggregate.taskCount,
         medianExecutionInclusiveNetSavings: expect.any(Number),

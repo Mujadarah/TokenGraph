@@ -15,9 +15,10 @@ The current deterministic `evidence-v1` corpus produces:
 - Required-file recall: 100% against the checked-in 0.85 baseline.
 - Forbidden false positives: 0; missing expected-test recommendations: 0.
 - Baseline: category-appropriate acquisition. Code, SQL, risk, memory, and release tasks use an already-minimal expert selection of raw reads; debugging and compression use the real noisy command output captured by the runner.
-- Routing: 28 tasks activate TokenGraph and two narrowly bounded code lookups bypass at Stage 0. Bypasses are not booked as savings.
+- Routing: 27 tasks activate TokenGraph and three bounded tasks bypass at Stage 0, including the exact file-and-line debugging task. Against independent fixture truth labels, false-bypass and false-activation rates are both 0/27 and 0/3 respectively. All 30 shadow observations and per-category coverage remain published in `results-current.json`. Bypasses are not booked as savings.
 - Delta delivery: the default no-handshake assumption resends 6,288 estimated tokens and books zero delta savings. When the host explicitly confirms every prior `id@hash`, the same fixture delivers 846 tokens and measures 5,442 estimated tokens saved. The handshake scenario is reported separately and is not part of the release-gate savings.
-- Primary execution-inclusive median: +183.5 tokens; nearest-rank 25th percentile: +91.5; 23 of 28 activated tasks are non-negative (82.1%).
+- Exact implementation evidence: four edit/debug tasks perform one hash-validated source slice each, charging four targeted-read calls and 711 estimated tokens in total.
+- Primary execution-inclusive median: +174.5 tokens; nearest-rank 25th percentile: +40.5; 22 of 27 activated tasks are non-negative (81.5%).
 - Frozen execution-inclusive release gate: pass.
 
 Execution-inclusive category results (bypassed tasks remain visible at zero but are excluded from activated-task gates):
@@ -26,16 +27,42 @@ Execution-inclusive category results (bypassed tasks remain visible at zero but 
 |---|---:|---:|
 | Code routing | 40.5 | 2/5 (both bypassed) |
 | SQL/security | 236.5 | 0/5 |
-| Debugging | 962.5 | 0/4 |
+| Debugging | 797.5 | 0/4 |
 | Change risk | 9.0 | 2/4 |
 | Compression | 1035.5 | 0/4 |
 | Memory/wiki | -210.0 | 3/4 |
 | Release packaging | 178.5 | 0/4 |
 
-The release gate treats execution-inclusive savings as the primary eligibility metric. Exact source slices are charged only when a fixture declares an unresolved post-lifecycle evidence gap; the normal corpus does not fabricate reads after its compact evidence is sufficient. Negative tails remain visible, especially in memory/wiki and change-risk tasks.
+The release gate treats execution-inclusive savings as the primary eligibility metric. Exact source slices are charged only for the four checked-in tasks whose natural implementation outcome requires a hash-bound source span; other tasks do not fabricate reads after compact evidence is sufficient. Negative tails remain visible, especially in memory/wiki and change-risk tasks.
+
+## Real-host paired evaluation
+
+The separately reported real-host evaluation contains five counterbalanced
+ON/OFF pairs for one implementation task in one repository and one category.
+All ten Codex host turns and acceptance commands passed. The reviewed manifest
+uses exact host-reported usage from `gpt-5.6-sol` on Codex CLI
+`0.145.0-alpha.27`: 18,029,573 input tokens, including 17,122,816 cached input
+tokens, and 154,673 output tokens. These values are not combined with the
+fixture estimates above.
+
+The ON conditions used 8,500,992 total tokens and OFF used 9,683,254. Median
+paired execution-inclusive savings are +236,452.4 tokens, but the paired
+interval crosses zero (-425,846.6 to +1,032,365.6), p25 is -557,686, and only
+three of five activated pairs are non-negative. Stage 0 routing latency is
+approximately 0.077 ms versus 2,155.5 ms activation latency.
+
+Promotion remains disabled. Five beneficial observations produce a zero
+false-bypass rate, but the protocol contains no bounded-task denominator and
+only five of the required ten category samples. The recorded failure is
+`router-shadow-sample-incomplete`; this one-repository result does not satisfy
+multi-repository B6 validation. See the checked
+`docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-manifest.json`
+and `docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-report.md`.
 
 Every category remains low-confidence and does not activate calibration. These are repeatable fixture estimates, not exact billed tokens, autonomous-agent patch-quality evidence, or universal Codex/Claude results.
 
 2026-07-19 accounting note: these current results were regenerated after the estimator began charging the category-qualified completion footer. This is a deterministic accounting update; it does not add host evaluation evidence or change the R4 routing-promotion state.
+
+2026-07-19 R4 accounting note: the corpus now charges four exact source slices on edit/debug tasks and treats the explicit file-and-line debugging task as a Stage-0 bypass. The execution-inclusive median moved from +183.5 to +174.5 estimated tokens and p25 from +91.5 to +40.5; 22 of 27 activated tasks remain non-negative. These are deterministic fixture estimates, not real-host promotion evidence.
 
 The checked-in JSON-versus-tabular format experiment is negative: the tabular candidate did not improve token usage and quality simultaneously, so JSON remains the public default. See `docs/benchmarks/format-experiment.json`.

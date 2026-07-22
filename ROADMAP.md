@@ -219,9 +219,12 @@ Status: complete
 - `tokengraph run -- <command> [args...]` provides bounded redacted captures, timeout and signal handling, retention, purge, and targeted saved-run queries.
 - Scoped project briefs, verified outcomes, deterministic Obsidian projection, supersession, archival, compaction, and injection-safe memory composition are implemented.
 - Paired host-trace evaluation reports counterbalanced bootstrap confidence intervals and keeps enforced routing disabled unless every promotion gate passes. JSON remains the default after the negative tabular-format experiment.
+- R4.1 is complete: routing publishes the frozen `none | low | medium | high` benefit enum and new retrieval artifacts use schema v5 while historical hashes remain readable.
+- R4.2 and R4.3 are complete: independent fixture truth produces denominator-correct router rates, and four edit/debug tasks charge four exact source slices totaling 711 estimated tokens.
+- R4.4 is complete as an evidence milestone, not a promotion: the first reviewed real-host run records five successful ON/OFF pairs, but enforcement remains disabled because every frozen gate did not pass. One repository does not satisfy multi-repository B6 validation.
 - The standalone release packages `web-tree-sitter@0.26.11` with pinned Python, Go, Rust, and Java grammar WASM assets and asserts zero workspace execution.
 - v0.21.0 benchmark claims use the checked-in artifact: routing median net savings 5.7 tokens and execution-inclusive median net savings -94.3 tokens, with 19/30 execution-inclusive tasks non-positive. The frozen execution-inclusive release gate failed; no corrective tag or publication was made, and these are measured fixture results rather than universal savings guarantees.
-- v0.21.1 repairs the audited production wiring and passes the deterministic release gate: 28 activated tasks, two unbooked Stage-0 bypasses, a +196.5-token execution-inclusive median, +102.5-token p25, 82.1% non-negative activated tasks, 100% constraint preservation and recall, and zero critical false negatives. Enforced routing and B7 activation remain conditional on a separate complete passing B6 host-trace promotion report.
+- The current v0.21.1 fixture artifact passes the deterministic release gate: 27 activated tasks, three unbooked Stage-0 bypasses, a +174.5-token execution-inclusive median, +40.5-token p25, 81.5% non-negative activated tasks, 100% constraint preservation and recall, and zero critical false negatives. The separate reviewed real-host report is non-promoting, so enforced routing and B7 activation remain disabled.
 
 ## Later
 

@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createStableArtifact } from "../src/core/artifact.js";
 import { buildEvidenceBackedSliceRecommendation, buildRetrievalCapsule, capsuleArtifact, deliverDelta, escalateReadPolicy, expandGraph, rankFilesBm25, readExactSlice, recommendExactRead, startReadPolicyResponse } from "../src/core/retrieval.js";
 import type { CodeFile, ProjectIndex } from "../src/core/types.js";
 
@@ -75,7 +76,8 @@ describe("deterministic retrieval", () => {
     const otherTask = buildRetrievalCapsule("task-2", "authenticate", project);
     expect(otherTask).toEqual(first);
     expect(capsuleArtifact(otherTask)).toEqual(capsuleArtifact(first));
-    expect(capsuleArtifact(first).artifactSchemaVersion).toBe(4);
+    expect(capsuleArtifact(first).artifactSchemaVersion).toBe(5);
+    expect(capsuleArtifact(first).hash).not.toBe(createStableArtifact("capsule/retrieval", first, 4).hash);
     expect(JSON.stringify(capsuleArtifact(first))).not.toContain("task-1");
   });
 

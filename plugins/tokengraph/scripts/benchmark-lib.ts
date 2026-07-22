@@ -58,7 +58,22 @@ export interface BenchmarkTask {
   expectedTests: string[];
   allowRawReads?: boolean;
   targetedRawReadsAllowed: boolean;
+  expectedRouting: "activate" | "bypass";
   requiresExactSlice?: boolean;
+  exactSliceTarget?:
+    | { file: string; symbol: string; startLine?: never; endLine?: never }
+    | { file: string; symbol?: never; startLine: number; endLine: number };
+}
+
+export interface RouterShadowSummary {
+  observationCount: number;
+  beneficialTaskCount: number;
+  boundedTaskCount: number;
+  falseBypassCount: number;
+  falseActivationCount: number;
+  falseBypassRate: number | null;
+  falseActivationRate: number | null;
+  categoryCounts: Record<string, { observations: number; beneficial: number; bounded: number; activated: number; bypassed: number }>;
 }
 
 export interface BenchmarkCorpus {
@@ -187,14 +202,44 @@ export function validateCorpus(value: unknown): { tasks: BenchmarkTask[]; errors
       !candidate.forbiddenFalsePositiveFiles.every((entry) => typeof entry === "string") ||
       !Array.isArray(candidate.expectedTests) ||
       !candidate.expectedTests.every((entry) => typeof entry === "string") ||
+      (candidate.expectedRouting !== "activate" && candidate.expectedRouting !== "bypass") ||
       (candidate.allowRawReads !== undefined && typeof candidate.allowRawReads !== "boolean") ||
       (candidate.requiresExactSlice !== undefined && typeof candidate.requiresExactSlice !== "boolean") ||
+      (candidate.exactSliceTarget !== undefined && (!isRecord(candidate.exactSliceTarget) || typeof candidate.exactSliceTarget.file !== "string" || !candidate.exactSliceTarget.file.trim())) ||
       typeof candidate.targetedRawReadsAllowed !== "boolean"
     ) {
       errors.push(`Task at index ${index} is malformed.`);
       continue;
     }
-    tasks.push(candidate as unknown as BenchmarkTask);
+    const task = candidate as unknown as BenchmarkTask;
+    if (task.requiresExactSlice && !task.exactSliceTarget) {
+      errors.push(`Task ${task.id} requires an exact slice target.`);
+    } else if (task.requiresExactSlice && task.exactSliceTarget) {
+      const target = task.exactSliceTarget as Record<string, unknown>;
+      const hasSymbolProperty = Object.prototype.hasOwnProperty.call(target, "symbol");
+      const hasStartLine = Object.prototype.hasOwnProperty.call(target, "startLine");
+      const hasEndLine = Object.prototype.hasOwnProperty.call(target, "endLine");
+      const hasAnyLine = hasStartLine || hasEndLine;
+      const hasValidSymbol = hasSymbolProperty && typeof target.symbol === "string" && target.symbol.trim().length > 0;
+      const hasValidRange = Number.isSafeInteger(target.startLine) && Number.isSafeInteger(target.endLine) &&
+        (target.startLine as number) >= 1 && (target.endLine as number) >= (target.startLine as number);
+      const symbolForm = hasValidSymbol && !hasAnyLine;
+      const rangeForm = !hasSymbolProperty && hasStartLine && hasEndLine && hasValidRange;
+      if (hasSymbolProperty && hasAnyLine) {
+        errors.push(`Task ${task.id} exact slice target must use exactly one locator form: symbol or line range.`);
+      } else if (!hasSymbolProperty && hasAnyLine && !rangeForm) {
+        errors.push(`Task ${task.id} exact slice line range is invalid.`);
+      } else if (!symbolForm && !rangeForm) {
+        errors.push(`Task ${task.id} exact slice target must use exactly one locator form: symbol or line range.`);
+      } else if (!task.requiredFiles.includes(task.exactSliceTarget.file)) {
+        errors.push(`Task ${task.id} exact slice target must be one of its required files.`);
+      } else if (!task.targetedRawReadsAllowed || task.allowRawReads === false) {
+        errors.push(`Task ${task.id} requires exact-slice targeted reads but targeted reads are disallowed.`);
+      }
+    } else if (!task.requiresExactSlice && task.exactSliceTarget) {
+      errors.push(`Task ${task.id} has an exact slice target without requiring an exact slice.`);
+    }
+    tasks.push(task);
   }
   if (tasks.length < 30) errors.push("Corpus must contain at least 30 tasks.");
   if (new Set(tasks.map((task) => task.id)).size !== tasks.length) errors.push("Task ids must be unique.");
@@ -222,6 +267,37 @@ export function median(values: number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
+export function summarizeRouterShadow(tasks: Array<{
+  category: string;
+  expectedRouting: "activate" | "bypass";
+  routing: { useTokenGraph: boolean };
+}>): RouterShadowSummary {
+  const beneficial = tasks.filter((task) => task.expectedRouting === "activate");
+  const bounded = tasks.filter((task) => task.expectedRouting === "bypass");
+  const falseBypassCount = beneficial.filter((task) => !task.routing.useTokenGraph).length;
+  const falseActivationCount = bounded.filter((task) => task.routing.useTokenGraph).length;
+  const categories = [...new Set([...BENCHMARK_CATEGORIES, ...tasks.map((task) => task.category)])].sort();
+  return {
+    observationCount: tasks.length,
+    beneficialTaskCount: beneficial.length,
+    boundedTaskCount: bounded.length,
+    falseBypassCount,
+    falseActivationCount,
+    falseBypassRate: beneficial.length ? falseBypassCount / beneficial.length : null,
+    falseActivationRate: bounded.length ? falseActivationCount / bounded.length : null,
+    categoryCounts: Object.fromEntries(categories.map((category) => {
+      const categoryTasks = tasks.filter((task) => task.category === category);
+      return [category, {
+        observations: categoryTasks.length,
+        beneficial: categoryTasks.filter((task) => task.expectedRouting === "activate").length,
+        bounded: categoryTasks.filter((task) => task.expectedRouting === "bypass").length,
+        activated: categoryTasks.filter((task) => task.routing.useTokenGraph).length,
+        bypassed: categoryTasks.filter((task) => !task.routing.useTokenGraph).length
+      }];
+    }))
+  };
 }
 
 function quantile(values: number[], probability: number): number {
@@ -446,18 +522,6 @@ function lifecycleWire(
   return compactToolResultEnvelope(payload);
 }
 
-function firstReadPaths(wire: { content: Array<{ type: "text"; text: string }> }): string[] {
-  const parsed = JSON.parse(wire.content[0]!.text) as unknown;
-  if (!isRecord(parsed)) return [];
-  const candidate = isRecord(parsed.plan) ? parsed.plan : parsed;
-  if (!Array.isArray(candidate.files) || !Array.isArray(candidate.firstReads)) return [];
-  const files = candidate.files.filter(isRecord);
-  return [...new Set(candidate.firstReads
-    .filter((index): index is number => Number.isInteger(index) && index >= 0)
-    .map((index) => files[index]?.path)
-    .filter((path): path is string => typeof path === "string"))].slice(0, 1);
-}
-
 function normalizePredicate(text: string): string {
   return text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
 }
@@ -529,16 +593,21 @@ async function evaluateTask(
   const rawBaselineTokens = rawBaselineCalls.reduce((total, call) => total + call.requestTokens + call.responseTokens, 0);
   const intentResponse = lifecycleWire(result.serializedOutputs[0], taskId);
   const indexedPaths = new Set(project.files.map((file) => file.path));
-  const targetedReadCalls = task.allowRawReads === false || task.requiresExactSlice !== true ? [] : await Promise.all(firstReadPaths(intentResponse)
-    .filter((path) => indexedPaths.has(path))
+  const targetPaths = task.requiresExactSlice && task.exactSliceTarget ? [task.exactSliceTarget.file] : [];
+  const targetedReadCalls = task.allowRawReads === false || task.requiresExactSlice !== true ? [] : await Promise.all(targetPaths
     .map(async (path, index) => {
+      if (!indexedPaths.has(path)) throw new Error(`Exact slice target ${path} is not indexed for ${task.id}.`);
       const indexedFile = project.files.find((file) => file.path === path)!;
-      const symbol = project.symbols
-        .filter((candidate) => candidate.filePath === path && Number.isInteger(candidate.startLine) && Number.isInteger(candidate.endLine))
-        .sort((left, right) => left.startLine! - right.startLine! || left.endLine! - right.endLine!)[0];
-      const startLine = symbol?.startLine ?? 1;
-      const endLine = symbol?.endLine ?? startLine;
+      const target = task.exactSliceTarget!;
+      const symbol = "symbol" in target ? project.symbols
+        .filter((candidate) => candidate.filePath === path && candidate.name === target.symbol &&
+          Number.isInteger(candidate.startLine) && Number.isInteger(candidate.endLine))
+        .sort((left, right) => left.startLine! - right.startLine! || left.endLine! - right.endLine!)[0] : undefined;
+      if ("symbol" in target && !symbol) throw new Error(`Exact slice symbol ${target.symbol} is not indexed in ${path} for ${task.id}.`);
+      const startLine = "symbol" in target ? symbol!.startLine! : target.startLine;
+      const endLine = "symbol" in target ? symbol!.endLine! : target.endLine;
       const slice = await readExactSlice(root, path, startLine, endLine, 64 * 1024, indexedFile.contentHash);
+      if (slice.startLine !== startLine || slice.endLine !== endLine) throw new Error(`Exact slice range fidelity failed for ${path} in ${task.id}.`);
       const targetedRequest = request(taskOrdinal * 100 + 50 + index, "tokengraph_query_context", {
         taskId,
         mode: "slice",
@@ -634,13 +703,21 @@ async function evaluateTask(
     ...(!rawReadPolicyPreserved ? ["Raw-read fallback guidance violated the task policy."] : []),
     ...(missingExpectedTests.length ? [`Expected tests not recommended: ${missingExpectedTests.join(", ")}.`] : [])
   ];
+  const routing = adviseRouting({ task: task.query });
   return {
     id: task.id,
     category: task.category,
     query: task.query,
+    expectedRouting: task.expectedRouting,
+    requiresExactSlice: task.requiresExactSlice === true,
+    ...(task.exactSliceTarget ? { exactSliceTarget: task.exactSliceTarget } : {}),
     targetedRawReadsAllowed: task.targetedRawReadsAllowed,
     flow,
-    routing: adviseRouting({ task: task.query }),
+    routing,
+    routingTruth: {
+      falseBypass: task.expectedRouting === "activate" && !routing.useTokenGraph,
+      falseActivation: task.expectedRouting === "bypass" && routing.useTokenGraph
+    },
     coreOutput: result.coreOutput,
     accounting: {
       coreOutputCount: lifecycleCalls.length,
@@ -756,6 +833,14 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     taskFailures: tasks.filter((task) => task.metrics.qualityResult === "failed").map((task) => task.id)
   };
   const releaseGate = evaluateReleaseGate({ ...aggregate, baselineRequiredFileRecall: corpus.baselineRequiredFileRecall });
+  const routerShadow = summarizeRouterShadow(tasks);
+  const exactSliceTasks = tasks.filter((task) => task.requiresExactSlice);
+  const exactSliceAccounting = {
+    taskCount: exactSliceTasks.length,
+    targetedReadCallCount: exactSliceTasks.reduce((total, task) => total + task.accounting.targetedReadCalls.length, 0),
+    targetedReadTokens: exactSliceTasks.reduce((total, task) => total + task.accounting.targetedReadCalls.reduce((subtotal, call) => subtotal + call.requestTokens + call.responseTokens, 0), 0),
+    taskIds: exactSliceTasks.map((task) => task.id).sort()
+  };
   const observations = tasks.map((task) => ({ category: task.category, residual: task.metrics.calibrationResidual }));
   const calibration = buildCalibration(observations);
   const taskCalibration: TaskCalibration = Object.fromEntries(
@@ -772,6 +857,8 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
     baselineRequiredFileRecall: corpus.baselineRequiredFileRecall,
     sessionAccounting,
     tasks,
+    routerShadow,
+    exactSliceAccounting,
     deltaDelivery: measureDeltaDelivery(tasks),
     aggregate,
     releaseGate,
