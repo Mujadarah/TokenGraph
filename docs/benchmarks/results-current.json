@@ -70,8 +70,9 @@
     }
   },
   "realHostEvaluation": {
-    "manifestPath": "docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-manifest.json",
-    "reportPath": "docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-report.json",
+    "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json",
+    "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.json",
+    "schemaVersion": 3,
     "evidenceSource": "real-host",
     "reviewed": true,
     "scope": {
@@ -84,40 +85,57 @@
     },
     "model": {
       "identifier": "gpt-5.6-sol",
-      "versionOrDate": "2026-07-19"
+      "versionOrDate": "2026-07-22"
     },
     "host": {
       "name": "codex",
-      "version": "codex-cli 0.145.0-alpha.27"
+      "version": "codex-cli 0.145.0-alpha.30"
     },
     "plugin": {
       "version": "0.21.1",
-      "commit": "2f2076df7a310efb546d824293464a99b4ec1861"
+      "commit": "934c5c1114668e4d5161f2314f67f593e294044d"
     },
     "repositoryCommit": "11129c2b262e5bdd282c153e9940a0c7d3620262",
     "hostUsage": {
-      "inputTokens": 18029573,
-      "cachedInputTokens": 17122816,
-      "outputTokens": 154673,
-      "reasoningOutputTokens": 66904,
-      "onTokens": 8500992,
-      "offTokens": 9683254
+      "inputTokens": 26183135,
+      "cachedInputTokens": 25191424,
+      "outputTokens": 168284,
+      "reasoningOutputTokens": 78105,
+      "onTokens": 11057367,
+      "offTokens": 15294052
     },
     "routerRates": {
       "falseBypassRate": 0,
       "falseActivationRate": null,
       "beneficialCount": 5,
       "boundedCount": 0,
-      "stage0LatencyMs": 0.07689999975264072,
-      "activationLatencyMs": 2155.53740000003
+      "stage0LatencyMs": 0.017499999841675162,
+      "activationLatencyMs": 1713.5563000002876,
+      "stage0LatencyMaximumMs": 5,
+      "stage0WithinBudget": true
     },
     "pairedIntervals": {
-      "tokenDifference": { "estimate": -236452.4, "lower": -1032264.2, "upper": 425846.6, "samples": 5 },
+      "tokenDifference": { "estimate": -847337, "lower": -2200080.8, "upper": 244224.4, "samples": 5 },
       "qualityDifference": { "estimate": 0, "lower": 0, "upper": 0, "samples": 5 },
-      "executionInclusiveSavings": { "estimate": 236452.4, "lower": -425846.6, "upper": 1032365.6, "samples": 5 }
+      "executionInclusiveSavings": { "estimate": 847337, "lower": -244224.4, "upper": 2199729.6, "samples": 5 }
     },
     "promotion": {
       "enforcementEnabled": false,
+      "gates": {
+        "minimumSamples": false,
+        "realHostEvidence": true,
+        "qualityNonInferiority": true,
+        "tokenSuperiority": false,
+        "resources": false,
+        "routerRates": false,
+        "routerLatency": true,
+        "executionMedian": false,
+        "executionP25": false,
+        "nonNegativeActivated": false
+      },
+      "executionInclusiveMedian": -52798,
+      "executionInclusiveP25": -291203,
+      "nonNegativeActivatedRate": 0.4,
       "failureReasons": [
         "router-shadow-sample-incomplete"
       ]

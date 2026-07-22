@@ -302,4 +302,13 @@ describe("paired evaluation", () => {
     expect(evaluateManifest(manifest)).toMatchObject({ schemaVersion: 2, promotionEligible: false, enforcementEnabled: false });
     expect(checkedReport).toMatchObject({ promotionEligible: true, enforcementEnabled: false });
   });
+
+  it("reproduces the checked-in reviewed schema-v3 host evaluation decision", async () => {
+    const evidenceRoot = resolve("..", "..", "docs", "benchmarks", "host-evaluations");
+    const manifest = await loadEvaluationManifest(resolve(evidenceRoot, "2026-07-22-tokengraph-codex-manifest.json"));
+    const checkedReport = JSON.parse(await readFile(resolve(evidenceRoot, "2026-07-22-tokengraph-codex-report.json"), "utf8"));
+
+    expect(manifest).toMatchObject({ schemaVersion: 3, evidenceSource: "real-host", reviewed: true });
+    expect(checkedReport).toEqual(evaluateManifest(manifest));
+  });
 });
