@@ -226,6 +226,15 @@ Status: complete
 - v0.21.0 benchmark claims use the checked-in artifact: routing median net savings 5.7 tokens and execution-inclusive median net savings -94.3 tokens, with 19/30 execution-inclusive tasks non-positive. The frozen execution-inclusive release gate failed; no corrective tag or publication was made, and these are measured fixture results rather than universal savings guarantees.
 - The current v0.21.1 fixture artifact passes the deterministic release gate: 27 activated tasks, three unbooked Stage-0 bypasses, a +174.5-token execution-inclusive median, +40.5-token p25, 81.5% non-negative activated tasks, 100% constraint preservation and recall, and zero critical false negatives. The separate reviewed real-host report is non-promoting, so enforced routing and B7 activation remain disabled.
 
+## v0.22 - Evidence And Release Closeout
+
+Status: complete
+
+- v0.22.0 publishes the R1-R4 remediation stack, current fixture accounting, schema-v3 promotion safeguards, and reproducible standalone packages without promoting enforced routing.
+- Reviewed schema-v3 campaigns cover TokenGraph, `mattpocock/ts-reset`, and `imbhargav5/nextbase-nextjs-supabase-starter`: 15 counterbalanced ON/OFF pairs and 30 accepted traces across three repositories and three categories.
+- The multi-repository B6 coverage target is met, but the frozen promotion gates do not all pass. Routing remains in shadow mode and B7 polyglot indexing remains inactive.
+- The completed campaign is documented in `docs/benchmarks/results-current.md` and the checked manifests and reports under `docs/benchmarks/host-evaluations/`.
+
 ## Later
 
 Ideas under consideration:
