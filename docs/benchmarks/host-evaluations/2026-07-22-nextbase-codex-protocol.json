@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "evaluationId": "nextbase-20260722",
-  "seed": "tokengraph-nextbase-real-host-v1",
+  "evaluationId": "nextbase-20260722b",
+  "seed": "tokengraph-nextbase-real-host-v2",
   "reviewed": true,
   "model": {
     "identifier": "gpt-5.6-sol",
@@ -41,6 +41,7 @@
     "permissions": "root-deny-worktree-write-controller-read-dependencies-read-network-disabled",
     "subprocessEnvironment": "inherit-none-platform-runtime-and-evaluation-temp-only",
     "dependencies": "lockfile-matched-root-node-modules-junction",
+    "gitWorktrees": "controller-preflight-core-longpaths-enabled",
     "acceptance": "final-attested-hidden-read-only-verifier",
     "controller": "separately-attested-controller-root",
     "userConfig": "ignored"
