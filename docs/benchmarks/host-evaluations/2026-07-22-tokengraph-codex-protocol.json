@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "evaluationId": "r4-20260722g",
+  "evaluationId": "r4-20260722h",
   "seed": "tokengraph-r4-real-host-v2",
   "reviewed": true,
   "model": {
@@ -13,7 +13,7 @@
   "repositoryCommit": "11129c2b262e5bdd282c153e9940a0c7d3620262",
   "plugin": {
     "version": "0.21.1",
-    "commit": "94a1b6a83de1b6678ae181c0a78c86e337e20f4d"
+    "commit": "934c5c1114668e4d5161f2314f67f593e294044d"
   },
   "promptTemplate": {
     "identifier": "tokengraph-r4-benefit-enum-v2",
