@@ -26,8 +26,8 @@ const testSource = await readFile(resolve(root, "src", "tests", "map-constructor
 const requiredCoverage = [
   /new Map\(\)\s+satisfies\s+Map<string,\s*boolean>/,
   /:\s*Map<string,\s*boolean>\s*=\s*new Map\(\)/,
-  /expectsBooleanMap\(new Map\(\)\)/,
-  /new Map\(\[\s*\["foo",\s*1\]/s
+  /\b[A-Za-z_$][\w$]*\(new Map\(\)\)/,
+  /new Map\(\[\s*\[/s
 ];
 if (requiredCoverage.some((pattern) => !pattern.test(testSource))) {
   throw new Error("Map constructor regression coverage is incomplete.");

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "evaluationId": "ts-reset-20260722",
-  "seed": "tokengraph-ts-reset-real-host-v1",
+  "evaluationId": "ts-reset-20260722b",
+  "seed": "tokengraph-ts-reset-real-host-v2",
   "reviewed": true,
   "model": {
     "identifier": "gpt-5.6-sol",
