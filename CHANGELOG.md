@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Refreshed trust-doc benchmark claims to match restated R4 accounting and documented the omitted-vs-null serialization policy.
 - R4 review correction (2026-07-22): limited promotion to reviewed schema-v3 evidence, added a 5 ms Stage-0 latency ceiling, replaced file-only exact slices with explicit symbol or line-range locators, and moved acceptance into an attested least-privilege Codex sandbox.
 - R4 evidence note (2026-07-21): recorded five reviewed real-host ON/OFF pairs with exact Codex usage and passing acceptance commands; the one-repository run remains non-promoting because coverage, token-superiority, resource, router-denominator, p25, and non-negative-rate gates did not all pass, so routing enforcement remains disabled.
 - Frozen routing benefits as `none | low | medium | high` and advanced new retrieval artifacts to schema v5. Schema-v2 real-host evidence remains historical and parse-only; after the 2026-07-22 correction, only eligible reviewed schema-v3 evidence may promote routing.
