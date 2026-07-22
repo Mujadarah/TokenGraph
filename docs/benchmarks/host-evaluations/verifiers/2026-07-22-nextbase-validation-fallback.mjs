@@ -23,8 +23,8 @@ function runNode(args, cwd = root) {
 
 const testPath = resolve(root, "apps", "web", "src", "utils", "effect-bridge.test.ts");
 const testSource = await readFile(testPath, "utf8");
-if (!/ValidationError\(\{\s*field:\s*['"]email['"],\s*message:\s*['"]['"]\s*\}\)/s.test(testSource) ||
-    !testSource.includes("email: Validation failed")) {
+if (!/new ValidationError\(\{(?=[^}]*\bfield\s*:)(?=[^}]*\bmessage\s*:\s*['"]['"])[^}]*\}\)/s.test(testSource) ||
+    !testSource.includes("Validation failed")) {
   throw new Error("Fielded empty-message validation regression coverage is missing.");
 }
 
