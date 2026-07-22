@@ -30,7 +30,8 @@
   },
   "dependencySource": "node_modules",
   "acceptance": {
-    "verifierScript": "docs/benchmarks/host-evaluations/verifiers/2026-07-22-ts-reset-map-constructor.mjs"
+    "verifierScript": "docs/benchmarks/host-evaluations/verifiers/2026-07-22-ts-reset-map-constructor.mjs",
+    "verifierCommit": "841b539e3b042cb2792d455e1c6027d64acd7920"
   },
   "toolConfiguration": {
     "on": "local-tokengraph-mcp-only",

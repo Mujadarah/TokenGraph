@@ -321,6 +321,14 @@ describe("paired evaluation", () => {
     expect(checkedReport).toEqual(evaluateManifest(manifest));
   });
 
+  it("pins the ts-reset verifier to the inferred type of a bare Map constructor", async () => {
+    const verifier = await readFile(resolve("..", "..", "docs", "benchmarks", "host-evaluations", "verifiers", "2026-07-22-ts-reset-map-constructor.mjs"), "utf8");
+
+    expect(verifier).toMatch(/const bare = new Map\(\);/);
+    expect(verifier).toMatch(/Expect<Equal<typeof bare, Map<unknown, unknown>>>/);
+    expect(verifier).not.toMatch(/BareValue/);
+  });
+
   it("reproduces the checked-in Nextbase schema-v3 host evaluation decision", async () => {
     const evidenceRoot = resolve("..", "..", "docs", "benchmarks", "host-evaluations");
     const manifest = await loadEvaluationManifest(resolve(evidenceRoot, "2026-07-22-nextbase-codex-manifest.json"));

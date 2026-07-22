@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, chmod, mkdir, open, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -30,7 +30,7 @@ export interface PairedHostProtocol {
   promptTemplate: { identifier: string; template: string };
   tokenGraphMcp: { command: string; args: string[]; env?: Record<string, string> };
   dependencySource?: string;
-  acceptance: { verifierScript: string };
+  acceptance: { verifierScript: string; verifierCommit: string };
   toolConfiguration: Record<string, unknown>;
   cacheState: string;
   indexState: "cold" | "warm";
@@ -80,6 +80,8 @@ export interface ProcessResult {
 const MAX_PROCESS_OUTPUT_BYTES = 16 * 1024 * 1024;
 const ACCEPTANCE_COMMAND = "node .tokengraph-controller/acceptance.mjs";
 const ALLOWED_MCP_ENVIRONMENT = new Set(["TOKENGRAPH_TOOL_SURFACE"]);
+const APPROVED_VERIFIER_DIRECTORY = "docs/benchmarks/host-evaluations/verifiers";
+const APPROVED_VERIFIER_FILE = "plugins/tokengraph/scripts/paired-host-acceptance.mjs";
 
 export interface RunPairedHostOptions {
   root: string;
@@ -277,6 +279,7 @@ function assertProtocol(value: unknown): PairedHostProtocol {
     typeof typed.promptTemplate.identifier !== "string" || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(typed.promptTemplate.identifier) || typeof typed.promptTemplate.template !== "string" || typed.promptTemplate.template.length > 20_000 || !typed.promptTemplate.template.includes("{{task}}") ||
     typeof typed.tokenGraphMcp.command !== "string" || !approvedNodeCommand(typed.tokenGraphMcp.command) || !Array.isArray(typed.tokenGraphMcp.args) || typed.tokenGraphMcp.args.some((entry) => typeof entry !== "string") ||
     typeof typed.acceptance.verifierScript !== "string" || !typed.acceptance.verifierScript || isAbsolute(typed.acceptance.verifierScript) || typed.acceptance.verifierScript.split(/[\\/]/).includes("..") || !/\.[cm]?js$/i.test(typed.acceptance.verifierScript) ||
+    typeof typed.acceptance.verifierCommit !== "string" || !/^[a-f0-9]{40}$/i.test(typed.acceptance.verifierCommit) ||
     (typed.dependencySource !== undefined && (typeof typed.dependencySource !== "string" || isAbsolute(typed.dependencySource) || typed.dependencySource.split(/[\\/]/).includes(".."))) ||
     typeof typed.cacheState !== "string" || !typed.cacheState || !["cold", "warm"].includes(typed.indexState) ||
     !typed.toolConfiguration || typeof typed.toolConfiguration !== "object" || Array.isArray(typed.toolConfiguration) || containsAbsolutePath(typed.toolConfiguration) ||
@@ -452,15 +455,35 @@ function permissionFilesystem(gitCommonDirectory: string, dependencySource: stri
   return `{${rules.join(",")}}`;
 }
 
-async function verifierSource(root: string, verifierScript: string): Promise<{ path: string; content: Buffer; commandHash: string }> {
+function samePath(left: string, right: string): boolean {
+  const normalizedLeft = resolve(left);
+  const normalizedRight = resolve(right);
+  return process.platform === "win32" ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase() : normalizedLeft === normalizedRight;
+}
+
+function approvedVerifierPath(root: string, candidate: string): boolean {
+  return beneath(resolve(root, APPROVED_VERIFIER_DIRECTORY), candidate) || samePath(resolve(root, APPROVED_VERIFIER_FILE), candidate);
+}
+
+async function verifierSource(root: string, verifierScript: string, verifierCommit: string): Promise<{ path: string; content: Buffer; commandHash: string }> {
   const requested = resolve(root, verifierScript);
   if (!beneath(root, requested)) throw new Error("Acceptance verifier escaped the supplied evaluation root.");
-  const canonical = await realpath(requested);
-  if (!beneath(root, canonical)) throw new Error("Acceptance verifier resolves outside the supplied evaluation root.");
-  const metadata = await stat(canonical);
-  if (!metadata.isFile() || metadata.size > 1024 * 1024) throw new Error("Acceptance verifier must be a bounded regular file.");
-  const content = await readFile(canonical);
-  return { path: canonical, content, commandHash: sha256(content) };
+  if (!approvedVerifierPath(root, requested)) throw new Error("Acceptance verifier must use an approved verifier location.");
+  const exactVerifierCommit = await git(root, ["rev-parse", `${verifierCommit}^{commit}`]);
+  if (exactVerifierCommit.toLowerCase() !== verifierCommit.toLowerCase()) throw new Error("Protocol verifier commit is not exact.");
+  const verifierGitPath = relative(root, requested).split(sep).join("/");
+  const trackedVerifier = await runProcess("git", ["cat-file", "-e", `${exactVerifierCommit}:${verifierGitPath}`], root, 30_000);
+  if (trackedVerifier.spawnFailed || trackedVerifier.exitCode !== 0) throw new Error("Acceptance verifier is not tracked by the attested verifier commit.");
+  const verifierType = await runProcess("git", ["cat-file", "-t", `${exactVerifierCommit}:${verifierGitPath}`], root, 30_000);
+  if (verifierType.spawnFailed || verifierType.exitCode !== 0 || verifierType.stdout.trim() !== "blob") throw new Error("Acceptance verifier must be an attested regular-file blob.");
+  const verifierSize = await runProcess("git", ["cat-file", "-s", `${exactVerifierCommit}:${verifierGitPath}`], root, 30_000);
+  const size = Number.parseInt(verifierSize.stdout.trim(), 10);
+  if (verifierSize.spawnFailed || verifierSize.exitCode !== 0 || !Number.isSafeInteger(size) || size < 1 || size > 1024 * 1024) throw new Error("Acceptance verifier must be a bounded regular-file blob.");
+  const verifierBlob = await runProcess("git", ["cat-file", "-p", `${exactVerifierCommit}:${verifierGitPath}`], root, 30_000);
+  if (verifierBlob.spawnFailed || verifierBlob.exitCode !== 0) throw new Error("Acceptance verifier blob could not be read from its attested commit.");
+  const content = Buffer.from(verifierBlob.stdout, "utf8");
+  if (content.byteLength !== size) throw new Error("Acceptance verifier blob size did not match its attested metadata.");
+  return { path: requested, content, commandHash: sha256(content) };
 }
 
 async function installVerifier(worktree: string, verifier: { content: Buffer; commandHash: string }): Promise<void> {
@@ -628,7 +651,9 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
   const hostExecutable = options.hostExecutable ?? "codex";
   const hostArgumentsPrefix = options.hostArgumentsPrefix ?? [];
   const hostEnvironment = isolatedHostEnvironment();
-  const verifier = await verifierSource(controllerRoot, protocol.acceptance.verifierScript);
+  const pluginCommit = await git(controllerRoot, ["rev-parse", `${protocol.plugin.commit}^{commit}`]);
+  if (pluginCommit.toLowerCase() !== protocol.plugin.commit.toLowerCase()) throw new Error("Protocol plugin commit is not exact.");
+  const verifier = await verifierSource(controllerRoot, protocol.acceptance.verifierScript, protocol.acceptance.verifierCommit);
   const version = await runProcess(hostExecutable, [...hostArgumentsPrefix, "--version"], root, 10_000, undefined, hostEnvironment);
   if (version.spawnFailed || version.exitCode !== 0 || !/^codex-cli\s+\S+/i.test(version.stdout.trim())) throw new Error("Codex host version could not be verified.");
   const hostVersion = version.stdout.trim();
@@ -636,6 +661,7 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
   if (!options.outputManifest) throw new Error("An output manifest path is required for a live host evaluation.");
   const outputManifest = isAbsolute(options.outputManifest) ? resolve(options.outputManifest) : resolve(controllerRoot, options.outputManifest);
   if (!beneath(controllerRoot, outputManifest)) throw new Error("Reviewed manifest must remain beneath the controller root.");
+  await assertNoSymbolicLinkComponents(outputManifest);
 
   await ensureLocalRunExclusion(root);
   const evaluationRoot = resolve(root, ".tokengraph", "runs", "paired-host", protocol.evaluationId);
@@ -651,8 +677,6 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
   const gitCommonDirectory = isAbsolute(gitCommonValue) ? resolve(gitCommonValue) : resolve(root, gitCommonValue);
   const dependencySource = protocol.dependencySource ? resolve(root, protocol.dependencySource) : undefined;
   const resolvedMcp = resolveMcp(controllerRoot, protocol.tokenGraphMcp);
-  const pluginCommit = await git(controllerRoot, ["rev-parse", `${protocol.plugin.commit}^{commit}`]);
-  if (pluginCommit.toLowerCase() !== protocol.plugin.commit.toLowerCase()) throw new Error("Protocol plugin commit is not exact.");
   const mcpRuntimePaths = resolvedMcp.args.filter(isAbsolute);
   for (const runtimePath of mcpRuntimePaths) {
     if (!beneath(controllerRoot, runtimePath)) throw new Error("TokenGraph MCP runtime must remain beneath the controller root.");

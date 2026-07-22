@@ -30,7 +30,8 @@
   },
   "dependencySource": "node_modules",
   "acceptance": {
-    "verifierScript": "docs/benchmarks/host-evaluations/verifiers/2026-07-22-nextbase-validation-fallback.mjs"
+    "verifierScript": "docs/benchmarks/host-evaluations/verifiers/2026-07-22-nextbase-validation-fallback.mjs",
+    "verifierCommit": "f6c8a4ef7513d42d05ee577a54ad22e3a732d984"
   },
   "toolConfiguration": {
     "on": "local-tokengraph-mcp-only",

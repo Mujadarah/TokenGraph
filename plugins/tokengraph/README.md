@@ -122,7 +122,7 @@ Reviewed schema-v3 real-host campaigns cover TokenGraph, `mattpocock/ts-reset`,
 and `imbhargav5/nextbase-nextjs-supabase-starter`: fifteen counterbalanced
 ON/OFF pairs and thirty accepted traces across three repositories and three
 categories. The multi-repository B6 coverage target is met, but promotion and
-enforcement remain disabled because every frozen gate did not pass. Routing
+enforcement remain disabled because not all frozen gates passed. Routing
 stays in shadow mode and B7 remains dark. See the repository
 `docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json`,
 `docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.md`,

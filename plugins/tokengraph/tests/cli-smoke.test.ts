@@ -313,6 +313,8 @@ describe("tokengraph benchmark harness and trust docs", () => {
       expect(text).toMatch(/three repositories/i);
       expect(text).toMatch(/promotion.*disabled|enforcement.*disabled/is);
       expect(text).toMatch(/multi-repository B6.*(?:target|coverage).*(?:met|complete)/is);
+      expect(text).not.toMatch(/every frozen.*gate did not pass/is);
+      expect(text).toMatch(/not all frozen.*gates passed/is);
     }
 
     const hooksSource = await readFile(resolve("src", "hooks.ts"), "utf8");
@@ -612,6 +614,8 @@ describe("tokengraph release package command", () => {
     expect(releaseReadme).toMatch(/fixture.*real-host|real-host.*fixture/is);
     expect(releaseReadme).toMatch(/promotion.*disabled|enforcement.*disabled/is);
     expect(releaseReadme).toMatch(/three repositories.*multi-repository B6.*(?:target|coverage).*(?:met|complete)/is);
+    expect(releaseReadme).not.toMatch(/every frozen.*gate did not pass/is);
+    expect(releaseReadme).toMatch(/not all frozen.*gates passed/is);
     await expect(access(resolve(releaseRoot, "src"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "tests"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "scripts"))).rejects.toThrow();

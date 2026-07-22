@@ -43,13 +43,14 @@ const argument = expectsBooleanMap(new Map());
 const assigned: Map<string, boolean> = new Map();
 const satisfied = new Map() satisfies Map<string, boolean>;
 const populated = new Map([["foo", 1], ["bar", 2]]);
+const bare = new Map();
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Expect<T extends true> = T;
 type Argument = Expect<Equal<typeof argument, Map<string, boolean>>>;
 type Assigned = Expect<Equal<typeof assigned, Map<string, boolean>>>;
 type Satisfied = Expect<Equal<typeof satisfied, Map<string, boolean>>>;
 type Populated = Expect<Equal<typeof populated, Map<string, number>>>;
-type BareValue = Expect<Equal<ReturnType<Map<unknown, unknown>["get"]>, unknown>>;
+type Bare = Expect<Equal<typeof bare, Map<unknown, unknown>>>;
 `;
 const options = {
   target: ts.ScriptTarget.ES2020,
