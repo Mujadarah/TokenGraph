@@ -143,10 +143,11 @@
   },
   "multiRepositoryRealHostCoverage": {
     "targetRepositoryCount": 3,
-    "completedRepositoryCount": 2,
-    "completedCategoryCount": 2,
-    "completedPairCount": 10,
-    "completedTraceCount": 20,
+    "completedRepositoryCount": 3,
+    "completedCategoryCount": 3,
+    "completedPairCount": 15,
+    "completedTraceCount": 30,
+    "coverageComplete": true,
     "promotionComplete": false,
     "evaluations": [
       {
@@ -170,9 +171,25 @@
         "acceptancePassed": 10,
         "acceptanceFailed": 0,
         "enforcementEnabled": false
+      },
+      {
+        "repository": "imbhargav5/nextbase-nextjs-supabase-starter",
+        "category": "frontend",
+        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-manifest.json",
+        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-report.json",
+        "pairCount": 5,
+        "traceCount": 10,
+        "acceptancePassed": 10,
+        "acceptanceFailed": 0,
+        "enforcementEnabled": false
       }
     ],
-    "remaining": "One eligible Next.js and Supabase repository evaluation"
+    "finalDecision": {
+      "routingMode": "shadow",
+      "b7PolyglotIndexing": "dark",
+      "reason": "The three-repository coverage target is met, but the frozen promotion gates do not all pass."
+    },
+    "remaining": "No repository coverage gap; frozen promotion gates still fail."
   },
   "releaseGate": {
     "passed": true,

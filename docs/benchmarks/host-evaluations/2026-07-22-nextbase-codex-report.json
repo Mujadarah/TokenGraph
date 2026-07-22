@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 3,
+  "evidenceSource": "real-host",
+  "reviewed": true,
+  "promotionEligible": true,
+  "taskCount": 5,
+  "categoryCounts": {
+    "frontend": 5
+  },
+  "tokenDifference": {
+    "estimate": 101736.8,
+    "lower": -151584.6,
+    "upper": 390882.6,
+    "samples": 5
+  },
+  "qualityDifference": {
+    "estimate": 0,
+    "lower": 0,
+    "upper": 0,
+    "samples": 5
+  },
+  "executionInclusiveSavings": {
+    "estimate": -101736.8,
+    "lower": -384554.2,
+    "upper": 155548.2,
+    "samples": 5
+  },
+  "gates": {
+    "minimumSamples": false,
+    "realHostEvidence": true,
+    "qualityNonInferiority": true,
+    "tokenSuperiority": false,
+    "resources": false,
+    "routerRates": false,
+    "routerLatency": true,
+    "executionMedian": false,
+    "executionP25": false,
+    "nonNegativeActivated": false
+  },
+  "routerRates": {
+    "falseBypassRate": 0,
+    "falseActivationRate": null,
+    "beneficialCount": 5,
+    "boundedCount": 0,
+    "observationCount": 5,
+    "categoryCounts": {
+      "frontend": 5
+    },
+    "stage0LatencyMs": 0.020900000003166497,
+    "activationLatencyMs": 3077.8828000000212,
+    "stage0LatencyMaximumMs": 5,
+    "stage0WithinBudget": true,
+    "stage0LatencySamples": 5,
+    "activationLatencySamples": 5,
+    "stage0FasterThanActivation": true
+  },
+  "executionInclusive": {
+    "median": -10884,
+    "p25": -211447,
+    "nonNegativeActivatedRate": 0.4
+  },
+  "categoryIntervals": {
+    "frontend": {
+      "tokenDifference": {
+        "estimate": 101736.8,
+        "lower": -155548.2,
+        "upper": 380266,
+        "samples": 5
+      },
+      "qualityDifference": {
+        "estimate": 0,
+        "lower": 0,
+        "upper": 0,
+        "samples": 5
+      },
+      "executionInclusiveSavings": {
+        "estimate": -101736.8,
+        "lower": -420378.6,
+        "upper": 155548.2,
+        "samples": 5
+      }
+    }
+  },
+  "enforcementEnabled": false,
+  "failures": [
+    "router-shadow-sample-incomplete"
+  ]
+}

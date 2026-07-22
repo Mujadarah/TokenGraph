@@ -259,6 +259,7 @@ describe("tokengraph benchmark harness and trust docs", () => {
     expect(benchmarkResults).toMatch(/22 of 27 activated tasks are non-negative/i);
     expect(benchmarkResults).toMatch(/execution-inclusive median.*\+174\.5/i);
     expect(benchmarkResults).toMatch(/low-confidence/i);
+    expect(benchmarkResults).not.toMatch(/third.*(?:remain|campaign).*incomplete|three-repository B6 target is not met/is);
     const benchmarkMethodology = await readFile(resolve(repoRoot, "docs", "benchmarks", "methodology.md"), "utf8");
     expect(benchmarkMethodology).toMatch(/\+174\.5-token activated-task median.*\+40\.5-token p25/i);
 
@@ -308,9 +309,10 @@ describe("tokengraph benchmark harness and trust docs", () => {
       expect(text).toMatch(/2026-07-22-tokengraph-codex-manifest\.json/);
       expect(text).toMatch(/2026-07-22-tokengraph-codex-report\.md/);
       expect(text).toMatch(/2026-07-22-ts-reset-codex-report\.md/);
-      expect(text).toMatch(/two repositories/i);
+      expect(text).toMatch(/2026-07-22-nextbase-codex-report\.md/);
+      expect(text).toMatch(/three repositories/i);
       expect(text).toMatch(/promotion.*disabled|enforcement.*disabled/is);
-      expect(text).toMatch(/third.*repository.*remain.*multi-repository B6/is);
+      expect(text).toMatch(/multi-repository B6.*(?:target|coverage).*(?:met|complete)/is);
     }
 
     const hooksSource = await readFile(resolve("src", "hooks.ts"), "utf8");
@@ -609,7 +611,7 @@ describe("tokengraph release package command", () => {
     expect(releaseReadme).toMatch(/four.*exact.*slice.*711|711.*four.*exact.*slice/is);
     expect(releaseReadme).toMatch(/fixture.*real-host|real-host.*fixture/is);
     expect(releaseReadme).toMatch(/promotion.*disabled|enforcement.*disabled/is);
-    expect(releaseReadme).toMatch(/two repositories.*third.*repository.*remain.*multi-repository B6/is);
+    expect(releaseReadme).toMatch(/three repositories.*multi-repository B6.*(?:target|coverage).*(?:met|complete)/is);
     await expect(access(resolve(releaseRoot, "src"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "tests"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "scripts"))).rejects.toThrow();
