@@ -415,7 +415,7 @@ function modelShellEnvironment(worktree: string): Record<string, string> {
   return environment;
 }
 
-function permissionFilesystem(gitCommonDirectory: string, dependencySource?: string): string {
+function permissionFilesystem(gitCommonDirectory: string, dependencySource: string | undefined, mcpRuntimePaths: string[]): string {
   const workspaceRules = tomlInlineTable([
     [".", "write"],
     [".git", "read"],
@@ -426,7 +426,8 @@ function permissionFilesystem(gitCommonDirectory: string, dependencySource?: str
     `${tomlString(":minimal")}=${tomlString("read")}`,
     `${tomlString(":workspace_roots")}=${workspaceRules}`,
     `${tomlString(gitCommonDirectory)}=${tomlString("read")}`,
-    ...(dependencySource ? [`${tomlString(dependencySource)}=${tomlString("read")}`] : [])
+    ...(dependencySource ? [`${tomlString(dependencySource)}=${tomlString("read")}`] : []),
+    ...[...new Set(mcpRuntimePaths)].map((path) => `${tomlString(path)}=${tomlString("read")}`)
   ];
   return `{${rules.join(",")}}`;
 }
@@ -597,6 +598,15 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
   const gitCommonValue = await git(root, ["rev-parse", "--git-common-dir"]);
   const gitCommonDirectory = isAbsolute(gitCommonValue) ? resolve(gitCommonValue) : resolve(root, gitCommonValue);
   const dependencySource = protocol.dependencySource ? resolve(root, protocol.dependencySource) : undefined;
+  const resolvedMcp = resolveMcp(root, protocol.tokenGraphMcp);
+  const pluginCommit = await git(root, ["rev-parse", `${protocol.plugin.commit}^{commit}`]);
+  if (pluginCommit.toLowerCase() !== protocol.plugin.commit.toLowerCase()) throw new Error("Protocol plugin commit is not exact.");
+  const mcpRuntimePaths = resolvedMcp.args.filter(isAbsolute);
+  for (const runtimePath of mcpRuntimePaths) {
+    if (!beneath(root, runtimePath)) throw new Error("TokenGraph MCP runtime must remain beneath the evaluation root.");
+    const runtimeDiff = await runProcess("git", ["diff", "--quiet", pluginCommit, "--", relative(root, runtimePath)], root, 30_000);
+    if (runtimeDiff.spawnFailed || runtimeDiff.exitCode !== 0) throw new Error("TokenGraph MCP runtime does not match the attested plugin commit.");
+  }
 
   for (const run of plan) {
     const task = protocol.tasks.find((candidate) => candidate.taskId === run.taskId)!;
@@ -641,7 +651,6 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
           phaseFailure = "acceptance-provisioning-failed";
         }
       }
-      const resolvedMcp = resolveMcp(worktree, protocol.tokenGraphMcp);
       let host = emptyProcessResult();
       let parsed: ParsedCodexJsonl | undefined;
       let parseFailure: "invalid-host-stream" | undefined;
@@ -655,7 +664,7 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
         "--config", `approval_policy=${tomlString(protocol.approvalPolicy)}`,
         "--config", `windows.sandbox=${tomlString(protocol.windowsSandbox)}`,
         "--config", `default_permissions=${tomlString("tokengraph-eval")}`,
-        "--config", `permissions.tokengraph-eval.filesystem=${permissionFilesystem(gitCommonDirectory, dependencySource)}`,
+        "--config", `permissions.tokengraph-eval.filesystem=${permissionFilesystem(gitCommonDirectory, dependencySource, mcpRuntimePaths)}`,
         "--config", "permissions.tokengraph-eval.network.enabled=false",
         "--config", `shell_environment_policy.inherit=${tomlString("none")}`,
         "--config", `shell_environment_policy.set=${tomlInlineTable(Object.entries(modelShellEnvironment(worktree)).sort(([left], [right]) => left.localeCompare(right)))}`

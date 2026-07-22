@@ -28,7 +28,7 @@ function protocol(repositoryCommit: string, prompt = "Where is src/a.ts? Do not 
     approvalPolicy: "never",
     windowsSandbox: "elevated",
     repositoryCommit,
-    plugin: { version: "0.21.1", commit: "a".repeat(40) },
+    plugin: { version: "0.21.1", commit: repositoryCommit },
     promptTemplate: { identifier: "host-test-v1", template: "{{task}}" },
     tokenGraphMcp: { command: process.execPath, args: ["dist/index.js"] },
     acceptance: { verifierScript: "acceptance.mjs" },
@@ -140,7 +140,9 @@ describe("paired Codex host adapter", () => {
     try {
       await execFileAsync("git", ["init"], { cwd: root });
       await writeFile(join(root, "README.md"), "fixture\n");
-      await execFileAsync("git", ["add", "README.md"], { cwd: root });
+      await mkdir(join(root, "dist"));
+      await writeFile(join(root, "dist", "index.js"), "// fixture MCP runtime\n");
+      await execFileAsync("git", ["add", "README.md", "dist/index.js"], { cwd: root });
       await execFileAsync("git", ["-c", "user.name=TokenGraph", "-c", "user.email=tokengraph@example.invalid", "commit", "-m", "fixture"], { cwd: root });
       const { stdout: commit } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root });
       const hostScript = join(root, "fake-host.mjs");
@@ -188,6 +190,10 @@ describe("paired Codex host adapter", () => {
       const worktreeCwds = (await readFile(cwdLog, "utf8")).trim().split(/\r?\n/);
       expect(new Set(worktreeCwds).size).toBe(2);
       const hostArguments = await readFile(argvLog, "utf8");
+      const argumentSets = hostArguments.trim().split(/\r?\n/).map((line) => JSON.parse(line) as string[]);
+      const onArguments = argumentSets.find((args) => args.some((arg) => arg.startsWith("mcp_servers.tokengraph.args=")))!;
+      const mcpArgumentsSetting = onArguments.find((arg) => arg.startsWith("mcp_servers.tokengraph.args="))!;
+      expect(JSON.parse(mcpArgumentsSetting.slice(mcpArgumentsSetting.indexOf("=") + 1))).toEqual([join(root, "dist", "index.js")]);
       expect(hostArguments).toContain("shell_environment_policy.inherit=\\\"none\\\"");
       expect(hostArguments).toContain("permissions.tokengraph-eval.network.enabled=false");
       expect(hostArguments).toMatch(/permissions\.tokengraph-eval\.filesystem=.*:root.*deny/);
@@ -206,6 +212,17 @@ describe("paired Codex host adapter", () => {
         status: "passed",
         commandHash: createHash("sha256").update(verifierSource).digest("hex")
       });
+
+      await writeFile(join(root, "dist", "index.js"), "// uncommitted runtime drift\n");
+      await expect(runPairedHostEvaluation({
+        root,
+        protocol: { ...protocol(commit.trim()), evaluationId: "paired-host-runtime-drift" },
+        outputManifest: "artifacts/runtime-drift-manifest.json",
+        hostExecutable: process.execPath,
+        hostArgumentsPrefix: [hostScript, cwdLog, argvLog],
+        timeoutMs: 10_000
+      })).rejects.toThrow(/runtime does not match the attested plugin commit/i);
+      await writeFile(join(root, "dist", "index.js"), "// fixture MCP runtime\n");
 
       const failedAcceptanceProtocol = {
         ...protocol(commit.trim()),

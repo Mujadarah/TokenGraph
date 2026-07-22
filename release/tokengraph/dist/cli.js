@@ -1550,7 +1550,7 @@ function modelShellEnvironment(worktree) {
   };
   return environment;
 }
-function permissionFilesystem(gitCommonDirectory2, dependencySource) {
+function permissionFilesystem(gitCommonDirectory2, dependencySource, mcpRuntimePaths) {
   const workspaceRules = tomlInlineTable([
     [".", "write"],
     [".git", "read"],
@@ -1561,7 +1561,8 @@ function permissionFilesystem(gitCommonDirectory2, dependencySource) {
     `${tomlString(":minimal")}=${tomlString("read")}`,
     `${tomlString(":workspace_roots")}=${workspaceRules}`,
     `${tomlString(gitCommonDirectory2)}=${tomlString("read")}`,
-    ...dependencySource ? [`${tomlString(dependencySource)}=${tomlString("read")}`] : []
+    ...dependencySource ? [`${tomlString(dependencySource)}=${tomlString("read")}`] : [],
+    ...[...new Set(mcpRuntimePaths)].map((path) => `${tomlString(path)}=${tomlString("read")}`)
   ];
   return `{${rules.join(",")}}`;
 }
@@ -1722,6 +1723,15 @@ async function runPairedHostEvaluation(options) {
   const gitCommonValue = await git2(root, ["rev-parse", "--git-common-dir"]);
   const gitCommonDirectory2 = isAbsolute4(gitCommonValue) ? resolve5(gitCommonValue) : resolve5(root, gitCommonValue);
   const dependencySource = protocol.dependencySource ? resolve5(root, protocol.dependencySource) : void 0;
+  const resolvedMcp = resolveMcp(root, protocol.tokenGraphMcp);
+  const pluginCommit = await git2(root, ["rev-parse", `${protocol.plugin.commit}^{commit}`]);
+  if (pluginCommit.toLowerCase() !== protocol.plugin.commit.toLowerCase()) throw new Error("Protocol plugin commit is not exact.");
+  const mcpRuntimePaths = resolvedMcp.args.filter(isAbsolute4);
+  for (const runtimePath of mcpRuntimePaths) {
+    if (!beneath(root, runtimePath)) throw new Error("TokenGraph MCP runtime must remain beneath the evaluation root.");
+    const runtimeDiff = await runProcess("git", ["diff", "--quiet", pluginCommit, "--", relative4(root, runtimePath)], root, 3e4);
+    if (runtimeDiff.spawnFailed || runtimeDiff.exitCode !== 0) throw new Error("TokenGraph MCP runtime does not match the attested plugin commit.");
+  }
   for (const run of plan) {
     const task = protocol.tasks.find((candidate) => candidate.taskId === run.taskId);
     const runName = `${run.taskId}-repeat-${run.repeat}-${run.condition}`;
@@ -1769,7 +1779,6 @@ async function runPairedHostEvaluation(options) {
           phaseFailure = "acceptance-provisioning-failed";
         }
       }
-      const resolvedMcp = resolveMcp(worktree, protocol.tokenGraphMcp);
       let host = emptyProcessResult();
       let parsed;
       let parseFailure;
@@ -1793,7 +1802,7 @@ async function runPairedHostEvaluation(options) {
         "--config",
         `default_permissions=${tomlString("tokengraph-eval")}`,
         "--config",
-        `permissions.tokengraph-eval.filesystem=${permissionFilesystem(gitCommonDirectory2, dependencySource)}`,
+        `permissions.tokengraph-eval.filesystem=${permissionFilesystem(gitCommonDirectory2, dependencySource, mcpRuntimePaths)}`,
         "--config",
         "permissions.tokengraph-eval.network.enabled=false",
         "--config",
