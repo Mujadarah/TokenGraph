@@ -14,6 +14,7 @@ function canonicalValue(value: unknown): unknown {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
+        // Omitted means unknown, null means known-absent, and undefined is never serialized.
         .filter(([, entry]) => entry !== undefined)
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([key, entry]) => [key, canonicalValue(entry)])

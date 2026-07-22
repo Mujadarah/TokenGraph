@@ -631,7 +631,7 @@ function recommendedExactRead(plan: ContextPlan, project: ProjectIndex) {
 export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWorkspaceProvider } = {}): McpServer {
   const toolSurface = selectedToolSurface();
   const server = new McpServer(
-    { name: "tokengraph", version: "0.21.1" },
+    { name: "tokengraph", version: "0.22.0" },
     {
       instructions:
         "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. " +
