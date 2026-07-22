@@ -1319,7 +1319,7 @@ function rawReadCommand(command) {
 function matchesAcceptanceCommand(recorded, expected) {
   if (typeof recorded !== "string" || expected === void 0) return false;
   if (recorded === expected) return true;
-  const windowsWrapper = recorded.match(/^"[a-z]:\\windows\\system32\\windowspowershell\\v1\.0\\powershell\.exe" -Command '([^'\r\n]*)'$/i);
+  const windowsWrapper = recorded.match(/^"[a-z]:\\{1,2}windows\\{1,2}system32\\{1,2}windowspowershell\\{1,2}v1\.0\\{1,2}powershell\.exe" -Command '([^'\r\n]*)'$/i);
   return windowsWrapper?.[1] === expected;
 }
 function parseCodexJsonl(raw, options) {

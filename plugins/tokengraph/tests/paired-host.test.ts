@@ -79,7 +79,7 @@ describe("paired Codex host adapter", () => {
   it("attests only the exact Windows PowerShell wrapper emitted for the verifier", () => {
     const acceptanceCommand = "node .tokengraph-controller/acceptance.mjs";
     const acceptanceCommandHash = "d".repeat(64);
-    const wrapped = `"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '${acceptanceCommand}'`;
+    const wrapped = `"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" -Command '${acceptanceCommand}'`;
     const event = (command: string) => [
       { type: "item.completed", item: { id: "1", type: "command_execution", command, exit_code: 0, status: "completed" } },
       { type: "item.completed", item: { id: "2", type: "todo_list", items: [{ text: "finished", completed: true }] } },
