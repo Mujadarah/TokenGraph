@@ -305,10 +305,12 @@ describe("tokengraph benchmark harness and trust docs", () => {
       expect(text).toMatch(/none\s*\|\s*low\s*\|\s*medium\s*\|\s*high/i);
       expect(text).toMatch(/four.*exact.*slice.*711|711.*four.*exact.*slice/is);
       expect(text).toMatch(/fixture.*real-host|real-host.*fixture/is);
-      expect(text).toMatch(/2026-07-19-tokengraph-codex-manifest\.json/);
-      expect(text).toMatch(/2026-07-19-tokengraph-codex-report\.md/);
+      expect(text).toMatch(/2026-07-22-tokengraph-codex-manifest\.json/);
+      expect(text).toMatch(/2026-07-22-tokengraph-codex-report\.md/);
+      expect(text).toMatch(/2026-07-22-ts-reset-codex-report\.md/);
+      expect(text).toMatch(/two repositories/i);
       expect(text).toMatch(/promotion.*disabled|enforcement.*disabled/is);
-      expect(text).toMatch(/one repository.*does not\s+satisfy.*multi-repository B6/is);
+      expect(text).toMatch(/third.*repository.*remain.*multi-repository B6/is);
     }
 
     const hooksSource = await readFile(resolve("src", "hooks.ts"), "utf8");
@@ -607,7 +609,7 @@ describe("tokengraph release package command", () => {
     expect(releaseReadme).toMatch(/four.*exact.*slice.*711|711.*four.*exact.*slice/is);
     expect(releaseReadme).toMatch(/fixture.*real-host|real-host.*fixture/is);
     expect(releaseReadme).toMatch(/promotion.*disabled|enforcement.*disabled/is);
-    expect(releaseReadme).toMatch(/one repository.*does not\s+satisfy.*multi-repository B6/is);
+    expect(releaseReadme).toMatch(/two repositories.*third.*repository.*remain.*multi-repository B6/is);
     await expect(access(resolve(releaseRoot, "src"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "tests"))).rejects.toThrow();
     await expect(access(resolve(releaseRoot, "scripts"))).rejects.toThrow();

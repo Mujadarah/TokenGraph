@@ -118,12 +118,14 @@ bypasses, with a +174.5-token execution-inclusive median and +40.5-token p25.
 Four edit/debug tasks charge one hash-validated exact source slice each, for
 711 estimated tokens total. These are fixture estimates, not provider billing.
 
-The first reviewed real-host evaluation completed five counterbalanced ON/OFF
-pairs with no host or acceptance failures, but promotion and enforcement are
-disabled because every frozen gate did not pass. This one repository does not
-satisfy multi-repository B6 validation. See the repository
-`docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-manifest.json`
-and `docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-report.md`.
+Reviewed schema-v3 real-host campaigns now cover TokenGraph and
+`mattpocock/ts-reset`: ten counterbalanced ON/OFF pairs and twenty accepted
+traces across two repositories and two categories. Promotion and enforcement
+remain disabled because every frozen gate did not pass. The third repository
+remains outstanding, so multi-repository B6 validation is incomplete. See the
+repository `docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json`,
+`docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.md`, and
+`docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.md`.
 
 ## Packaging contract
 

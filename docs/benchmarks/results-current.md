@@ -64,6 +64,24 @@ multi-repository B6 validation. See the checked
 `docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json`
 and `docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.md`.
 
+The second eligible repository campaign evaluated `mattpocock/ts-reset` at a
+pinned commit. Its five counterbalanced pairs also completed all ten host turns
+and acceptance checks. ON used 4,140,943 total tokens and OFF used 4,790,975.
+The paired execution-inclusive savings estimate is +130,006.4 tokens with an
+interval of -222,194.2 to +458,705.6; the median is +371,094, p25 is -257,068,
+and three of five activated pairs are non-negative. Median Stage 0 latency was
+approximately 0.0389 ms and false bypasses were 0/5.
+
+Promotion remains disabled for this result too. It passes reviewed schema-v3
+evidence, quality non-inferiority, routing latency, and execution median, but
+fails minimum samples, token superiority, resources, complete router rates,
+execution p25, and the 80% non-negative threshold. Coverage now includes two
+repositories, two categories, ten pairs, and twenty accepted traces. The third
+eligible Next.js and Supabase repository campaign remains incomplete, so the
+frozen three-repository B6 target is not met. See the checked
+`docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-manifest.json` and
+`docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.md`.
+
 Every category remains low-confidence and does not activate calibration. These are repeatable fixture estimates, not exact billed tokens, autonomous-agent patch-quality evidence, or universal Codex/Claude results.
 
 2026-07-19 accounting note: these current results were regenerated after the estimator began charging the category-qualified completion footer. This is a deterministic accounting update; it does not add host evaluation evidence or change the R4 routing-promotion state.

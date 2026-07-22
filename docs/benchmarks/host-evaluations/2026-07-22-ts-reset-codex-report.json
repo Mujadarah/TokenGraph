@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 3,
+  "evidenceSource": "real-host",
+  "reviewed": true,
+  "promotionEligible": true,
+  "taskCount": 5,
+  "categoryCounts": {
+    "type-system": 5
+  },
+  "tokenDifference": {
+    "estimate": -130006.4,
+    "lower": -458705.6,
+    "upper": 232271.4,
+    "samples": 5
+  },
+  "qualityDifference": {
+    "estimate": 0,
+    "lower": 0,
+    "upper": 0,
+    "samples": 5
+  },
+  "executionInclusiveSavings": {
+    "estimate": 130006.4,
+    "lower": -222194.2,
+    "upper": 458705.6,
+    "samples": 5
+  },
+  "gates": {
+    "minimumSamples": false,
+    "realHostEvidence": true,
+    "qualityNonInferiority": true,
+    "tokenSuperiority": false,
+    "resources": false,
+    "routerRates": false,
+    "routerLatency": true,
+    "executionMedian": true,
+    "executionP25": false,
+    "nonNegativeActivated": false
+  },
+  "routerRates": {
+    "falseBypassRate": 0,
+    "falseActivationRate": null,
+    "beneficialCount": 5,
+    "boundedCount": 0,
+    "observationCount": 5,
+    "categoryCounts": {
+      "type-system": 5
+    },
+    "stage0LatencyMs": 0.03890000004321337,
+    "activationLatencyMs": 4304.342299999902,
+    "stage0LatencyMaximumMs": 5,
+    "stage0WithinBudget": true,
+    "stage0LatencySamples": 5,
+    "activationLatencySamples": 5,
+    "stage0FasterThanActivation": true
+  },
+  "executionInclusive": {
+    "median": 371094,
+    "p25": -257068,
+    "nonNegativeActivatedRate": 0.6
+  },
+  "categoryIntervals": {
+    "type-system": {
+      "tokenDifference": {
+        "estimate": -130006.4,
+        "lower": -458705.6,
+        "upper": 222194.2,
+        "samples": 5
+      },
+      "qualityDifference": {
+        "estimate": 0,
+        "lower": 0,
+        "upper": 0,
+        "samples": 5
+      },
+      "executionInclusiveSavings": {
+        "estimate": 130006.4,
+        "lower": -222194.2,
+        "upper": 458705.6,
+        "samples": 5
+      }
+    }
+  },
+  "enforcementEnabled": false,
+  "failures": [
+    "router-shadow-sample-incomplete"
+  ]
+}

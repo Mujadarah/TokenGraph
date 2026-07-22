@@ -311,4 +311,13 @@ describe("paired evaluation", () => {
     expect(manifest).toMatchObject({ schemaVersion: 3, evidenceSource: "real-host", reviewed: true });
     expect(checkedReport).toEqual(evaluateManifest(manifest));
   });
+
+  it("reproduces the checked-in ts-reset schema-v3 host evaluation decision", async () => {
+    const evidenceRoot = resolve("..", "..", "docs", "benchmarks", "host-evaluations");
+    const manifest = await loadEvaluationManifest(resolve(evidenceRoot, "2026-07-22-ts-reset-codex-manifest.json"));
+    const checkedReport = JSON.parse(await readFile(resolve(evidenceRoot, "2026-07-22-ts-reset-codex-report.json"), "utf8"));
+
+    expect(manifest).toMatchObject({ schemaVersion: 3, evidenceSource: "real-host", reviewed: true });
+    expect(checkedReport).toEqual(evaluateManifest(manifest));
+  });
 });

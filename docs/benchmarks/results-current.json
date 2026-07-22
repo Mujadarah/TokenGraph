@@ -141,6 +141,39 @@
       ]
     }
   },
+  "multiRepositoryRealHostCoverage": {
+    "targetRepositoryCount": 3,
+    "completedRepositoryCount": 2,
+    "completedCategoryCount": 2,
+    "completedPairCount": 10,
+    "completedTraceCount": 20,
+    "promotionComplete": false,
+    "evaluations": [
+      {
+        "repository": "Mujadarah/TokenGraph",
+        "category": "code",
+        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json",
+        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.json",
+        "pairCount": 5,
+        "traceCount": 10,
+        "acceptancePassed": 10,
+        "acceptanceFailed": 0,
+        "enforcementEnabled": false
+      },
+      {
+        "repository": "mattpocock/ts-reset",
+        "category": "type-system",
+        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-manifest.json",
+        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.json",
+        "pairCount": 5,
+        "traceCount": 10,
+        "acceptancePassed": 10,
+        "acceptanceFailed": 0,
+        "enforcementEnabled": false
+      }
+    ],
+    "remaining": "One eligible Next.js and Supabase repository evaluation"
+  },
   "releaseGate": {
     "passed": true,
     "failureReasons": []
