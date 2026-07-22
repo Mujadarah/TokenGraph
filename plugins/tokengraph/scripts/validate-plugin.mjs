@@ -262,7 +262,7 @@ assert(distServer.includes("tokengraph_update_config"), "built MCP server must r
 assert(distServer.includes("fullReindex"), "built MCP server must expose v0.8 full reindex option");
 assert(distServer.includes("indexingMode"), "built MCP server must report v0.8 indexing mode");
 assert(distServer.includes("maxEstimatedTokens"), "built MCP server must expose v0.8 planner token budget input");
-assert(packageJson.version === "0.21.1", "package version must be 0.21.1 for this release");
+assert(packageJson.version === "0.22.0", "package version must be 0.22.0 for this release");
 assert(distServer.includes("tokengraph_setup_status"), "built MCP server must register setup diagnostics");
 assert(distServer.includes("tokengraph_generate_wiki"), "built MCP server must register v0.9 wiki generator");
 assert(distServer.includes("tokengraph_show_wiki_page"), "built MCP server must register v0.9 wiki page reader");

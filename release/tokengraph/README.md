@@ -1,6 +1,6 @@
 # TokenGraph Release Plugin
 
-This folder is the installable TokenGraph 0.21.1 plugin for Codex and Claude Code users.
+This folder is the installable TokenGraph 0.22.0 plugin for Codex and Claude Code users.
 
 It includes the self-contained Node.js 22 MCP runtime at `dist/index.js`, bundled parser workers at `dist/typescript-worker.cjs` and `dist/polyglot-worker.js`, the bounded command runner at `dist/cli.js`, the cross-host lifecycle adapter at `dist/hooks.js`, hook and host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
 
@@ -16,7 +16,7 @@ codex plugin add tokengraph@tokengraph
 For an extracted release ZIP, add the bundle directory that contains this `tokengraph/` folder, not this plugin folder itself:
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.21.1
+codex plugin marketplace add C:\path\to\tokengraph-0.22.0
 codex plugin add tokengraph@tokengraph
 ```
 
@@ -51,9 +51,9 @@ Use `tokengraph_prepare_context` when planning is needed. Direct query, compress
 
 Routing publishes the frozen expectedBenefit enum none | low | medium | high: bypass paths use none, Stage 0 activation uses the recommended medium, Stage 1 indexed activation uses high, and low remains reserved.
 
-The checked-in deterministic fixture benchmark preserves 100% of critical constraints and recall with zero critical false negatives. Its 27 activated tasks have a +174.5-token execution-inclusive median, +40.5-token p25, and 81.5% non-negative rate; three bounded Stage-0 bypasses are not booked as savings. Four edit/debug tasks charge four exact source slices totaling 685 estimated tokens. Every category remains low-confidence, and these fixture estimates are not provider billing counts or autonomous-agent quality proof. JSON remains the default response format because the tabular experiment did not improve both token usage and quality.
+The checked-in deterministic fixture benchmark preserves 100% of critical constraints and recall with zero critical false negatives. Its 27 activated tasks have a +174.5-token execution-inclusive median, +40.5-token p25, and 81.5% non-negative rate; three bounded Stage-0 bypasses are not booked as savings. Four edit/debug tasks charge four exact source slices totaling 711 estimated tokens. Every category remains low-confidence, and these fixture estimates are not provider billing counts or autonomous-agent quality proof. JSON remains the default response format because the tabular experiment did not improve both token usage and quality.
 
-Real-host evidence is reported separately from fixture economics. The first reviewed evaluation completed five ON/OFF pairs with no host or acceptance failures, but promotion and enforcement are disabled because every frozen gate did not pass. This one repository does not satisfy multi-repository B6 validation. See the checked [manifest](https://github.com/Mujadarah/TokenGraph/blob/main/docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-manifest.json) and [report](https://github.com/Mujadarah/TokenGraph/blob/main/docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-report.md).
+Real-host evidence is reported separately from fixture economics. The first reviewed evaluation completed five ON/OFF pairs with no host or acceptance failures, but promotion and enforcement are disabled because every frozen gate did not pass. Only eligible reviewed schema-v3 evidence may promote routing. This one repository does not satisfy multi-repository B6 validation. See the checked [manifest](https://github.com/Mujadarah/TokenGraph/blob/main/docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-manifest.json) and [report](https://github.com/Mujadarah/TokenGraph/blob/main/docs/benchmarks/host-evaluations/2026-07-19-tokengraph-codex-report.md).
 
 The PostToolUse/Stop hook stores only a schema-versioned session hash, task id, trusted root, turn id, and timestamp in the host-provided plugin data directory. It never stores prompts, transcripts, or tool payloads. Normal Stop can request one pause-or-complete report or the exact canonical footer; interrupts and API failures are not completion events. Review and trust the hook definition before enabling it, or disable host hooks and call `tokengraph_task_report` explicitly.
 
@@ -68,4 +68,4 @@ pnpm package:plugin -- --release
 pnpm validate:plugin
 ```
 
-Version: 0.21.1
+Version: 0.22.0

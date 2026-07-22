@@ -85,11 +85,16 @@ jobs:
         working-directory: .
         run: |
           set -euo pipefail
+          cat > release-notes.md <<'EOF'
+          Automated release built from the tagged commit. The attached ZIP and SHA-256 checksum were produced by CI.
+
+          Routing enforcement remains disabled pending eligible reviewed schema-v3 real-host evidence. This release ships remediation and evidence tooling; it does not promote enforced routing or B7 polyglot indexing.
+          EOF
           gh release create "$TAG_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --draft \
             --title "TokenGraph $TAG_NAME" \
-            --notes "Automated release built from the tagged commit. The attached ZIP and SHA-256 checksum were produced by CI." \
+            --notes-file release-notes.md \
             "${{ steps.artifact.outputs.archive }}" \
             "${{ steps.artifact.outputs.checksum }}"

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.22.0 - 2026-07-22
 
 - Refreshed trust-doc benchmark claims to match restated R4 accounting and documented the omitted-vs-null serialization policy.
 - R4 review correction (2026-07-22): limited promotion to reviewed schema-v3 evidence, added a 5 ms Stage-0 latency ceiling, replaced file-only exact slices with explicit symbol or line-range locators, and moved acceptance into an attested least-privilege Codex sandbox.
