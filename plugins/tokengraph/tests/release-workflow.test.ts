@@ -17,7 +17,8 @@ describe("tagged release workflow", () => {
     expect(workflow).toContain("--draft");
     expect(workflow).toContain("--notes-file release-notes.md");
     expect(workflow).toMatch(/enforcement remains disabled/i);
-    expect(workflow).toMatch(/schema-v3 real-host evidence/i);
+    expect(workflow).toMatch(/reviewed schema-v3 campaigns now cover three repositories/i);
+    expect(workflow).toMatch(/multi-repository coverage target is met/i);
     expect(workflow).toContain('"${{ steps.artifact.outputs.archive }}"');
     expect(workflow).not.toContain('"plugins/tokengraph/${{ steps.artifact.outputs.archive }}"');
   });

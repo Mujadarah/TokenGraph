@@ -1,6 +1,6 @@
 # TokenGraph Release Plugin
 
-This folder is the installable TokenGraph 0.22.0 plugin for Codex and Claude Code users.
+This folder is the installable TokenGraph 0.22.1 plugin for Codex and Claude Code users.
 
 It includes the self-contained Node.js 22 MCP runtime at `dist/index.js`, bundled parser workers at `dist/typescript-worker.cjs` and `dist/polyglot-worker.js`, the bounded command runner at `dist/cli.js`, the cross-host lifecycle adapter at `dist/hooks.js`, hook and host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
 
@@ -16,7 +16,7 @@ codex plugin add tokengraph@tokengraph
 For an extracted release ZIP, add the bundle directory that contains this `tokengraph/` folder, not this plugin folder itself:
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.22.0
+codex plugin marketplace add C:\path\to\tokengraph-0.22.1
 codex plugin add tokengraph@tokengraph
 ```
 
@@ -68,4 +68,4 @@ pnpm package:plugin -- --release
 pnpm validate:plugin
 ```
 
-Version: 0.22.0
+Version: 0.22.1

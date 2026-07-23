@@ -88,7 +88,7 @@ jobs:
           cat > release-notes.md <<'EOF'
           Automated release built from the tagged commit. The attached ZIP and SHA-256 checksum were produced by CI.
 
-          Routing enforcement remains disabled pending eligible reviewed schema-v3 real-host evidence. This release ships remediation and evidence tooling; it does not promote enforced routing or B7 polyglot indexing.
+          Reviewed schema-v3 campaigns now cover three repositories, three categories, 15 paired runs, and 30 accepted traces. The multi-repository coverage target is met, but the frozen promotion gates do not all pass, so routing enforcement remains disabled and B7 polyglot indexing remains inactive.
           EOF
           gh release create "$TAG_NAME" \
             --repo "$GITHUB_REPOSITORY" \

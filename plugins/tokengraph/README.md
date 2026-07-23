@@ -1,6 +1,6 @@
 # TokenGraph Source Plugin
 
-This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.22.0. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
+This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.22.1. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
 
 ## Development
 

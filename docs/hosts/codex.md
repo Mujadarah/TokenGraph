@@ -57,10 +57,10 @@ A paused task id is terminal. Start a new task with `tokengraph_prepare_context`
 
 ## Install an extracted release bundle
 
-Extract `tokengraph-0.22.0.zip`, then add the extracted bundle root:
+Extract `tokengraph-0.22.1.zip`, then add the extracted bundle root:
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.22.0
+codex plugin marketplace add C:\path\to\tokengraph-0.22.1
 codex plugin add tokengraph@tokengraph
 ```
 
