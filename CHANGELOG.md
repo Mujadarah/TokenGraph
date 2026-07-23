@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.1 - 2026-07-23
+
+- Recorded reviewed schema-v3 campaigns across TokenGraph, `mattpocock/ts-reset`, and `imbhargav5/nextbase-nextjs-supabase-starter`: 15 counterbalanced ON/OFF pairs and 30 accepted traces across three repositories and three categories. The multi-repository B6 coverage target is met, but routing remains in shadow mode and B7 remains inactive because the frozen promotion gates do not all pass.
+- Hardened external host replay with pinned repository and protocol inputs, approved verifier locations, independently pinned verifier Git blobs, retained failure evidence, and stable Windows integration execution.
+- Refreshed README, roadmap, trust limitations, benchmark results, and future release notes to match the completed evidence campaign and its recorded non-promotion decision.
+
 ## 0.22.0 - 2026-07-22
 
 - Refreshed trust-doc benchmark claims to match restated R4 accounting and documented the omitted-vs-null serialization policy.
