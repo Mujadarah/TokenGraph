@@ -12,7 +12,7 @@ TokenGraph is a local-first MCP plugin for Codex and Claude Code that helps codi
 - **Trust-bounded:** the host must identify the workspace; installed plugin launches fail closed instead of trusting an arbitrary path.
 - **Evidence-led:** deterministic benchmarks and reviewed real-host traces are checked into the repository, while automatic routing stays in shadow mode until every promotion gate passes.
 
-Current release: `0.22.1` · Runtime: Node.js 22 or newer · Source-available under the repository [license](LICENSE).
+Current release: `0.22.1` | Runtime: Node.js 22 or newer | Source-available under the repository [license](LICENSE).
 
 ## Install from GitHub
 
