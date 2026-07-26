@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -18,6 +18,7 @@ import {
 const hookEntry = resolve(process.env.TOKENGRAPH_HOOK_ENTRY ?? resolve("dist", "hooks.js"));
 const hookPluginRoot = resolve(dirname(hookEntry), "..");
 const roots: string[] = [];
+const attestationPaths: string[] = [];
 
 async function makeRoot(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
@@ -48,7 +49,7 @@ interface HookRun {
 }
 
 async function runHook(
-  event: "post-tool-use" | "stop" | "stop-failure",
+  event: "post-tool-use" | "session-end" | "session-start" | "stop" | "stop-failure" | "user-prompt-submit",
   input: Record<string, unknown>,
   env: Record<string, string | undefined> = {}
 ): Promise<HookRun> {
@@ -89,6 +90,15 @@ async function runHook(
     });
     child.stdin.end(`${JSON.stringify(input)}\n`);
   });
+}
+
+async function attestationPath(sessionId: string): Promise<string> {
+  const canonicalPluginRoot = await realpath(hookPluginRoot);
+  const pluginHash = createHash("sha256").update(canonicalPluginRoot).digest("hex");
+  const sessionIdHash = createHash("sha256").update(sessionId).digest("hex");
+  const path = join(tmpdir(), "tokengraph-host-workspaces", pluginHash, `${sessionIdHash}.json`);
+  attestationPaths.push(path);
+  return path;
 }
 
 function pointerPath(dataRoot: string, sessionId: string): string {
@@ -140,10 +150,55 @@ async function attachPointer(
 }
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all([
+    ...roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    ...attestationPaths.splice(0).map((path) => rm(path, { force: true }))
+  ]);
 });
 
 describe("built lifecycle hook process", () => {
+  it("attests only the host session workspace and removes it when that session ends", async () => {
+    const root = await makeRoot("tokengraph-hook-workspace-");
+    const sessionId = randomUUID();
+    const path = await attestationPath(sessionId);
+    const secret = "prompt-content-must-not-persist";
+    const env = { PLUGIN_ROOT: hookPluginRoot };
+
+    const started = await runHook("session-start", {
+      hook_event_name: "SessionStart",
+      session_id: sessionId,
+      cwd: root,
+      source: "startup",
+      prompt: secret
+    }, env);
+
+    expect(started.code).toBe(0);
+    expect(started.output).toEqual({});
+    const storedText = await readFile(path, "utf8");
+    const stored = JSON.parse(storedText) as Record<string, unknown>;
+    expect(Object.keys(stored).sort()).toEqual([
+      "pluginRootHash", "root", "schemaId", "schemaVersion", "sessionHash", "updatedAt"
+    ].sort());
+    expect(stored).toMatchObject({
+      schemaId: "tokengraph-host-workspace",
+      schemaVersion: 1,
+      pluginRootHash: createHash("sha256").update(await realpath(hookPluginRoot)).digest("hex"),
+      sessionHash: createHash("sha256").update(sessionId).digest("hex"),
+      root: await realpath(root)
+    });
+    expect(storedText).not.toContain(sessionId);
+    expect(storedText).not.toContain(secret);
+
+    const ended = await runHook("session-end", {
+      hook_event_name: "SessionEnd",
+      session_id: sessionId,
+      cwd: root,
+      reason: "other"
+    }, env);
+    expect(ended.output).toEqual({});
+    await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("extracts compact prepare from the real single-TextContent response and host cwd without persisting response text", async () => {
     const root = await makeRoot("tokengraph-hook-root-");
     const dataRoot = await makeRoot("tokengraph-hook-data-");
@@ -586,11 +641,22 @@ describe("built lifecycle hook process", () => {
 });
 
 describe("hook manifest contract", () => {
-  it("wires task-aware PostToolUse and Stop through the self-contained Node adapter only", async () => {
+  it("wires workspace attestation and task lifecycle through the self-contained Node adapter only", async () => {
     const manifest = JSON.parse(await readFile(resolve("hooks", "hooks.json"), "utf8")) as {
       hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command: string }> }>>;
     };
-    expect(Object.keys(manifest.hooks).sort()).toEqual(["PostToolUse", "Stop"]);
+    expect(Object.keys(manifest.hooks).sort()).toEqual([
+      "PostToolUse", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"
+    ].sort());
+    expect(manifest.hooks.SessionStart[0]?.hooks).toEqual([
+      { type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks.js\" session-start" }
+    ]);
+    expect(manifest.hooks.UserPromptSubmit[0]?.hooks).toEqual([
+      { type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks.js\" user-prompt-submit" }
+    ]);
+    expect(manifest.hooks.SessionEnd[0]?.hooks).toEqual([
+      { type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks.js\" session-end" }
+    ]);
     expect(manifest.hooks.PostToolUse[0]?.matcher).toMatch(/tokengraph_prepare_context/);
     expect(manifest.hooks.PostToolUse[0]?.matcher).toMatch(/tokengraph_task_report/);
     expect(manifest.hooks.PostToolUse[0]?.hooks).toEqual([

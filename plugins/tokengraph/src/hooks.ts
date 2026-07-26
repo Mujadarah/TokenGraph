@@ -4,6 +4,7 @@ import { mkdir, open, readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { formatTaskReportFooter } from "./core/taskEstimator.js";
+import { attestHostWorkspace, removeHostWorkspaceAttestation } from "./core/hostWorkspace.js";
 import { attachTaskHostContext, loadTaskLedger, type TaskHost } from "./core/taskLedger.js";
 import { writeJsonAtomic } from "./core/storage.js";
 
@@ -61,6 +62,11 @@ function dataRoot(): string | undefined {
   // Host plugin-data directory for session pointers, not workspace .tokengraph state.
   const value = process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
   return isIdentifier(value) ? resolve(value) : undefined;
+}
+
+function installedPluginRoot(): string | undefined {
+  const value = process.env.PLUGIN_ROOT ?? process.env.CLAUDE_PLUGIN_ROOT;
+  return isIdentifier(value) && isAbsolute(value) ? resolve(value) : undefined;
 }
 
 function sessionsDirectory(root: string): string {
@@ -302,6 +308,34 @@ async function postToolUse(input: unknown): Promise<HookOutput> {
   return {};
 }
 
+async function attestSessionWorkspace(input: unknown): Promise<HookOutput> {
+  if (!isRecord(input) || !isIdentifier(input.session_id) || typeof input.cwd !== "string" || !isAbsolute(input.cwd)) {
+    return { systemMessage: "TokenGraph received invalid host workspace attestation input; automatic workspace setup was skipped." };
+  }
+  const pluginRoot = installedPluginRoot();
+  if (!pluginRoot) {
+    return { systemMessage: "TokenGraph plugin root is unavailable; automatic workspace setup was skipped." };
+  }
+  try {
+    await attestHostWorkspace(pluginRoot, input.session_id, input.cwd);
+    return {};
+  } catch {
+    return { systemMessage: "TokenGraph could not persist the host workspace attestation; automatic workspace setup was skipped." };
+  }
+}
+
+async function endSessionWorkspace(input: unknown): Promise<HookOutput> {
+  if (!isRecord(input) || !isIdentifier(input.session_id)) return {};
+  const pluginRoot = installedPluginRoot();
+  if (!pluginRoot) return {};
+  try {
+    await removeHostWorkspaceAttestation(pluginRoot, input.session_id);
+  } catch {
+    return { systemMessage: "TokenGraph could not remove the expired host workspace attestation." };
+  }
+  return {};
+}
+
 function retryWarning(ledgerStatus: string, footer?: string): HookOutput {
   if (ledgerStatus === "completed" && footer) {
     return { systemMessage: `TokenGraph completion footer is still missing. Append exactly: ${footer}` };
@@ -362,7 +396,15 @@ async function main(): Promise<void> {
   let output: HookOutput;
   try {
     const input = await readStdin();
-    output = event === "post-tool-use" ? await postToolUse(input) : event === "stop" ? await stop(input) : {};
+    output = event === "session-start" || event === "user-prompt-submit"
+      ? await attestSessionWorkspace(input)
+      : event === "session-end"
+        ? await endSessionWorkspace(input)
+        : event === "post-tool-use"
+          ? await postToolUse(input)
+          : event === "stop"
+            ? await stop(input)
+            : {};
   } catch {
     output = { systemMessage: "TokenGraph hook state could not be processed; lifecycle enforcement was skipped." };
   }

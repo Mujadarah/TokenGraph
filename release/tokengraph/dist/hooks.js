@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 // src/hooks.ts
-import { createHash as createHash2 } from "node:crypto";
-import { mkdir as mkdir2, open as open2, readFile as readFile4, readdir as readdir2, rm as rm3, stat as stat2 } from "node:fs/promises";
-import { dirname as dirname2, isAbsolute as isAbsolute2, join as join4, resolve as resolve4 } from "node:path";
+import { createHash as createHash3 } from "node:crypto";
+import { mkdir as mkdir2, open as open2, readFile as readFile5, readdir as readdir2, rm as rm4, stat as stat2 } from "node:fs/promises";
+import { dirname as dirname2, isAbsolute as isAbsolute3, join as join5, resolve as resolve4 } from "node:path";
 
 // src/core/taskEstimator.ts
 var TASK_ESTIMATOR_VERSION = "task-estimator-v2";
@@ -163,9 +163,11 @@ function formatTaskReportFooter(report) {
   return `${aggregateFooter.slice(0, -1)}; categories ${categoryText}.`;
 }
 
-// src/core/taskLedger.ts
-import { readFile as readFile3, readdir, rename as rename2, rm as rm2 } from "node:fs/promises";
-import { join as join3, resolve as resolve3 } from "node:path";
+// src/core/hostWorkspace.ts
+import { createHash } from "node:crypto";
+import { readFile as readFile2, realpath as realpath2, rm as rm2 } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute as isAbsolute2, join as join2 } from "node:path";
 
 // src/core/storage.ts
 import { randomUUID } from "node:crypto";
@@ -267,12 +269,60 @@ async function assertNoSymbolicLinkComponents(path) {
   }
 }
 
+// src/core/hostWorkspace.ts
+var HOST_WORKSPACE_SCHEMA_ID = "tokengraph-host-workspace";
+var HOST_WORKSPACE_SCHEMA_VERSION = 1;
+var HOST_WORKSPACE_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
+var HOST_WORKSPACE_FUTURE_TOLERANCE_MS = 5 * 60 * 1e3;
+function isIdentifier(value) {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 1024;
+}
+function hash(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+async function attestationIdentity(pluginRoot, sessionId) {
+  if (!isIdentifier(sessionId)) throw new Error("Host session id must be non-empty.");
+  if (!isAbsolute2(pluginRoot)) throw new Error("Plugin root must be absolute.");
+  const pluginRootHash = hash(await realpath2(pluginRoot));
+  const sessionHash2 = hash(sessionId);
+  return {
+    path: join2(tmpdir(), "tokengraph-host-workspaces", pluginRootHash, `${sessionHash2}.json`),
+    pluginRootHash,
+    sessionHash: sessionHash2
+  };
+}
+async function attestHostWorkspace(pluginRoot, sessionId, workspaceRoot, now = /* @__PURE__ */ new Date()) {
+  if (!isAbsolute2(workspaceRoot)) throw new Error("Host workspace root must be absolute.");
+  const [identity, root] = await Promise.all([
+    attestationIdentity(pluginRoot, sessionId),
+    realpath2(workspaceRoot)
+  ]);
+  const attestation = {
+    schemaId: HOST_WORKSPACE_SCHEMA_ID,
+    schemaVersion: HOST_WORKSPACE_SCHEMA_VERSION,
+    pluginRootHash: identity.pluginRootHash,
+    sessionHash: identity.sessionHash,
+    root,
+    updatedAt: now.toISOString()
+  };
+  await writeJsonAtomic(identity.path, attestation);
+}
+async function removeHostWorkspaceAttestation(pluginRoot, sessionId) {
+  const identity = await attestationIdentity(pluginRoot, sessionId);
+  await assertNoSymbolicLinkComponents(identity.path);
+  await rm2(identity.path, { force: true });
+}
+
+// src/core/taskLedger.ts
+import { readFile as readFile4, readdir, rename as rename2, rm as rm3 } from "node:fs/promises";
+import { join as join4, resolve as resolve3 } from "node:path";
+
 // src/core/repositoryIdentity.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createHash } from "node:crypto";
-import { access, readFile as readFile2 } from "node:fs/promises";
-import { join as join2, resolve as resolve2 } from "node:path";
+import { createHash as createHash2 } from "node:crypto";
+import { access, readFile as readFile3 } from "node:fs/promises";
+import { join as join3, resolve as resolve2 } from "node:path";
 var execFileAsync = promisify(execFile);
 var LOCAL_EXCLUDE_WARNING = "TokenGraph could not update .git/info/exclude; add this exact line manually: .tokengraph/";
 var setupWarnings = /* @__PURE__ */ new Map();
@@ -294,7 +344,7 @@ async function ensureLocalExclude(root) {
     await withFileLock(`${lockKey}.lock`, async () => {
       let existing = "";
       try {
-        existing = await readFile2(path, "utf8");
+        existing = await readFile3(path, "utf8");
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
@@ -310,7 +360,7 @@ async function ensureLocalExclude(root) {
   }
 }
 function digest(value) {
-  return createHash("sha256").update(value).digest("hex");
+  return createHash2("sha256").update(value).digest("hex");
 }
 async function remoteIdentity(root) {
   const remotes = await git(root, "remote", "get-url", "--all", "origin");
@@ -329,9 +379,9 @@ function sanitizeRemote(value) {
   }
 }
 async function loadOrCreateRepositoryId(directory) {
-  const path = join2(directory, "identity.json");
+  const path = join3(directory, "identity.json");
   try {
-    const parsed = JSON.parse(await readFile2(path, "utf8"));
+    const parsed = JSON.parse(await readFile3(path, "utf8"));
     if (parsed.schemaVersion === 1 && typeof parsed.repositoryId === "string" && parsed.repositoryId.length >= 16) return parsed.repositoryId;
   } catch (error) {
     if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
@@ -342,7 +392,7 @@ ${Math.random()}`);
   const lockKey = await canonicalPersistenceLockKey(directory, "identity.json");
   await withFileLock(`${lockKey}.lock`, async () => {
     try {
-      const existing = JSON.parse(await readFile2(path, "utf8"));
+      const existing = JSON.parse(await readFile3(path, "utf8"));
       if (existing.schemaVersion === 1 && typeof existing.repositoryId === "string" && existing.repositoryId.length >= 16) return;
     } catch (error) {
       if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
@@ -350,7 +400,7 @@ ${Math.random()}`);
     await writeJsonAtomic(path, { schemaVersion: 1, repositoryId });
   });
   try {
-    const persisted = JSON.parse(await readFile2(path, "utf8"));
+    const persisted = JSON.parse(await readFile3(path, "utf8"));
     return typeof persisted.repositoryId === "string" ? persisted.repositoryId : repositoryId;
   } catch {
     return repositoryId;
@@ -390,7 +440,7 @@ ${firstCommit}`);
   };
 }
 function repositoryStateDirectory(root, commonDirectory) {
-  return commonDirectory ? join2(commonDirectory, "tokengraph") : join2(resolve2(root), ".tokengraph", "repository");
+  return commonDirectory ? join3(commonDirectory, "tokengraph") : join3(resolve2(root), ".tokengraph", "repository");
 }
 
 // src/core/taskLedger.ts
@@ -404,11 +454,11 @@ function assertTaskId(taskId) {
   }
 }
 function tasksDirectory(root) {
-  return join3(resolve3(root), ".tokengraph", "tasks");
+  return join4(resolve3(root), ".tokengraph", "tasks");
 }
 function taskLedgerPath(root, taskId) {
   assertTaskId(taskId);
-  return join3(tasksDirectory(root), `${taskId}.json`);
+  return join4(tasksDirectory(root), `${taskId}.json`);
 }
 function isRecord2(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -418,11 +468,11 @@ function isTimestamp(value) {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
 }
-function isIdentifier(value) {
+function isIdentifier2(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 function isOptionalIdentifier(value) {
-  return value === void 0 || isIdentifier(value);
+  return value === void 0 || isIdentifier2(value);
 }
 function reconstructQualityCheck(value) {
   if (!isRecord2(value) || typeof value.name !== "string" || typeof value.passed !== "boolean") return void 0;
@@ -449,7 +499,7 @@ function reconstructEvent(value) {
 }
 function reconstructOutcome(value) {
   if (!isRecord2(value) || !Array.isArray(value.evidence)) return void 0;
-  if (!isIdentifier(value.id) || !isIdentifier(value.taskId) || typeof value.summary !== "string" || value.summary.trim().length === 0 || !["verified", "proposed", "failed"].includes(String(value.status)) || !value.evidence.every((entry) => isIdentifier(entry)) || !isTimestamp(value.createdAt) || value.staleAt !== void 0 && !isTimestamp(value.staleAt) || value.sourceFingerprint !== void 0 && !isIdentifier(value.sourceFingerprint) || !isIdentifier(value.branch) || !isIdentifier(value.worktreeId) || !isIdentifier(value.headCommit)) return void 0;
+  if (!isIdentifier2(value.id) || !isIdentifier2(value.taskId) || typeof value.summary !== "string" || value.summary.trim().length === 0 || !["verified", "proposed", "failed"].includes(String(value.status)) || !value.evidence.every((entry) => isIdentifier2(entry)) || !isTimestamp(value.createdAt) || value.staleAt !== void 0 && !isTimestamp(value.staleAt) || value.sourceFingerprint !== void 0 && !isIdentifier2(value.sourceFingerprint) || !isIdentifier2(value.branch) || !isIdentifier2(value.worktreeId) || !isIdentifier2(value.headCommit)) return void 0;
   return {
     id: value.id,
     taskId: value.taskId,
@@ -513,7 +563,7 @@ function reconstructTaskLedger(value, expectedTaskId) {
 }
 function isRepositoryIdentity(value) {
   if (!isRecord2(value)) return false;
-  return ["repositoryId", "repositoryFingerprint", "workspaceId", "worktreeId", "branch", "headCommit"].every((key) => isIdentifier(value[key]));
+  return ["repositoryId", "repositoryFingerprint", "workspaceId", "worktreeId", "branch", "headCommit"].every((key) => isIdentifier2(value[key]));
 }
 function reconstructRoutingObservation(value) {
   if (!isRecord2(value)) return void 0;
@@ -571,8 +621,8 @@ async function attachTaskHostContext(root, taskId, context) {
     if (context.host !== "codex" && context.host !== "claude" && context.host !== "unknown") {
       throw new Error("Host context must identify codex, claude, or unknown.");
     }
-    if (!isIdentifier(context.sessionId)) throw new Error("Session id must be non-empty.");
-    if (!isIdentifier(context.turnId)) throw new Error("Turn id must be non-empty.");
+    if (!isIdentifier2(context.sessionId)) throw new Error("Session id must be non-empty.");
+    if (!isIdentifier2(context.turnId)) throw new Error("Turn id must be non-empty.");
     if (context.host !== "unknown" && ledger.host !== "unknown" && ledger.host !== context.host) {
       throw new Error(`Host context conflict: task is already associated with ${ledger.host}.`);
     }
@@ -590,7 +640,7 @@ async function attachTaskHostContext(root, taskId, context) {
 async function loadTaskLedger(root, taskId) {
   const path = taskLedgerPath(root, taskId);
   try {
-    const parsed = JSON.parse(await readFile3(path, "utf8"));
+    const parsed = JSON.parse(await readFile4(path, "utf8"));
     if (isRecord2(parsed) && typeof parsed.schemaVersion === "number" && parsed.schemaVersion > TASK_LEDGER_SCHEMA_VERSION) {
       throw new Error(`Task ledger schema ${parsed.schemaVersion} is newer than supported schema ${TASK_LEDGER_SCHEMA_VERSION}; refusing to modify it.`);
     }
@@ -650,7 +700,7 @@ var TASK_AWARE_TOOLS = /* @__PURE__ */ new Set([
 function isRecord3(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function isIdentifier2(value) {
+function isIdentifier3(value) {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 1024;
 }
 function isTimestamp2(value) {
@@ -659,25 +709,29 @@ function isTimestamp2(value) {
   return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
 }
 function sessionHash(sessionId) {
-  return createHash2("sha256").update(sessionId).digest("hex");
+  return createHash3("sha256").update(sessionId).digest("hex");
 }
 function dataRoot() {
   const value = process.env.PLUGIN_DATA ?? process.env.CLAUDE_PLUGIN_DATA;
-  return isIdentifier2(value) ? resolve4(value) : void 0;
+  return isIdentifier3(value) ? resolve4(value) : void 0;
+}
+function installedPluginRoot() {
+  const value = process.env.PLUGIN_ROOT ?? process.env.CLAUDE_PLUGIN_ROOT;
+  return isIdentifier3(value) && isAbsolute3(value) ? resolve4(value) : void 0;
 }
 function sessionsDirectory(root) {
-  return join4(root, "sessions");
+  return join5(root, "sessions");
 }
-function pointerPath(root, hash) {
-  if (!HASH_PATTERN.test(hash)) throw new Error("Invalid session hash.");
-  return join4(sessionsDirectory(root), `${hash}.json`);
+function pointerPath(root, hash2) {
+  if (!HASH_PATTERN.test(hash2)) throw new Error("Invalid session hash.");
+  return join5(sessionsDirectory(root), `${hash2}.json`);
 }
 function reconstructPointer(value, expectedHash) {
   if (!isRecord3(value)) return void 0;
   const keys = Object.keys(value).sort();
   const expectedKeys = ["root", "schemaId", "schemaVersion", "sessionHash", "taskId", "turnId", "updatedAt"].sort();
   if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) return void 0;
-  if (value.schemaId !== POINTER_SCHEMA_ID || value.schemaVersion !== POINTER_SCHEMA_VERSION || value.sessionHash !== expectedHash || typeof value.taskId !== "string" || !UUID_PATTERN2.test(value.taskId) || typeof value.root !== "string" || !isAbsolute2(value.root) || !isIdentifier2(value.turnId) || !isTimestamp2(value.updatedAt)) {
+  if (value.schemaId !== POINTER_SCHEMA_ID || value.schemaVersion !== POINTER_SCHEMA_VERSION || value.sessionHash !== expectedHash || typeof value.taskId !== "string" || !UUID_PATTERN2.test(value.taskId) || typeof value.root !== "string" || !isAbsolute3(value.root) || !isIdentifier3(value.turnId) || !isTimestamp2(value.updatedAt)) {
     return void 0;
   }
   return {
@@ -690,10 +744,10 @@ function reconstructPointer(value, expectedHash) {
     updatedAt: value.updatedAt
   };
 }
-async function loadPointer(root, hash) {
+async function loadPointer(root, hash2) {
   try {
-    const parsed = JSON.parse(await readFile4(pointerPath(root, hash), "utf8"));
-    const pointer = reconstructPointer(parsed, hash);
+    const parsed = JSON.parse(await readFile5(pointerPath(root, hash2), "utf8"));
+    const pointer = reconstructPointer(parsed, hash2);
     return pointer ? { status: "valid", pointer } : { status: "corrupt" };
   } catch (error) {
     if (error.code === "ENOENT") return { status: "missing" };
@@ -727,13 +781,13 @@ async function withPointerLock(path, operation) {
         return await operation();
       } finally {
         await handle.close();
-        await retryTransientWindowsFs2(async () => rm3(lockPath, { force: true }));
+        await retryTransientWindowsFs2(async () => rm4(lockPath, { force: true }));
       }
     } catch (error) {
       if (error.code !== "EEXIST" && !isTransientWindowsFsError2(error)) throw error;
       try {
         const lockStats = await stat2(lockPath);
-        if (Date.now() - lockStats.mtimeMs > LOCK_STALE_MS) await rm3(lockPath, { force: true });
+        if (Date.now() - lockStats.mtimeMs > LOCK_STALE_MS) await rm4(lockPath, { force: true });
       } catch (lockError) {
         if (lockError.code !== "ENOENT") throw lockError;
       }
@@ -752,21 +806,21 @@ async function prunePointers(root, now = /* @__PURE__ */ new Date()) {
   }
   const cutoff = now.getTime() - POINTER_RETENTION_MS;
   await Promise.all(files.filter((file) => HASH_PATTERN.test(file.slice(0, -5)) && file.endsWith(".json")).map(async (file) => {
-    const hash = file.slice(0, -5);
-    const path = pointerPath(root, hash);
+    const hash2 = file.slice(0, -5);
+    const path = pointerPath(root, hash2);
     await withPointerLock(path, async () => {
-      const loaded = await loadPointer(root, hash);
+      const loaded = await loadPointer(root, hash2);
       if (loaded.status === "missing") return;
       const expired = loaded.status === "valid" ? Date.parse(loaded.pointer.updatedAt) < cutoff : (await stat2(path)).mtimeMs < cutoff;
-      if (expired) await retryTransientWindowsFs2(async () => rm3(path, { force: true }));
+      if (expired) await retryTransientWindowsFs2(async () => rm4(path, { force: true }));
     });
   }));
 }
 function detectHost() {
   const explicit = process.env.TOKENGRAPH_HOOK_HOST;
   if (explicit === "codex" || explicit === "claude") return explicit;
-  if (isIdentifier2(process.env.PLUGIN_ROOT)) return "codex";
-  if (isIdentifier2(process.env.CLAUDE_PLUGIN_ROOT)) return "claude";
+  if (isIdentifier3(process.env.PLUGIN_ROOT)) return "codex";
+  if (isIdentifier3(process.env.CLAUDE_PLUGIN_ROOT)) return "claude";
   return "unknown";
 }
 function normalizeToolName(value) {
@@ -800,25 +854,25 @@ function responseReference(response, toolInput, hookInput, previous) {
     process.env.CLAUDE_PROJECT_DIR,
     process.env.TOKENGRAPH_WORKSPACE_ROOT
   ];
-  const root = candidates.find((candidate) => typeof candidate === "string" && isAbsolute2(candidate));
+  const root = candidates.find((candidate) => typeof candidate === "string" && isAbsolute3(candidate));
   return root ? { taskId: payload.taskId, root } : void 0;
 }
 function taskInputReference(value, previous) {
   if (!isRecord3(value) || typeof value.taskId !== "string" || !UUID_PATTERN2.test(value.taskId)) return void 0;
   if (typeof value.root === "string") {
-    return isAbsolute2(value.root) ? { taskId: value.taskId, root: value.root } : void 0;
+    return isAbsolute3(value.root) ? { taskId: value.taskId, root: value.root } : void 0;
   }
   if (value.root !== void 0 || previous.status !== "valid" || previous.pointer.taskId !== value.taskId) return void 0;
   return { taskId: value.taskId, root: previous.pointer.root };
 }
 function turnId(input) {
-  if (isIdentifier2(input.turn_id)) return input.turn_id;
-  if (isIdentifier2(input.prompt_id)) return input.prompt_id;
-  if (isIdentifier2(input.tool_use_id)) return input.tool_use_id;
+  if (isIdentifier3(input.turn_id)) return input.turn_id;
+  if (isIdentifier3(input.prompt_id)) return input.prompt_id;
+  if (isIdentifier3(input.tool_use_id)) return input.tool_use_id;
   return void 0;
 }
 async function postToolUse(input) {
-  if (!isRecord3(input) || !isIdentifier2(input.session_id)) return {};
+  if (!isRecord3(input) || !isIdentifier3(input.session_id)) return {};
   const currentSessionId = input.session_id;
   const toolName = normalizeToolName(input.tool_name);
   if (!toolName) return {};
@@ -826,13 +880,13 @@ async function postToolUse(input) {
   if (!pluginData) {
     return { systemMessage: "TokenGraph plugin data is unavailable; task lifecycle tracking was skipped." };
   }
-  const hash = sessionHash(currentSessionId);
-  const previous = await loadPointer(pluginData, hash);
+  const hash2 = sessionHash(currentSessionId);
+  const previous = await loadPointer(pluginData, hash2);
   const reference = taskInputReference(input.tool_input, previous) ?? responseReference(input.tool_response, input.tool_input, input, previous);
   const currentTurnId = turnId(input);
   if (!reference || !currentTurnId) return {};
   try {
-    await withPointerLock(pointerPath(pluginData, hash), async () => {
+    await withPointerLock(pointerPath(pluginData, hash2), async () => {
       const ledger = await loadTaskLedger(reference.root, reference.taskId);
       if (!ledger) throw new Error("ledger-unavailable");
       const detected = detectHost();
@@ -845,13 +899,13 @@ async function postToolUse(input) {
       const pointer = {
         schemaId: POINTER_SCHEMA_ID,
         schemaVersion: POINTER_SCHEMA_VERSION,
-        sessionHash: hash,
+        sessionHash: hash2,
         taskId: reference.taskId,
         root: reference.root,
         turnId: currentTurnId,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       };
-      await retryTransientWindowsFs2(async () => writeJsonAtomic(pointerPath(pluginData, hash), pointer));
+      await retryTransientWindowsFs2(async () => writeJsonAtomic(pointerPath(pluginData, hash2), pointer));
     });
   } catch (error) {
     if (error instanceof Error && error.message === "ledger-unavailable") {
@@ -866,6 +920,32 @@ async function postToolUse(input) {
   await prunePointers(pluginData);
   return {};
 }
+async function attestSessionWorkspace(input) {
+  if (!isRecord3(input) || !isIdentifier3(input.session_id) || typeof input.cwd !== "string" || !isAbsolute3(input.cwd)) {
+    return { systemMessage: "TokenGraph received invalid host workspace attestation input; automatic workspace setup was skipped." };
+  }
+  const pluginRoot = installedPluginRoot();
+  if (!pluginRoot) {
+    return { systemMessage: "TokenGraph plugin root is unavailable; automatic workspace setup was skipped." };
+  }
+  try {
+    await attestHostWorkspace(pluginRoot, input.session_id, input.cwd);
+    return {};
+  } catch {
+    return { systemMessage: "TokenGraph could not persist the host workspace attestation; automatic workspace setup was skipped." };
+  }
+}
+async function endSessionWorkspace(input) {
+  if (!isRecord3(input) || !isIdentifier3(input.session_id)) return {};
+  const pluginRoot = installedPluginRoot();
+  if (!pluginRoot) return {};
+  try {
+    await removeHostWorkspaceAttestation(pluginRoot, input.session_id);
+  } catch {
+    return { systemMessage: "TokenGraph could not remove the expired host workspace attestation." };
+  }
+  return {};
+}
 function retryWarning(ledgerStatus, footer) {
   if (ledgerStatus === "completed" && footer) {
     return { systemMessage: `TokenGraph completion footer is still missing. Append exactly: ${footer}` };
@@ -873,7 +953,7 @@ function retryWarning(ledgerStatus, footer) {
   return { systemMessage: "TokenGraph task is still open without a pause-or-complete report; allowing stop to prevent a hook retry loop." };
 }
 async function stop(input) {
-  if (!isRecord3(input) || !isIdentifier2(input.session_id)) {
+  if (!isRecord3(input) || !isIdentifier3(input.session_id)) {
     return { systemMessage: "TokenGraph received invalid Stop hook input; lifecycle enforcement was skipped." };
   }
   const pluginData = dataRoot();
@@ -923,7 +1003,7 @@ async function main() {
   let output;
   try {
     const input = await readStdin();
-    output = event === "post-tool-use" ? await postToolUse(input) : event === "stop" ? await stop(input) : {};
+    output = event === "session-start" || event === "user-prompt-submit" ? await attestSessionWorkspace(input) : event === "session-end" ? await endSessionWorkspace(input) : event === "post-tool-use" ? await postToolUse(input) : event === "stop" ? await stop(input) : {};
   } catch {
     output = { systemMessage: "TokenGraph hook state could not be processed; lifecycle enforcement was skipped." };
   }

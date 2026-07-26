@@ -1,6 +1,6 @@
 # TokenGraph Release Plugin
 
-This folder is the installable TokenGraph 0.22.1 plugin for Codex and Claude Code users.
+This folder is the installable TokenGraph 0.22.2 plugin for Codex and Claude Code users.
 
 It includes the self-contained Node.js 22 MCP runtime at `dist/index.js`, bundled parser workers at `dist/typescript-worker.cjs` and `dist/polyglot-worker.js`, the bounded command runner at `dist/cli.js`, the cross-host lifecycle adapter at `dist/hooks.js`, hook and host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
 
@@ -16,7 +16,7 @@ codex plugin add tokengraph@tokengraph
 For an extracted release ZIP, add the bundle directory that contains this `tokengraph/` folder, not this plugin folder itself:
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.22.1
+codex plugin marketplace add C:\path\to\tokengraph-0.22.2
 codex plugin add tokengraph@tokengraph
 ```
 
@@ -28,7 +28,7 @@ Claude Code GitHub install:
 /reload-plugins
 ```
 
-Claude launches through `${CLAUDE_PLUGIN_ROOT}` and forwards `${CLAUDE_PROJECT_DIR}`. Codex must provide MCP Roots or inherit `TOKENGRAPH_WORKSPACE_ROOT`. Call `tokengraph_setup` before project tools; it diagnoses setup without granting filesystem trust.
+Claude launches through `${CLAUDE_PLUGIN_ROOT}` and forwards `${CLAUDE_PROJECT_DIR}`. On Codex, the reviewed lifecycle hook binds the host-generated working directory to the matching `CODEX_THREAD_ID`; MCP Roots and the explicit `TOKENGRAPH_WORKSPACE_ROOT` compatibility fallback remain supported. Call `tokengraph_setup` before project tools; it diagnoses setup without granting filesystem trust.
 
 ## Runtime
 
@@ -55,7 +55,7 @@ The checked-in deterministic fixture benchmark preserves 100% of critical constr
 
 Real-host evidence is reported separately from fixture economics. Reviewed schema-v3 campaigns cover TokenGraph, mattpocock/ts-reset, and imbhargav5/nextbase-nextjs-supabase-starter: fifteen counterbalanced ON/OFF pairs and thirty accepted traces across three repositories and three categories. The multi-repository B6 coverage target is met, but promotion and enforcement remain disabled because not all frozen gates passed. Only eligible reviewed schema-v3 evidence may promote routing. Routing stays in shadow mode and B7 remains dark. See the TokenGraph [report](https://github.com/Mujadarah/TokenGraph/blob/main/docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.md), the ts-reset [report](https://github.com/Mujadarah/TokenGraph/blob/main/docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.md), and the Nextbase [report](https://github.com/Mujadarah/TokenGraph/blob/main/docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-report.md).
 
-The PostToolUse/Stop hook stores only a schema-versioned session hash, task id, trusted root, turn id, and timestamp in the host-provided plugin data directory. It never stores prompts, transcripts, or tool payloads. Normal Stop can request one pause-or-complete report or the exact canonical footer; interrupts and API failures are not completion events. Review and trust the hook definition before enabling it, or disable host hooks and call `tokengraph_task_report` explicitly.
+The SessionStart/UserPromptSubmit bridge stores only schema/version, plugin and session hashes, trusted root, and timestamp under the operating-system temporary directory for up to 24 hours; SessionEnd removes it. The PostToolUse/Stop lifecycle pointer separately stores only a schema-versioned session hash, task id, trusted root, turn id, and timestamp in the host-provided plugin data directory. Neither stores raw session ids, prompts, transcripts, or tool payloads. Normal Stop can request one pause-or-complete report or the exact canonical footer; interrupts and API failures are not completion events. Review and trust the hook definition before enabling it, or disable host hooks and call `tokengraph_task_report` explicitly.
 
 ## Maintainers
 
@@ -68,4 +68,4 @@ pnpm package:plugin -- --release
 pnpm validate:plugin
 ```
 
-Version: 0.22.1
+Version: 0.22.2

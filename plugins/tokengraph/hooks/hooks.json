@@ -1,6 +1,36 @@
 {
   "description": "Track TokenGraph task lifecycle and require honest completion reports.",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks.js\" session-start"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks.js\" user-prompt-submit"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks.js\" session-end"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "(?:^|__)(?:tokengraph_prepare_context|tokengraph_query_context|tokengraph_compress|tokengraph_recall|tokengraph_analyze|tokengraph_propose_knowledge|tokengraph_task_report)$",

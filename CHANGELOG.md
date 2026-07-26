@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.2 - 2026-07-26
+
+- Added a Codex session workspace bridge that binds the host-generated hook `cwd` to the matching `CODEX_THREAD_ID`, so the globally installed plugin can discover each task's workspace without a machine-wide `TOKENGRAPH_WORKSPACE_ROOT`.
+- Kept workspace trust fail-closed: attestations are scoped to the installed plugin and session, expire after 24 hours, contain no prompt or transcript content, and cannot authorize another concurrent task's repository.
+- Retained explicit environment roots and MCP Roots as supported trust sources, with the environment variable documented as a compatibility fallback.
+
 ## 0.22.1 - 2026-07-23
 
 - Recorded reviewed schema-v3 campaigns across TokenGraph, `mattpocock/ts-reset`, and `imbhargav5/nextbase-nextjs-supabase-starter`: 15 counterbalanced ON/OFF pairs and 30 accepted traces across three repositories and three categories. The multi-repository B6 coverage target is met, but routing remains in shadow mode and B7 remains inactive because the frozen promotion gates do not all pass.

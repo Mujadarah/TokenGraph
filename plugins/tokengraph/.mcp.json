@@ -7,7 +7,8 @@
       ],
       "cwd": ".",
       "env_vars": [
-        "TOKENGRAPH_WORKSPACE_ROOT"
+        "TOKENGRAPH_WORKSPACE_ROOT",
+        "CODEX_THREAD_ID"
       ],
       "startup_timeout_sec": 20,
       "tool_timeout_sec": 120
