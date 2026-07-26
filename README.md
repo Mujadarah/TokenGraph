@@ -3,17 +3,20 @@
 [![CI](https://github.com/Mujadarah/TokenGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/Mujadarah/TokenGraph/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Mujadarah/TokenGraph)](https://github.com/Mujadarah/TokenGraph/releases/latest)
 
-TokenGraph is a local-first plugin for Codex and Claude Code. It indexes a trusted workspace locally, then helps coding agents use compact project maps, context plans, SQL summaries, wiki pages, memories, failure traces, and compressed logs before broad raw-file reads.
+TokenGraph is a local-first MCP plugin for Codex and Claude Code that helps coding agents spend less context rediscovering a repository. It indexes a trusted workspace locally, then routes agents through compact, task-scoped views of code, SQL, documentation, memories, and noisy tool output before broad raw-file reads.
 
-- No OpenAI or Anthropic API key required.
-- No cloud index, embeddings service, telemetry, or paid external service.
-- Current release: `0.22.1`.
-- Runtime: Node.js 22 or newer.
-- Source-available under the repository [license](LICENSE).
+## Why TokenGraph
+
+- **Local and self-contained:** no cloud index, embeddings service, telemetry, paid external service, or OpenAI/Anthropic API key.
+- **Task-scoped:** agents retrieve focused project maps, plans, summaries, failure traces, and exact source slices instead of dumping an entire index into context.
+- **Trust-bounded:** the host must identify the workspace; installed plugin launches fail closed instead of trusting an arbitrary path.
+- **Evidence-led:** deterministic benchmarks and reviewed real-host traces are checked into the repository, while automatic routing stays in shadow mode until every promotion gate passes.
+
+Current release: `0.22.1` | Runtime: Node.js 22 or newer | Source-available under the repository [license](LICENSE).
 
 ## Install from GitHub
 
-The GitHub marketplace route is the recommended installation path. It installs the committed, self-contained plugin under `release/tokengraph`; users do not run `pnpm install` or build TypeScript.
+The recommended path adds this GitHub repository as a plugin marketplace and installs the committed, self-contained package under `release/tokengraph`; users do not run `pnpm install` or build TypeScript.
 
 ### Codex
 
