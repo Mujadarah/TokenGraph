@@ -46,6 +46,7 @@ import { loadRun, summarizeRun } from "./core/runner.js";
 import { assertStorageReplacementAllowed, enforceStorageClassQuotas } from "./core/storagePolicy.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
+import { loadHostWorkspaceAttestation } from "./core/hostWorkspace.js";
 import { traceFailure } from "./core/failureTracer.js";
 import { MemoryStore } from "./core/memoryStore.js";
 import { buildContextPlan } from "./core/planner.js";
@@ -192,7 +193,13 @@ async function isPluginRoot(root: string): Promise<boolean> {
 }
 
 type TrustedWorkspaceProvider = () => Promise<string | undefined>;
-type TrustedWorkspaceSource = "CLAUDE_PROJECT_DIR" | "TOKENGRAPH_WORKSPACE_ROOT" | "mcp-roots" | "process-cwd" | "injected";
+type TrustedWorkspaceSource =
+  | "CLAUDE_PROJECT_DIR"
+  | "TOKENGRAPH_WORKSPACE_ROOT"
+  | "codex-session-hook"
+  | "mcp-roots"
+  | "process-cwd"
+  | "injected";
 
 interface TrustedWorkspaceCandidate {
   source: TrustedWorkspaceSource;
@@ -215,13 +222,20 @@ async function resolveTrustedWorkspace(server: McpServer): Promise<TrustedWorksp
   const codexRoot = process.env.TOKENGRAPH_WORKSPACE_ROOT?.trim();
   if (codexRoot) return { source: "TOKENGRAPH_WORKSPACE_ROOT", root: codexRoot };
 
+  const threadId = process.env.CODEX_THREAD_ID?.trim();
+  if (threadId) {
+    const attestation = await loadHostWorkspaceAttestation(ownPluginRoot(), threadId);
+    if (attestation.status === "valid") return { source: "codex-session-hook", root: attestation.root };
+  }
+
   try {
     const roots = await server.server.listRoots({}, { timeout: 1_000 });
     const fileRoot = roots.roots.find((root) => root.uri.startsWith("file://"));
-    return fileRoot ? { source: "mcp-roots", root: fileURLToPath(fileRoot.uri) } : undefined;
+    if (fileRoot) return { source: "mcp-roots", root: fileURLToPath(fileRoot.uri) };
   } catch {
-    return undefined;
+    // Some clients do not advertise MCP Roots.
   }
+  return undefined;
 }
 
 function detectedHost(): WorkspaceSetupStatus["host"] {
@@ -238,8 +252,9 @@ async function inspectWorkspaceSetup(server: McpServer, provider?: TrustedWorksp
     ? { source: "injected" as const, root: injected }
     : await resolveTrustedWorkspace(server) ?? (!pluginRootLaunch ? { source: "process-cwd" as const, root: cwd } : undefined);
   const nextSteps = [
-    "Codex PowerShell: $env:TOKENGRAPH_WORKSPACE_ROOT=(Get-Location).Path; codex",
-    "Codex POSIX shell: TOKENGRAPH_WORKSPACE_ROOT=\"$PWD\" codex",
+    "Codex: review and trust the TokenGraph lifecycle hooks, then start a new task so SessionStart can attest its working directory.",
+    "Codex compatibility fallback (PowerShell): $env:TOKENGRAPH_WORKSPACE_ROOT=(Get-Location).Path; codex",
+    "Codex compatibility fallback (POSIX): TOKENGRAPH_WORKSPACE_ROOT=\"$PWD\" codex",
     "Claude Code normally forwards CLAUDE_PROJECT_DIR automatically.",
     "After changing host configuration, start a new Codex task or run /reload-plugins in Claude Code."
   ];
@@ -631,7 +646,7 @@ function recommendedExactRead(plan: ContextPlan, project: ProjectIndex) {
 export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWorkspaceProvider } = {}): McpServer {
   const toolSurface = selectedToolSurface();
   const server = new McpServer(
-    { name: "tokengraph", version: "0.22.1" },
+    { name: "tokengraph", version: "0.22.2" },
     {
       instructions:
         "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. " +

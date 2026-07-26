@@ -1,6 +1,6 @@
 # TokenGraph Source Plugin
 
-This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.22.1. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
+This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.22.2. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
 
 ## Development
 
@@ -22,9 +22,10 @@ pnpm package:plugin -- --release --json
 TokenGraph project tools accept paths only inside a host-provided trusted workspace. Trust is resolved in this order:
 
 1. `CLAUDE_PROJECT_DIR` from Claude Code.
-2. `TOKENGRAPH_WORKSPACE_ROOT`, normally set before starting Codex.
-3. A file root returned through MCP Roots.
-4. The process working directory only when the server is not running from an installed plugin directory.
+2. `TOKENGRAPH_WORKSPACE_ROOT`, when explicitly set as a compatibility fallback.
+3. The Codex host workspace attested by the lifecycle hook for the matching `CODEX_THREAD_ID`.
+4. A file root returned through MCP Roots.
+5. The process working directory only when the server is not running from an installed plugin directory.
 
 `tokengraph_setup` is rootless and read-only. It reports whether setup is ready, the trust source, the selected tool surface, and exact recovery steps. It never accepts or grants a workspace. Filesystem roots, home directories, unreadable roots, and requested paths outside the trusted workspace remain blocked.
 
@@ -135,11 +136,11 @@ The installable plugin contains host manifests, MCP configuration, `hooks/hooks.
 
 ## Lifecycle hooks
 
-The default `hooks/hooks.json` is auto-discovered by Codex and Claude Code. PostToolUse associates task-aware core tools with a host session, while Stop asks for exactly one pause-or-complete `tokengraph_task_report` call or the exact stored canonical footer. A repeated Stop continuation never blocks again. Paused tasks, unrelated tools, interrupts, and API failures do not produce completion claims.
+The default `hooks/hooks.json` is auto-discovered by Codex and Claude Code. SessionStart and UserPromptSubmit attest the host-generated working directory for the matching Codex task, while SessionEnd removes that bridge record. PostToolUse associates task-aware core tools with a host session, while Stop asks for exactly one pause-or-complete `tokengraph_task_report` call or the exact stored canonical footer. A repeated Stop continuation never blocks again. Paused tasks, unrelated tools, interrupts, and API failures do not produce completion claims.
 
 Pause is terminal for that task id. Stop remains allowed for a paused task, but later task-aware calls are rejected. Start a new task through `tokengraph_prepare_context` or a direct intent call that omits `taskId`.
 
-The adapter reads documented hook fields and strictly parses only the single JSON `TextContent` result needed to capture a returned task id. It resolves the trusted root from an explicit absolute tool root, an existing pointer, or the host-provided working/project root. It stores a minimal 30-day session pointer in the host-provided plugin data directory: schema/version, a SHA-256 session hash, task id, trusted root, turn id, and timestamp. It does not store prompts, transcripts, tool inputs, tool responses, or raw response text. Missing or corrupt state fails open with an honest warning and never fabricates savings.
+The adapter reads documented hook fields and strictly parses only the single JSON `TextContent` result needed to capture a returned task id. The workspace bridge stores schema/version, SHA-256 plugin and session hashes, the host-provided root, and a timestamp under the operating-system temporary directory for up to 24 hours. The lifecycle adapter stores a separate minimal 30-day task pointer in the host-provided plugin data directory: schema/version, a SHA-256 session hash, task id, trusted root, turn id, and timestamp. It does not store raw session ids, prompts, transcripts, tool inputs, tool responses, or raw response text. Missing, corrupt, expired, or mismatched workspace attestations do not grant trust; missing or corrupt lifecycle state fails open with an honest warning and never fabricates savings.
 
 Codex users must review and trust plugin hooks before they run. Hooks can be disabled globally with `[features] hooks = false`; Claude Code users can inspect them with `/hooks` and disable all hooks with `"disableAllHooks": true`. When hooks are off or unavailable, call `tokengraph_task_report` explicitly.
 

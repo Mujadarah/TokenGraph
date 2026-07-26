@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -24,6 +24,7 @@ const tempRoots: string[] = [];
 let server: ChildProcessWithoutNullStreams | undefined;
 let advertisedRoots: Array<{ uri: string; name?: string }> | undefined;
 const serverEntry = resolve("dist/index.js");
+const hookEntry = resolve("dist/hooks.js");
 const coreToolNames = [
   "tokengraph_analyze",
   "tokengraph_compress",
@@ -178,6 +179,53 @@ async function stopServer() {
     });
     current.kill();
   });
+}
+
+async function runWorkspaceHook(event: "session-end" | "session-start", sessionId: string, cwd: string): Promise<void> {
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const child = spawn(process.execPath, [hookEntry, event], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        PLUGIN_ROOT: process.cwd(),
+        PLUGIN_DATA: undefined,
+        CLAUDE_PLUGIN_ROOT: undefined,
+        CLAUDE_PLUGIN_DATA: undefined
+      },
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.once("error", rejectPromise);
+    child.once("exit", (code) => {
+      if (code !== 0) {
+        rejectPromise(new Error(`Workspace hook failed (${code ?? "null"}): ${stderr}`));
+        return;
+      }
+      try {
+        expect(JSON.parse(stdout)).toEqual({});
+        resolvePromise();
+      } catch (error) {
+        rejectPromise(error);
+      }
+    });
+    child.stdin.end(`${JSON.stringify({
+      hook_event_name: event === "session-start" ? "SessionStart" : "SessionEnd",
+      session_id: sessionId,
+      cwd,
+      ...(event === "session-start" ? { source: "startup" } : { reason: "other" })
+    })}\n`);
+  });
+}
+
+async function workspaceAttestationPath(sessionId: string): Promise<string> {
+  const pluginHash = createHash("sha256").update(await realpath(process.cwd())).digest("hex");
+  const sessionHash = createHash("sha256").update(sessionId).digest("hex");
+  return join(tmpdir(), "tokengraph-host-workspaces", pluginHash, `${sessionHash}.json`);
 }
 
 beforeEach(() => {
@@ -1838,6 +1886,86 @@ describe("TokenGraph MCP stdio server", () => {
     expect(JSON.stringify(mapped)).toMatch(/trusted workspace root/i);
 
     await expect(access(join(root, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("uses only the Codex host workspace attested for the current thread", async () => {
+    const firstRoot = await makeRoot();
+    const secondRoot = await makeRoot();
+    const firstSession = randomUUID();
+    const secondSession = randomUUID();
+    await mkdir(join(firstRoot, "src"), { recursive: true });
+    await mkdir(join(secondRoot, "src"), { recursive: true });
+    await writeFile(join(firstRoot, "src", "first.ts"), "export const first = true;");
+    await writeFile(join(secondRoot, "src", "second.ts"), "export const second = true;");
+    await runWorkspaceHook("session-start", firstSession, firstRoot);
+    await runWorkspaceHook("session-start", secondSession, secondRoot);
+    await stopServer();
+    startServer(process.cwd(), {
+      TOKENGRAPH_WORKSPACE_ROOT: "",
+      CLAUDE_PROJECT_DIR: "",
+      CODEX_THREAD_ID: firstSession
+    });
+
+    await request(420, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-session-workspace-test", version: "0.22.2" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const setup = await request(421, "tools/call", {
+      name: "tokengraph_setup_status",
+      arguments: {}
+    });
+    expect(setup.structuredContent).toMatchObject({
+      status: "ready",
+      trustedWorkspace: { source: "codex-session-hook", root: firstRoot },
+      blockingReason: null,
+      pluginRootLaunch: true
+    });
+
+    const mapped = await request(422, "tools/call", {
+      name: "tokengraph_project_map",
+      arguments: { root: secondRoot }
+    });
+    expect(mapped.isError).toBe(true);
+    expect(JSON.stringify(mapped)).toMatch(/outside the trusted workspace/i);
+
+    await runWorkspaceHook("session-end", firstSession, firstRoot);
+    await runWorkspaceHook("session-end", secondSession, secondRoot);
+  });
+
+  it("fails closed for an expired Codex host workspace attestation", async () => {
+    const root = await makeRoot();
+    const sessionId = randomUUID();
+    await runWorkspaceHook("session-start", sessionId, root);
+    const path = await workspaceAttestationPath(sessionId);
+    const stored = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    await writeFile(path, `${JSON.stringify({ ...stored, updatedAt: "2000-01-01T00:00:00.000Z" }, null, 2)}\n`);
+    await stopServer();
+    startServer(process.cwd(), {
+      TOKENGRAPH_WORKSPACE_ROOT: "",
+      CLAUDE_PROJECT_DIR: "",
+      CODEX_THREAD_ID: sessionId
+    });
+
+    await request(423, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-expired-workspace-test", version: "0.22.2" }
+    });
+    send({ method: "notifications/initialized" });
+    const setup = await request(424, "tools/call", {
+      name: "tokengraph_setup_status",
+      arguments: {}
+    });
+    expect(setup.structuredContent).toMatchObject({
+      status: "blocked",
+      trustedWorkspace: null,
+      blockingReason: "missing-trusted-workspace"
+    });
+
+    await runWorkspaceHook("session-end", sessionId, root);
   });
 
   it("accepts a root inside the host-provided workspace when launched from the plugin root", async () => {

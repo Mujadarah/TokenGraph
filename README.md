@@ -12,7 +12,7 @@ TokenGraph is a local-first MCP plugin for Codex and Claude Code that helps codi
 - **Trust-bounded:** the host must identify the workspace; installed plugin launches fail closed instead of trusting an arbitrary path.
 - **Evidence-led:** deterministic benchmarks and reviewed real-host traces are checked into the repository, while automatic routing stays in shadow mode until every promotion gate passes.
 
-Current release: `0.22.1` | Runtime: Node.js 22 or newer | Source-available under the repository [license](LICENSE).
+Current release: `0.22.2` | Runtime: Node.js 22 or newer | Source-available under the repository [license](LICENSE).
 
 ## Install from GitHub
 
@@ -26,7 +26,7 @@ codex plugin add tokengraph@tokengraph
 codex plugin list --json
 ```
 
-Codex must provide a trusted project root. When the client does not support MCP Roots, start Codex from the project with the environment variable set:
+Codex must provide a trusted project root. TokenGraph's reviewed lifecycle hook attests the host-generated working directory for the matching task, so one global installation works across repositories without a machine-wide workspace variable. If hooks are disabled or untrusted and the client does not support MCP Roots, use the compatibility fallback before starting Codex:
 
 ```powershell
 $env:TOKENGRAPH_WORKSPACE_ROOT=(Get-Location).Path
@@ -37,7 +37,7 @@ codex
 TOKENGRAPH_WORKSPACE_ROOT="$PWD" codex
 ```
 
-Start a new task after installation or configuration changes. In Codex Desktop, the task should receive MCP Roots from the host or the app should be launched with `TOKENGRAPH_WORKSPACE_ROOT` already configured. During development launches, the process working directory is the final host-derived fallback only when the server is not running from an installed plugin directory. Installed plugin launches deliberately stay blocked rather than trusting an arbitrary tool argument.
+Start a new task after installation or configuration changes so `SessionStart` can attest that task's host working directory. Review and trust TokenGraph's hook definition when Codex prompts. During development launches, the process working directory is the final host-derived fallback only when the server is not running from an installed plugin directory. Installed plugin launches deliberately stay blocked rather than trusting an arbitrary tool argument.
 
 ### Claude Code
 
@@ -60,15 +60,15 @@ Claude Code forwards `CLAUDE_PROJECT_DIR` to TokenGraph automatically.
 
 ## Install the release ZIP
 
-Download `tokengraph-0.22.1.zip` from the [latest GitHub release](https://github.com/Mujadarah/TokenGraph/releases/latest) and extract it. The extracted directory is a standalone marketplace root containing both host catalogs and the installable `tokengraph/` plugin.
+Download `tokengraph-0.22.2.zip` from the [latest GitHub release](https://github.com/Mujadarah/TokenGraph/releases/latest) and extract it. The extracted directory is a standalone marketplace root containing both host catalogs and the installable `tokengraph/` plugin.
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.22.1
+codex plugin marketplace add C:\path\to\tokengraph-0.22.2
 codex plugin add tokengraph@tokengraph
 ```
 
 ```bash
-claude plugin marketplace add /path/to/tokengraph-0.22.1
+claude plugin marketplace add /path/to/tokengraph-0.22.2
 claude plugin install tokengraph@tokengraph
 ```
 

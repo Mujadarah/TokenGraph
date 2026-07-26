@@ -21,7 +21,9 @@ The marketplace resolves `tokengraph@tokengraph` to `release/tokengraph/`. Start
 
 ## Configure workspace trust
 
-TokenGraph must receive a trusted project root from the host. If Codex supplies MCP Roots, no environment variable is necessary. Otherwise, set `TOKENGRAPH_WORKSPACE_ROOT` before starting Codex:
+TokenGraph must receive a trusted project root from the host. Its reviewed `SessionStart` and `UserPromptSubmit` hooks attest Codex's host-generated `cwd` for the matching `CODEX_THREAD_ID`, so one installed plugin follows each task into its own repository without a global workspace variable. MCP Roots remain supported.
+
+If hooks are disabled or untrusted and Codex does not supply MCP Roots, set `TOKENGRAPH_WORKSPACE_ROOT` before starting Codex as a compatibility fallback:
 
 ```powershell
 $env:TOKENGRAPH_WORKSPACE_ROOT=(Get-Location).Path
@@ -32,15 +34,15 @@ codex
 TOKENGRAPH_WORKSPACE_ROOT="$PWD" codex
 ```
 
-For Codex Desktop, the task must receive MCP Roots or the app process must inherit `TOKENGRAPH_WORKSPACE_ROOT`. A root argument passed by a tool caller is never treated as authority.
+The session attestation is scoped to the installed plugin root and the exact task id, expires after 24 hours unless refreshed by a prompt, and is removed on `SessionEnd`. A root argument passed by a tool caller is never treated as authority.
 
 Call `tokengraph_setup` first. A `blocked` result includes the missing or unsafe trust reason and recovery commands without reading project files. A `ready` result identifies the trusted source and root.
 
 ## Lifecycle hook trust and control
 
-Codex auto-discovers TokenGraph's `hooks/hooks.json`, but installing or enabling a plugin does not trust its hooks. Review and trust the current definition before expecting PostToolUse task tracking or Stop completion checks. Codex supplies `PLUGIN_ROOT`/`PLUGIN_DATA` and the Claude-compatible aliases used by the shared adapter.
+Codex auto-discovers TokenGraph's `hooks/hooks.json`, but installing or enabling a plugin does not trust its hooks. Review and trust the current definition before expecting automatic workspace attestation, PostToolUse task tracking, or Stop completion checks. Codex supplies `PLUGIN_ROOT`/`PLUGIN_DATA` and the Claude-compatible aliases used by the shared adapter.
 
-The hook stores only a session hash, task id, trusted root, turn id, schema/version, and timestamp in plugin data for up to 30 days. It never stores prompts, transcripts, or tool payloads. On a normal Stop it can request one exact pause-or-complete report call or the exact canonical footer. Its retry continuation fails open with a warning rather than looping.
+The workspace bridge stores only plugin/session hashes, trusted root, schema/version, and timestamp in the operating-system temporary directory for up to 24 hours. The task lifecycle pointer separately stores only a session hash, task id, trusted root, turn id, schema/version, and timestamp in plugin data for up to 30 days. Neither stores prompts, transcripts, or tool payloads. On a normal Stop the hook can request one exact pause-or-complete report call or the exact canonical footer. Its retry continuation fails open with a warning rather than looping.
 
 To disable hooks globally, set this in Codex `config.toml` and restart the task:
 
@@ -57,10 +59,10 @@ A paused task id is terminal. Start a new task with `tokengraph_prepare_context`
 
 ## Install an extracted release bundle
 
-Extract `tokengraph-0.22.1.zip`, then add the extracted bundle root:
+Extract `tokengraph-0.22.2.zip`, then add the extracted bundle root:
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.22.1
+codex plugin marketplace add C:\path\to\tokengraph-0.22.2
 codex plugin add tokengraph@tokengraph
 ```
 

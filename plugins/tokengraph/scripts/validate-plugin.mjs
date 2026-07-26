@@ -200,9 +200,18 @@ assert(claudeManifest.name === "tokengraph", "Claude plugin manifest name must b
 assert(claudeManifest.version === packageJson.version, "Claude plugin manifest version must match package version");
 assert(claudeManifest.mcpServers === "./.mcp.claude.json", "Claude plugin manifest must point at ./.mcp.claude.json");
 assert(claudeManifest.hooks === undefined, "Claude plugin manifest must use default hooks/hooks.json auto-discovery");
-assert(Object.keys(hooksManifest.hooks ?? {}).sort().join(",") === "PostToolUse,Stop", "hook manifest must define only PostToolUse and Stop");
+assert(
+  Object.keys(hooksManifest.hooks ?? {}).sort().join(",") === "PostToolUse,SessionEnd,SessionStart,Stop,UserPromptSubmit",
+  "hook manifest must define workspace attestation and task lifecycle events"
+);
+const sessionStartHook = hooksManifest.hooks?.SessionStart?.[0];
+const userPromptHook = hooksManifest.hooks?.UserPromptSubmit?.[0];
+const sessionEndHook = hooksManifest.hooks?.SessionEnd?.[0];
 const postToolHook = hooksManifest.hooks?.PostToolUse?.[0];
 const stopHook = hooksManifest.hooks?.Stop?.[0];
+assert(sessionStartHook?.hooks?.[0]?.command === 'node "${CLAUDE_PLUGIN_ROOT}/dist/hooks.js" session-start', "SessionStart must use the workspace attestation adapter");
+assert(userPromptHook?.hooks?.[0]?.command === 'node "${CLAUDE_PLUGIN_ROOT}/dist/hooks.js" user-prompt-submit', "UserPromptSubmit must refresh the workspace attestation");
+assert(sessionEndHook?.hooks?.[0]?.command === 'node "${CLAUDE_PLUGIN_ROOT}/dist/hooks.js" session-end', "SessionEnd must remove the workspace attestation");
 const postMatcher = new RegExp(postToolHook?.matcher ?? "a^");
 for (const toolName of ["tokengraph_prepare_context", "tokengraph_query_context", "tokengraph_compress", "tokengraph_recall", "tokengraph_analyze", "tokengraph_propose_knowledge", "tokengraph_task_report"]) {
   assert(postMatcher.test(`mcp__tokengraph__${toolName}`), `PostToolUse matcher must include ${toolName}`);
@@ -212,6 +221,7 @@ assert(postToolHook?.hooks?.[0]?.command === 'node "${CLAUDE_PLUGIN_ROOT}/dist/h
 assert(stopHook?.hooks?.length === 1 && stopHook.hooks[0]?.type === "command", "Stop must use one command hook");
 assert(stopHook?.hooks?.[0]?.command === 'node "${CLAUDE_PLUGIN_ROOT}/dist/hooks.js" stop', "Stop command must use the cross-host Node adapter");
 assert(distHooks.includes("tokengraph-hook-session"), "built lifecycle hook must include the private session pointer schema");
+assert(distHooks.includes("tokengraph-host-workspace"), "built lifecycle hook must include the host workspace attestation schema");
 assert(!distHooks.includes("createTokenGraphServer"), "built lifecycle hook must not bundle or start the MCP server entry");
 const claudeMarketplacePlugin = claudeMarketplace.plugins?.find((plugin) => plugin.name === "tokengraph");
 assert(claudeMarketplace.name === "tokengraph", "Claude marketplace must be named tokengraph");
@@ -238,6 +248,10 @@ assert(
   "tokengraph MCP args must include ./dist/index.js"
 );
 assert(mcp.mcpServers.tokengraph.cwd === ".", "tokengraph MCP cwd must be plugin root");
+assert(
+  Array.isArray(mcp.mcpServers.tokengraph.env_vars) && mcp.mcpServers.tokengraph.env_vars.includes("CODEX_THREAD_ID"),
+  "tokengraph MCP config must forward CODEX_THREAD_ID for session-bound workspace attestation"
+);
 assert(claudeMcp.mcpServers?.tokengraph?.command === "node", "Claude tokengraph MCP command must be node");
 assert(claudeMcp.mcpServers.tokengraph.args?.includes("${CLAUDE_PLUGIN_ROOT}/dist/index.js"), "Claude MCP args must use CLAUDE_PLUGIN_ROOT");
 assert(claudeMcp.mcpServers.tokengraph.env?.TOKENGRAPH_WORKSPACE_ROOT === "${CLAUDE_PROJECT_DIR}", "Claude MCP config must forward CLAUDE_PROJECT_DIR");
@@ -262,7 +276,7 @@ assert(distServer.includes("tokengraph_update_config"), "built MCP server must r
 assert(distServer.includes("fullReindex"), "built MCP server must expose v0.8 full reindex option");
 assert(distServer.includes("indexingMode"), "built MCP server must report v0.8 indexing mode");
 assert(distServer.includes("maxEstimatedTokens"), "built MCP server must expose v0.8 planner token budget input");
-assert(packageJson.version === "0.22.1", "package version must be 0.22.1 for this release");
+assert(packageJson.version === "0.22.2", "package version must be 0.22.2 for this release");
 assert(distServer.includes("tokengraph_setup_status"), "built MCP server must register setup diagnostics");
 assert(distServer.includes("tokengraph_generate_wiki"), "built MCP server must register v0.9 wiki generator");
 assert(distServer.includes("tokengraph_show_wiki_page"), "built MCP server must register v0.9 wiki page reader");
@@ -368,6 +382,7 @@ assert(releaseDeclaresHooks, "release with lifecycle hooks must document dist/ho
 const releaseHooksManifest = await readJson(releaseHooksManifestPath);
 assert(JSON.stringify(releaseHooksManifest) === JSON.stringify(hooksManifest), "release lifecycle hook manifest must match source");
 assert(Array.isArray(mcp.mcpServers.tokengraph.env_vars) && mcp.mcpServers.tokengraph.env_vars.includes("TOKENGRAPH_WORKSPACE_ROOT"), "tokengraph MCP config must forward TOKENGRAPH_WORKSPACE_ROOT");
+assert(codexHostGuide.includes("CODEX_THREAD_ID") && /SessionStart/.test(codexHostGuide), "Codex host guide must document session-bound automatic workspace attestation");
 assert(sourceReadme.includes("TOKENGRAPH_WORKSPACE_ROOT"), "plugin README must document trusted workspace configuration");
 assert(codexHostGuide.includes("TOKENGRAPH_WORKSPACE_ROOT"), "Codex host guide must document trusted workspace configuration");
 assert(claudeHostGuide.includes("CLAUDE_PROJECT_DIR"), "Claude Code host guide must document its trusted project root");

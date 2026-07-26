@@ -7023,9 +7023,9 @@ var require_util = /* @__PURE__ */ __commonJSMin(((exports) => {
   const codegen_1 = require_codegen();
   const code_1 = require_code$1();
   function toHash(arr) {
-    const hash = {};
-    for (const item of arr) hash[item] = true;
-    return hash;
+    const hash2 = {};
+    for (const item of arr) hash2[item] = true;
+    return hash2;
   }
   exports.toHash = toHash;
   function alwaysValidSchema(it, schema) {
@@ -19432,10 +19432,10 @@ function toError(value) {
 
 // src/server.ts
 import process4 from "node:process";
-import { createHash as createHash12, randomUUID as randomUUID6 } from "node:crypto";
-import { access as access5, realpath as realpath4 } from "node:fs/promises";
+import { createHash as createHash13, randomUUID as randomUUID6 } from "node:crypto";
+import { access as access5, realpath as realpath5 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname as dirname8, isAbsolute as isAbsolute6, join as join11, parse as parse4, relative as relative7, resolve as resolve12 } from "node:path";
+import { dirname as dirname8, isAbsolute as isAbsolute7, join as join12, parse as parse4, relative as relative7, resolve as resolve12 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // src/core/architectureRules.ts
@@ -20277,7 +20277,7 @@ async function saveVaultProjectionUnlocked(root, notes) {
   const retained = new Set(notes.map((note) => note.path));
   await Promise.all(previous.filter((note) => !retained.has(note.path)).map(async (note) => rm3(await resolveConfinedPath(root, join4(".tokengraph", "vault", note.path)), { force: true })));
   for (const note of notes) await writeTextAtomicConfined(root, join4(".tokengraph", "vault", note.path), note.body);
-  await writeTextAtomicConfined(root, join4(".tokengraph", "vault", "manifest.json"), `${JSON.stringify({ schemaVersion: 1, notes: notes.map(({ path, title, hash, backlinks, archived }) => ({ path, title, hash, backlinks, archived })) }, null, 2)}
+  await writeTextAtomicConfined(root, join4(".tokengraph", "vault", "manifest.json"), `${JSON.stringify({ schemaVersion: 1, notes: notes.map(({ path, title, hash: hash2, backlinks, archived }) => ({ path, title, hash: hash2, backlinks, archived })) }, null, 2)}
 `);
 }
 async function saveVaultProjection(root, notes) {
@@ -20489,8 +20489,8 @@ function artifactKey(artifact) {
 function shouldSuppressArtifact(artifact, knownArtifacts) {
   return (knownArtifacts ?? []).includes(artifactKey(artifact));
 }
-function artifactPath(directory, hash) {
-  return join5(directory, "artifacts", `${hash}.json`);
+function artifactPath(directory, hash2) {
+  return join5(directory, "artifacts", `${hash2}.json`);
 }
 async function saveStableArtifact(root, artifact) {
   if (!/^[a-f0-9]{64}$/.test(artifact.hash)) throw new Error("Stable artifact hash is invalid.");
@@ -20499,15 +20499,15 @@ async function saveStableArtifact(root, artifact) {
   const key = await canonicalPersistenceLockKey(directory, "artifacts", `${artifact.hash}.json`);
   await withFileLock(`${key}.lock`, () => writeJsonAtomic(path, artifact));
 }
-async function loadStableArtifact(root, hash) {
-  if (!/^[a-f0-9]{64}$/.test(hash)) return void 0;
+async function loadStableArtifact(root, hash2) {
+  if (!/^[a-f0-9]{64}$/.test(hash2)) return void 0;
   const directory = await repositoryDir(root);
-  const path = artifactPath(directory, hash);
+  const path = artifactPath(directory, hash2);
   try {
     const parsed = JSON.parse(await readFile5(path, "utf8"));
-    if (!parsed || typeof parsed !== "object" || parsed.hash !== hash || typeof parsed.id !== "string" || typeof parsed.artifactSchemaVersion !== "number") return void 0;
+    if (!parsed || typeof parsed !== "object" || parsed.hash !== hash2 || typeof parsed.id !== "string" || typeof parsed.artifactSchemaVersion !== "number") return void 0;
     const expected = createStableArtifact(parsed.id, parsed.content, parsed.artifactSchemaVersion, parsed.hashContext);
-    return expected.hash === hash ? expected : void 0;
+    return expected.hash === hash2 ? expected : void 0;
   } catch (error2) {
     if (error2.code === "ENOENT") return void 0;
     if (error2 instanceof SyntaxError) {
@@ -24036,6 +24036,71 @@ async function getIndexStatus(root, options = {}) {
   };
 }
 
+// src/core/hostWorkspace.ts
+import { createHash as createHash9 } from "node:crypto";
+import { readFile as readFile13, realpath as realpath3, rm as rm6 } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute as isAbsolute5, join as join9 } from "node:path";
+var HOST_WORKSPACE_SCHEMA_ID = "tokengraph-host-workspace";
+var HOST_WORKSPACE_SCHEMA_VERSION = 1;
+var HOST_WORKSPACE_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
+var HOST_WORKSPACE_FUTURE_TOLERANCE_MS = 5 * 60 * 1e3;
+var HASH_PATTERN = /^[0-9a-f]{64}$/;
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function isIdentifier(value) {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 1024;
+}
+function hash(value) {
+  return createHash9("sha256").update(value).digest("hex");
+}
+async function attestationIdentity(pluginRoot, sessionId) {
+  if (!isIdentifier(sessionId)) throw new Error("Host session id must be non-empty.");
+  if (!isAbsolute5(pluginRoot)) throw new Error("Plugin root must be absolute.");
+  const pluginRootHash = hash(await realpath3(pluginRoot));
+  const sessionHash = hash(sessionId);
+  return {
+    path: join9(tmpdir(), "tokengraph-host-workspaces", pluginRootHash, `${sessionHash}.json`),
+    pluginRootHash,
+    sessionHash
+  };
+}
+function reconstructAttestation(value, expectedPluginRootHash, expectedSessionHash) {
+  if (!isRecord(value)) return void 0;
+  const expectedKeys = ["pluginRootHash", "root", "schemaId", "schemaVersion", "sessionHash", "updatedAt"].sort();
+  const keys = Object.keys(value).sort();
+  if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) return void 0;
+  if (value.schemaId !== HOST_WORKSPACE_SCHEMA_ID || value.schemaVersion !== HOST_WORKSPACE_SCHEMA_VERSION || value.pluginRootHash !== expectedPluginRootHash || value.sessionHash !== expectedSessionHash || !HASH_PATTERN.test(value.pluginRootHash) || !HASH_PATTERN.test(value.sessionHash) || typeof value.root !== "string" || !isAbsolute5(value.root) || typeof value.updatedAt !== "string" || !Number.isFinite(Date.parse(value.updatedAt)) || new Date(value.updatedAt).toISOString() !== value.updatedAt) {
+    return void 0;
+  }
+  return {
+    schemaId: HOST_WORKSPACE_SCHEMA_ID,
+    schemaVersion: HOST_WORKSPACE_SCHEMA_VERSION,
+    pluginRootHash: expectedPluginRootHash,
+    sessionHash: expectedSessionHash,
+    root: value.root,
+    updatedAt: value.updatedAt
+  };
+}
+async function loadHostWorkspaceAttestation(pluginRoot, sessionId, now = /* @__PURE__ */ new Date()) {
+  try {
+    const identity = await attestationIdentity(pluginRoot, sessionId);
+    await assertNoSymbolicLinkComponents(identity.path);
+    const parsed = JSON.parse(await readFile13(identity.path, "utf8"));
+    const attestation = reconstructAttestation(parsed, identity.pluginRootHash, identity.sessionHash);
+    if (!attestation) return { status: "corrupt" };
+    const updatedAt = Date.parse(attestation.updatedAt);
+    if (updatedAt < now.getTime() - HOST_WORKSPACE_MAX_AGE_MS || updatedAt > now.getTime() + HOST_WORKSPACE_FUTURE_TOLERANCE_MS) {
+      return { status: "expired" };
+    }
+    return { status: "valid", root: attestation.root };
+  } catch (error2) {
+    if (error2.code === "ENOENT") return { status: "missing" };
+    return { status: "corrupt" };
+  }
+}
+
 // src/core/failureTracer.ts
 var PATH_PATTERN = /(?:[A-Za-z]:[\\/])?[\w@./\\[\]-]+\.(?:ts|tsx|js|jsx|sql)(?::\d+:\d+)?/g;
 function compressionKind(kind) {
@@ -24212,7 +24277,7 @@ ${input.text}`, plan.relevantSql);
 
 // src/core/memoryStore.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { readFile as readFile13, rename as rename3 } from "node:fs/promises";
+import { readFile as readFile14, rename as rename3 } from "node:fs/promises";
 import { resolve as resolve9 } from "node:path";
 var DEFAULT_SOURCE = "manual";
 var CURRENT_MEMORY_SCHEMA_VERSION = 1;
@@ -24481,7 +24546,7 @@ var MemoryStore = class _MemoryStore {
   }
   async readAll() {
     try {
-      const raw = await readFile13(this.filePath, "utf8");
+      const raw = await readFile14(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
       const records = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.memories) ? parsed.memories : [];
       return records.map(normalizeMemory).filter((memory) => Boolean(memory));
@@ -24833,7 +24898,7 @@ function exportProjectMap(project, options = {}) {
 
 // src/core/taskEstimator.ts
 var TASK_ESTIMATOR_VERSION = "task-estimator-v2";
-function isRecord(value) {
+function isRecord2(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 function isFiniteNumber(value) {
@@ -24846,7 +24911,7 @@ function isQualityStatus(value) {
   return value === "passed" || value === "warning" || value === "not_evaluated";
 }
 function reconstructCategory(value) {
-  if (!isRecord(value) || !isRecord(value.range) || !Array.isArray(value.basis)) return void 0;
+  if (!isRecord2(value) || !isRecord2(value.range) || !Array.isArray(value.basis)) return void 0;
   if (typeof value.category !== "string" || value.category.length === 0 || !Number.isInteger(value.eventCount) || value.eventCount < 1 || !isFiniteNumber(value.range.low) || !isFiniteNumber(value.range.likely) || !isFiniteNumber(value.range.high) || value.range.low > value.range.likely || value.range.likely > value.range.high || value.range.unit !== "estimated_tokens" || !isConfidence(value.confidence) || !value.basis.every((item) => typeof item === "string") || !isFiniteNumber(value.overhead) || value.overhead < 0) return void 0;
   return {
     category: value.category,
@@ -24863,7 +24928,7 @@ function reconstructCategory(value) {
   };
 }
 function reconstructTaskReport(value, expectedTaskId, expectedEventCount) {
-  if (!isRecord(value) || !isRecord(value.estimate) || !isRecord(value.estimate.range) || !isRecord(value.quality) || !Array.isArray(value.categories)) {
+  if (!isRecord2(value) || !isRecord2(value.estimate) || !isRecord2(value.estimate.range) || !isRecord2(value.quality) || !Array.isArray(value.categories)) {
     return void 0;
   }
   const range = value.estimate.range;
@@ -24990,7 +25055,7 @@ function formatTaskReportFooter(report) {
 }
 
 // src/core/wiki.ts
-import { createHash as createHash9 } from "node:crypto";
+import { createHash as createHash10 } from "node:crypto";
 import { posix } from "node:path";
 var CURRENT_WIKI_SCHEMA_VERSION = 1;
 var LIST_LIMIT = 20;
@@ -25010,7 +25075,7 @@ function pageSourceFingerprints(index, draft, applications) {
   const reviewed = applications.flatMap(
     (application) => application.sources.map((source) => `${source.kind}:${source.sourceId}:${source.fingerprint}`)
   );
-  const indexedFingerprint = indexed.length ? [`index:${createHash9("sha256").update(JSON.stringify(indexed.sort())).digest("hex")}`] : [];
+  const indexedFingerprint = indexed.length ? [`index:${createHash10("sha256").update(JSON.stringify(indexed.sort())).digest("hex")}`] : [];
   return Array.from(/* @__PURE__ */ new Set([...indexedFingerprint, ...reviewed])).sort();
 }
 function sourceIsStale(index, application) {
@@ -25220,7 +25285,7 @@ function buildProjectWiki(index, memories, applications = []) {
 }
 
 // src/core/vaultProjection.ts
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash11 } from "node:crypto";
 function safeName(value) {
   return value.replace(/[^a-zA-Z0-9 _-]+/g, "-").trim().replace(/\s+/g, "-").toLowerCase() || "untitled";
 }
@@ -25244,7 +25309,7 @@ ${body}${links ? `
 
 ${links}` : ""}
 `;
-    notes.push({ path: `${folder}/${safeName(memory.title)}-${memory.id}.md`, title: memory.title, body: content, hash: createHash10("sha256").update(content).digest("hex"), backlinks, archived: Boolean(memory.archived || superseded.has(memory.id)) });
+    notes.push({ path: `${folder}/${safeName(memory.title)}-${memory.id}.md`, title: memory.title, body: content, hash: createHash11("sha256").update(content).digest("hex"), backlinks, archived: Boolean(memory.archived || superseded.has(memory.id)) });
   }
   return compactVaultNotes(notes, options.maxBytes ?? Number.MAX_SAFE_INTEGER);
 }
@@ -25262,8 +25327,8 @@ function compactVaultNotes(notes, maxBytes) {
 
 // src/core/taskLedger.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { readFile as readFile14, readdir as readdir4, rename as rename4, rm as rm6 } from "node:fs/promises";
-import { join as join9, resolve as resolve10 } from "node:path";
+import { readFile as readFile15, readdir as readdir4, rename as rename4, rm as rm7 } from "node:fs/promises";
+import { join as join10, resolve as resolve10 } from "node:path";
 var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
 var TASK_LEDGER_SCHEMA_VERSION = 3;
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -25277,16 +25342,16 @@ function assertTaskId(taskId) {
   }
 }
 function tasksDirectory(root) {
-  return join9(resolve10(root), ".tokengraph", "tasks");
+  return join10(resolve10(root), ".tokengraph", "tasks");
 }
 function taskLedgerPath(root, taskId) {
   assertTaskId(taskId);
-  return join9(tasksDirectory(root), `${taskId}.json`);
+  return join10(tasksDirectory(root), `${taskId}.json`);
 }
 function completedOutcomesIndexPath(root) {
-  return join9(tasksDirectory(root), "completed-outcomes.json");
+  return join10(tasksDirectory(root), "completed-outcomes.json");
 }
-function isRecord2(value) {
+function isRecord3(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 function isTimestamp(value) {
@@ -25294,18 +25359,18 @@ function isTimestamp(value) {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
 }
-function isIdentifier(value) {
+function isIdentifier2(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 function isOptionalIdentifier(value) {
-  return value === void 0 || isIdentifier(value);
+  return value === void 0 || isIdentifier2(value);
 }
 function reconstructQualityCheck(value) {
-  if (!isRecord2(value) || typeof value.name !== "string" || typeof value.passed !== "boolean") return void 0;
+  if (!isRecord3(value) || typeof value.name !== "string" || typeof value.passed !== "boolean") return void 0;
   return { name: value.name, passed: value.passed };
 }
 function reconstructEvent(value) {
-  if (!isRecord2(value) || !Array.isArray(value.qualityChecks)) return void 0;
+  if (!isRecord3(value) || !Array.isArray(value.qualityChecks)) return void 0;
   const qualityChecks = value.qualityChecks.map(reconstructQualityCheck);
   if (typeof value.id !== "string" || typeof value.fingerprint !== "string" || typeof value.category !== "string" || typeof value.toolName !== "string" || typeof value.originalTokens !== "number" || !Number.isFinite(value.originalTokens) || value.originalTokens < 0 || typeof value.compactTokens !== "number" || !Number.isFinite(value.compactTokens) || value.compactTokens < 0 || typeof value.overheadTokens !== "number" || !Number.isFinite(value.overheadTokens) || value.overheadTokens < 0 || value.confidence !== "low" && value.confidence !== "medium" && value.confidence !== "high" || !isTimestamp(value.timestamp) || qualityChecks.some((check) => check === void 0)) {
     return void 0;
@@ -25324,8 +25389,8 @@ function reconstructEvent(value) {
   };
 }
 function reconstructOutcome(value) {
-  if (!isRecord2(value) || !Array.isArray(value.evidence)) return void 0;
-  if (!isIdentifier(value.id) || !isIdentifier(value.taskId) || typeof value.summary !== "string" || value.summary.trim().length === 0 || !["verified", "proposed", "failed"].includes(String(value.status)) || !value.evidence.every((entry) => isIdentifier(entry)) || !isTimestamp(value.createdAt) || value.staleAt !== void 0 && !isTimestamp(value.staleAt) || value.sourceFingerprint !== void 0 && !isIdentifier(value.sourceFingerprint) || !isIdentifier(value.branch) || !isIdentifier(value.worktreeId) || !isIdentifier(value.headCommit)) return void 0;
+  if (!isRecord3(value) || !Array.isArray(value.evidence)) return void 0;
+  if (!isIdentifier2(value.id) || !isIdentifier2(value.taskId) || typeof value.summary !== "string" || value.summary.trim().length === 0 || !["verified", "proposed", "failed"].includes(String(value.status)) || !value.evidence.every((entry) => isIdentifier2(entry)) || !isTimestamp(value.createdAt) || value.staleAt !== void 0 && !isTimestamp(value.staleAt) || value.sourceFingerprint !== void 0 && !isIdentifier2(value.sourceFingerprint) || !isIdentifier2(value.branch) || !isIdentifier2(value.worktreeId) || !isIdentifier2(value.headCommit)) return void 0;
   return {
     id: value.id,
     taskId: value.taskId,
@@ -25341,7 +25406,7 @@ function reconstructOutcome(value) {
   };
 }
 function reconstructTaskLedger(value, expectedTaskId) {
-  if (!isRecord2(value) || !Array.isArray(value.events)) return void 0;
+  if (!isRecord3(value) || !Array.isArray(value.events)) return void 0;
   const legacy = value.schemaVersion === 1 || value.schemaVersion === 2;
   const events = value.events.map(reconstructEvent);
   const outcomes = value.outcomes === void 0 && legacy ? [] : Array.isArray(value.outcomes) ? value.outcomes.map(reconstructOutcome) : void 0;
@@ -25388,11 +25453,11 @@ function reconstructTaskLedger(value, expectedTaskId) {
   return ledger;
 }
 function isRepositoryIdentity(value) {
-  if (!isRecord2(value)) return false;
-  return ["repositoryId", "repositoryFingerprint", "workspaceId", "worktreeId", "branch", "headCommit"].every((key) => isIdentifier(value[key]));
+  if (!isRecord3(value)) return false;
+  return ["repositoryId", "repositoryFingerprint", "workspaceId", "worktreeId", "branch", "headCommit"].every((key) => isIdentifier2(value[key]));
 }
 function reconstructRoutingObservation(value) {
-  if (!isRecord2(value)) return void 0;
+  if (!isRecord3(value)) return void 0;
   if (value.decision !== "activate" && value.decision !== "bypass" || !Number.isInteger(value.stage) || value.stage < 0 || typeof value.reason !== "string" || typeof value.expectedOverheadTokens !== "number" || !Number.isFinite(value.expectedOverheadTokens) || value.expectedOverheadTokens < 0 || !["shadow", "enforced", "always-activate", "always-advisory"].includes(String(value.mode)) || typeof value.enforced !== "boolean") return void 0;
   return {
     decision: value.decision,
@@ -25404,7 +25469,7 @@ function reconstructRoutingObservation(value) {
   };
 }
 function reconstructReadPolicy(value) {
-  if (!isRecord2(value)) return void 0;
+  if (!isRecord3(value)) return void 0;
   if (!["L0", "L1", "L2", "L3", "L4"].includes(String(value.level)) || typeof value.allowRawReads !== "boolean" || typeof value.reason !== "string" || value.targetedReads !== void 0 && (!Number.isInteger(value.targetedReads) || value.targetedReads < 0) || value.recommendedReadsThisResponse !== void 0 && (!Number.isInteger(value.recommendedReadsThisResponse) || value.recommendedReadsThisResponse < 0) || value.requiresReassessment !== void 0 && typeof value.requiresReassessment !== "boolean" || value.hasReassessed !== void 0 && typeof value.hasReassessed !== "boolean" || value.evidenceGap !== void 0 && typeof value.evidenceGap !== "string") return void 0;
   return {
     level: value.level,
@@ -25461,8 +25526,8 @@ async function enqueueLedgerOperation(root, taskId, operation) {
   return current;
 }
 async function createTaskLedger(root, options) {
-  if (options.sessionId !== void 0 && !isIdentifier(options.sessionId)) throw new Error("Session id must be non-empty.");
-  if (options.turnId !== void 0 && !isIdentifier(options.turnId)) throw new Error("Turn id must be non-empty.");
+  if (options.sessionId !== void 0 && !isIdentifier2(options.sessionId)) throw new Error("Session id must be non-empty.");
+  if (options.turnId !== void 0 && !isIdentifier2(options.turnId)) throw new Error("Turn id must be non-empty.");
   const taskId = randomUUID4();
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const repositoryIdentity = await getRepositoryIdentity(root);
@@ -25490,8 +25555,8 @@ async function createTaskLedger(root, options) {
 async function loadTaskLedger(root, taskId) {
   const path = taskLedgerPath(root, taskId);
   try {
-    const parsed = JSON.parse(await readFile14(path, "utf8"));
-    if (isRecord2(parsed) && typeof parsed.schemaVersion === "number" && parsed.schemaVersion > TASK_LEDGER_SCHEMA_VERSION) {
+    const parsed = JSON.parse(await readFile15(path, "utf8"));
+    if (isRecord3(parsed) && typeof parsed.schemaVersion === "number" && parsed.schemaVersion > TASK_LEDGER_SCHEMA_VERSION) {
       throw new Error(`Task ledger schema ${parsed.schemaVersion} is newer than supported schema ${TASK_LEDGER_SCHEMA_VERSION}; refusing to modify it.`);
     }
     const ledger = reconstructTaskLedger(parsed, taskId);
@@ -25499,7 +25564,7 @@ async function loadTaskLedger(root, taskId) {
       await quarantine(path);
       return void 0;
     }
-    if (!ledger.repositoryIdentity || isRecord2(parsed) && (parsed.schemaVersion === 1 || parsed.schemaVersion === 2)) {
+    if (!ledger.repositoryIdentity || isRecord3(parsed) && (parsed.schemaVersion === 1 || parsed.schemaVersion === 2)) {
       ledger.repositoryIdentity ??= await getRepositoryIdentity(root);
       ledger.schemaVersion = TASK_LEDGER_SCHEMA_VERSION;
       ledger.estimatorVersion = TASK_ESTIMATOR_VERSION;
@@ -25556,7 +25621,7 @@ async function discardEmptyTaskLedger(root, taskId) {
   return enqueueLedgerOperation(root, taskId, async () => {
     const ledger = await loadTaskLedger(root, taskId);
     if (!ledger || ledger.status !== "open" || ledger.events.length !== 0) return false;
-    await rm6(taskLedgerPath(root, taskId), { force: true });
+    await rm7(taskLedgerPath(root, taskId), { force: true });
     return true;
   });
 }
@@ -25595,8 +25660,8 @@ function orderOutcomes(outcomes) {
 async function readCompletedOutcomesIndex(root) {
   const path = completedOutcomesIndexPath(root);
   try {
-    const parsed = JSON.parse(await readFile14(path, "utf8"));
-    if (!isRecord2(parsed) || parsed.schemaId !== COMPLETED_OUTCOMES_INDEX_SCHEMA_ID || parsed.schemaVersion !== COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION || !Array.isArray(parsed.outcomes)) {
+    const parsed = JSON.parse(await readFile15(path, "utf8"));
+    if (!isRecord3(parsed) || parsed.schemaId !== COMPLETED_OUTCOMES_INDEX_SCHEMA_ID || parsed.schemaVersion !== COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION || !Array.isArray(parsed.outcomes)) {
       await quarantine(path);
       return void 0;
     }
@@ -25697,9 +25762,9 @@ async function setTaskDisposition(root, taskId, disposition, turnId, calibration
 }
 
 // src/core/knowledgeReviewQueue.ts
-import { createHash as createHash11, randomUUID as randomUUID5 } from "node:crypto";
-import { readFile as readFile15, realpath as realpath3 } from "node:fs/promises";
-import { isAbsolute as isAbsolute5, join as join10, relative as relative6, resolve as resolve11, win32 } from "node:path";
+import { createHash as createHash12, randomUUID as randomUUID5 } from "node:crypto";
+import { readFile as readFile16, realpath as realpath4 } from "node:fs/promises";
+import { isAbsolute as isAbsolute6, join as join11, relative as relative6, resolve as resolve11, win32 } from "node:path";
 var REVIEW_QUEUE_SCHEMA_VERSION = 3;
 var APPLICATION_SCHEMA_VERSION = 2;
 var DEFAULT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1e3;
@@ -25713,10 +25778,10 @@ var SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 var SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 var queueWriteChains = /* @__PURE__ */ new Map();
 function queuePath(root) {
-  return join10(resolve11(root), ".tokengraph", "review-queue.json");
+  return join11(resolve11(root), ".tokengraph", "review-queue.json");
 }
 function applicationPath(root) {
-  return join10(resolve11(root), ".tokengraph", "knowledge-applications.json");
+  return join11(resolve11(root), ".tokengraph", "knowledge-applications.json");
 }
 function nonEmptyString(value, label) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a non-empty string.`);
@@ -25753,7 +25818,7 @@ function validateTimestamp(value, label) {
 }
 function normalizeSourceId(value) {
   const sourceId = nonEmptyString(value, "Source id").replaceAll("\\", "/");
-  if (isAbsolute5(sourceId) || win32.isAbsolute(sourceId) || sourceId.startsWith("../") || sourceId.includes("/../") || !SOURCE_ID_PATTERN.test(sourceId)) {
+  if (isAbsolute6(sourceId) || win32.isAbsolute(sourceId) || sourceId.startsWith("../") || sourceId.includes("/../") || !SOURCE_ID_PATTERN.test(sourceId)) {
     throw new Error("Source ids must be privacy-safe relative paths or stable logical ids.");
   }
   return sourceId;
@@ -25807,7 +25872,7 @@ function normalizeAffectedTargets(value, type, legacyIdentifiers) {
   return result;
 }
 function suggestionFingerprint(input) {
-  return createHash11("sha256").update(JSON.stringify({
+  return createHash12("sha256").update(JSON.stringify({
     type: input.type,
     title: input.title,
     rationale: input.rationale,
@@ -25872,7 +25937,7 @@ function reconstructSuggestion(value, schemaVersion) {
     } : {}
   });
   if (persistedSources) proposal.sources = persistedSources;
-  const expectedFingerprint = schemaVersion === 1 ? createHash11("sha256").update(JSON.stringify({
+  const expectedFingerprint = schemaVersion === 1 ? createHash12("sha256").update(JSON.stringify({
     type: proposal.type,
     title: proposal.title,
     proposedContent: proposal.proposedContent,
@@ -25897,7 +25962,7 @@ function reconstructSuggestion(value, schemaVersion) {
 async function readQueue(root) {
   const path = queuePath(root);
   try {
-    const parsed = JSON.parse(await readFile15(path, "utf8"));
+    const parsed = JSON.parse(await readFile16(path, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Queue must be an object.");
     const queue2 = parsed;
     if (!hasExactKeys(queue2, ["schemaVersion", "suggestions"]) || ![1, 2, 3].includes(queue2.schemaVersion) || !Array.isArray(queue2.suggestions)) {
@@ -25963,7 +26028,7 @@ function reconstructApplication(value, schemaVersion) {
 async function readApplications(root) {
   const path = applicationPath(root);
   try {
-    const parsed = JSON.parse(await readFile15(path, "utf8"));
+    const parsed = JSON.parse(await readFile16(path, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Application store must be an object.");
     const store = parsed;
     if (!hasExactKeys(store, ["schemaVersion", "applications"]) || ![1, 2].includes(store.schemaVersion) || !Array.isArray(store.applications)) {
@@ -25981,11 +26046,11 @@ async function readApplications(root) {
   }
 }
 function targetFiles(root, application) {
-  const base2 = join10(resolve11(root), ".tokengraph", "knowledge");
+  const base2 = join11(resolve11(root), ".tokengraph", "knowledge");
   return [
-    ...application.affectedTargets.wikiPages.map((slug) => join10(base2, "wiki", ...slug.split("/"), `${application.suggestionId}.md`)),
-    ...application.affectedTargets.memories.map((id) => join10(base2, "memories", id, `${application.suggestionId}.md`)),
-    ...application.affectedTargets.skills.map((name) => join10(base2, "skills", name, `${application.suggestionId}.md`))
+    ...application.affectedTargets.wikiPages.map((slug) => join11(base2, "wiki", ...slug.split("/"), `${application.suggestionId}.md`)),
+    ...application.affectedTargets.memories.map((id) => join11(base2, "memories", id, `${application.suggestionId}.md`)),
+    ...application.affectedTargets.skills.map((name) => join11(base2, "skills", name, `${application.suggestionId}.md`))
   ];
 }
 function applicationMarkdown(application) {
@@ -26006,11 +26071,11 @@ async function writeApplication(root, applications, application) {
 }
 async function ensureApplicationTargets(root, application) {
   const expected = applicationMarkdown(application);
-  const logicalBase = join10(resolve11(root), ".tokengraph", "knowledge");
+  const logicalBase = join11(resolve11(root), ".tokengraph", "knowledge");
   for (const logicalPath of targetFiles(root, application)) {
-    const path = await resolveConfinedPath(root, join10(".tokengraph", "knowledge", relative6(logicalBase, logicalPath)), true);
+    const path = await resolveConfinedPath(root, join11(".tokengraph", "knowledge", relative6(logicalBase, logicalPath)), true);
     try {
-      const existing = await readFile15(path, "utf8");
+      const existing = await readFile16(path, "utf8");
       if (existing !== expected) throw new Error("Applied knowledge target differs from its reviewed payload.");
     } catch (error2) {
       if (error2.code !== "ENOENT") throw error2;
@@ -26029,18 +26094,18 @@ async function assertFreshForApproval(root, suggestion) {
     if (source.kind !== "path") continue;
     let content;
     try {
-      const canonicalRoot = await realpath3(resolve11(root));
-      const canonicalSource = await realpath3(join10(canonicalRoot, ...source.sourceId.split("/")));
+      const canonicalRoot = await realpath4(resolve11(root));
+      const canonicalSource = await realpath4(join11(canonicalRoot, ...source.sourceId.split("/")));
       const confined = relative6(canonicalRoot, canonicalSource);
-      if (!confined || confined.startsWith("..") || isAbsolute5(confined)) {
+      if (!confined || confined.startsWith("..") || isAbsolute6(confined)) {
         throw new Error(`Knowledge source ${source.sourceId} resolves outside the trusted workspace.`);
       }
-      content = await readFile15(canonicalSource);
+      content = await readFile16(canonicalSource);
     } catch (error2) {
       if (error2.code === "ENOENT") throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} is missing.`);
       throw error2;
     }
-    const current = createHash11("sha256").update(content.toString("utf8").replace(/\r\n?/g, "\n")).digest("hex");
+    const current = createHash12("sha256").update(content.toString("utf8").replace(/\r\n?/g, "\n")).digest("hex");
     if (current !== source.fingerprint) throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} fingerprint changed.`);
   }
 }
@@ -26259,7 +26324,7 @@ function taskHost(value) {
   return "unknown";
 }
 function eventFingerprint(taskId, toolName, category, operation) {
-  return createHash12("sha256").update(JSON.stringify({ taskId, toolName, category, operation })).digest("hex");
+  return createHash13("sha256").update(JSON.stringify({ taskId, toolName, category, operation })).digest("hex");
 }
 async function recordCoreEvent(input) {
   const overheadTokens = input.overheadTokens ?? coreEventOverheadTokens(input.taskId, input.toolName, input.category);
@@ -26285,15 +26350,15 @@ function ownPluginRoot() {
 }
 async function isPluginRoot(root) {
   try {
-    const [realRoot, realSelf] = await Promise.all([realpath4(root), realpath4(ownPluginRoot())]);
+    const [realRoot, realSelf] = await Promise.all([realpath5(root), realpath5(ownPluginRoot())]);
     if (realRoot !== realSelf) return false;
     const hasManifest = await Promise.any([
-      access5(join11(root, ".codex-plugin", "plugin.json")),
-      access5(join11(root, ".claude-plugin", "plugin.json"))
+      access5(join12(root, ".codex-plugin", "plugin.json")),
+      access5(join12(root, ".claude-plugin", "plugin.json"))
     ]).then(() => true, () => false);
     const hasMcpConfig = await Promise.any([
-      access5(join11(root, ".mcp.json")),
-      access5(join11(root, ".mcp.claude.json"))
+      access5(join12(root, ".mcp.json")),
+      access5(join12(root, ".mcp.claude.json"))
     ]).then(() => true, () => false);
     return hasManifest && hasMcpConfig;
   } catch {
@@ -26305,13 +26370,18 @@ async function resolveTrustedWorkspace(server) {
   if (claudeRoot) return { source: "CLAUDE_PROJECT_DIR", root: claudeRoot };
   const codexRoot = process4.env.TOKENGRAPH_WORKSPACE_ROOT?.trim();
   if (codexRoot) return { source: "TOKENGRAPH_WORKSPACE_ROOT", root: codexRoot };
+  const threadId = process4.env.CODEX_THREAD_ID?.trim();
+  if (threadId) {
+    const attestation = await loadHostWorkspaceAttestation(ownPluginRoot(), threadId);
+    if (attestation.status === "valid") return { source: "codex-session-hook", root: attestation.root };
+  }
   try {
     const roots = await server.server.listRoots({}, { timeout: 1e3 });
     const fileRoot = roots.roots.find((root) => root.uri.startsWith("file://"));
-    return fileRoot ? { source: "mcp-roots", root: fileURLToPath3(fileRoot.uri) } : void 0;
+    if (fileRoot) return { source: "mcp-roots", root: fileURLToPath3(fileRoot.uri) };
   } catch {
-    return void 0;
   }
+  return void 0;
 }
 function detectedHost() {
   if (process4.env.CLAUDE_PROJECT_DIR?.trim() || process4.env.CLAUDE_CODE) return "claude-code";
@@ -26319,13 +26389,14 @@ function detectedHost() {
   return "unknown";
 }
 async function inspectWorkspaceSetup(server, provider) {
-  const cwd = await realpath4(process4.cwd());
+  const cwd = await realpath5(process4.cwd());
   const pluginRootLaunch = await isPluginRoot(cwd);
   const injected = provider ? await provider() : void 0;
   const candidate = injected ? { source: "injected", root: injected } : await resolveTrustedWorkspace(server) ?? (!pluginRootLaunch ? { source: "process-cwd", root: cwd } : void 0);
   const nextSteps = [
-    "Codex PowerShell: $env:TOKENGRAPH_WORKSPACE_ROOT=(Get-Location).Path; codex",
-    'Codex POSIX shell: TOKENGRAPH_WORKSPACE_ROOT="$PWD" codex',
+    "Codex: review and trust the TokenGraph lifecycle hooks, then start a new task so SessionStart can attest its working directory.",
+    "Codex compatibility fallback (PowerShell): $env:TOKENGRAPH_WORKSPACE_ROOT=(Get-Location).Path; codex",
+    'Codex compatibility fallback (POSIX): TOKENGRAPH_WORKSPACE_ROOT="$PWD" codex',
     "Claude Code normally forwards CLAUDE_PROJECT_DIR automatically.",
     "After changing host configuration, start a new Codex task or run /reload-plugins in Claude Code."
   ];
@@ -26342,7 +26413,7 @@ async function inspectWorkspaceSetup(server, provider) {
   }
   let root;
   try {
-    root = await realpath4(candidate.root);
+    root = await realpath5(candidate.root);
   } catch {
     return {
       status: "blocked",
@@ -26354,7 +26425,7 @@ async function inspectWorkspaceSetup(server, provider) {
       nextSteps
     };
   }
-  const home = await realpath4(homedir());
+  const home = await realpath5(homedir());
   const trustedWorkspace = { ...candidate, root };
   if (root === parse4(root).root || root === home) {
     return {
@@ -26394,12 +26465,12 @@ function createWorkspaceResolver(server, provider) {
     const requested = inputRoot?.trim() ? resolve12(allowedRoot, inputRoot.trim()) : allowedRoot;
     let resolvedRoot;
     try {
-      resolvedRoot = await realpath4(requested);
+      resolvedRoot = await realpath5(requested);
     } catch {
       throw new Error(`Requested workspace root does not exist or is not readable: ${requested}`);
     }
     const relativeToAllowed = relative7(allowedRoot, resolvedRoot);
-    if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute6(relativeToAllowed))) {
+    if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute7(relativeToAllowed))) {
       throw new Error(`Requested root is outside the trusted workspace: ${resolvedRoot}`);
     }
     return resolvedRoot;
@@ -26486,7 +26557,7 @@ async function ensureProject(root) {
   });
 }
 function isSafeRelativePath(path) {
-  if (!path || isAbsolute6(path)) return false;
+  if (!path || isAbsolute7(path)) return false;
   const segments = path.split(/[\\/]+/);
   return segments.every((segment) => segment && segment !== "." && segment !== "..");
 }
@@ -26683,7 +26754,7 @@ function recommendedExactRead(plan, project) {
 function createTokenGraphServer(options = {}) {
   const toolSurface = selectedToolSurface();
   const server = new McpServer(
-    { name: "tokengraph", version: "0.22.1" },
+    { name: "tokengraph", version: "0.22.2" },
     {
       instructions: "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. Call tokengraph_setup once and capture its trusted workspace root. Use tokengraph_prepare_context only when planning is needed; otherwise omit taskId from the first query, compress, recall, or analyze call and capture the returned taskId. Complete or pause with tokengraph_task_report. TokenGraph tools are task-scoped: never reuse a taskId across workspaces or merge unrelated tasks."
     }
@@ -26903,7 +26974,7 @@ function createTokenGraphServer(options = {}) {
       });
       if (memories.length) {
         const vaultNotes = projectToVault(memories.map((memory) => ({ id: memory.id, title: memory.title, body: memory.body, links: memory.linkedFiles, archived: memory.status !== "active", updatedAt: memory.updatedAt })));
-        const vaultManifest = `${JSON.stringify({ schemaVersion: 1, notes: vaultNotes.map(({ path, title, hash, backlinks, archived }) => ({ path, title, hash, backlinks, archived })) }, null, 2)}
+        const vaultManifest = `${JSON.stringify({ schemaVersion: 1, notes: vaultNotes.map(({ path, title, hash: hash2, backlinks, archived }) => ({ path, title, hash: hash2, backlinks, archived })) }, null, 2)}
 `;
         const vaultBytes = vaultNotes.reduce((total, note) => total + Buffer.byteLength(note.body, "utf8"), Buffer.byteLength(vaultManifest, "utf8"));
         await assertStorageReplacementAllowed(resolvedRoot, "vault", vaultBytes, config2.storage);
@@ -26915,7 +26986,7 @@ function createTokenGraphServer(options = {}) {
       const projectedPlan = responseMode === "verbose" ? plan : compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
       const artifactContent = compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
       const stableArtifact = createStableArtifact(
-        `context/${createHash12("sha256").update(task.trim().toLocaleLowerCase()).digest("hex")}`,
+        `context/${createHash13("sha256").update(task.trim().toLocaleLowerCase()).digest("hex")}`,
         artifactContent,
         1,
         {
@@ -26927,8 +26998,8 @@ function createTokenGraphServer(options = {}) {
           parserVersion: "tokengraph-index-v4",
           normalizedIntent: task.trim().replace(/\s+/g, " ").toLocaleLowerCase(),
           retrievalConfig: { profile: plan.profile, maxEstimatedTokens: plan.budget.maxEstimatedTokens, allowRawReads: plan.budget.allowRawReads },
-          memoryFingerprint: createHash12("sha256").update(JSON.stringify(memories.map((memory) => memory.id))).digest("hex"),
-          decisionFingerprint: createHash12("sha256").update(JSON.stringify(appliedKnowledge.map((entry) => ({ id: entry.suggestionId, fingerprint: entry.fingerprint })))).digest("hex")
+          memoryFingerprint: createHash13("sha256").update(JSON.stringify(memories.map((memory) => memory.id))).digest("hex"),
+          decisionFingerprint: createHash13("sha256").update(JSON.stringify(appliedKnowledge.map((entry) => ({ id: entry.suggestionId, fingerprint: entry.fingerprint })))).digest("hex")
         }
       );
       await saveStableArtifact(resolvedRoot, stableArtifact);
@@ -26965,7 +27036,7 @@ function createTokenGraphServer(options = {}) {
         toolName: "tokengraph_prepare_context",
         category: "context-routing",
         operation: {
-          taskHash: createHash12("sha256").update(task).digest("hex"),
+          taskHash: createHash13("sha256").update(task).digest("hex"),
           profile: plan.profile,
           indexingMode,
           routingObservation: {
@@ -27071,7 +27142,7 @@ function createTokenGraphServer(options = {}) {
           taskId: task.taskId,
           toolName: "tokengraph_query_context",
           category: `query-${mode}`,
-          operation: { mode, queryHash: createHash12("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
+          operation: { mode, queryHash: createHash13("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
           originalTokens,
           compactTokens
         });
@@ -27141,7 +27212,7 @@ ${text ?? ""}`, config2.maxMemories) : [];
           taskId: task.taskId,
           toolName: "tokengraph_compress",
           category,
-          operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash12("sha256").update(`${"task" in input ? input.task : ""}
+          operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash13("sha256").update(`${"task" in input ? input.task : ""}
 ${input.text ?? ""}`).digest("hex") },
           originalTokens: estimates.baselineTokens,
           compactTokens,
@@ -27181,7 +27252,7 @@ ${input.text ?? ""}`).digest("hex") },
           taskId: task.taskId,
           toolName: "tokengraph_recall",
           category: `memory-${mode}`,
-          operation: { mode, queryHash: createHash12("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
+          operation: { mode, queryHash: createHash13("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
           originalTokens: estimateTokens(compactJson(memories)),
           compactTokens
         });
@@ -27236,7 +27307,7 @@ ${changedFiles.join("\n")}`, 8);
           taskId: task.taskId,
           toolName: "tokengraph_analyze",
           category: `analysis-${mode}`,
-          operation: { mode, inputHash: createHash12("sha256").update(JSON.stringify(input)).digest("hex") },
+          operation: { mode, inputHash: createHash13("sha256").update(JSON.stringify(input)).digest("hex") },
           originalTokens: Math.max(compactTokens, project.files.reduce((total, file) => total + file.estimatedTokens, 0)),
           compactTokens
         });
@@ -27291,7 +27362,7 @@ ${changedFiles.join("\n")}`, 8);
         taskId,
         toolName: "tokengraph_propose_knowledge",
         category: `knowledge-${action}`,
-        operation: action === "propose" ? { action, proposalHash: createHash12("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") } : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
+        operation: action === "propose" ? { action, proposalHash: createHash13("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") } : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
         originalTokens: compactTokens,
         compactTokens
       });
