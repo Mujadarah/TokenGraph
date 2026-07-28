@@ -13,7 +13,7 @@ function parseArgs(argv) {
 }
 
 const { file } = parseArgs(process.argv.slice(2));
-const notes = file === undefined
+const notes = (file === undefined
   ? await new Promise((resolve, reject) => {
     let content = "";
     process.stdin.setEncoding("utf8");
@@ -21,43 +21,69 @@ const notes = file === undefined
     process.stdin.on("end", () => resolve(content));
     process.stdin.on("error", reject);
   })
-  : await readFile(file, "utf8");
+  : await readFile(file, "utf8")).replace(/\r\n?/g, "\n");
 
-function isVersionScopedHistoricalSentence(sentence) {
-  return /\b(?:in|before|during|as of)\s+v\d+\.\d+\.\d+\b/i.test(sentence)
-    || /\bv\d+\.\d+\.\d+\b[\s\S]{0,80}\b(?:was|remained)\s+(?:inactive|disabled)\b/i.test(sentence);
+const currentStart = "--- TOKENGRAPH_CURRENT_STATE START ---";
+const currentEnd = "--- TOKENGRAPH_CURRENT_STATE END ---";
+const historicalStart = "--- TOKENGRAPH_HISTORICAL_STATE START ---";
+const historicalEnd = "--- TOKENGRAPH_HISTORICAL_STATE END ---";
+const canonicalCurrentFields = [
+  "B7_POLYGLOT_INDEXING=active-by-default",
+  "B7_ROUTING_PROMOTION=independent",
+  "ROUTING_MODE=shadow-only",
+  "ENFORCEMENT=disabled"
+];
+
+function markerIndexes(text, marker) {
+  const indexes = [];
+  let index = text.indexOf(marker);
+  while (index !== -1) {
+    indexes.push(index);
+    index = text.indexOf(marker, index + marker.length);
+  }
+  return indexes;
 }
 
-const currentSentences = notes
-  .split(/(?<=[.!?])\s+/)
-  .filter((sentence) => sentence && !isVersionScopedHistoricalSentence(sentence));
-const b7Notes = currentSentences.filter((sentence) => /\bB7\b/i.test(sentence)).join(" ");
-const routingNotes = currentSentences.filter((sentence) => /\brouting\b/i.test(sentence)).join(" ");
-const enforcementNotes = currentSentences.filter((sentence) => /\benforcement\b/i.test(sentence)).join(" ");
+function matchedBlocks(text, startMarker, endMarker, label, requireExactlyOne) {
+  const starts = markerIndexes(text, startMarker);
+  const ends = markerIndexes(text, endMarker);
+  if (requireExactlyOne && (starts.length !== 1 || ends.length !== 1)) {
+    fail(`release notes must contain exactly one ${label} block.`);
+  }
+  if (!requireExactlyOne && starts.length !== ends.length) {
+    fail(`${label} blocks must have matching start and end markers.`);
+  }
 
-if (/\bB7\b[\s\S]{0,180}\b(?:is\s+)?not\s+(?:active|enabled)\s+by\s+default\b/i.test(b7Notes)) {
-  fail("B7 must not be described as not active or enabled by default.");
+  const blocks = [];
+  for (let index = 0; index < starts.length; index += 1) {
+    const start = starts[index];
+    const end = ends[index];
+    if (end === undefined || end <= start || (index + 1 < starts.length && starts[index + 1] < end)) {
+      fail(`${label} blocks must be well-formed and non-overlapping.`);
+    }
+    blocks.push({ start, end: end + endMarker.length, content: text.slice(start + startMarker.length, end).trim() });
+  }
+  return blocks;
 }
-if (/\bB7\b[\s\S]{0,180}\b(?:is|remains|remained|was)?\s*(?:inactive|disabled)\b/i.test(b7Notes)) {
-  fail("B7 must not be described as inactive or disabled.");
+
+const [currentBlock] = matchedBlocks(notes, currentStart, currentEnd, "current-state", true);
+const historicalBlocks = matchedBlocks(notes, historicalStart, historicalEnd, "historical-state", false);
+if (currentBlock.content !== canonicalCurrentFields.join("\n")) {
+  fail("current-state block must contain exactly the canonical fields.");
 }
-if (!/\bB7\b[\s\S]{0,180}\b(?:is\s+)?(?:active|enabled)\s+by\s+default\b/i.test(b7Notes)) {
-  fail("B7 must be described as active by default.");
+for (const historicalBlock of historicalBlocks) {
+  if (historicalBlock.start < currentBlock.end && currentBlock.start < historicalBlock.end) {
+    fail("current-state and historical-state blocks must not overlap.");
+  }
 }
-if (/\bB7\b[\s\S]{0,220}\b(?:is\s+)?not\s+independent\b[\s\S]{0,120}\brouting\b/i.test(b7Notes)) {
-  fail("B7 must not be described as dependent on routing.");
+
+const stateBlocks = [currentBlock, ...historicalBlocks].sort((left, right) => right.start - left.start);
+let notesOutsideStateBlocks = notes;
+for (const block of stateBlocks) {
+  notesOutsideStateBlocks = `${notesOutsideStateBlocks.slice(0, block.start)}${notesOutsideStateBlocks.slice(block.end)}`;
 }
-if (!/\bB7\b[\s\S]{0,220}\bindependent\b[\s\S]{0,120}\brouting\b/i.test(b7Notes)) {
-  fail("B7 must be described as independent of routing.");
-}
-if (/\brouting\b[\s\S]{0,120}\b(?:is\s+)?not\s+shadow(?:-only| mode)?\b/i.test(routingNotes)) {
-  fail("routing must not be described as non-shadow.");
-}
-if (!/\brouting\b[\s\S]{0,120}\bshadow(?:-only| mode)?\b/i.test(routingNotes)) {
-  fail("routing must be described as shadow-only.");
-}
-if (/\benforcement\b[\s\S]{0,80}\b(?:is\s+)?enabled\b/i.test(enforcementNotes)) {
-  fail("enforcement must not be described as enabled.");
+if (/\b(?:B7(?:\b|_)|ROUTING(?:\b|_)|ENFORCEMENT(?:\b|_)|enforced\b)/i.test(notesOutsideStateBlocks)) {
+  fail("current B7, routing, or enforcement claims must not appear outside a delimited state block.");
 }
 
 console.log("TokenGraph release-note contract passed.");
