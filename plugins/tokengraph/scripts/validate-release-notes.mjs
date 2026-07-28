@@ -23,17 +23,41 @@ const notes = file === undefined
   })
   : await readFile(file, "utf8");
 
-if (/\bB7\b[\s\S]{0,180}\binactive\b/i.test(notes)) {
-  fail("B7 must not be described as inactive.");
+function isVersionScopedHistoricalSentence(sentence) {
+  return /\b(?:in|before|during|as of)\s+v\d+\.\d+\.\d+\b/i.test(sentence)
+    || /\bv\d+\.\d+\.\d+\b[\s\S]{0,80}\b(?:was|remained)\s+(?:inactive|disabled)\b/i.test(sentence);
 }
-if (!/\bB7\b[\s\S]{0,180}\b(?:active|enabled)\s+by\s+default\b/i.test(notes)) {
+
+const currentSentences = notes
+  .split(/(?<=[.!?])\s+/)
+  .filter((sentence) => sentence && !isVersionScopedHistoricalSentence(sentence));
+const b7Notes = currentSentences.filter((sentence) => /\bB7\b/i.test(sentence)).join(" ");
+const routingNotes = currentSentences.filter((sentence) => /\brouting\b/i.test(sentence)).join(" ");
+const enforcementNotes = currentSentences.filter((sentence) => /\benforcement\b/i.test(sentence)).join(" ");
+
+if (/\bB7\b[\s\S]{0,180}\b(?:is\s+)?not\s+(?:active|enabled)\s+by\s+default\b/i.test(b7Notes)) {
+  fail("B7 must not be described as not active or enabled by default.");
+}
+if (/\bB7\b[\s\S]{0,180}\b(?:is|remains|remained|was)?\s*(?:inactive|disabled)\b/i.test(b7Notes)) {
+  fail("B7 must not be described as inactive or disabled.");
+}
+if (!/\bB7\b[\s\S]{0,180}\b(?:is\s+)?(?:active|enabled)\s+by\s+default\b/i.test(b7Notes)) {
   fail("B7 must be described as active by default.");
 }
-if (!/\bB7\b[\s\S]{0,220}\bindependent\b[\s\S]{0,120}\brouting\b/i.test(notes)) {
+if (/\bB7\b[\s\S]{0,220}\b(?:is\s+)?not\s+independent\b[\s\S]{0,120}\brouting\b/i.test(b7Notes)) {
+  fail("B7 must not be described as dependent on routing.");
+}
+if (!/\bB7\b[\s\S]{0,220}\bindependent\b[\s\S]{0,120}\brouting\b/i.test(b7Notes)) {
   fail("B7 must be described as independent of routing.");
 }
-if (!/\brouting\b[\s\S]{0,120}\bshadow(?:-only| mode)?\b/i.test(notes)) {
+if (/\brouting\b[\s\S]{0,120}\b(?:is\s+)?not\s+shadow(?:-only| mode)?\b/i.test(routingNotes)) {
+  fail("routing must not be described as non-shadow.");
+}
+if (!/\brouting\b[\s\S]{0,120}\bshadow(?:-only| mode)?\b/i.test(routingNotes)) {
   fail("routing must be described as shadow-only.");
+}
+if (/\benforcement\b[\s\S]{0,80}\b(?:is\s+)?enabled\b/i.test(enforcementNotes)) {
+  fail("enforcement must not be described as enabled.");
 }
 
 console.log("TokenGraph release-note contract passed.");

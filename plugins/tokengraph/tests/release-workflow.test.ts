@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -21,5 +22,35 @@ describe("tagged release workflow", () => {
     expect(workflow).toMatch(/multi-repository coverage target is met/i);
     expect(workflow).toContain('"${{ steps.artifact.outputs.archive }}"');
     expect(workflow).not.toContain('"plugins/tokengraph/${{ steps.artifact.outputs.archive }}"');
+  });
+});
+
+function validateReleaseNotes(fixture: string) {
+  return spawnSync(process.execPath, [resolve(process.cwd(), "scripts", "validate-release-notes.mjs")], {
+    encoding: "utf8",
+    input: readFileSync(resolve(process.cwd(), "tests", "fixtures", "release-notes", fixture), "utf8")
+  });
+}
+
+describe("release-note contract", () => {
+  it("rejects negated current B7 and routing claims", () => {
+    const result = validateReleaseNotes("negated-current-state.md");
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+  });
+
+  it("rejects a contradictory current B7 disabled claim", () => {
+    const result = validateReleaseNotes("contradictory-disabled.md");
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+  });
+
+  it("accepts version-scoped historical B7 inactivity", () => {
+    const result = validateReleaseNotes("version-scoped-history.md");
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
   });
 });
