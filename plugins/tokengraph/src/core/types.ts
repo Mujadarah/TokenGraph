@@ -63,6 +63,7 @@ export interface TokenGraphConfig {
   routingKillSwitch: boolean;
   routing: { mode: RoutingMode; killSwitch: boolean };
   parser: {
+    polyglotEnabled: boolean;
     maxFileBytes: number;
     maxTotalBytes: number;
     maxSymbols: number;

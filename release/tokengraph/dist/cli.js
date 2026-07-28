@@ -3,7 +3,7 @@
 // src/core/runner.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { spawn } from "node:child_process";
-import { readFile as readFile4, readdir as readdir2, rm as rm3 } from "node:fs/promises";
+import { readFile as readFile4, readdir as readdir3, rm as rm3 } from "node:fs/promises";
 import { join as join5 } from "node:path";
 
 // src/core/storage.ts
@@ -123,11 +123,12 @@ import { isAbsolute as isAbsolute2, join as join3, relative as relative2, resolv
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { access, readFile as readFile2 } from "node:fs/promises";
+import { access, lstat as lstat2, readFile as readFile2, readdir } from "node:fs/promises";
 import { join as join2, resolve as resolve2 } from "node:path";
 var execFileAsync = promisify(execFile);
 var LOCAL_EXCLUDE_WARNING = "TokenGraph could not update .git/info/exclude; add this exact line manually: .tokengraph/";
 var setupWarnings = /* @__PURE__ */ new Map();
+var LEGACY_REPOSITORY_STATE_SCHEMA_VERSION = 1;
 async function git(root, ...args) {
   try {
     const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 });
@@ -223,10 +224,9 @@ async function getRepositoryIdentityUncached(workspaceRoot) {
     remoteIdentity(workspaceRoot)
   ]);
   const normalizedRoot = resolve2(topLevel ?? workspaceRoot);
-  const normalizedCommon = commonDir ? resolve2(workspaceRoot, commonDir) : void 0;
   const normalizedGitDir = gitDir ? resolve2(workspaceRoot, gitDir) : void 0;
   if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
-  const repositoryState = repositoryStateDirectory(normalizedRoot, normalizedCommon);
+  const repositoryState = await resolveRepositoryStateDirectory(normalizedRoot);
   const repositoryId = await loadOrCreateRepositoryId(repositoryState);
   const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
   const repositoryFingerprint = digest(`${repositoryId}
@@ -247,10 +247,97 @@ async function gitCommonDirectory(root) {
   return resolve2(root, commonDir);
 }
 function repositoryStateDirectory(root, commonDirectory) {
-  return commonDirectory ? join2(commonDirectory, "tokengraph") : join2(resolve2(root), ".tokengraph", "repository");
+  void commonDirectory;
+  return join2(resolve2(root), ".tokengraph", "repository");
 }
 async function resolveRepositoryStateDirectory(root) {
-  return repositoryStateDirectory(root, await gitCommonDirectory(root));
+  const normalizedRoot = resolve2(root);
+  const target = repositoryStateDirectory(normalizedRoot);
+  const commonDirectory = await gitCommonDirectory(normalizedRoot);
+  if (commonDirectory) await migrateLegacyRepositoryState(join2(commonDirectory, "tokengraph"), target);
+  return target;
+}
+async function migrateLegacyRepositoryState(source, target) {
+  try {
+    await lstat2(join2(target, "migration.json"));
+    return;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  let sourceStats;
+  try {
+    sourceStats = await lstat2(source);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  if (!sourceStats.isDirectory()) return;
+  const lockKey = await canonicalPersistenceLockKey(target, "migration.json");
+  await withFileLock(`${lockKey}.lock`, async () => {
+    try {
+      await lstat2(join2(target, "migration.json"));
+      return;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const report = {
+      schemaVersion: LEGACY_REPOSITORY_STATE_SCHEMA_VERSION,
+      source,
+      migratedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      migrated: [],
+      skippedExisting: [],
+      skippedInvalid: [],
+      skippedUnsupported: [],
+      skippedSymlink: []
+    };
+    await migrateLegacyEntries(source, target, "", report);
+    await writeJsonAtomic(join2(target, "migration.json"), report);
+  });
+}
+async function migrateLegacyEntries(sourceRoot, targetRoot, relativePath, report) {
+  const sourceDirectory = join2(sourceRoot, relativePath);
+  for (const entry of await readdir(sourceDirectory, { withFileTypes: true })) {
+    const entryRelativePath = relativePath ? join2(relativePath, entry.name) : entry.name;
+    const sourcePath = join2(sourceRoot, entryRelativePath);
+    if (entry.name.endsWith(".lock") || entry.name.endsWith(".tmp")) {
+      report.skippedUnsupported.push(entryRelativePath);
+      continue;
+    }
+    const stats = await lstat2(sourcePath);
+    if (stats.isSymbolicLink()) {
+      report.skippedSymlink.push(entryRelativePath);
+      continue;
+    }
+    if (stats.isDirectory()) {
+      await migrateLegacyEntries(sourceRoot, targetRoot, entryRelativePath, report);
+      continue;
+    }
+    if (!stats.isFile() || !entry.name.endsWith(".json")) {
+      report.skippedUnsupported.push(entryRelativePath);
+      continue;
+    }
+    const targetPath = join2(targetRoot, entryRelativePath);
+    try {
+      await lstat2(targetPath);
+      report.skippedExisting.push(entryRelativePath);
+      continue;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    let contents;
+    try {
+      contents = await readFile2(sourcePath, "utf8");
+      JSON.parse(contents);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        report.skippedInvalid.push(entryRelativePath);
+        continue;
+      }
+      throw error;
+    }
+    await writeTextAtomic(targetPath, contents);
+    report.migrated.push(entryRelativePath);
+  }
 }
 
 // src/core/persistence.ts
@@ -280,15 +367,15 @@ function vaultDir(root) {
 import { createHash as createHash2 } from "node:crypto";
 
 // src/core/storagePolicy.ts
-import { chmod as chmod2, lstat as lstat2, mkdir as mkdir2, readFile as readFile3, readdir, realpath as realpath2, rm as rm2 } from "node:fs/promises";
+import { chmod as chmod2, lstat as lstat3, mkdir as mkdir2, readFile as readFile3, readdir as readdir2, realpath as realpath2, rm as rm2 } from "node:fs/promises";
 import { basename, dirname as dirname2, isAbsolute as isAbsolute3, join as join4, relative as relative3, resolve as resolve4 } from "node:path";
 async function usage(path) {
   try {
-    const info = await lstat2(path);
+    const info = await lstat3(path);
     if (info.isSymbolicLink()) throw new Error(`TokenGraph storage accounting refuses symbolic-link paths: ${path}`);
     if (info.isFile()) return { bytes: info.size, files: 1 };
     if (!info.isDirectory()) return { bytes: 0, files: 0 };
-    const entries = await readdir(path);
+    const entries = await readdir2(path);
     const children = await Promise.all(entries.map((entry) => usage(join4(path, entry))));
     return children.reduce((total, child) => ({ bytes: total.bytes + child.bytes, files: total.files + child.files }), { bytes: 0, files: 0 });
   } catch (error) {
@@ -346,7 +433,7 @@ async function safeRemoveUnderBase(base, relativeTarget, recursive) {
   if (!relativeTarget || isAbsolute3(relativeTarget) || relativeTarget.replaceAll("\\", "/").split("/").includes("..")) throw new Error("Storage purge target must be a safe relative path.");
   let canonicalBase;
   try {
-    if ((await lstat2(base)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link base paths: ${base}`);
+    if ((await lstat3(base)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link base paths: ${base}`);
     canonicalBase = await realpath2(base);
   } catch (error) {
     if (error.code === "ENOENT") return false;
@@ -358,7 +445,7 @@ async function safeRemoveUnderBase(base, relativeTarget, recursive) {
   for (const segment of relativeTarget.replaceAll("\\", "/").split("/").filter(Boolean)) {
     current = join4(current, segment);
     try {
-      if ((await lstat2(current)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link or junction paths: ${current}`);
+      if ((await lstat3(current)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link or junction paths: ${current}`);
     } catch (error) {
       if (error.code === "ENOENT") return false;
       throw error;
@@ -383,7 +470,7 @@ async function purgeCache(root) {
 }
 async function purgeOutcomes(root) {
   const directory = join4(await realpath2(resolve4(root)), ".tokengraph", "tasks");
-  const entries = await readdir(directory).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error));
+  const entries = await readdir2(directory).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error));
   const removed = [];
   for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
     try {
@@ -679,7 +766,7 @@ ${run.stdout}`;
   };
 }
 async function purgeRuns(root, before) {
-  const entries = await readdir2(runsDir(root)).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error));
+  const entries = await readdir3(runsDir(root)).catch((error) => error.code === "ENOENT" ? [] : Promise.reject(error));
   const removed = [];
   for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
     const runId = entry.slice(0, -5);
@@ -694,7 +781,7 @@ async function purgeRuns(root, before) {
 
 // src/core/config.ts
 import { copyFile, readFile as readFile5 } from "node:fs/promises";
-var CURRENT_CONFIG_SCHEMA_VERSION = 2;
+var CURRENT_CONFIG_SCHEMA_VERSION = 3;
 var PROFILE_DEFAULTS = {
   conservative: {
     maxFiles: 10,
@@ -735,6 +822,7 @@ var DEFAULT_TOKEN_GRAPH_CONFIG = {
   routingKillSwitch: false,
   routing: { mode: "shadow", killSwitch: false },
   parser: {
+    polyglotEnabled: true,
     maxFileBytes: 512 * 1024,
     maxTotalBytes: 8 * 1024 * 1024,
     maxSymbols: 1e4,
@@ -802,6 +890,7 @@ function normalizeConfig(value, applyEnvironment = true) {
     routingKillSwitch,
     routing: { mode: routingMode, killSwitch: routingKillSwitch },
     parser: {
+      polyglotEnabled: typeof nestedParser.polyglotEnabled === "boolean" ? Boolean(nestedParser.polyglotEnabled) : DEFAULT_TOKEN_GRAPH_CONFIG.parser.polyglotEnabled,
       maxFileBytes: integer(nestedParser, "maxFileBytes", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxFileBytes, 1),
       maxTotalBytes: integer(nestedParser, "maxTotalBytes", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxTotalBytes, 1),
       maxSymbols: integer(nestedParser, "maxSymbols", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxSymbols, 1),
@@ -1969,7 +2058,7 @@ async function runPairedHostEvaluation(options) {
 }
 
 // src/core/taskLedger.ts
-import { readFile as readFile9, readdir as readdir3, rename as rename2, rm as rm5 } from "node:fs/promises";
+import { readFile as readFile9, readdir as readdir4, rename as rename2, rm as rm5 } from "node:fs/promises";
 import { join as join6, resolve as resolve6 } from "node:path";
 
 // src/core/taskEstimator.ts

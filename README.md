@@ -12,7 +12,7 @@ TokenGraph is a local-first MCP plugin for Codex and Claude Code that helps codi
 - **Trust-bounded:** the host must identify the workspace; installed plugin launches fail closed instead of trusting an arbitrary path.
 - **Evidence-led:** deterministic benchmarks and reviewed real-host traces are checked into the repository, while automatic routing stays in shadow mode until every promotion gate passes.
 
-Current release: `0.22.2` | Runtime: Node.js 22 or newer | Source-available under the repository [license](LICENSE).
+Current release: `0.23.0` | Runtime: Node.js 22 or newer | Source-available under the repository [license](LICENSE).
 
 ## Install from GitHub
 
@@ -26,7 +26,7 @@ codex plugin add tokengraph@tokengraph
 codex plugin list --json
 ```
 
-Codex must provide a trusted project root. TokenGraph's reviewed lifecycle hook attests the host-generated working directory for the matching task, so one global installation works across repositories without a machine-wide workspace variable. If hooks are disabled or untrusted and the client does not support MCP Roots, use the compatibility fallback before starting Codex:
+Codex must provide a trusted project root. Each MCP request names its active project and thread; TokenGraph accepts that metadata only when it matches the reviewed lifecycle-hook attestation for the same task, so one global installation works across simultaneous repositories without a machine-wide workspace variable. If hooks are disabled or untrusted and the client does not support MCP Roots, use the compatibility fallback before starting Codex:
 
 ```powershell
 $env:TOKENGRAPH_WORKSPACE_ROOT=(Get-Location).Path
@@ -60,15 +60,15 @@ Claude Code forwards `CLAUDE_PROJECT_DIR` to TokenGraph automatically.
 
 ## Install the release ZIP
 
-Download `tokengraph-0.22.2.zip` from the [latest GitHub release](https://github.com/Mujadarah/TokenGraph/releases/latest) and extract it. The extracted directory is a standalone marketplace root containing both host catalogs and the installable `tokengraph/` plugin.
+Download `tokengraph-0.23.0.zip` from the [latest GitHub release](https://github.com/Mujadarah/TokenGraph/releases/latest) and extract it. The extracted directory is a standalone marketplace root containing both host catalogs and the installable `tokengraph/` plugin.
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.22.2
+codex plugin marketplace add C:\path\to\tokengraph-0.23.0
 codex plugin add tokengraph@tokengraph
 ```
 
 ```bash
-claude plugin marketplace add /path/to/tokengraph-0.22.2
+claude plugin marketplace add /path/to/tokengraph-0.23.0
 claude plugin install tokengraph@tokengraph
 ```
 
@@ -105,7 +105,7 @@ TokenGraph exposes eight compact intent-level tools by default and 42 tools on t
 
 See the [source plugin guide](plugins/tokengraph/README.md) for the complete tool catalog.
 
-TokenGraph indexes TypeScript, JavaScript, SQL, and Markdown by default. Pinned Tree-sitter WASM grammars for Python, Go, Rust, and Java ship with the plugin, but their indexing remains dark until a complete passing B6 paired evaluation records promotion evidence.
+TokenGraph indexes TypeScript, JavaScript, SQL, Markdown, Python, Go, Rust, and Java by default. Pinned Tree-sitter WASM grammars for the four polyglot languages run locally with bounded resources; set `parser.polyglotEnabled` to `false` in the project's `.tokengraph/config.json` when a project needs the kill switch.
 
 ## Current behavior and evidence
 
@@ -115,7 +115,7 @@ Routing decisions expose the frozen `expectedBenefit` enum `none | low | medium 
 
 The checked-in deterministic fixture benchmark preserves 100% of critical constraints, has zero critical false negatives, and reaches 100% required-file recall. Three bounded tasks bypass at Stage 0 and are not booked as savings. Across the 27 activated tasks, the primary execution-inclusive median is +174.5 estimated tokens, the nearest-rank p25 is +40.5, and 22 tasks (81.5%) are non-negative, so the frozen deterministic release gate passes. Four edit/debug tasks charge one hash-validated exact source slice each, totaling 711 estimated tokens. The baseline is category-appropriate: minimal expert raw reads for code, SQL, risk, memory, and release tasks, and real noisy runner captures for debugging and compression. Memory/wiki remains negative in three of four fixtures and change risk in two of four; negative tails are not hidden. Every fixture category still has fewer than 10 observations, so calibration confidence remains low. These fixture estimates are not provider billing counts, autonomous-agent patch-quality evidence, or universal Codex/Claude proof.
 
-Real-host evidence is reported separately from fixture economics. Reviewed schema-v3 campaigns cover TokenGraph, `mattpocock/ts-reset`, and `imbhargav5/nextbase-nextjs-supabase-starter`: fifteen counterbalanced ON/OFF pairs and thirty accepted traces across three repositories and three categories. The multi-repository B6 coverage target is met, but promotion and enforcement remain disabled because not all frozen sample, performance, resource, and router gates passed. Routing stays in shadow mode and B7 remains dark. See the TokenGraph [manifest](docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json) and [report](docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.md), the `ts-reset` [manifest](docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-manifest.json) and [report](docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.md), and the Nextbase [manifest](docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-manifest.json) and [report](docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-report.md).
+Real-host evidence is reported separately from fixture economics. Reviewed schema-v3 campaigns cover TokenGraph, `mattpocock/ts-reset`, and `imbhargav5/nextbase-nextjs-supabase-starter`: fifteen counterbalanced ON/OFF pairs and thirty accepted traces across three repositories and three categories. The multi-repository B6 coverage target is met, but routing promotion and enforcement remain disabled because not all frozen sample, performance, resource, and router gates passed. Routing stays in shadow mode; B7 polyglot indexing is an independent local parser capability and is active by default. See the TokenGraph [manifest](docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json) and [report](docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.md), the `ts-reset` [manifest](docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-manifest.json) and [report](docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.md), and the Nextbase [manifest](docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-manifest.json) and [report](docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-report.md).
 
 Lifecycle hooks are cooperative automation. Users must review and trust them; they can be disabled, and interrupts, process termination, StopFailure, or API failure do not run normal completion enforcement. Missing or corrupt hook state fails open with a warning.
 

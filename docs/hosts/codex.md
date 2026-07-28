@@ -21,7 +21,7 @@ The marketplace resolves `tokengraph@tokengraph` to `release/tokengraph/`. Start
 
 ## Configure workspace trust
 
-TokenGraph must receive a trusted project root from the host. Its reviewed `SessionStart` and `UserPromptSubmit` hooks attest Codex's host-generated `cwd` for the matching `CODEX_THREAD_ID`, so one installed plugin follows each task into its own repository without a global workspace variable. MCP Roots remain supported.
+TokenGraph must receive a trusted project root from the host. Codex request metadata now names the active project and thread on every tool call; TokenGraph accepts it only when it matches the reviewed `SessionStart` or `UserPromptSubmit` attestation for that thread. The attestation bridge is keyed by the host's `CODEX_THREAD_ID`, while MCP calls carry that same identity in request metadata. One installed plugin can therefore follow multiple simultaneous tasks into separate repositories without a global workspace variable. MCP Roots remain supported.
 
 If hooks are disabled or untrusted and Codex does not supply MCP Roots, set `TOKENGRAPH_WORKSPACE_ROOT` before starting Codex as a compatibility fallback:
 
@@ -34,7 +34,7 @@ codex
 TOKENGRAPH_WORKSPACE_ROOT="$PWD" codex
 ```
 
-The session attestation is scoped to the installed plugin root and the exact task id, expires after 24 hours unless refreshed by a prompt, and is removed on `SessionEnd`. A root argument passed by a tool caller is never treated as authority.
+The session attestation is scoped to the installed plugin root and the exact task id, expires after 24 hours unless refreshed by a prompt, and is removed on `SessionEnd`. A root argument passed by a tool caller is never treated as authority. Active graph, memory, config, wiki, and repository records live under each project's `.tokengraph/` directory. Legacy `.git/tokengraph/` JSON records are copied once with workspace data winning conflicts and the old files retained as a backup.
 
 Call `tokengraph_setup` first. A `blocked` result includes the missing or unsafe trust reason and recovery commands without reading project files. A `ready` result identifies the trusted source and root.
 
@@ -59,10 +59,10 @@ A paused task id is terminal. Start a new task with `tokengraph_prepare_context`
 
 ## Install an extracted release bundle
 
-Extract `tokengraph-0.22.2.zip`, then add the extracted bundle root:
+Extract `tokengraph-0.23.0.zip`, then add the extracted bundle root:
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.22.2
+codex plugin marketplace add C:\path\to\tokengraph-0.23.0
 codex plugin add tokengraph@tokengraph
 ```
 

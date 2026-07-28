@@ -117,19 +117,19 @@ describe("source-free SymbolChunk records", () => {
     }
   });
 
-  it("reuses source limits for incremental updates and keeps B7 parsers promotion-gated", async () => {
+  it("reuses source limits for incremental updates with B7 active by default and a local kill switch", async () => {
     const root = await mkdtemp(join(tmpdir(), "tokengraph-incremental-limits-"));
     try {
       await writeFile(join(root, "sample.ts"), "export const value = 1;\n");
       await writeFile(join(root, "sample.py"), "def promoted_symbol():\n  return True\n");
       await writeFile(join(root, "Sample.java"), "class HiddenUntilPromotion {}\n");
       const initial = await indexProject(root, { parserLimits: { maxFileBytes: 1024 } });
-      expect(initial.symbols.some((symbol) => symbol.name === "promoted_symbol")).toBe(false);
-      expect(initial.symbols.some((symbol) => symbol.name === "HiddenUntilPromotion")).toBe(false);
+      expect(initial.symbols.some((symbol) => symbol.name === "promoted_symbol" && symbol.provenance === "tree-sitter")).toBe(true);
+      expect(initial.symbols.some((symbol) => symbol.name === "HiddenUntilPromotion" && symbol.provenance === "tree-sitter")).toBe(true);
       expect(initial.symbols).toContainEqual(expect.objectContaining({ name: "value", provenance: "typescript", parserVersion: "5.9.3" }));
-      const promoted = await indexProject(root, { polyglotEnabled: true, parserLimits: { perFileTimeoutMs: 2_000 } });
-      expect(promoted.symbols.some((symbol) => symbol.name === "promoted_symbol" && symbol.provenance === "tree-sitter")).toBe(true);
-      expect(promoted.symbols.some((symbol) => symbol.name === "HiddenUntilPromotion" && symbol.provenance === "tree-sitter")).toBe(true);
+      const disabled = await indexProject(root, { polyglotEnabled: false, parserLimits: { perFileTimeoutMs: 2_000 } });
+      expect(disabled.symbols.some((symbol) => symbol.name === "promoted_symbol")).toBe(false);
+      expect(disabled.symbols.some((symbol) => symbol.name === "HiddenUntilPromotion")).toBe(false);
 
       await writeFile(join(root, "sample.ts"), `export const value = "${"x".repeat(256)}";\n`);
       const updated = await updateProjectIndexIncremental(root, initial, { parserLimits: { maxFileBytes: 64, maxTotalBytes: 1024 } });

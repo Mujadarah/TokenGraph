@@ -4,7 +4,7 @@ import { configPath, stateDir } from "./persistence.js";
 import { canonicalPersistenceLockKey, quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
 import type { RoutingMode, TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
 
-export const CURRENT_CONFIG_SCHEMA_VERSION = 2;
+export const CURRENT_CONFIG_SCHEMA_VERSION = 3;
 
 export const PROFILE_DEFAULTS = {
   conservative: {
@@ -54,6 +54,7 @@ export const DEFAULT_TOKEN_GRAPH_CONFIG: TokenGraphConfig = {
   routingKillSwitch: false,
   routing: { mode: "shadow", killSwitch: false },
   parser: {
+    polyglotEnabled: true,
     maxFileBytes: 512 * 1024,
     maxTotalBytes: 8 * 1024 * 1024,
     maxSymbols: 10_000,
@@ -128,6 +129,9 @@ function normalizeConfig(value: unknown, applyEnvironment = true): TokenGraphCon
     routingKillSwitch,
     routing: { mode: routingMode, killSwitch: routingKillSwitch },
     parser: {
+      polyglotEnabled: typeof (nestedParser as { polyglotEnabled?: unknown }).polyglotEnabled === "boolean"
+        ? Boolean((nestedParser as { polyglotEnabled?: unknown }).polyglotEnabled)
+        : DEFAULT_TOKEN_GRAPH_CONFIG.parser.polyglotEnabled,
       maxFileBytes: integer(nestedParser, "maxFileBytes", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxFileBytes, 1),
       maxTotalBytes: integer(nestedParser, "maxTotalBytes", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxTotalBytes, 1),
       maxSymbols: integer(nestedParser, "maxSymbols", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxSymbols, 1),

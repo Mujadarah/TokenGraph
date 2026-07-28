@@ -1828,6 +1828,41 @@ describe("TokenGraph MCP stdio server", () => {
     });
   });
 
+  it("activates B7 polyglot indexing from project config without requiring routing promotion", async () => {
+    const root = await makeRoot();
+    await writeFile(join(root, "sample.py"), "def python_symbol():\n    return True\n");
+    await stopServer();
+    startServer(root);
+
+    await request(75, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-b7-config-test", version: "0.23.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const indexed = await request(76, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root, fullReindex: true }
+    });
+    expect(indexed.structuredContent).toMatchObject({
+      status: "indexed",
+      map: { counts: { files: 1, symbols: expect.any(Number) } }
+    });
+    expect((indexed.structuredContent as { map: { counts: { symbols: number } } }).map.counts.symbols).toBeGreaterThan(0);
+
+    const disabled = await request(77, "tools/call", {
+      name: "tokengraph_update_config",
+      arguments: { root, parser: { polyglotEnabled: false } }
+    });
+    expect(disabled.structuredContent).toMatchObject({ config: { parser: { polyglotEnabled: false } } });
+    const reindexed = await request(78, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root, fullReindex: true }
+    });
+    expect((reindexed.structuredContent as { map: { counts: { symbols: number } } }).map.counts.symbols).toBe(0);
+  });
+
   it("rejects an outside root when launched from the installed plugin root", async () => {
     const root = await makeRoot();
     const outsideRoot = await makeRoot();
@@ -1909,7 +1944,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(420, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-session-workspace-test", version: "0.22.2" }
+      clientInfo: { name: "tokengraph-session-workspace-test", version: "0.23.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -1935,6 +1970,80 @@ describe("TokenGraph MCP stdio server", () => {
     await runWorkspaceHook("session-end", secondSession, secondRoot);
   });
 
+  it("uses request-attested Codex workspace metadata when the MCP process has no workspace environment", async () => {
+    const root = await makeRoot();
+    const secondRoot = await makeRoot();
+    const sessionId = randomUUID();
+    const secondSessionId = randomUUID();
+    await runWorkspaceHook("session-start", sessionId, root);
+    await runWorkspaceHook("session-start", secondSessionId, secondRoot);
+    await stopServer();
+    startServer(process.cwd(), {
+      TOKENGRAPH_WORKSPACE_ROOT: "",
+      CLAUDE_PROJECT_DIR: "",
+      CODEX_THREAD_ID: ""
+    });
+
+    await request(425, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-request-metadata-test", version: "0.23.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const setup = await request(426, "tools/call", {
+      name: "tokengraph_setup_status",
+      arguments: {},
+      _meta: {
+        "x-codex-turn-metadata": {
+          workspace_kind: "project",
+          thread_id: sessionId,
+          workspaces: {
+            [root]: {
+              associated_remote_urls: { origin: "https://example.test/project.git" }
+            }
+          }
+        }
+      }
+    });
+    expect(setup.structuredContent).toMatchObject({
+      status: "ready",
+      trustedWorkspace: { source: "codex-request-metadata", root },
+      blockingReason: null,
+      pluginRootLaunch: true
+    });
+
+    const [firstConcurrent, secondConcurrent] = await Promise.all([
+      request(427, "tools/call", {
+        name: "tokengraph_setup_status",
+        arguments: {},
+        _meta: {
+          "x-codex-turn-metadata": {
+            workspace_kind: "project",
+            thread_id: sessionId,
+            workspaces: { [root]: {} }
+          }
+        }
+      }),
+      request(428, "tools/call", {
+        name: "tokengraph_setup_status",
+        arguments: {},
+        _meta: {
+          "x-codex-turn-metadata": {
+            workspace_kind: "project",
+            thread_id: secondSessionId,
+            workspaces: { [secondRoot]: {} }
+          }
+        }
+      })
+    ]);
+    expect(firstConcurrent.structuredContent).toMatchObject({ trustedWorkspace: { root } });
+    expect(secondConcurrent.structuredContent).toMatchObject({ trustedWorkspace: { root: secondRoot } });
+
+    await runWorkspaceHook("session-end", sessionId, root);
+    await runWorkspaceHook("session-end", secondSessionId, secondRoot);
+  });
+
   it("fails closed for an expired Codex host workspace attestation", async () => {
     const root = await makeRoot();
     const sessionId = randomUUID();
@@ -1952,7 +2061,7 @@ describe("TokenGraph MCP stdio server", () => {
     await request(423, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-expired-workspace-test", version: "0.22.2" }
+      clientInfo: { name: "tokengraph-expired-workspace-test", version: "0.23.0" }
     });
     send({ method: "notifications/initialized" });
     const setup = await request(424, "tools/call", {

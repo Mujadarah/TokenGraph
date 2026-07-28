@@ -1,11 +1,12 @@
 import process from "node:process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { access, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { McpServer } from "@modelcontextprotocol/server";
+import { McpServer, type ServerContext } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import { ArchitectureRuleStore, checkArchitecture } from "./core/architectureRules.js";
@@ -39,7 +40,7 @@ import {
 } from "./core/toolContracts.js";
 import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } from "./core/config.js";
 import { adviseRouting, failOpenRouting } from "./core/routingAdvisor.js";
-import { isValidatedPromotion, loadRoutingControl } from "./core/routingControl.js";
+import { loadRoutingControl } from "./core/routingControl.js";
 import { getRepositoryIdentity, getRepositorySetupWarnings } from "./core/repositoryIdentity.js";
 import { buildEvidenceBackedSliceRecommendation, buildRetrievalCapsule, capsuleArtifact, escalateReadPolicy, rankFilesBm25, readExactSlice, recommendExactRead, startReadPolicyResponse } from "./core/retrieval.js";
 import { loadRun, summarizeRun } from "./core/runner.js";
@@ -174,6 +175,11 @@ function ownPluginRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
 }
 
+// MCP invokes tool callbacks concurrently. AsyncLocalStorage keeps each
+// request's host metadata attached to its own callback chain without a
+// process-wide mutable workspace selector.
+const requestWorkspaceContext = new AsyncLocalStorage<ServerContext>();
+
 async function isPluginRoot(root: string): Promise<boolean> {
   try {
     const [realRoot, realSelf] = await Promise.all([realpath(root), realpath(ownPluginRoot())]);
@@ -197,6 +203,7 @@ type TrustedWorkspaceSource =
   | "CLAUDE_PROJECT_DIR"
   | "TOKENGRAPH_WORKSPACE_ROOT"
   | "codex-session-hook"
+  | "codex-request-metadata"
   | "mcp-roots"
   | "process-cwd"
   | "injected";
@@ -216,7 +223,66 @@ interface WorkspaceSetupStatus {
   nextSteps: string[];
 }
 
-async function resolveTrustedWorkspace(server: McpServer): Promise<TrustedWorkspaceCandidate | undefined> {
+interface CodexTurnMetadata {
+  workspace_kind?: unknown;
+  thread_id?: unknown;
+  threadId?: unknown;
+  workspaces?: unknown;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function codexTurnMetadata(context: ServerContext | undefined): CodexTurnMetadata | undefined {
+  const meta = recordValue(context?.mcpReq._meta);
+  if (!meta) return undefined;
+  return recordValue(meta["x-codex-turn-metadata"] ?? meta["codex-turn-metadata"]) as CodexTurnMetadata | undefined;
+}
+
+function hasCodexTurnMetadata(context: ServerContext | undefined): boolean {
+  const meta = recordValue(context?.mcpReq._meta);
+  return Boolean(meta && (Object.prototype.hasOwnProperty.call(meta, "x-codex-turn-metadata") || Object.prototype.hasOwnProperty.call(meta, "codex-turn-metadata")));
+}
+
+function codexWorkspaceRoots(metadata: CodexTurnMetadata): string[] {
+  const workspaces = recordValue(metadata.workspaces);
+  if (!workspaces) return [];
+  return Object.keys(workspaces).filter((root) => isAbsolute(root));
+}
+
+function workspacePathKey(path: string): string {
+  const normalized = resolve(path);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+async function resolveCodexRequestWorkspace(context: ServerContext | undefined): Promise<{
+  present: boolean;
+  candidate?: TrustedWorkspaceCandidate;
+}> {
+  const metadata = codexTurnMetadata(context);
+  if (!metadata) return { present: hasCodexTurnMetadata(context) };
+  const threadId = stringValue(metadata.thread_id) ?? stringValue(metadata.threadId);
+  if (!threadId || metadata.workspace_kind !== "project") return { present: true };
+  const attestation = await loadHostWorkspaceAttestation(ownPluginRoot(), threadId);
+  if (attestation.status !== "valid") return { present: true };
+  const attestedRoot = workspacePathKey(attestation.root);
+  const advertisedRoots = codexWorkspaceRoots(metadata).map(workspacePathKey);
+  if (!advertisedRoots.includes(attestedRoot)) return { present: true };
+  return { present: true, candidate: { source: "codex-request-metadata", root: attestation.root } };
+}
+
+async function resolveTrustedWorkspace(server: McpServer, context?: ServerContext): Promise<TrustedWorkspaceCandidate | undefined> {
+  const requestWorkspace = await resolveCodexRequestWorkspace(context);
+  if (requestWorkspace.candidate) return requestWorkspace.candidate;
+  // A request carrying Codex workspace metadata must never fall back to a
+  // process-wide root. That would let concurrent projects cross-apply state.
+  if (requestWorkspace.present) return undefined;
+
   const claudeRoot = process.env.CLAUDE_PROJECT_DIR?.trim();
   if (claudeRoot) return { source: "CLAUDE_PROJECT_DIR", root: claudeRoot };
   const codexRoot = process.env.TOKENGRAPH_WORKSPACE_ROOT?.trim();
@@ -238,19 +304,20 @@ async function resolveTrustedWorkspace(server: McpServer): Promise<TrustedWorksp
   return undefined;
 }
 
-function detectedHost(): WorkspaceSetupStatus["host"] {
+function detectedHost(context?: ServerContext): WorkspaceSetupStatus["host"] {
   if (process.env.CLAUDE_PROJECT_DIR?.trim() || process.env.CLAUDE_CODE) return "claude-code";
-  if (Object.keys(process.env).some((name) => name.startsWith("CODEX_"))) return "codex";
+  if (Object.keys(process.env).some((name) => name.startsWith("CODEX_")) || hasCodexTurnMetadata(context)) return "codex";
   return "unknown";
 }
 
-async function inspectWorkspaceSetup(server: McpServer, provider?: TrustedWorkspaceProvider): Promise<WorkspaceSetupStatus> {
+async function inspectWorkspaceSetup(server: McpServer, provider?: TrustedWorkspaceProvider, context?: ServerContext): Promise<WorkspaceSetupStatus> {
   const cwd = await realpath(process.cwd());
   const pluginRootLaunch = await isPluginRoot(cwd);
-  const injected = provider ? await provider() : undefined;
+  const requestMetadataPresent = hasCodexTurnMetadata(context);
+  const injected = !requestMetadataPresent && provider ? await provider() : undefined;
   const candidate = injected
     ? { source: "injected" as const, root: injected }
-    : await resolveTrustedWorkspace(server) ?? (!pluginRootLaunch ? { source: "process-cwd" as const, root: cwd } : undefined);
+    : await resolveTrustedWorkspace(server, context) ?? (!pluginRootLaunch && !requestMetadataPresent ? { source: "process-cwd" as const, root: cwd } : undefined);
   const nextSteps = [
     "Codex: review and trust the TokenGraph lifecycle hooks, then start a new task so SessionStart can attest its working directory.",
     "Codex compatibility fallback (PowerShell): $env:TOKENGRAPH_WORKSPACE_ROOT=(Get-Location).Path; codex",
@@ -262,7 +329,7 @@ async function inspectWorkspaceSetup(server: McpServer, provider?: TrustedWorksp
   if (!candidate) {
     return {
       status: "blocked",
-      host: detectedHost(),
+      host: detectedHost(context),
       trustedWorkspace: null,
       blockingReason: "missing-trusted-workspace",
       pluginRootLaunch,
@@ -277,7 +344,7 @@ async function inspectWorkspaceSetup(server: McpServer, provider?: TrustedWorksp
   } catch {
     return {
       status: "blocked",
-      host: detectedHost(),
+      host: detectedHost(context),
       trustedWorkspace: { ...candidate, root: resolve(candidate.root) },
       blockingReason: "unreadable-trusted-workspace",
       pluginRootLaunch,
@@ -291,7 +358,7 @@ async function inspectWorkspaceSetup(server: McpServer, provider?: TrustedWorksp
   if (root === parse(root).root || root === home) {
     return {
       status: "blocked",
-      host: detectedHost(),
+      host: detectedHost(context),
       trustedWorkspace,
       blockingReason: "unsafe-trusted-workspace",
       pluginRootLaunch,
@@ -302,7 +369,7 @@ async function inspectWorkspaceSetup(server: McpServer, provider?: TrustedWorksp
 
   return {
     status: "ready",
-    host: detectedHost(),
+    host: detectedHost(context),
     trustedWorkspace,
     blockingReason: null,
     pluginRootLaunch,
@@ -313,7 +380,7 @@ async function inspectWorkspaceSetup(server: McpServer, provider?: TrustedWorksp
 
 function createWorkspaceResolver(server: McpServer, provider?: TrustedWorkspaceProvider) {
   return async (inputRoot?: string): Promise<string> => {
-    const setup = await inspectWorkspaceSetup(server, provider);
+    const setup = await inspectWorkspaceSetup(server, provider, requestWorkspaceContext.getStore());
     if (setup.blockingReason === "missing-trusted-workspace") {
       throw new Error("TokenGraph needs a trusted workspace root from the host before it can access project files.");
     }
@@ -368,8 +435,7 @@ function okWithResourceLinks<T extends { resourceLinks?: Array<{ label: string; 
 const projectWriteChains = new Map<string, Promise<void>>();
 
 function projectIndexOptions(
-  config: Awaited<ReturnType<typeof loadTokenGraphConfig>>,
-  control: Awaited<ReturnType<typeof loadRoutingControl>>
+  config: Awaited<ReturnType<typeof loadTokenGraphConfig>>
 ): ProjectIndexOptions {
   return {
     parserLimits: {
@@ -384,8 +450,9 @@ function projectIndexOptions(
       maxTsconfigChain: config.parser.maxTsconfigChain,
       maxAliases: config.parser.maxAliases
     },
-    // B7 stays dark until a complete B6 promotion report proves every gate.
-    polyglotEnabled: isValidatedPromotion(control.promotion) && control.promotion.enforcementEnabled
+    // B7 parsing is a project-local capability. Routing promotion remains a
+    // separate, shadow-only control plane and must not gate indexing.
+    polyglotEnabled: config.parser.polyglotEnabled
   };
 }
 
@@ -405,8 +472,8 @@ async function enqueueProjectWrite<T>(root: string, operation: () => Promise<T>)
 
 async function ensureProject(root: string): Promise<ProjectIndex> {
   return enqueueProjectWrite(root, async () => {
-    const [config, control] = await Promise.all([loadTokenGraphConfig(root), loadRoutingControl(root)]);
-    const options = projectIndexOptions(config, control);
+    const config = await loadTokenGraphConfig(root);
+    const options = projectIndexOptions(config);
     const currentScanSignature = await scanProjectSignature(root, options.parserLimits);
     const existing = await loadProjectIndex(root);
     if (existing && isSafeProjectIndex(root, existing)) {
@@ -646,7 +713,7 @@ function recommendedExactRead(plan: ContextPlan, project: ProjectIndex) {
 export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWorkspaceProvider } = {}): McpServer {
   const toolSurface = selectedToolSurface();
   const server = new McpServer(
-    { name: "tokengraph", version: "0.22.2" },
+    { name: "tokengraph", version: "0.23.0" },
     {
       instructions:
         "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. " +
@@ -654,6 +721,13 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         "TokenGraph tools are task-scoped: never reuse a taskId across workspaces or merge unrelated tasks."
     }
   );
+  const nativeRegisterTool = server.registerTool.bind(server);
+  server.registerTool = ((name: string, config: unknown, handler: unknown) => {
+    const wrappedHandler = async (input: unknown, context: ServerContext) => {
+      return requestWorkspaceContext.run(context, () => (handler as (input: unknown, context: ServerContext) => unknown)(input, context));
+    };
+    return nativeRegisterTool(name, config as never, wrappedHandler as never);
+  }) as typeof server.registerTool;
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
 
   async function requireTaskRoot(root: string | undefined, taskId: string, allowTerminal = false): Promise<string> {
@@ -676,7 +750,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       }
       return { root: resolvedRoot, taskId, autoStarted: false };
     }
-    const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(detectedHost()) });
+    const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(detectedHost(requestWorkspaceContext.getStore())) });
     return { root: resolvedRoot, taskId: ledger.taskId, autoStarted: true };
   }
 
@@ -744,7 +818,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       inputSchema: z.object({})
     },
     async () => {
-      const setup = await inspectWorkspaceSetup(server, options.trustedWorkspace);
+      const setup = await inspectWorkspaceSetup(server, options.trustedWorkspace, requestWorkspaceContext.getStore());
       const repositoryIdentity = setup.trustedWorkspace ? await getRepositoryIdentity(setup.trustedWorkspace.root) : null;
       return ok({
       ...setup,
@@ -777,7 +851,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         return ok(responseMode === "verbose" ? { ...response, root: resolvedRoot } : response);
       }
       const { status: cachedStatus, config, control } = probe;
-      const indexOptions = projectIndexOptions(config, control);
+      const indexOptions = projectIndexOptions(config);
       await enforceStorageClassQuotas(resolvedRoot, config.storage);
       const identity = await getRepositoryIdentity(resolvedRoot);
       const routing = adviseRouting({
@@ -854,7 +928,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
           { id: "first-reads", text: plan.recommendedFirstReads.map((file) => file.path).join("\n"), evidenceClass: "derived", confidence: "high", source: "planner:recommended-first-reads" }
         ]
       }, Math.max(150, Math.min(config.memory.projectBriefTargetTokens, config.memory.projectBriefMaxTokens)));
-      const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost()) });
+      const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost(requestWorkspaceContext.getStore())) });
       await updateTaskRoutingObservation(resolvedRoot, ledger.taskId, {
         decision: routing.useTokenGraph ? "activate" : "bypass",
         stage: routing.stage,
@@ -1292,7 +1366,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({})
     },
-    async () => ok(await inspectWorkspaceSetup(server, options.trustedWorkspace))
+    async () => ok(await inspectWorkspaceSetup(server, options.trustedWorkspace, requestWorkspaceContext.getStore()))
   );
 
   server.registerTool(
@@ -1308,8 +1382,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root, fullReindex }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const [config, control] = await Promise.all([loadTokenGraphConfig(resolvedRoot), loadRoutingControl(resolvedRoot)]);
-      const indexOptions = projectIndexOptions(config, control);
+      const config = await loadTokenGraphConfig(resolvedRoot);
+      const indexOptions = projectIndexOptions(config);
       const existing = fullReindex ? undefined : await loadProjectIndex(resolvedRoot);
       const result = existing && isSafeProjectIndex(resolvedRoot, existing)
         ? await updateProjectIndexIncremental(resolvedRoot, existing, indexOptions)
@@ -1365,8 +1439,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     },
     async ({ root }) => {
       const resolvedRoot = await workspaceRoot(root);
-      const [config, control] = await Promise.all([loadTokenGraphConfig(resolvedRoot), loadRoutingControl(resolvedRoot)]);
-      return ok(await getIndexStatus(resolvedRoot, { projectOptions: projectIndexOptions(config, control) }));
+      const config = await loadTokenGraphConfig(resolvedRoot);
+      return ok(await getIndexStatus(resolvedRoot, { projectOptions: projectIndexOptions(config) }));
     }
   );
 
@@ -1439,7 +1513,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         wikiGenerationEnabled: z.boolean().optional(),
         routingKillSwitch: z.boolean().optional(),
         routing: z.object({ mode: z.enum(["shadow", "enforced", "always-activate", "always-advisory"]).optional(), killSwitch: z.boolean().optional() }).optional(),
-        parser: z.object({ maxFileBytes: z.number().int().min(1).optional(), maxTotalBytes: z.number().int().min(1).optional(), maxSymbols: z.number().int().min(1).optional(), maxNodes: z.number().int().min(1).optional(), perFileTimeoutMs: z.number().int().min(1).optional(), wholeIndexTimeoutMs: z.number().int().min(1).optional(), maxRecursionDepth: z.number().int().min(1).optional(), maxGraphDepth: z.number().int().min(0).optional(), maxGeneratedFiles: z.number().int().min(0).optional(), maxTsconfigChain: z.number().int().min(1).optional(), maxAliases: z.number().int().min(0).optional() }).optional(),
+        parser: z.object({ polyglotEnabled: z.boolean().optional(), maxFileBytes: z.number().int().min(1).optional(), maxTotalBytes: z.number().int().min(1).optional(), maxSymbols: z.number().int().min(1).optional(), maxNodes: z.number().int().min(1).optional(), perFileTimeoutMs: z.number().int().min(1).optional(), wholeIndexTimeoutMs: z.number().int().min(1).optional(), maxRecursionDepth: z.number().int().min(1).optional(), maxGraphDepth: z.number().int().min(0).optional(), maxGeneratedFiles: z.number().int().min(0).optional(), maxTsconfigChain: z.number().int().min(1).optional(), maxAliases: z.number().int().min(0).optional() }).optional(),
         storage: z.object({
           maxBytes: z.number().int().min(1).optional(),
           runsMaxBytes: z.number().int().min(0).optional(),

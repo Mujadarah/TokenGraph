@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { access, lstat, readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import type { RepositoryIdentity, RetrievalSignals } from "./types.js";
@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 
 export const LOCAL_EXCLUDE_WARNING = "TokenGraph could not update .git/info/exclude; add this exact line manually: .tokengraph/";
 const setupWarnings = new Map<string, string[]>();
+const LEGACY_REPOSITORY_STATE_SCHEMA_VERSION = 1 as const;
 
 async function git(root: string, ...args: string[]): Promise<string | undefined> {
   try {
@@ -157,10 +158,9 @@ async function getRepositoryIdentityUncached(workspaceRoot: string): Promise<Rep
     remoteIdentity(workspaceRoot)
   ]);
   const normalizedRoot = resolve(topLevel ?? workspaceRoot);
-  const normalizedCommon = commonDir ? resolve(workspaceRoot, commonDir) : undefined;
   const normalizedGitDir = gitDir ? resolve(workspaceRoot, gitDir) : undefined;
   if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
-  const repositoryState = repositoryStateDirectory(normalizedRoot, normalizedCommon);
+  const repositoryState = await resolveRepositoryStateDirectory(normalizedRoot);
   const repositoryId = await loadOrCreateRepositoryId(repositoryState);
   const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
   const repositoryFingerprint = digest(`${repositoryId}\n${firstCommit}`);
@@ -182,7 +182,11 @@ export async function gitCommonDirectory(root: string): Promise<string | undefin
 }
 
 export function repositoryStateDirectory(root: string, commonDirectory?: string): string {
-  return commonDirectory ? join(commonDirectory, "tokengraph") : join(resolve(root), ".tokengraph", "repository");
+  // Repository knowledge is now owned by the active workspace. The optional
+  // commonDirectory argument remains for source compatibility with callers
+  // from the shared-store era; it is intentionally ignored.
+  void commonDirectory;
+  return join(resolve(root), ".tokengraph", "repository");
 }
 
 export async function isGitWorkspace(root: string): Promise<boolean> {
@@ -195,5 +199,105 @@ export async function isGitWorkspace(root: string): Promise<boolean> {
 }
 
 export async function resolveRepositoryStateDirectory(root: string): Promise<string> {
-  return repositoryStateDirectory(root, await gitCommonDirectory(root));
+  const normalizedRoot = resolve(root);
+  const target = repositoryStateDirectory(normalizedRoot);
+  const commonDirectory = await gitCommonDirectory(normalizedRoot);
+  if (commonDirectory) await migrateLegacyRepositoryState(join(commonDirectory, "tokengraph"), target);
+  return target;
+}
+
+interface LegacyMigrationReport {
+  schemaVersion: typeof LEGACY_REPOSITORY_STATE_SCHEMA_VERSION;
+  source: string;
+  migratedAt: string;
+  migrated: string[];
+  skippedExisting: string[];
+  skippedInvalid: string[];
+  skippedUnsupported: string[];
+  skippedSymlink: string[];
+}
+
+async function migrateLegacyRepositoryState(source: string, target: string): Promise<void> {
+  try {
+    await lstat(join(target, "migration.json"));
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  let sourceStats: Awaited<ReturnType<typeof lstat>>;
+  try {
+    sourceStats = await lstat(source);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (!sourceStats.isDirectory()) return;
+
+  const lockKey = await canonicalPersistenceLockKey(target, "migration.json");
+  await withFileLock(`${lockKey}.lock`, async () => {
+    try {
+      await lstat(join(target, "migration.json"));
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const report: LegacyMigrationReport = {
+      schemaVersion: LEGACY_REPOSITORY_STATE_SCHEMA_VERSION,
+      source,
+      migratedAt: new Date().toISOString(),
+      migrated: [],
+      skippedExisting: [],
+      skippedInvalid: [],
+      skippedUnsupported: [],
+      skippedSymlink: []
+    };
+    await migrateLegacyEntries(source, target, "", report);
+    await writeJsonAtomic(join(target, "migration.json"), report);
+  });
+}
+
+async function migrateLegacyEntries(sourceRoot: string, targetRoot: string, relativePath: string, report: LegacyMigrationReport): Promise<void> {
+  const sourceDirectory = join(sourceRoot, relativePath);
+  for (const entry of await readdir(sourceDirectory, { withFileTypes: true })) {
+    const entryRelativePath = relativePath ? join(relativePath, entry.name) : entry.name;
+    const sourcePath = join(sourceRoot, entryRelativePath);
+    if (entry.name.endsWith(".lock") || entry.name.endsWith(".tmp")) {
+      report.skippedUnsupported.push(entryRelativePath);
+      continue;
+    }
+    const stats = await lstat(sourcePath);
+    if (stats.isSymbolicLink()) {
+      report.skippedSymlink.push(entryRelativePath);
+      continue;
+    }
+    if (stats.isDirectory()) {
+      await migrateLegacyEntries(sourceRoot, targetRoot, entryRelativePath, report);
+      continue;
+    }
+    if (!stats.isFile() || !entry.name.endsWith(".json")) {
+      report.skippedUnsupported.push(entryRelativePath);
+      continue;
+    }
+    const targetPath = join(targetRoot, entryRelativePath);
+    try {
+      await lstat(targetPath);
+      report.skippedExisting.push(entryRelativePath);
+      continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    let contents: string;
+    try {
+      contents = await readFile(sourcePath, "utf8");
+      JSON.parse(contents);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        report.skippedInvalid.push(entryRelativePath);
+        continue;
+      }
+      throw error;
+    }
+    await writeTextAtomic(targetPath, contents);
+    report.migrated.push(entryRelativePath);
+  }
 }

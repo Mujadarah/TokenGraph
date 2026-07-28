@@ -29,7 +29,7 @@ export interface ParserResourceLimits extends ConfigurationLimits, ScanBudget {
 export interface ProjectIndexOptions {
   scanSignature?: string;
   parserLimits?: ParserResourceLimits;
-  /** B7 parser activation remains opt-in until the B6 promotion gate has passed. */
+  /** B7 polyglot parsing is active by default and can be disabled per project. */
   polyglotEnabled?: boolean;
 }
 
@@ -238,7 +238,7 @@ export async function indexProject(root: string, options: ProjectIndexOptions = 
     wholeIndexTimeoutMs: options.parserLimits?.wholeIndexTimeoutMs,
     maxDepth: options.parserLimits?.maxDepth,
     maxGeneratedFiles: options.parserLimits?.maxGeneratedFiles,
-    polyglotEnabled: options.polyglotEnabled === true
+    polyglotEnabled: options.polyglotEnabled !== false
   };
   const metadata = await scanProjectFileMetadata(root, scanLimits);
   const sqlContents = new Map<string, string>();
@@ -250,7 +250,7 @@ export async function indexProject(root: string, options: ProjectIndexOptions = 
       }
     }
   });
-  for (const file of options.polyglotEnabled === true ? metadata.files.filter((candidate) => [".py", ".go", ".rs", ".java"].includes(candidate.extension)) : []) {
+  for (const file of options.polyglotEnabled !== false ? metadata.files.filter((candidate) => [".py", ".go", ".rs", ".java"].includes(candidate.extension)) : []) {
     const parsed = await scanProjectFile(root, file, scanLimits);
     if (parsed) {
       graph.symbols.push(...parsed.symbols);
@@ -284,7 +284,7 @@ export async function updateProjectIndexIncremental(root: string, existingIndex:
     wholeIndexTimeoutMs: options.parserLimits?.wholeIndexTimeoutMs,
     maxDepth: options.parserLimits?.maxDepth,
     maxGeneratedFiles: options.parserLimits?.maxGeneratedFiles,
-    polyglotEnabled: options.polyglotEnabled === true
+    polyglotEnabled: options.polyglotEnabled !== false
   };
   if (existingIndex.root !== root) {
     return {

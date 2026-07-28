@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.0 - 2026-07-28
+
+- Resolved Codex workspace trust per MCP request from host turn metadata corroborated by the matching trusted lifecycle-hook attestation, allowing one installed TokenGraph instance to serve concurrent project tasks without cross-applying roots.
+- Made every active project own its TokenGraph state under `.tokengraph/`, migrated valid legacy `.git/tokengraph/` JSON records with workspace data winning conflicts, and retained the legacy directory as a recoverable backup.
+- Activated B7 bounded Python, Go, Rust, and Java indexing independently of routing promotion, with the project-local `parser.polyglotEnabled` kill switch; routing remains shadow-only until its evidence gates pass.
+
 ## 0.22.2 - 2026-07-26
 
 - Added a Codex session workspace bridge that binds the host-generated hook `cwd` to the matching `CODEX_THREAD_ID`, so the globally installed plugin can discover each task's workspace without a machine-wide `TOKENGRAPH_WORKSPACE_ROOT`.

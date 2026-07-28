@@ -1,6 +1,6 @@
 # TokenGraph Source Plugin
 
-This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.22.2. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
+This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.23.0. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
 
 ## Development
 
@@ -21,11 +21,14 @@ pnpm package:plugin -- --release --json
 
 TokenGraph project tools accept paths only inside a host-provided trusted workspace. Trust is resolved in this order:
 
-1. `CLAUDE_PROJECT_DIR` from Claude Code.
-2. `TOKENGRAPH_WORKSPACE_ROOT`, when explicitly set as a compatibility fallback.
-3. The Codex host workspace attested by the lifecycle hook for the matching `CODEX_THREAD_ID`.
-4. A file root returned through MCP Roots.
-5. The process working directory only when the server is not running from an installed plugin directory.
+1. Codex request metadata naming a project workspace and thread, corroborated by the lifecycle-hook attestation for that thread.
+2. `CLAUDE_PROJECT_DIR` from Claude Code.
+3. `TOKENGRAPH_WORKSPACE_ROOT`, when explicitly set as a compatibility fallback.
+4. The Codex session-hook attestation identified by `CODEX_THREAD_ID`.
+5. A file root returned through MCP Roots.
+6. The process working directory only when the server is not running from an installed plugin directory.
+
+Request metadata is resolved per MCP call, so one installed server can serve concurrent projects without selecting a process-global root. An invalid or unattested Codex request never falls back to that process-wide state.
 
 `tokengraph_setup` is rootless and read-only. It reports whether setup is ready, the trust source, the selected tool surface, and exact recovery steps. It never accepts or grants a workspace. Filesystem roots, home directories, unreadable roots, and requested paths outside the trusted workspace remain blocked.
 
@@ -122,9 +125,11 @@ Four edit/debug tasks charge one hash-validated exact source slice each, for
 Reviewed schema-v3 real-host campaigns cover TokenGraph, `mattpocock/ts-reset`,
 and `imbhargav5/nextbase-nextjs-supabase-starter`: fifteen counterbalanced
 ON/OFF pairs and thirty accepted traces across three repositories and three
-categories. The multi-repository B6 coverage target is met, but promotion and
-enforcement remain disabled because not all frozen gates passed. Routing
-stays in shadow mode and B7 remains dark. See the repository
+categories. The multi-repository B6 coverage target is met, but routing
+promotion and enforcement remain disabled because not all frozen gates passed.
+Routing stays in shadow mode; B7 polyglot parsing is an independent local
+capability and is active by default, with `parser.polyglotEnabled: false` as
+the per-project kill switch. See the repository
 `docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json`,
 `docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.md`,
 `docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.md`, and

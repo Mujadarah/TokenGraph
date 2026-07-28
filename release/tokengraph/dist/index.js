@@ -19432,6 +19432,7 @@ function toError(value) {
 
 // src/server.ts
 import process4 from "node:process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash as createHash13, randomUUID as randomUUID6 } from "node:crypto";
 import { access as access5, realpath as realpath5 } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -20029,11 +20030,12 @@ import { isAbsolute as isAbsolute2, join as join4, relative as relative2, resolv
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash as createHash2 } from "node:crypto";
-import { access, readFile as readFile3 } from "node:fs/promises";
+import { access, lstat as lstat2, readFile as readFile3, readdir } from "node:fs/promises";
 import { join as join3, resolve as resolve3 } from "node:path";
 var execFileAsync = promisify(execFile);
 var LOCAL_EXCLUDE_WARNING = "TokenGraph could not update .git/info/exclude; add this exact line manually: .tokengraph/";
 var setupWarnings = /* @__PURE__ */ new Map();
+var LEGACY_REPOSITORY_STATE_SCHEMA_VERSION = 1;
 async function git(root, ...args) {
   try {
     const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 });
@@ -20172,10 +20174,9 @@ async function getRepositoryIdentityUncached(workspaceRoot) {
     remoteIdentity(workspaceRoot)
   ]);
   const normalizedRoot = resolve3(topLevel ?? workspaceRoot);
-  const normalizedCommon = commonDir ? resolve3(workspaceRoot, commonDir) : void 0;
   const normalizedGitDir = gitDir ? resolve3(workspaceRoot, gitDir) : void 0;
   if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
-  const repositoryState = repositoryStateDirectory(normalizedRoot, normalizedCommon);
+  const repositoryState = await resolveRepositoryStateDirectory(normalizedRoot);
   const repositoryId = await loadOrCreateRepositoryId(repositoryState);
   const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
   const repositoryFingerprint = digest(`${repositoryId}
@@ -20196,10 +20197,97 @@ async function gitCommonDirectory(root) {
   return resolve3(root, commonDir);
 }
 function repositoryStateDirectory(root, commonDirectory) {
-  return commonDirectory ? join3(commonDirectory, "tokengraph") : join3(resolve3(root), ".tokengraph", "repository");
+  void commonDirectory;
+  return join3(resolve3(root), ".tokengraph", "repository");
 }
 async function resolveRepositoryStateDirectory(root) {
-  return repositoryStateDirectory(root, await gitCommonDirectory(root));
+  const normalizedRoot = resolve3(root);
+  const target = repositoryStateDirectory(normalizedRoot);
+  const commonDirectory = await gitCommonDirectory(normalizedRoot);
+  if (commonDirectory) await migrateLegacyRepositoryState(join3(commonDirectory, "tokengraph"), target);
+  return target;
+}
+async function migrateLegacyRepositoryState(source, target) {
+  try {
+    await lstat2(join3(target, "migration.json"));
+    return;
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+  }
+  let sourceStats;
+  try {
+    sourceStats = await lstat2(source);
+  } catch (error2) {
+    if (error2.code === "ENOENT") return;
+    throw error2;
+  }
+  if (!sourceStats.isDirectory()) return;
+  const lockKey = await canonicalPersistenceLockKey(target, "migration.json");
+  await withFileLock(`${lockKey}.lock`, async () => {
+    try {
+      await lstat2(join3(target, "migration.json"));
+      return;
+    } catch (error2) {
+      if (error2.code !== "ENOENT") throw error2;
+    }
+    const report = {
+      schemaVersion: LEGACY_REPOSITORY_STATE_SCHEMA_VERSION,
+      source,
+      migratedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      migrated: [],
+      skippedExisting: [],
+      skippedInvalid: [],
+      skippedUnsupported: [],
+      skippedSymlink: []
+    };
+    await migrateLegacyEntries(source, target, "", report);
+    await writeJsonAtomic(join3(target, "migration.json"), report);
+  });
+}
+async function migrateLegacyEntries(sourceRoot, targetRoot, relativePath, report) {
+  const sourceDirectory = join3(sourceRoot, relativePath);
+  for (const entry of await readdir(sourceDirectory, { withFileTypes: true })) {
+    const entryRelativePath = relativePath ? join3(relativePath, entry.name) : entry.name;
+    const sourcePath = join3(sourceRoot, entryRelativePath);
+    if (entry.name.endsWith(".lock") || entry.name.endsWith(".tmp")) {
+      report.skippedUnsupported.push(entryRelativePath);
+      continue;
+    }
+    const stats = await lstat2(sourcePath);
+    if (stats.isSymbolicLink()) {
+      report.skippedSymlink.push(entryRelativePath);
+      continue;
+    }
+    if (stats.isDirectory()) {
+      await migrateLegacyEntries(sourceRoot, targetRoot, entryRelativePath, report);
+      continue;
+    }
+    if (!stats.isFile() || !entry.name.endsWith(".json")) {
+      report.skippedUnsupported.push(entryRelativePath);
+      continue;
+    }
+    const targetPath = join3(targetRoot, entryRelativePath);
+    try {
+      await lstat2(targetPath);
+      report.skippedExisting.push(entryRelativePath);
+      continue;
+    } catch (error2) {
+      if (error2.code !== "ENOENT") throw error2;
+    }
+    let contents;
+    try {
+      contents = await readFile3(sourcePath, "utf8");
+      JSON.parse(contents);
+    } catch (error2) {
+      if (error2 instanceof SyntaxError) {
+        report.skippedInvalid.push(entryRelativePath);
+        continue;
+      }
+      throw error2;
+    }
+    await writeTextAtomic(targetPath, contents);
+    report.migrated.push(entryRelativePath);
+  }
 }
 
 // src/core/persistence.ts
@@ -20522,15 +20610,15 @@ async function loadStableArtifact(root, hash2) {
 import { createHash as createHash3 } from "node:crypto";
 
 // src/core/storagePolicy.ts
-import { chmod as chmod3, lstat as lstat2, mkdir as mkdir3, readFile as readFile6, readdir, realpath as realpath2, rm as rm4 } from "node:fs/promises";
+import { chmod as chmod3, lstat as lstat3, mkdir as mkdir3, readFile as readFile6, readdir as readdir2, realpath as realpath2, rm as rm4 } from "node:fs/promises";
 import { basename, dirname as dirname3, isAbsolute as isAbsolute3, join as join6, relative as relative3, resolve as resolve5 } from "node:path";
 async function usage(path) {
   try {
-    const info = await lstat2(path);
+    const info = await lstat3(path);
     if (info.isSymbolicLink()) throw new Error(`TokenGraph storage accounting refuses symbolic-link paths: ${path}`);
     if (info.isFile()) return { bytes: info.size, files: 1 };
     if (!info.isDirectory()) return { bytes: 0, files: 0 };
-    const entries = await readdir(path);
+    const entries = await readdir2(path);
     const children = await Promise.all(entries.map((entry) => usage(join6(path, entry))));
     return children.reduce((total, child) => ({ bytes: total.bytes + child.bytes, files: total.files + child.files }), { bytes: 0, files: 0 });
   } catch (error2) {
@@ -20588,7 +20676,7 @@ async function safeRemoveUnderBase(base2, relativeTarget, recursive) {
   if (!relativeTarget || isAbsolute3(relativeTarget) || relativeTarget.replaceAll("\\", "/").split("/").includes("..")) throw new Error("Storage purge target must be a safe relative path.");
   let canonicalBase;
   try {
-    if ((await lstat2(base2)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link base paths: ${base2}`);
+    if ((await lstat3(base2)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link base paths: ${base2}`);
     canonicalBase = await realpath2(base2);
   } catch (error2) {
     if (error2.code === "ENOENT") return false;
@@ -20600,7 +20688,7 @@ async function safeRemoveUnderBase(base2, relativeTarget, recursive) {
   for (const segment of relativeTarget.replaceAll("\\", "/").split("/").filter(Boolean)) {
     current = join6(current, segment);
     try {
-      if ((await lstat2(current)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link or junction paths: ${current}`);
+      if ((await lstat3(current)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link or junction paths: ${current}`);
     } catch (error2) {
       if (error2.code === "ENOENT") return false;
       throw error2;
@@ -20625,7 +20713,7 @@ async function purgeCache(root) {
 }
 async function purgeOutcomes(root) {
   const directory = join6(await realpath2(resolve5(root)), ".tokengraph", "tasks");
-  const entries = await readdir(directory).catch((error2) => error2.code === "ENOENT" ? [] : Promise.reject(error2));
+  const entries = await readdir2(directory).catch((error2) => error2.code === "ENOENT" ? [] : Promise.reject(error2));
   const removed = [];
   for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
     try {
@@ -20792,7 +20880,7 @@ function composeMemoryContext(input) {
 
 // src/core/config.ts
 import { copyFile, readFile as readFile7 } from "node:fs/promises";
-var CURRENT_CONFIG_SCHEMA_VERSION = 2;
+var CURRENT_CONFIG_SCHEMA_VERSION = 3;
 var PROFILE_DEFAULTS = {
   conservative: {
     maxFiles: 10,
@@ -20833,6 +20921,7 @@ var DEFAULT_TOKEN_GRAPH_CONFIG = {
   routingKillSwitch: false,
   routing: { mode: "shadow", killSwitch: false },
   parser: {
+    polyglotEnabled: true,
     maxFileBytes: 512 * 1024,
     maxTotalBytes: 8 * 1024 * 1024,
     maxSymbols: 1e4,
@@ -20900,6 +20989,7 @@ function normalizeConfig(value, applyEnvironment = true) {
     routingKillSwitch,
     routing: { mode: routingMode, killSwitch: routingKillSwitch },
     parser: {
+      polyglotEnabled: typeof nestedParser.polyglotEnabled === "boolean" ? Boolean(nestedParser.polyglotEnabled) : DEFAULT_TOKEN_GRAPH_CONFIG.parser.polyglotEnabled,
       maxFileBytes: integer2(nestedParser, "maxFileBytes", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxFileBytes, 1),
       maxTotalBytes: integer2(nestedParser, "maxTotalBytes", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxTotalBytes, 1),
       maxSymbols: integer2(nestedParser, "maxSymbols", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxSymbols, 1),
@@ -22182,7 +22272,7 @@ function recommendExactRead(current, options = {}) {
 }
 
 // src/core/runner.ts
-import { readFile as readFile9, readdir as readdir2, rm as rm5 } from "node:fs/promises";
+import { readFile as readFile9, readdir as readdir3, rm as rm5 } from "node:fs/promises";
 async function loadRun(root, runId) {
   try {
     const parsed = JSON.parse(await readFile9(runPath(root, runId), "utf8"));
@@ -22222,7 +22312,7 @@ ${run.stdout}`;
 // src/core/fileScanner.ts
 var ignorePackage = __toESM(require_ignore(), 1);
 import { createHash as createHash6 } from "node:crypto";
-import { readdir as readdir3, readFile as readFile11, stat as stat2 } from "node:fs/promises";
+import { readdir as readdir4, readFile as readFile11, stat as stat2 } from "node:fs/promises";
 import { basename as basename2, dirname as dirname6, extname, join as join8, normalize as normalize2, relative as relative4, sep } from "node:path";
 
 // src/core/polyglot.ts
@@ -22757,7 +22847,7 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
   const currentScopes = current === root ? ignoreScopes : await loadIgnoreScopes(current, ignoreScopes);
   let entries;
   try {
-    entries = await readdir3(current, { withFileTypes: true });
+    entries = await readdir4(current, { withFileTypes: true });
   } catch {
     addUnreadable(graph, normalizePath(relative4(root, current)));
     return;
@@ -22900,7 +22990,7 @@ async function scanProjectFileMetadata(root, options) {
     const currentScopes = current === root ? inheritedScopes : await loadIgnoreScopes(current, inheritedScopes);
     let entries;
     try {
-      entries = await readdir3(current, { withFileTypes: true });
+      entries = await readdir4(current, { withFileTypes: true });
     } catch {
       rows.push({ path: normalizePath(relative4(root, current)), reason: "unreadable" });
       return;
@@ -23844,7 +23934,7 @@ async function indexProject(root, options = {}) {
     wholeIndexTimeoutMs: options.parserLimits?.wholeIndexTimeoutMs,
     maxDepth: options.parserLimits?.maxDepth,
     maxGeneratedFiles: options.parserLimits?.maxGeneratedFiles,
-    polyglotEnabled: options.polyglotEnabled === true
+    polyglotEnabled: options.polyglotEnabled !== false
   };
   const metadata = await scanProjectFileMetadata(root, scanLimits);
   const sqlContents = /* @__PURE__ */ new Map();
@@ -23856,7 +23946,7 @@ async function indexProject(root, options = {}) {
       }
     }
   });
-  for (const file of options.polyglotEnabled === true ? metadata.files.filter((candidate) => [".py", ".go", ".rs", ".java"].includes(candidate.extension)) : []) {
+  for (const file of options.polyglotEnabled !== false ? metadata.files.filter((candidate) => [".py", ".go", ".rs", ".java"].includes(candidate.extension)) : []) {
     const parsed = await scanProjectFile(root, file, scanLimits);
     if (parsed) {
       graph.symbols.push(...parsed.symbols);
@@ -23887,7 +23977,7 @@ async function updateProjectIndexIncremental(root, existingIndex, options = {}) 
     wholeIndexTimeoutMs: options.parserLimits?.wholeIndexTimeoutMs,
     maxDepth: options.parserLimits?.maxDepth,
     maxGeneratedFiles: options.parserLimits?.maxGeneratedFiles,
-    polyglotEnabled: options.polyglotEnabled === true
+    polyglotEnabled: options.polyglotEnabled !== false
   };
   if (existingIndex.root !== root) {
     return {
@@ -25327,7 +25417,7 @@ function compactVaultNotes(notes, maxBytes) {
 
 // src/core/taskLedger.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { readFile as readFile15, readdir as readdir4, rename as rename4, rm as rm7 } from "node:fs/promises";
+import { readFile as readFile15, readdir as readdir5, rename as rename4, rm as rm7 } from "node:fs/promises";
 import { join as join10, resolve as resolve10 } from "node:path";
 var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
 var TASK_LEDGER_SCHEMA_VERSION = 3;
@@ -25690,7 +25780,7 @@ async function writeCompletedOutcomesIndex(root, outcomes) {
 async function scanCompletedTaskOutcomes(root) {
   let files;
   try {
-    files = await readdir4(tasksDirectory(root));
+    files = await readdir5(tasksDirectory(root));
   } catch (error2) {
     if (error2.code === "ENOENT") return [];
     throw error2;
@@ -26348,6 +26438,7 @@ function coreEventOverheadTokens(taskId, toolName, category) {
 function ownPluginRoot() {
   return resolve12(dirname8(fileURLToPath3(import.meta.url)), "..");
 }
+var requestWorkspaceContext = new AsyncLocalStorage();
 async function isPluginRoot(root) {
   try {
     const [realRoot, realSelf] = await Promise.all([realpath5(root), realpath5(ownPluginRoot())]);
@@ -26365,7 +26456,46 @@ async function isPluginRoot(root) {
     return false;
   }
 }
-async function resolveTrustedWorkspace(server) {
+function recordValue(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function stringValue(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : void 0;
+}
+function codexTurnMetadata(context) {
+  const meta2 = recordValue(context?.mcpReq._meta);
+  if (!meta2) return void 0;
+  return recordValue(meta2["x-codex-turn-metadata"] ?? meta2["codex-turn-metadata"]);
+}
+function hasCodexTurnMetadata(context) {
+  const meta2 = recordValue(context?.mcpReq._meta);
+  return Boolean(meta2 && (Object.prototype.hasOwnProperty.call(meta2, "x-codex-turn-metadata") || Object.prototype.hasOwnProperty.call(meta2, "codex-turn-metadata")));
+}
+function codexWorkspaceRoots(metadata) {
+  const workspaces = recordValue(metadata.workspaces);
+  if (!workspaces) return [];
+  return Object.keys(workspaces).filter((root) => isAbsolute7(root));
+}
+function workspacePathKey(path) {
+  const normalized = resolve12(path);
+  return process4.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+async function resolveCodexRequestWorkspace(context) {
+  const metadata = codexTurnMetadata(context);
+  if (!metadata) return { present: hasCodexTurnMetadata(context) };
+  const threadId = stringValue(metadata.thread_id) ?? stringValue(metadata.threadId);
+  if (!threadId || metadata.workspace_kind !== "project") return { present: true };
+  const attestation = await loadHostWorkspaceAttestation(ownPluginRoot(), threadId);
+  if (attestation.status !== "valid") return { present: true };
+  const attestedRoot = workspacePathKey(attestation.root);
+  const advertisedRoots = codexWorkspaceRoots(metadata).map(workspacePathKey);
+  if (!advertisedRoots.includes(attestedRoot)) return { present: true };
+  return { present: true, candidate: { source: "codex-request-metadata", root: attestation.root } };
+}
+async function resolveTrustedWorkspace(server, context) {
+  const requestWorkspace = await resolveCodexRequestWorkspace(context);
+  if (requestWorkspace.candidate) return requestWorkspace.candidate;
+  if (requestWorkspace.present) return void 0;
   const claudeRoot = process4.env.CLAUDE_PROJECT_DIR?.trim();
   if (claudeRoot) return { source: "CLAUDE_PROJECT_DIR", root: claudeRoot };
   const codexRoot = process4.env.TOKENGRAPH_WORKSPACE_ROOT?.trim();
@@ -26383,16 +26513,17 @@ async function resolveTrustedWorkspace(server) {
   }
   return void 0;
 }
-function detectedHost() {
+function detectedHost(context) {
   if (process4.env.CLAUDE_PROJECT_DIR?.trim() || process4.env.CLAUDE_CODE) return "claude-code";
-  if (Object.keys(process4.env).some((name) => name.startsWith("CODEX_"))) return "codex";
+  if (Object.keys(process4.env).some((name) => name.startsWith("CODEX_")) || hasCodexTurnMetadata(context)) return "codex";
   return "unknown";
 }
-async function inspectWorkspaceSetup(server, provider) {
+async function inspectWorkspaceSetup(server, provider, context) {
   const cwd = await realpath5(process4.cwd());
   const pluginRootLaunch = await isPluginRoot(cwd);
-  const injected = provider ? await provider() : void 0;
-  const candidate = injected ? { source: "injected", root: injected } : await resolveTrustedWorkspace(server) ?? (!pluginRootLaunch ? { source: "process-cwd", root: cwd } : void 0);
+  const requestMetadataPresent = hasCodexTurnMetadata(context);
+  const injected = !requestMetadataPresent && provider ? await provider() : void 0;
+  const candidate = injected ? { source: "injected", root: injected } : await resolveTrustedWorkspace(server, context) ?? (!pluginRootLaunch && !requestMetadataPresent ? { source: "process-cwd", root: cwd } : void 0);
   const nextSteps = [
     "Codex: review and trust the TokenGraph lifecycle hooks, then start a new task so SessionStart can attest its working directory.",
     "Codex compatibility fallback (PowerShell): $env:TOKENGRAPH_WORKSPACE_ROOT=(Get-Location).Path; codex",
@@ -26403,7 +26534,7 @@ async function inspectWorkspaceSetup(server, provider) {
   if (!candidate) {
     return {
       status: "blocked",
-      host: detectedHost(),
+      host: detectedHost(context),
       trustedWorkspace: null,
       blockingReason: "missing-trusted-workspace",
       pluginRootLaunch,
@@ -26417,7 +26548,7 @@ async function inspectWorkspaceSetup(server, provider) {
   } catch {
     return {
       status: "blocked",
-      host: detectedHost(),
+      host: detectedHost(context),
       trustedWorkspace: { ...candidate, root: resolve12(candidate.root) },
       blockingReason: "unreadable-trusted-workspace",
       pluginRootLaunch,
@@ -26430,7 +26561,7 @@ async function inspectWorkspaceSetup(server, provider) {
   if (root === parse4(root).root || root === home) {
     return {
       status: "blocked",
-      host: detectedHost(),
+      host: detectedHost(context),
       trustedWorkspace,
       blockingReason: "unsafe-trusted-workspace",
       pluginRootLaunch,
@@ -26440,7 +26571,7 @@ async function inspectWorkspaceSetup(server, provider) {
   }
   return {
     status: "ready",
-    host: detectedHost(),
+    host: detectedHost(context),
     trustedWorkspace,
     blockingReason: null,
     pluginRootLaunch,
@@ -26450,7 +26581,7 @@ async function inspectWorkspaceSetup(server, provider) {
 }
 function createWorkspaceResolver(server, provider) {
   return async (inputRoot) => {
-    const setup = await inspectWorkspaceSetup(server, provider);
+    const setup = await inspectWorkspaceSetup(server, provider, requestWorkspaceContext.getStore());
     if (setup.blockingReason === "missing-trusted-workspace") {
       throw new Error("TokenGraph needs a trusted workspace root from the host before it can access project files.");
     }
@@ -26498,7 +26629,7 @@ function okWithResourceLinks(output) {
   };
 }
 var projectWriteChains = /* @__PURE__ */ new Map();
-function projectIndexOptions(config2, control) {
+function projectIndexOptions(config2) {
   return {
     parserLimits: {
       maxFileBytes: config2.parser.maxFileBytes,
@@ -26512,8 +26643,9 @@ function projectIndexOptions(config2, control) {
       maxTsconfigChain: config2.parser.maxTsconfigChain,
       maxAliases: config2.parser.maxAliases
     },
-    // B7 stays dark until a complete B6 promotion report proves every gate.
-    polyglotEnabled: isValidatedPromotion(control.promotion) && control.promotion.enforcementEnabled
+    // B7 parsing is a project-local capability. Routing promotion remains a
+    // separate, shadow-only control plane and must not gate indexing.
+    polyglotEnabled: config2.parser.polyglotEnabled
   };
 }
 async function enqueueProjectWrite(root, operation) {
@@ -26531,8 +26663,8 @@ async function enqueueProjectWrite(root, operation) {
 }
 async function ensureProject(root) {
   return enqueueProjectWrite(root, async () => {
-    const [config2, control] = await Promise.all([loadTokenGraphConfig(root), loadRoutingControl(root)]);
-    const options = projectIndexOptions(config2, control);
+    const config2 = await loadTokenGraphConfig(root);
+    const options = projectIndexOptions(config2);
     const currentScanSignature = await scanProjectSignature(root, options.parserLimits);
     const existing = await loadProjectIndex(root);
     if (existing && isSafeProjectIndex(root, existing)) {
@@ -26754,11 +26886,18 @@ function recommendedExactRead(plan, project) {
 function createTokenGraphServer(options = {}) {
   const toolSurface = selectedToolSurface();
   const server = new McpServer(
-    { name: "tokengraph", version: "0.22.2" },
+    { name: "tokengraph", version: "0.23.0" },
     {
       instructions: "Use TokenGraph for task-scoped context routing, debugging failures, change risk, architecture checks, memory recall, SQL/wiki lookup, and compression before broad raw reads. Call tokengraph_setup once and capture its trusted workspace root. Use tokengraph_prepare_context only when planning is needed; otherwise omit taskId from the first query, compress, recall, or analyze call and capture the returned taskId. Complete or pause with tokengraph_task_report. TokenGraph tools are task-scoped: never reuse a taskId across workspaces or merge unrelated tasks."
     }
   );
+  const nativeRegisterTool = server.registerTool.bind(server);
+  server.registerTool = ((name, config2, handler) => {
+    const wrappedHandler = async (input, context) => {
+      return requestWorkspaceContext.run(context, () => handler(input, context));
+    };
+    return nativeRegisterTool(name, config2, wrappedHandler);
+  });
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
   async function requireTaskRoot(root, taskId, allowTerminal = false) {
     const resolvedRoot = await workspaceRoot(root);
@@ -26779,7 +26918,7 @@ function createTokenGraphServer(options = {}) {
       }
       return { root: resolvedRoot, taskId, autoStarted: false };
     }
-    const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(detectedHost()) });
+    const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(detectedHost(requestWorkspaceContext.getStore())) });
     return { root: resolvedRoot, taskId: ledger.taskId, autoStarted: true };
   }
   async function withTaskIntent(root, taskId, operation) {
@@ -26837,7 +26976,7 @@ function createTokenGraphServer(options = {}) {
       inputSchema: object({})
     },
     async () => {
-      const setup = await inspectWorkspaceSetup(server, options.trustedWorkspace);
+      const setup = await inspectWorkspaceSetup(server, options.trustedWorkspace, requestWorkspaceContext.getStore());
       const repositoryIdentity = setup.trustedWorkspace ? await getRepositoryIdentity(setup.trustedWorkspace.root) : null;
       return ok({
         ...setup,
@@ -26869,7 +27008,7 @@ function createTokenGraphServer(options = {}) {
         return ok(responseMode === "verbose" ? { ...response2, root: resolvedRoot } : response2);
       }
       const { status: cachedStatus, config: config2, control } = probe;
-      const indexOptions = projectIndexOptions(config2, control);
+      const indexOptions = projectIndexOptions(config2);
       await enforceStorageClassQuotas(resolvedRoot, config2.storage);
       const identity = await getRepositoryIdentity(resolvedRoot);
       const routing = adviseRouting({
@@ -26944,7 +27083,7 @@ function createTokenGraphServer(options = {}) {
           { id: "first-reads", text: plan.recommendedFirstReads.map((file) => file.path).join("\n"), evidenceClass: "derived", confidence: "high", source: "planner:recommended-first-reads" }
         ]
       }, Math.max(150, Math.min(config2.memory.projectBriefTargetTokens, config2.memory.projectBriefMaxTokens)));
-      const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost()) });
+      const ledger = await createTaskLedger(resolvedRoot, { host: taskHost(host ?? detectedHost(requestWorkspaceContext.getStore())) });
       await updateTaskRoutingObservation(resolvedRoot, ledger.taskId, {
         decision: routing.useTokenGraph ? "activate" : "bypass",
         stage: routing.stage,
@@ -27411,7 +27550,7 @@ ${changedFiles.join("\n")}`, 8);
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         inputSchema: object({})
       },
-      async () => ok(await inspectWorkspaceSetup(server, options.trustedWorkspace))
+      async () => ok(await inspectWorkspaceSetup(server, options.trustedWorkspace, requestWorkspaceContext.getStore()))
     );
     server.registerTool(
       "tokengraph_index_project",
@@ -27426,8 +27565,8 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, fullReindex }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const [config2, control] = await Promise.all([loadTokenGraphConfig(resolvedRoot), loadRoutingControl(resolvedRoot)]);
-        const indexOptions = projectIndexOptions(config2, control);
+        const config2 = await loadTokenGraphConfig(resolvedRoot);
+        const indexOptions = projectIndexOptions(config2);
         const existing = fullReindex ? void 0 : await loadProjectIndex(resolvedRoot);
         const result = existing && isSafeProjectIndex(resolvedRoot, existing) ? await updateProjectIndexIncremental(resolvedRoot, existing, indexOptions) : {
           index: await indexProject(resolvedRoot, indexOptions),
@@ -27480,8 +27619,8 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const [config2, control] = await Promise.all([loadTokenGraphConfig(resolvedRoot), loadRoutingControl(resolvedRoot)]);
-        return ok(await getIndexStatus(resolvedRoot, { projectOptions: projectIndexOptions(config2, control) }));
+        const config2 = await loadTokenGraphConfig(resolvedRoot);
+        return ok(await getIndexStatus(resolvedRoot, { projectOptions: projectIndexOptions(config2) }));
       }
     );
     server.registerTool(
@@ -27550,7 +27689,7 @@ ${changedFiles.join("\n")}`, 8);
           wikiGenerationEnabled: boolean2().optional(),
           routingKillSwitch: boolean2().optional(),
           routing: object({ mode: _enum(["shadow", "enforced", "always-activate", "always-advisory"]).optional(), killSwitch: boolean2().optional() }).optional(),
-          parser: object({ maxFileBytes: number2().int().min(1).optional(), maxTotalBytes: number2().int().min(1).optional(), maxSymbols: number2().int().min(1).optional(), maxNodes: number2().int().min(1).optional(), perFileTimeoutMs: number2().int().min(1).optional(), wholeIndexTimeoutMs: number2().int().min(1).optional(), maxRecursionDepth: number2().int().min(1).optional(), maxGraphDepth: number2().int().min(0).optional(), maxGeneratedFiles: number2().int().min(0).optional(), maxTsconfigChain: number2().int().min(1).optional(), maxAliases: number2().int().min(0).optional() }).optional(),
+          parser: object({ polyglotEnabled: boolean2().optional(), maxFileBytes: number2().int().min(1).optional(), maxTotalBytes: number2().int().min(1).optional(), maxSymbols: number2().int().min(1).optional(), maxNodes: number2().int().min(1).optional(), perFileTimeoutMs: number2().int().min(1).optional(), wholeIndexTimeoutMs: number2().int().min(1).optional(), maxRecursionDepth: number2().int().min(1).optional(), maxGraphDepth: number2().int().min(0).optional(), maxGeneratedFiles: number2().int().min(0).optional(), maxTsconfigChain: number2().int().min(1).optional(), maxAliases: number2().int().min(0).optional() }).optional(),
           storage: object({
             maxBytes: number2().int().min(1).optional(),
             runsMaxBytes: number2().int().min(0).optional(),

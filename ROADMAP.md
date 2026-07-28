@@ -232,8 +232,17 @@ Status: complete
 
 - v0.22.0 publishes the R1-R4 remediation stack, current fixture accounting, schema-v3 promotion safeguards, and reproducible standalone packages without promoting enforced routing.
 - Reviewed schema-v3 campaigns cover TokenGraph, `mattpocock/ts-reset`, and `imbhargav5/nextbase-nextjs-supabase-starter`: 15 counterbalanced ON/OFF pairs and 30 accepted traces across three repositories and three categories.
-- The multi-repository B6 coverage target is met, but the frozen promotion gates do not all pass. Routing remains in shadow mode and B7 polyglot indexing remains inactive.
+- At the v0.22 closeout, the multi-repository B6 coverage target was met, but the frozen promotion gates did not all pass; routing remained in shadow mode and B7 polyglot indexing was still coupled to that promotion decision. v0.23 activates B7 independently below.
 - The completed campaign is documented in `docs/benchmarks/results-current.md` and the checked manifests and reports under `docs/benchmarks/host-evaluations/`.
+
+## v0.23 - Portable Concurrent Workspaces
+
+Status: complete
+
+- Codex request metadata is resolved per MCP call and corroborated by the matching lifecycle-hook attestation, so one installed TokenGraph instance can serve simultaneous projects without a process-global workspace root.
+- Every active graph, memory, config, wiki, task, and repository record is owned by the opened workspace under `.tokengraph/`. Valid legacy `.git/tokengraph/` JSON records migrate once with workspace data winning conflicts; the legacy directory remains as a recoverable backup.
+- B7 bounded Python, Go, Rust, and Java parsing is active independently of B6 routing promotion. `parser.polyglotEnabled` defaults to `true` and is an explicit project-local kill switch; routing remains shadow-only until its separate evidence gates pass.
+- The implementation tracker and evidence contract are recorded in [`docs/plans/2026-07-28-tokengraph-v023-portability.md`](docs/plans/2026-07-28-tokengraph-v023-portability.md).
 
 ## Later
 
