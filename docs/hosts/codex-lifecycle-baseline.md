@@ -6,7 +6,7 @@ new fallback or loosen the trust boundary.
 
 ## Resolver history
 
-v0.22 used a five-tier process resolver, in this order:
+v0.22.2 used a five-tier process resolver, in this order:
 
 1. `CLAUDE_PROJECT_DIR`
 2. `TOKENGRAPH_WORKSPACE_ROOT`
@@ -15,7 +15,8 @@ v0.22 used a five-tier process resolver, in this order:
 5. The process working directory when the server was not launched from its
    installed plugin root
 
-That model was safe for a single task but could not prove that an MCP request
+Earlier v0.22 releases predated the complete five-tier host bridge. That v0.22.2
+model was safe for a single task but could not prove that an MCP request
 belonged to the process-level Codex thread. v0.23 resolves the Codex request
 metadata for every call. Its advertised project root and thread id must match
 the lifecycle attestation for the same thread and installed plugin root. A

@@ -181,7 +181,12 @@ async function stopServer() {
   });
 }
 
-async function runWorkspaceHook(event: "session-end" | "session-start", sessionId: string, cwd: string): Promise<void> {
+async function runWorkspaceHook(
+  event: "session-end" | "session-start" | "user-prompt-submit",
+  sessionId: string,
+  cwd: string,
+  turnId = "turn-host-workspace"
+): Promise<void> {
   await new Promise<void>((resolvePromise, rejectPromise) => {
     const child = spawn(process.execPath, [hookEntry, event], {
       cwd: process.cwd(),
@@ -214,10 +219,11 @@ async function runWorkspaceHook(event: "session-end" | "session-start", sessionI
       }
     });
     child.stdin.end(`${JSON.stringify({
-      hook_event_name: event === "session-start" ? "SessionStart" : "SessionEnd",
+      hook_event_name: event === "session-start" ? "SessionStart" : event === "user-prompt-submit" ? "UserPromptSubmit" : "SessionEnd",
       session_id: sessionId,
+      turn_id: turnId,
       cwd,
-      ...(event === "session-start" ? { source: "startup" } : { reason: "other" })
+      ...(event === "session-end" ? { reason: "other" } : { source: "startup", prompt: "host prompt must not persist" })
     })}\n`);
   });
 }
@@ -1909,12 +1915,20 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_setup_status",
       arguments: {}
     });
-    expect(setup.structuredContent).toMatchObject({
+    expect(setup.structuredContent).toEqual({
       status: "blocked",
       host: "codex",
       trustedWorkspace: null,
       blockingReason: "missing-trusted-workspace",
-      pluginRootLaunch: true
+      pluginRootLaunch: true,
+      message: "TokenGraph needs a trusted workspace from the host before project tools can access files.",
+      nextSteps: [
+        "Codex: review and trust the TokenGraph lifecycle hooks, then start a new task so SessionStart can attest its working directory.",
+        "Codex compatibility fallback (PowerShell): $env:TOKENGRAPH_WORKSPACE_ROOT=(Get-Location).Path; codex",
+        "Codex compatibility fallback (POSIX): TOKENGRAPH_WORKSPACE_ROOT=\"$PWD\" codex",
+        "Claude Code normally forwards CLAUDE_PROJECT_DIR automatically.",
+        "After changing host configuration, start a new Codex task or run /reload-plugins in Claude Code."
+      ]
     });
     expect(JSON.stringify(setup)).toMatch(/TOKENGRAPH_WORKSPACE_ROOT/);
 
@@ -1978,10 +1992,23 @@ describe("TokenGraph MCP stdio server", () => {
   it("uses request-attested Codex workspace metadata when the MCP process has no workspace environment", async () => {
     const root = await makeRoot();
     const secondRoot = await makeRoot();
+    const mismatchedRoot = await makeRoot();
     const sessionId = randomUUID();
     const secondSessionId = randomUUID();
-    await runWorkspaceHook("session-start", sessionId, root);
-    await runWorkspaceHook("session-start", secondSessionId, secondRoot);
+    await mkdir(join(root, "src"), { recursive: true });
+    await mkdir(join(secondRoot, "src"), { recursive: true });
+    await mkdir(join(mismatchedRoot, "src"), { recursive: true });
+    await writeFile(join(root, "src", "firstProjectMarker.ts"), "export const firstProjectMarker = true;");
+    await writeFile(join(secondRoot, "src", "secondProjectMarker.ts"), "export const secondProjectMarker = true;");
+    await writeFile(join(mismatchedRoot, "src", "mismatchedProjectMarker.ts"), "export const mismatchedProjectMarker = true;");
+    await runWorkspaceHook("session-start", sessionId, root, "turn-session-start");
+    const refreshedPath = await workspaceAttestationPath(sessionId);
+    const beforePrompt = JSON.parse(await readFile(refreshedPath, "utf8")) as Record<string, unknown>;
+    await writeFile(refreshedPath, `${JSON.stringify({ ...beforePrompt, updatedAt: "2000-01-01T00:00:00.000Z" }, null, 2)}\n`);
+    await runWorkspaceHook("user-prompt-submit", sessionId, root, "turn-prompt-refresh");
+    const afterPrompt = JSON.parse(await readFile(refreshedPath, "utf8")) as Record<string, unknown>;
+    expect(afterPrompt.updatedAt).not.toBe("2000-01-01T00:00:00.000Z");
+    await runWorkspaceHook("session-start", secondSessionId, secondRoot, "turn-second-session-start");
     await stopServer();
     startServer(process.cwd(), {
       TOKENGRAPH_WORKSPACE_ROOT: "",
@@ -2011,11 +2038,14 @@ describe("TokenGraph MCP stdio server", () => {
         }
       }
     });
-    expect(setup.structuredContent).toMatchObject({
+    expect(setup.structuredContent).toEqual({
       status: "ready",
+      host: "codex",
       trustedWorkspace: { source: "codex-request-metadata", root },
       blockingReason: null,
-      pluginRootLaunch: true
+      pluginRootLaunch: true,
+      message: "TokenGraph has a safe host-provided workspace boundary.",
+      nextSteps: []
     });
 
     const [firstConcurrent, secondConcurrent] = await Promise.all([
@@ -2042,8 +2072,54 @@ describe("TokenGraph MCP stdio server", () => {
         }
       })
     ]);
-    expect(firstConcurrent.structuredContent).toMatchObject({ trustedWorkspace: { root } });
-    expect(secondConcurrent.structuredContent).toMatchObject({ trustedWorkspace: { root: secondRoot } });
+    expect(firstConcurrent.structuredContent).toEqual({
+      status: "ready", host: "codex", trustedWorkspace: { source: "codex-request-metadata", root },
+      blockingReason: null, pluginRootLaunch: true,
+      message: "TokenGraph has a safe host-provided workspace boundary.", nextSteps: []
+    });
+    expect(secondConcurrent.structuredContent).toEqual({
+      status: "ready", host: "codex", trustedWorkspace: { source: "codex-request-metadata", root: secondRoot },
+      blockingReason: null, pluginRootLaunch: true,
+      message: "TokenGraph has a safe host-provided workspace boundary.", nextSteps: []
+    });
+
+    const [firstIndex, secondIndex, firstConfig, secondConfig] = await Promise.all([
+      request(431, "tools/call", {
+        name: "tokengraph_index_project", arguments: { fullReindex: true },
+        _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: sessionId, workspaces: { [root]: {} } } }
+      }),
+      request(432, "tools/call", {
+        name: "tokengraph_index_project", arguments: { fullReindex: true },
+        _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: secondSessionId, workspaces: { [secondRoot]: {} } } }
+      }),
+      request(433, "tools/call", {
+        name: "tokengraph_update_config", arguments: { maxFiles: 4 },
+        _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: sessionId, workspaces: { [root]: {} } } }
+      }),
+      request(434, "tools/call", {
+        name: "tokengraph_update_config", arguments: { maxFiles: 5 },
+        _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: secondSessionId, workspaces: { [secondRoot]: {} } } }
+      })
+    ]);
+    expect(firstIndex.structuredContent).toMatchObject({ status: "indexed", map: { root, modules: [{ path: "src/firstProjectMarker.ts" }] } });
+    expect(JSON.stringify(firstIndex)).not.toContain("secondProjectMarker");
+    expect(secondIndex.structuredContent).toMatchObject({ status: "indexed", map: { root: secondRoot, modules: [{ path: "src/secondProjectMarker.ts" }] } });
+    expect(JSON.stringify(secondIndex)).not.toContain("firstProjectMarker");
+    expect(firstConfig.structuredContent).toMatchObject({ status: "updated", config: { maxFiles: 4 } });
+    expect(secondConfig.structuredContent).toMatchObject({ status: "updated", config: { maxFiles: 5 } });
+
+    const [firstConfigRead, secondConfigRead] = await Promise.all([
+      request(435, "tools/call", {
+        name: "tokengraph_get_config", arguments: {},
+        _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: sessionId, workspaces: { [root]: {} } } }
+      }),
+      request(436, "tools/call", {
+        name: "tokengraph_get_config", arguments: {},
+        _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: secondSessionId, workspaces: { [secondRoot]: {} } } }
+      })
+    ]);
+    expect(firstConfigRead.structuredContent).toMatchObject({ maxFiles: 4 });
+    expect(secondConfigRead.structuredContent).toMatchObject({ maxFiles: 5 });
 
     const wrongRootForThread = await request(429, "tools/call", {
       name: "tokengraph_setup_status",
@@ -2078,6 +2154,22 @@ describe("TokenGraph MCP stdio server", () => {
       trustedWorkspace: null,
       blockingReason: "missing-trusted-workspace"
     });
+
+    const [mismatchedIndex, mismatchedConfig] = await Promise.all([
+      request(437, "tools/call", {
+        name: "tokengraph_index_project", arguments: { fullReindex: true },
+        _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: sessionId, workspaces: { [mismatchedRoot]: {} } } }
+      }),
+      request(438, "tools/call", {
+        name: "tokengraph_update_config", arguments: { maxFiles: 6 },
+        _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: sessionId, workspaces: { [mismatchedRoot]: {} } } }
+      })
+    ]);
+    expect(mismatchedIndex.isError).toBe(true);
+    expect(mismatchedConfig.isError).toBe(true);
+    expect(JSON.stringify(mismatchedIndex)).not.toContain("mismatchedProjectMarker");
+    expect(JSON.stringify(mismatchedConfig)).not.toContain("mismatchedProjectMarker");
+    await expect(access(join(mismatchedRoot, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
 
     await runWorkspaceHook("session-end", sessionId, root);
     await runWorkspaceHook("session-end", secondSessionId, secondRoot);

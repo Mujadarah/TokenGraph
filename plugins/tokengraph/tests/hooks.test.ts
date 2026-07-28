@@ -157,17 +157,17 @@ afterEach(async () => {
 });
 
 describe("built lifecycle hook process", () => {
-  it("attests SessionStart and UserPromptSubmit Desktop payloads without persisting turn or prompt data", async () => {
+  it("refreshes the same Desktop session attestation from SessionStart through UserPromptSubmit", async () => {
     const root = await makeRoot("tokengraph-hook-workspace-");
     const secret = "prompt-content-must-not-persist";
     const env = { PLUGIN_ROOT: hookPluginRoot };
+    const sessionId = randomUUID();
+    const path = await attestationPath(sessionId);
 
     for (const lifecycle of [
       { command: "session-start" as const, event: "SessionStart", turnId: "turn-start" },
       { command: "user-prompt-submit" as const, event: "UserPromptSubmit", turnId: "turn-prompt" }
     ]) {
-      const sessionId = randomUUID();
-      const path = await attestationPath(sessionId);
       const attested = await runHook(lifecycle.command, {
         hook_event_name: lifecycle.event,
         session_id: sessionId,
@@ -195,15 +195,21 @@ describe("built lifecycle hook process", () => {
       expect(storedText).not.toContain(lifecycle.turnId);
       expect(storedText).not.toContain(secret);
 
-      const ended = await runHook("session-end", {
-        hook_event_name: "SessionEnd",
-        session_id: sessionId,
-        cwd: root,
-        reason: "other"
-      }, env);
-      expect(ended.output).toEqual({});
-      await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      if (lifecycle.command === "session-start") {
+        await writeFile(path, `${JSON.stringify({ ...stored, updatedAt: "2000-01-01T00:00:00.000Z" }, null, 2)}\n`);
+      } else {
+        expect(stored.updatedAt).not.toBe("2000-01-01T00:00:00.000Z");
+      }
     }
+
+    const ended = await runHook("session-end", {
+      hook_event_name: "SessionEnd",
+      session_id: sessionId,
+      cwd: root,
+      reason: "other"
+    }, env);
+    expect(ended.output).toEqual({});
+    await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("extracts compact prepare from the real single-TextContent response and host cwd without persisting response text", async () => {
