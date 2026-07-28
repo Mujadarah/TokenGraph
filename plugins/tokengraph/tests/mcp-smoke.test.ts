@@ -1887,17 +1887,21 @@ describe("TokenGraph MCP stdio server", () => {
     await expect(access(join(outsideRoot, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("fails closed when launched from the installed plugin root without a trusted workspace", async () => {
+  it("keeps the Codex CLI host blocked without a workspace override or lifecycle attestation", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
     await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
     await stopServer();
-    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: "", CLAUDE_PROJECT_DIR: "" });
+    startServer(process.cwd(), {
+      TOKENGRAPH_WORKSPACE_ROOT: "",
+      CLAUDE_PROJECT_DIR: "",
+      CODEX_THREAD_ID: randomUUID()
+    });
 
     await request(40, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "tokengraph-smoke-test", version: "0.7.0" }
+      clientInfo: { name: "codex-cli-host-baseline", version: "0.23.0" }
     });
     send({ method: "notifications/initialized" });
 
@@ -1907,6 +1911,7 @@ describe("TokenGraph MCP stdio server", () => {
     });
     expect(setup.structuredContent).toMatchObject({
       status: "blocked",
+      host: "codex",
       trustedWorkspace: null,
       blockingReason: "missing-trusted-workspace",
       pluginRootLaunch: true
@@ -2039,6 +2044,40 @@ describe("TokenGraph MCP stdio server", () => {
     ]);
     expect(firstConcurrent.structuredContent).toMatchObject({ trustedWorkspace: { root } });
     expect(secondConcurrent.structuredContent).toMatchObject({ trustedWorkspace: { root: secondRoot } });
+
+    const wrongRootForThread = await request(429, "tools/call", {
+      name: "tokengraph_setup_status",
+      arguments: {},
+      _meta: {
+        "x-codex-turn-metadata": {
+          workspace_kind: "project",
+          thread_id: sessionId,
+          workspaces: { [secondRoot]: {} }
+        }
+      }
+    });
+    expect(wrongRootForThread.structuredContent).toMatchObject({
+      status: "blocked",
+      trustedWorkspace: null,
+      blockingReason: "missing-trusted-workspace"
+    });
+
+    const wrongThreadForRoot = await request(430, "tools/call", {
+      name: "tokengraph_setup_status",
+      arguments: {},
+      _meta: {
+        "x-codex-turn-metadata": {
+          workspace_kind: "project",
+          thread_id: randomUUID(),
+          workspaces: { [root]: {} }
+        }
+      }
+    });
+    expect(wrongThreadForRoot.structuredContent).toMatchObject({
+      status: "blocked",
+      trustedWorkspace: null,
+      blockingReason: "missing-trusted-workspace"
+    });
 
     await runWorkspaceHook("session-end", sessionId, root);
     await runWorkspaceHook("session-end", secondSessionId, secondRoot);
