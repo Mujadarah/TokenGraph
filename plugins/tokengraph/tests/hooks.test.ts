@@ -157,37 +157,50 @@ afterEach(async () => {
 });
 
 describe("built lifecycle hook process", () => {
-  it("attests only the host session workspace and removes it when that session ends", async () => {
+  it("refreshes the same Desktop session attestation from SessionStart through UserPromptSubmit", async () => {
     const root = await makeRoot("tokengraph-hook-workspace-");
-    const sessionId = randomUUID();
-    const path = await attestationPath(sessionId);
     const secret = "prompt-content-must-not-persist";
     const env = { PLUGIN_ROOT: hookPluginRoot };
+    const sessionId = randomUUID();
+    const path = await attestationPath(sessionId);
 
-    const started = await runHook("session-start", {
-      hook_event_name: "SessionStart",
-      session_id: sessionId,
-      cwd: root,
-      source: "startup",
-      prompt: secret
-    }, env);
+    for (const lifecycle of [
+      { command: "session-start" as const, event: "SessionStart", turnId: "turn-start" },
+      { command: "user-prompt-submit" as const, event: "UserPromptSubmit", turnId: "turn-prompt" }
+    ]) {
+      const attested = await runHook(lifecycle.command, {
+        hook_event_name: lifecycle.event,
+        session_id: sessionId,
+        turn_id: lifecycle.turnId,
+        cwd: root,
+        source: "startup",
+        prompt: secret
+      }, env);
 
-    expect(started.code).toBe(0);
-    expect(started.output).toEqual({});
-    const storedText = await readFile(path, "utf8");
-    const stored = JSON.parse(storedText) as Record<string, unknown>;
-    expect(Object.keys(stored).sort()).toEqual([
-      "pluginRootHash", "root", "schemaId", "schemaVersion", "sessionHash", "updatedAt"
-    ].sort());
-    expect(stored).toMatchObject({
-      schemaId: "tokengraph-host-workspace",
-      schemaVersion: 1,
-      pluginRootHash: createHash("sha256").update(await realpath(hookPluginRoot)).digest("hex"),
-      sessionHash: createHash("sha256").update(sessionId).digest("hex"),
-      root: await realpath(root)
-    });
-    expect(storedText).not.toContain(sessionId);
-    expect(storedText).not.toContain(secret);
+      expect(attested.code).toBe(0);
+      expect(attested.output).toEqual({});
+      const storedText = await readFile(path, "utf8");
+      const stored = JSON.parse(storedText) as Record<string, unknown>;
+      expect(Object.keys(stored).sort()).toEqual([
+        "pluginRootHash", "root", "schemaId", "schemaVersion", "sessionHash", "updatedAt"
+      ].sort());
+      expect(stored).toMatchObject({
+        schemaId: "tokengraph-host-workspace",
+        schemaVersion: 1,
+        pluginRootHash: createHash("sha256").update(await realpath(hookPluginRoot)).digest("hex"),
+        sessionHash: createHash("sha256").update(sessionId).digest("hex"),
+        root: await realpath(root)
+      });
+      expect(storedText).not.toContain(sessionId);
+      expect(storedText).not.toContain(lifecycle.turnId);
+      expect(storedText).not.toContain(secret);
+
+      if (lifecycle.command === "session-start") {
+        await writeFile(path, `${JSON.stringify({ ...stored, updatedAt: "2000-01-01T00:00:00.000Z" }, null, 2)}\n`);
+      } else {
+        expect(stored.updatedAt).not.toBe("2000-01-01T00:00:00.000Z");
+      }
+    }
 
     const ended = await runHook("session-end", {
       hook_event_name: "SessionEnd",
