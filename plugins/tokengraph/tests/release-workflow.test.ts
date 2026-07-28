@@ -18,6 +18,9 @@ describe("tagged release workflow", () => {
     expect(workflow).toContain("--draft");
     expect(workflow).toContain("--notes-file release-notes.md");
     expect(workflow).toContain('VERSION="${GITHUB_REF_NAME#v}"');
+    const packageVersionCheck = 'node plugins/tokengraph/scripts/validate-release-version.mjs --package plugins/tokengraph/package.json --version "$VERSION"';
+    expect(workflow).toContain(packageVersionCheck);
+    expect(workflow.indexOf(packageVersionCheck)).toBeLessThan(workflow.indexOf("pnpm --silent package:plugin -- --release --json"));
     expect(workflow).toContain('node plugins/tokengraph/scripts/render-release-notes.mjs --version "$VERSION" > release-notes.md');
     expect(workflow).toContain('node plugins/tokengraph/scripts/validate-release-notes.mjs --file release-notes.md --version "$VERSION"');
     expect(workflow).toContain('"${{ steps.artifact.outputs.archive }}"');
@@ -30,13 +33,27 @@ function fixturePath(fixture: string) {
 }
 
 function validateReleaseNotes(fixture: string, args: string[] = ["--version", "0.23.0"]) {
-  return spawnSync(process.execPath, [resolve(process.cwd(), "scripts", "validate-release-notes.mjs"), "--file", fixturePath(fixture), ...args], {
+  return runReleaseNoteValidator(["--file", fixturePath(fixture), ...args]);
+}
+
+function runReleaseNoteValidator(args: string[]) {
+  return spawnSync(process.execPath, [resolve(process.cwd(), "scripts", "validate-release-notes.mjs"), ...args], {
     encoding: "utf8"
   });
 }
 
 function renderReleaseNotes(args: string[] = ["--version", "0.23.0"]) {
   return spawnSync(process.execPath, [resolve(process.cwd(), "scripts", "render-release-notes.mjs"), ...args], {
+    encoding: "utf8"
+  });
+}
+
+function packagePath() {
+  return resolve(process.cwd(), "package.json");
+}
+
+function validateReleaseVersion(args: string[] = ["--package", packagePath(), "--version", "0.23.0"]) {
+  return spawnSync(process.execPath, [resolve(process.cwd(), "scripts", "validate-release-version.mjs"), ...args], {
     encoding: "utf8"
   });
 }
@@ -57,10 +74,7 @@ describe("release-note contract", () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(readFileSync(fixturePath("canonical-v023.md"), "utf8"));
-    expect(result.stdout).toContain("B7 polyglot indexing is active-by-default.");
-    expect(result.stdout).toContain("B7 routing is independent of routing promotion.");
-    expect(result.stdout).toContain("Routing remains shadow-only.");
-    expect(result.stdout).toContain("Enforcement remains disabled.");
+    expect(result.stdout).toContain("B7 polyglot indexing is active by default and independent of routing promotion.\nRouting remains shadow-only.\nEnforcement remains disabled.");
   });
 
   it.each([
@@ -97,11 +111,62 @@ describe("release-note contract", () => {
     expect(result.stderr).toContain("release version is required");
   });
 
-  it("rejects a non-semver renderer version", () => {
-    const result = renderReleaseNotes(["--version", "v0.23.0"]);
+  it.each(["0.0.0", "1.23.456"])("accepts the strict numeric semantic version %s", (version) => {
+    const result = renderReleaseNotes(["--version", version]);
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+  });
+
+  it.each(["00.23.0", "0.023.0", "0.23.00", "v0.23.0", "0.23", "0.23.0-beta"])("rejects the non-canonical semantic version %s", (version) => {
+    const result = renderReleaseNotes(["--version", version]);
 
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("semantic version");
+  });
+
+  it.each([
+    ["duplicate file", () => runReleaseNoteValidator(["--file", fixturePath("canonical-v023.md"), "--file", fixturePath("canonical-v023.md"), "--version", "0.23.0"]), "release notes file may only be provided once"],
+    ["duplicate version", () => runReleaseNoteValidator(["--file", fixturePath("canonical-v023.md"), "--version", "0.23.0", "--version", "0.23.0"]), "release version may only be provided once"],
+    ["missing file value", () => runReleaseNoteValidator(["--file", "--version", "0.23.0"]), "release notes file requires a value"],
+    ["missing version value", () => runReleaseNoteValidator(["--file", fixturePath("canonical-v023.md"), "--version"]), "release version requires a value"]
+  ])("rejects validator arguments with %s", (_label, invoke, message) => {
+    const result = invoke();
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(message);
+  });
+});
+
+describe("release tag and package parity", () => {
+  it("accepts a package version matching the tag version", () => {
+    const result = validateReleaseVersion();
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("TokenGraph release tag and package version match.");
+  });
+
+  it("rejects a package version that differs from the tag version", () => {
+    const result = validateReleaseVersion(["--package", packagePath(), "--version", "0.23.1"]);
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("does not match release tag version 0.23.1");
+  });
+
+  it.each([
+    ["duplicate package", ["--package", packagePath(), "--package", packagePath(), "--version", "0.23.0"], "package path may only be provided once"],
+    ["duplicate version", ["--package", packagePath(), "--version", "0.23.0", "--version", "0.23.0"], "release version may only be provided once"],
+    ["missing package value", ["--package", "--version", "0.23.0"], "package path requires a value"],
+    ["missing version value", ["--package", packagePath(), "--version"], "release version requires a value"]
+  ])("rejects release-version validator arguments with %s", (_label, args, message) => {
+    const result = validateReleaseVersion(args);
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(message);
   });
 });

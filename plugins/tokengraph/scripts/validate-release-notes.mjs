@@ -13,9 +13,15 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--file") {
-      file = argv[++index];
+      if (file !== undefined) fail("release notes file may only be provided once.");
+      const value = argv[++index];
+      if (!value || value.startsWith("--")) fail("release notes file requires a value.");
+      file = value;
     } else if (argument === "--version") {
-      version = argv[++index];
+      if (version !== undefined) fail("release version may only be provided once.");
+      const value = argv[++index];
+      if (!value || value.startsWith("--")) fail("release version requires a value.");
+      version = value;
     } else {
       fail("usage: node scripts/validate-release-notes.mjs --file <release-notes.md> --version <x.y.z>");
     }

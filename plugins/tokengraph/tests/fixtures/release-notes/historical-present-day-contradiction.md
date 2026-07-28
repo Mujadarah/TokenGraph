@@ -5,8 +5,7 @@ Automated release built from the tagged commit. The attached ZIP and SHA-256 che
 Reviewed schema-v3 campaigns now cover three repositories, three categories, 15 paired runs, and 30 accepted traces. The multi-repository coverage target is met, but the frozen promotion gates do not all pass.
 
 Current release contract:
-B7 polyglot indexing is active-by-default.
-B7 routing is independent of routing promotion.
+B7 polyglot indexing is active by default and independent of routing promotion.
 Routing remains shadow-only.
 Enforcement remains disabled.
 

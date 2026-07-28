@@ -53,6 +53,14 @@ jobs:
       - name: Validate plugin
         run: pnpm validate:plugin
 
+      - name: Verify release tag and package version
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          node plugins/tokengraph/scripts/validate-release-version.mjs --package plugins/tokengraph/package.json --version "$VERSION"
+
       - name: Build release package
         run: pnpm --silent package:plugin -- --release --json > release-package.json
 
