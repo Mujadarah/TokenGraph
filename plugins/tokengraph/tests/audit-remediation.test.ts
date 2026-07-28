@@ -128,6 +128,38 @@ describe("audit remediation persistence contracts", () => {
     expect(await readFile(migrated, "utf8")).toBe(legacy);
   });
 
+  it("migrates Git-common TokenGraph state into the active workspace and keeps a legacy backup", async () => {
+    const root = await makeRoot();
+    await execFileAsync("git", ["init", "-b", "main", root]);
+    const legacyDirectory = join(root, ".git", "tokengraph");
+    await mkdir(legacyDirectory, { recursive: true });
+    const legacy = JSON.stringify({ schemaVersion: 1, memories: [{ id: "legacy-git-memory" }] });
+    await writeFile(join(legacyDirectory, "memory.json"), legacy);
+
+    const migrated = await repositoryMemoryPath(root);
+
+    expect(migrated).toBe(join(root, ".tokengraph", "repository", "memory.json"));
+    expect(await readFile(migrated, "utf8")).toBe(legacy);
+    expect(await readFile(join(legacyDirectory, "memory.json"), "utf8")).toBe(legacy);
+    expect(JSON.parse(await readFile(join(root, ".tokengraph", "repository", "migration.json"), "utf8"))).toMatchObject({ source: legacyDirectory });
+  });
+
+  it("preserves active workspace state when legacy Git-common data conflicts", async () => {
+    const root = await makeRoot();
+    await execFileAsync("git", ["init", "-b", "main", root]);
+    const legacyDirectory = join(root, ".git", "tokengraph");
+    const activeDirectory = join(root, ".tokengraph", "repository");
+    await mkdir(legacyDirectory, { recursive: true });
+    await mkdir(activeDirectory, { recursive: true });
+    await writeFile(join(legacyDirectory, "memory.json"), "legacy\n");
+    await writeFile(join(activeDirectory, "memory.json"), "active\n");
+
+    await repositoryMemoryPath(root);
+
+    expect(await readFile(join(activeDirectory, "memory.json"), "utf8")).toBe("active\n");
+    expect(await readFile(join(legacyDirectory, "memory.json"), "utf8")).toBe("legacy\n");
+  });
+
   it("does not overwrite a newer index schema", async () => {
     const root = await makeRoot();
     const newer = { schemaVersion: CURRENT_INDEX_SCHEMA_VERSION + 1 } as ProjectIndex;

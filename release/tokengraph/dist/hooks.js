@@ -2,7 +2,7 @@
 
 // src/hooks.ts
 import { createHash as createHash3 } from "node:crypto";
-import { mkdir as mkdir2, open as open2, readFile as readFile5, readdir as readdir2, rm as rm4, stat as stat2 } from "node:fs/promises";
+import { mkdir as mkdir2, open as open2, readFile as readFile5, readdir as readdir3, rm as rm4, stat as stat2 } from "node:fs/promises";
 import { dirname as dirname2, isAbsolute as isAbsolute3, join as join5, resolve as resolve4 } from "node:path";
 
 // src/core/taskEstimator.ts
@@ -314,18 +314,19 @@ async function removeHostWorkspaceAttestation(pluginRoot, sessionId) {
 }
 
 // src/core/taskLedger.ts
-import { readFile as readFile4, readdir, rename as rename2, rm as rm3 } from "node:fs/promises";
+import { readFile as readFile4, readdir as readdir2, rename as rename2, rm as rm3 } from "node:fs/promises";
 import { join as join4, resolve as resolve3 } from "node:path";
 
 // src/core/repositoryIdentity.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash as createHash2 } from "node:crypto";
-import { access, readFile as readFile3 } from "node:fs/promises";
+import { access, lstat as lstat2, readFile as readFile3, readdir } from "node:fs/promises";
 import { join as join3, resolve as resolve2 } from "node:path";
 var execFileAsync = promisify(execFile);
 var LOCAL_EXCLUDE_WARNING = "TokenGraph could not update .git/info/exclude; add this exact line manually: .tokengraph/";
 var setupWarnings = /* @__PURE__ */ new Map();
+var LEGACY_REPOSITORY_STATE_SCHEMA_VERSION = 1;
 async function git(root, ...args) {
   try {
     const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 });
@@ -421,10 +422,9 @@ async function getRepositoryIdentityUncached(workspaceRoot) {
     remoteIdentity(workspaceRoot)
   ]);
   const normalizedRoot = resolve2(topLevel ?? workspaceRoot);
-  const normalizedCommon = commonDir ? resolve2(workspaceRoot, commonDir) : void 0;
   const normalizedGitDir = gitDir ? resolve2(workspaceRoot, gitDir) : void 0;
   if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
-  const repositoryState = repositoryStateDirectory(normalizedRoot, normalizedCommon);
+  const repositoryState = await resolveRepositoryStateDirectory(normalizedRoot);
   const repositoryId = await loadOrCreateRepositoryId(repositoryState);
   const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
   const repositoryFingerprint = digest(`${repositoryId}
@@ -439,8 +439,103 @@ ${firstCommit}`);
     ...remote ? { remoteIdentity: remote } : {}
   };
 }
+async function gitCommonDirectory(root) {
+  const commonDir = await git(resolve2(root), "rev-parse", "--git-common-dir");
+  if (!commonDir) return void 0;
+  return resolve2(root, commonDir);
+}
 function repositoryStateDirectory(root, commonDirectory) {
-  return commonDirectory ? join3(commonDirectory, "tokengraph") : join3(resolve2(root), ".tokengraph", "repository");
+  void commonDirectory;
+  return join3(resolve2(root), ".tokengraph", "repository");
+}
+async function resolveRepositoryStateDirectory(root) {
+  const normalizedRoot = resolve2(root);
+  const target = repositoryStateDirectory(normalizedRoot);
+  const commonDirectory = await gitCommonDirectory(normalizedRoot);
+  if (commonDirectory) await migrateLegacyRepositoryState(join3(commonDirectory, "tokengraph"), target);
+  return target;
+}
+async function migrateLegacyRepositoryState(source, target) {
+  try {
+    await lstat2(join3(target, "migration.json"));
+    return;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  let sourceStats;
+  try {
+    sourceStats = await lstat2(source);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  if (!sourceStats.isDirectory()) return;
+  const lockKey = await canonicalPersistenceLockKey(target, "migration.json");
+  await withFileLock(`${lockKey}.lock`, async () => {
+    try {
+      await lstat2(join3(target, "migration.json"));
+      return;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const report = {
+      schemaVersion: LEGACY_REPOSITORY_STATE_SCHEMA_VERSION,
+      source,
+      migratedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      migrated: [],
+      skippedExisting: [],
+      skippedInvalid: [],
+      skippedUnsupported: [],
+      skippedSymlink: []
+    };
+    await migrateLegacyEntries(source, target, "", report);
+    await writeJsonAtomic(join3(target, "migration.json"), report);
+  });
+}
+async function migrateLegacyEntries(sourceRoot, targetRoot, relativePath, report) {
+  const sourceDirectory = join3(sourceRoot, relativePath);
+  for (const entry of await readdir(sourceDirectory, { withFileTypes: true })) {
+    const entryRelativePath = relativePath ? join3(relativePath, entry.name) : entry.name;
+    const sourcePath = join3(sourceRoot, entryRelativePath);
+    if (entry.name.endsWith(".lock") || entry.name.endsWith(".tmp")) {
+      report.skippedUnsupported.push(entryRelativePath);
+      continue;
+    }
+    const stats = await lstat2(sourcePath);
+    if (stats.isSymbolicLink()) {
+      report.skippedSymlink.push(entryRelativePath);
+      continue;
+    }
+    if (stats.isDirectory()) {
+      await migrateLegacyEntries(sourceRoot, targetRoot, entryRelativePath, report);
+      continue;
+    }
+    if (!stats.isFile() || !entry.name.endsWith(".json")) {
+      report.skippedUnsupported.push(entryRelativePath);
+      continue;
+    }
+    const targetPath = join3(targetRoot, entryRelativePath);
+    try {
+      await lstat2(targetPath);
+      report.skippedExisting.push(entryRelativePath);
+      continue;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    let contents;
+    try {
+      contents = await readFile3(sourcePath, "utf8");
+      JSON.parse(contents);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        report.skippedInvalid.push(entryRelativePath);
+        continue;
+      }
+      throw error;
+    }
+    await writeTextAtomic(targetPath, contents);
+    report.migrated.push(entryRelativePath);
+  }
 }
 
 // src/core/taskLedger.ts
@@ -799,7 +894,7 @@ async function withPointerLock(path, operation) {
 async function prunePointers(root, now = /* @__PURE__ */ new Date()) {
   let files;
   try {
-    files = await readdir2(sessionsDirectory(root));
+    files = await readdir3(sessionsDirectory(root));
   } catch (error) {
     if (error.code === "ENOENT") return;
     throw error;

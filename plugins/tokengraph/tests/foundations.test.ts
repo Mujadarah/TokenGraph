@@ -66,7 +66,8 @@ describe("repository identity and storage foundations", () => {
     expect(identity.workspaceId).toMatch(/^[a-f0-9]{64}$/);
     expect(identity.worktreeId).toMatch(/^[a-f0-9]{64}$/);
     expect(identity.headCommit).toMatch(/^[a-f0-9]{40}$/);
-    expect(await resolveRepositoryStateDirectory(root)).toBe(repositoryStateDirectory(root, resolve(root, ".git")));
+    expect(repositoryStateDirectory(root)).toBe(join(root, ".tokengraph", "repository"));
+    expect(await resolveRepositoryStateDirectory(root)).toBe(repositoryStateDirectory(root));
   });
 
   it("keeps task outcomes on their real Git worktree and branch while sharing repository decisions", async () => {

@@ -107,7 +107,8 @@ describe("TokenGraph local config", () => {
       rawReadWarningThreshold: 8000,
       sqlIndexingEnabled: true,
       memoryEnabled: true,
-      wikiGenerationEnabled: false
+      wikiGenerationEnabled: false,
+      parser: { polyglotEnabled: true }
     });
     expect(JSON.parse(await readFile(configPath(root), "utf8"))).toEqual({
       schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
@@ -191,6 +192,15 @@ describe("TokenGraph local config", () => {
       sqlIndexingEnabled: false,
       memoryEnabled: true
     });
+  });
+
+  it("defaults B7 polyglot parsing on and keeps an explicit project kill switch", async () => {
+    const root = await makeRoot();
+    const enabled = await loadTokenGraphConfig(root);
+    expect(enabled.parser.polyglotEnabled).toBe(true);
+    const disabled = await updateTokenGraphConfig(root, { parser: { polyglotEnabled: false } });
+    expect(disabled.parser.polyglotEnabled).toBe(false);
+    expect((await loadTokenGraphConfig(root)).parser.polyglotEnabled).toBe(false);
   });
 
   it("lets TOKENGRAPH_ROUTING_MODE override the persisted mode", async () => {
