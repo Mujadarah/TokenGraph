@@ -7,16 +7,22 @@ describe("tagged release workflow", () => {
   it("verifies the pinned toolchain, package gates, checksum, and draft upload", () => {
     const workflow = readFileSync(resolve(process.cwd(), "../..", ".github/workflows/release.yml"), "utf8");
     const ciWorkflow = readFileSync(resolve(process.cwd(), "../..", ".github/workflows/ci.yml"), "utf8");
+    const approvedActions = new Map([
+      ["actions/checkout", "11d5960a326750d5838078e36cf38b85af677262"],
+      ["pnpm/action-setup", "b906affcce14559ad1aafd4ab0e942779e9f58b1"],
+      ["actions/setup-node", "49933ea5288caeca8642d1e84afbd3f7d6820020"]
+    ]);
     expect(workflow).toContain("tags: ['v*']");
-    expect(workflow).toContain("actions/checkout@11d5960a326750d5838078e36cf38b85af677262");
-    expect(workflow).toContain("pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1");
-    expect(workflow).toContain("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020");
     for (const configuredWorkflow of [workflow, ciWorkflow]) {
       expect(configuredWorkflow).not.toMatch(/uses:\s+\S+@v\d+/);
-      for (const match of configuredWorkflow.matchAll(/uses:\s+\S+@([^\s#]+)/g)) {
-        expect(match[1]).toMatch(/^[0-9a-f]{40}$/);
+      const references = Array.from(configuredWorkflow.matchAll(/uses:\s+([^@\s]+)@([^\s#]+)/g));
+      expect(references).toHaveLength(approvedActions.size);
+      for (const [, action, revision] of references) {
+        expect(revision).toBe(approvedActions.get(action));
       }
     }
+    expect(workflow).not.toContain("cache: pnpm");
+    expect(workflow).not.toContain("cache-dependency-path:");
     expect(workflow).toContain("version: 10.14.0");
     expect(workflow).toContain("node-version: 22");
     expect(workflow).toContain("pnpm --silent package:plugin -- --release --json");
