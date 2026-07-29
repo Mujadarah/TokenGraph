@@ -354,6 +354,7 @@ describe("tokengraph release package command", () => {
     const validatorSource = await readFile(resolve("scripts", "validate-plugin.mjs"), "utf8");
     const license = await readFile(resolve(repoRoot, "LICENSE"), "utf8");
     const notice = await readFile(resolve(repoRoot, "NOTICE"), "utf8");
+    const lockfile = await readFile(resolve("pnpm-lock.yaml"), "utf8");
     const limitations = await readFile(resolve(repoRoot, "docs", "trust", "limitations.md"), "utf8");
     const rootReadme = await readFile(resolve(repoRoot, "README.md"), "utf8");
     const firstUse = rootReadme.split("## First use")[1]?.split("## What agents can use")[0] ?? "";
@@ -370,6 +371,8 @@ describe("tokengraph release package command", () => {
     expect(license).toContain("Apache License");
     expect(license).toContain("Version 2.0, January 2004");
     expect(notice).toContain("Copyright 2026 Mujadarah");
+    expect(lockfile).toContain("postcss@8.5.18");
+    expect(lockfile).not.toContain("postcss@8.5.16");
     expect(validatorSource).toContain('packageJson.license === "Apache-2.0"');
     expect(validatorSource).not.toContain("STALE_RELEASE_HOOK_TRANSITION_SHA256");
     expect(limitations).not.toMatch(/Phase 5.*remove this transition allowance/i);

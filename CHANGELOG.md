@@ -5,6 +5,7 @@
 - Relicensed TokenGraph from the proprietary source-available terms to the OSI-approved Apache License 2.0, including consistent package and marketplace metadata plus distributable `LICENSE` and `NOTICE` files.
 - Added public contribution, security-reporting, and maintainer-governance guidance so users can propose fixes through issues, forks, and reviewed pull requests without direct repository write access.
 - Pinned every GitHub Actions dependency to a verified full commit SHA so repository-level immutable-action enforcement can be enabled without breaking CI or tagged releases.
+- Overrode the transitive development dependency PostCSS to patched version 8.5.18, resolving GitHub advisory GHSA-r28c-9q8g-f849 before the open-source release.
 
 ## 0.23.0 - 2026-07-28
 
