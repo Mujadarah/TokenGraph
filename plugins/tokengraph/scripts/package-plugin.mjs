@@ -81,7 +81,7 @@ function buildReleaseReadme(version) {
 
 This folder is the installable TokenGraph ${version} plugin for Codex and Claude Code users.
 
-It includes the self-contained Node.js 22 MCP runtime at \`dist/index.js\`, bundled parser workers at \`dist/typescript-worker.cjs\` and \`dist/polyglot-worker.js\`, the bounded command runner at \`dist/cli.js\`, the cross-host lifecycle adapter at \`dist/hooks.js\`, hook and host manifests, MCP configs, skills, package metadata, and license. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
+It includes the self-contained Node.js 22 MCP runtime at \`dist/index.js\`, bundled parser workers at \`dist/typescript-worker.cjs\` and \`dist/polyglot-worker.js\`, the bounded command runner at \`dist/cli.js\`, the cross-host lifecycle adapter at \`dist/hooks.js\`, hook and host manifests, MCP configs, skills, package metadata, and Apache-2.0 license and notice files. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
 
 ## Install
 
@@ -148,6 +148,8 @@ pnpm validate:plugin
 \`\`\`
 
 Version: ${version}
+
+License: Apache-2.0
 `;
 }
 
@@ -194,6 +196,7 @@ async function copyInstallablePlugin(packageDir, packageJson, version) {
   await copyRequiredPath(resolve(pluginRoot, ".claude-plugin"), resolve(packageDir, ".claude-plugin"));
   await copyRequiredPath(resolve(pluginRoot, ".mcp.claude.json"), resolve(packageDir, ".mcp.claude.json"));
   await copyRequiredPath(resolve(repoRoot, "LICENSE"), resolve(packageDir, "LICENSE"));
+  await copyRequiredPath(resolve(repoRoot, "NOTICE"), resolve(packageDir, "NOTICE"));
   await writeReleaseMetadata(packageDir, packageJson, version);
 
   const packageStats = await stat(packageDir);

@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible TokenGraph defect
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thank you for helping improve TokenGraph. Use private vulnerability reporting for security issues.
+  - type: input
+    id: version
+    attributes:
+      label: TokenGraph version
+      placeholder: 0.23.1
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Host, operating system, and installation method
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the actual and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: List the smallest reliable steps and redact sensitive data.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste only the relevant, redacted output.
+      render: shell

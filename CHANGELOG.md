@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.1 - 2026-07-30
+
+- Relicensed TokenGraph from the proprietary source-available terms to the OSI-approved Apache License 2.0, including consistent package and marketplace metadata plus distributable `LICENSE` and `NOTICE` files.
+- Added public contribution, security-reporting, and maintainer-governance guidance so users can propose fixes through issues, forks, and reviewed pull requests without direct repository write access.
+- Pinned every GitHub Actions dependency to a verified full commit SHA so repository-level immutable-action enforcement can be enabled without breaking CI or tagged releases.
+
 ## 0.23.0 - 2026-07-28
 
 - Resolved Codex workspace trust per MCP request from host turn metadata corroborated by the matching trusted lifecycle-hook attestation, allowing one installed TokenGraph instance to serve concurrent project tasks without cross-applying roots.

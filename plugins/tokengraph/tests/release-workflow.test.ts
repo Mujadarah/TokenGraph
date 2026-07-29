@@ -6,8 +6,17 @@ import { describe, expect, it } from "vitest";
 describe("tagged release workflow", () => {
   it("verifies the pinned toolchain, package gates, checksum, and draft upload", () => {
     const workflow = readFileSync(resolve(process.cwd(), "../..", ".github/workflows/release.yml"), "utf8");
+    const ciWorkflow = readFileSync(resolve(process.cwd(), "../..", ".github/workflows/ci.yml"), "utf8");
     expect(workflow).toContain("tags: ['v*']");
-    expect(workflow).toContain("pnpm/action-setup@v4");
+    expect(workflow).toContain("actions/checkout@11d5960a326750d5838078e36cf38b85af677262");
+    expect(workflow).toContain("pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1");
+    expect(workflow).toContain("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020");
+    for (const configuredWorkflow of [workflow, ciWorkflow]) {
+      expect(configuredWorkflow).not.toMatch(/uses:\s+\S+@v\d+/);
+      for (const match of configuredWorkflow.matchAll(/uses:\s+\S+@([^\s#]+)/g)) {
+        expect(match[1]).toMatch(/^[0-9a-f]{40}$/);
+      }
+    }
     expect(workflow).toContain("version: 10.14.0");
     expect(workflow).toContain("node-version: 22");
     expect(workflow).toContain("pnpm --silent package:plugin -- --release --json");
@@ -52,7 +61,7 @@ function packagePath() {
   return resolve(process.cwd(), "package.json");
 }
 
-function validateReleaseVersion(args: string[] = ["--package", packagePath(), "--version", "0.23.0"]) {
+function validateReleaseVersion(args: string[] = ["--package", packagePath(), "--version", "0.23.1"]) {
   return spawnSync(process.execPath, [resolve(process.cwd(), "scripts", "validate-release-version.mjs"), ...args], {
     encoding: "utf8"
   });
@@ -150,11 +159,11 @@ describe("release tag and package parity", () => {
   });
 
   it("rejects a package version that differs from the tag version", () => {
-    const result = validateReleaseVersion(["--package", packagePath(), "--version", "0.23.1"]);
+    const result = validateReleaseVersion(["--package", packagePath(), "--version", "0.23.0"]);
 
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("does not match release tag version 0.23.1");
+    expect(result.stderr).toContain("does not match release tag version 0.23.0");
   });
 
   it.each([

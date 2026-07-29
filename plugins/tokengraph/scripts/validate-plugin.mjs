@@ -157,6 +157,10 @@ const releaseDistCorePath = resolve(releaseRoot, "dist", "core");
 const releaseSkillsPath = resolve(releaseRoot, "skills");
 const releasePackageJsonPath = resolve(releaseRoot, "package.json");
 const releaseReadmePath = resolve(releaseRoot, "README.md");
+const licensePath = resolve(repoRoot, "LICENSE");
+const noticePath = resolve(repoRoot, "NOTICE");
+const releaseLicensePath = resolve(releaseRoot, "LICENSE");
+const releaseNoticePath = resolve(releaseRoot, "NOTICE");
 const grammarAssets = ["web-tree-sitter.wasm", "tree-sitter-python.wasm", "tree-sitter-go.wasm", "tree-sitter-rust.wasm", "tree-sitter-java.wasm"];
 const rootReadmePath = resolve(repoRoot, "README.md");
 const sourceReadmePath = resolve(pluginRoot, "README.md");
@@ -183,7 +187,7 @@ const hooksManifest = await readJson(hooksManifestPath);
 const distReview = await readFile(distReviewPath, "utf8").catch((error) => fail(`cannot read built review helpers: ${error.message}`));
 
 assert(packageJson.name === "tokengraph", "package name must be tokengraph");
-assert(/LICENSE/i.test(packageJson.license ?? ""), "package metadata must point at the repository license");
+assert(packageJson.license === "Apache-2.0", "package metadata license must be Apache-2.0");
 assert(/^\d+\.\d+\.\d+$/.test(packageJson.version), "package version must be semver");
 assert(packageJson.scripts?.build === "node scripts/build.mjs", "package scripts must use the bundled MCP build command");
 assert(packageJson.devDependencies?.esbuild, "package devDependencies must include esbuild for self-contained MCP bundles");
@@ -276,7 +280,7 @@ assert(distServer.includes("tokengraph_update_config"), "built MCP server must r
 assert(distServer.includes("fullReindex"), "built MCP server must expose v0.8 full reindex option");
 assert(distServer.includes("indexingMode"), "built MCP server must report v0.8 indexing mode");
 assert(distServer.includes("maxEstimatedTokens"), "built MCP server must expose v0.8 planner token budget input");
-assert(packageJson.version === "0.23.0", "package version must be 0.23.0 for this release");
+assert(packageJson.version === "0.23.1", "package version must be 0.23.1 for this release");
 assert(distServer.includes("tokengraph_setup_status"), "built MCP server must register setup diagnostics");
 assert(distServer.includes("tokengraph_generate_wiki"), "built MCP server must register v0.9 wiki generator");
 assert(distServer.includes("tokengraph_show_wiki_page"), "built MCP server must register v0.9 wiki page reader");
@@ -342,7 +346,10 @@ for (const asset of grammarAssets) {
   await assertFile(resolve(pluginRoot, "assets", "grammars", asset), `source grammar asset ${asset}`);
   await assertFile(resolve(releaseRoot, "assets", "grammars", asset), `release grammar asset ${asset}`);
 }
-await assertFile(resolve(releaseRoot, "LICENSE"), "release license");
+await assertFile(licensePath, "repository license");
+await assertFile(noticePath, "repository notice");
+await assertFile(releaseLicensePath, "release license");
+await assertFile(releaseNoticePath, "release notice");
 const releaseSkillContract = await inspectSkillContract(releaseSkillsPath, "release plugin skills");
 assert(releaseSkillContract.forbiddenCoreTools.length === 0, `release plugin core skills reference non-core tools: ${releaseSkillContract.forbiddenCoreTools.join(", ")}`);
 const releaseUsesCoreLifecycle = releaseSkillContract.contract === "core";
@@ -371,6 +378,10 @@ const releaseClaudeManifest = await readJson(resolve(releaseRoot, ".claude-plugi
 const releaseClaudeMcp = await readJson(resolve(releaseRoot, ".mcp.claude.json"));
 const releasePackageJson = await readJson(releasePackageJsonPath);
 const releaseReadme = await readFile(releaseReadmePath, "utf8").catch((error) => fail(`cannot read release README: ${error.message}`));
+const license = await readFile(licensePath, "utf8").catch((error) => fail(`cannot read repository license: ${error.message}`));
+const notice = await readFile(noticePath, "utf8").catch((error) => fail(`cannot read repository notice: ${error.message}`));
+const releaseLicense = await readFile(releaseLicensePath, "utf8").catch((error) => fail(`cannot read release license: ${error.message}`));
+const releaseNotice = await readFile(releaseNoticePath, "utf8").catch((error) => fail(`cannot read release notice: ${error.message}`));
 const rootReadme = await readFile(rootReadmePath, "utf8").catch((error) => fail(`cannot read root README: ${error.message}`));
 const sourceReadme = await readFile(sourceReadmePath, "utf8").catch((error) => fail(`cannot read source plugin README: ${error.message}`));
 const codexHostGuide = await readFile(resolve(hostDocsPath, "codex.md"), "utf8").catch((error) => fail(`cannot read Codex host guide: ${error.message}`));
@@ -424,6 +435,13 @@ for (const filePath of packagedFiles) {
 assert(releaseManifest.name === manifest.name, "release plugin manifest name must match source manifest");
 assert(releaseManifest.version?.split("+", 1)[0] === packageJson.version, "release plugin manifest base version must match package version");
 assert(releasePackageJson.version === packageJson.version, "release package version must match source package version");
+assert(manifest.license === "Apache-2.0", "Codex plugin manifest license must be Apache-2.0");
+assert(claudeManifest.license === "Apache-2.0", "Claude plugin manifest license must be Apache-2.0");
+assert(releasePackageJson.license === "Apache-2.0", "release package metadata license must be Apache-2.0");
+assert(license.includes("Apache License") && license.includes("Version 2.0, January 2004"), "repository license must contain the Apache License 2.0 text");
+assert(notice.includes("Copyright 2026 Mujadarah"), "repository notice must contain the TokenGraph copyright attribution");
+assert(releaseLicense === license, "release license must match the repository license byte-for-byte");
+assert(releaseNotice === notice, "release notice must match the repository notice byte-for-byte");
 assert(releaseMcp.mcpServers?.tokengraph?.command === "node", "release tokengraph MCP command must be node");
 assert(
   Array.isArray(releaseMcp.mcpServers.tokengraph.args) && releaseMcp.mcpServers.tokengraph.args.includes("./dist/index.js"),
