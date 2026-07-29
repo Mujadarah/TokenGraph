@@ -13,6 +13,8 @@ describe("tagged release workflow", () => {
       ["actions/setup-node", "49933ea5288caeca8642d1e84afbd3f7d6820020"]
     ]);
     expect(workflow).toContain("tags: ['v*']");
+    expect(ciWorkflow).toMatch(/^permissions:\r?\n  contents: read$/m);
+    expect(workflow).toMatch(/^permissions:\r?\n  contents: write$/m);
     for (const configuredWorkflow of [workflow, ciWorkflow]) {
       expect(configuredWorkflow).not.toMatch(/uses:\s+\S+@v\d+/);
       const references = Array.from(configuredWorkflow.matchAll(/uses:\s+([^@\s]+)@([^\s#]+)/g));

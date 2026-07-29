@@ -2083,7 +2083,7 @@ describe("TokenGraph MCP stdio server", () => {
       message: "TokenGraph has a safe host-provided workspace boundary.", nextSteps: []
     });
 
-    const [firstIndex, secondIndex, firstConfig, secondConfig] = await Promise.all([
+    const [firstIndex, secondIndex] = await Promise.all([
       request(431, "tools/call", {
         name: "tokengraph_index_project", arguments: { fullReindex: true },
         _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: sessionId, workspaces: { [root]: {} } } }
@@ -2091,7 +2091,16 @@ describe("TokenGraph MCP stdio server", () => {
       request(432, "tools/call", {
         name: "tokengraph_index_project", arguments: { fullReindex: true },
         _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: secondSessionId, workspaces: { [secondRoot]: {} } } }
-      }),
+      })
+    ]);
+    expect(firstIndex.structuredContent).toMatchObject({ status: "indexed", map: { root, modules: [{ path: "src/firstProjectMarker.ts" }] } });
+    expect(JSON.stringify(firstIndex)).not.toContain("secondProjectMarker");
+    expect(secondIndex.structuredContent).toMatchObject({ status: "indexed", map: { root: secondRoot, modules: [{ path: "src/secondProjectMarker.ts" }] } });
+    expect(JSON.stringify(secondIndex)).not.toContain("firstProjectMarker");
+
+    // Keep requests concurrent across projects without introducing ambiguous
+    // write ordering between index and config mutations within one project.
+    const [firstConfig, secondConfig] = await Promise.all([
       request(433, "tools/call", {
         name: "tokengraph_update_config", arguments: { maxFiles: 4 },
         _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: sessionId, workspaces: { [root]: {} } } }
@@ -2101,10 +2110,6 @@ describe("TokenGraph MCP stdio server", () => {
         _meta: { "x-codex-turn-metadata": { workspace_kind: "project", thread_id: secondSessionId, workspaces: { [secondRoot]: {} } } }
       })
     ]);
-    expect(firstIndex.structuredContent).toMatchObject({ status: "indexed", map: { root, modules: [{ path: "src/firstProjectMarker.ts" }] } });
-    expect(JSON.stringify(firstIndex)).not.toContain("secondProjectMarker");
-    expect(secondIndex.structuredContent).toMatchObject({ status: "indexed", map: { root: secondRoot, modules: [{ path: "src/secondProjectMarker.ts" }] } });
-    expect(JSON.stringify(secondIndex)).not.toContain("firstProjectMarker");
     expect(firstConfig.structuredContent).toMatchObject({ status: "updated", config: { maxFiles: 4 } });
     expect(secondConfig.structuredContent).toMatchObject({ status: "updated", config: { maxFiles: 5 } });
 
