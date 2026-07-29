@@ -1,0 +1,26 @@
+const semanticVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+export function assertReleaseVersion(version) {
+  if (!version) throw new Error("release version is required.");
+  if (!semanticVersion.test(version)) throw new Error("release version must be a semantic version in x.y.z form.");
+  return version;
+}
+
+export function normalizeReleaseNotes(notes) {
+  return notes.replace(/\r\n?/g, "\n");
+}
+
+export function renderReleaseNotes(version) {
+  const resolvedVersion = assertReleaseVersion(version);
+  return `TokenGraph ${resolvedVersion} release notes.
+
+Automated release built from the tagged commit. The attached ZIP and SHA-256 checksum were produced by CI.
+
+Reviewed schema-v3 campaigns now cover three repositories, three categories, 15 paired runs, and 30 accepted traces. The multi-repository coverage target is met, but the frozen promotion gates do not all pass.
+
+Current release contract:
+B7 polyglot indexing is active by default and independent of routing promotion.
+Routing remains shadow-only.
+Enforcement remains disabled.
+`;
+}

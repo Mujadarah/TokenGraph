@@ -17,6 +17,8 @@ pnpm package:plugin -- --release --json
 
 `pnpm build` produces self-contained Node.js 22 entries at `dist/index.js` for MCP, `dist/typescript-worker.cjs` and `dist/polyglot-worker.js` for isolated bundled parsing, `dist/cli.js` for bounded saved-run capture, and `dist/hooks.js` for lifecycle hooks. Run `node ./dist/cli.js run -- <command> [args...]` to capture a redacted, bounded command result. `pnpm package:plugin` creates a standalone Codex/Claude marketplace directory and deterministic ZIP under the repository `artifacts/` directory. `pnpm package:plugin -- --release` regenerates the committed `release/tokengraph/` plugin.
 
+Draft GitHub release notes are rendered by `scripts/render-release-notes.mjs` and validated by `scripts/validate-release-notes.mjs`; both use the canonical contract in `scripts/release-note-contract.mjs`. Do not add free-form historical context to that draft. Historical corrections remain dated, append-only entries in the root `CHANGELOG.md`.
+
 ## Workspace trust
 
 TokenGraph project tools accept paths only inside a host-provided trusted workspace. Trust is resolved in this order:
