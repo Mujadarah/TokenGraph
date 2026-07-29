@@ -344,7 +344,7 @@ describe("tokengraph focused skills", () => {
 });
 
 describe("tokengraph release package command", () => {
-  it("uses v0.23.0 across every active source and marketplace version contract", async () => {
+  it("uses v0.23.1 and Apache-2.0 across every active source and marketplace contract", async () => {
     const repoRoot = resolve("..", "..");
     const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8"));
     const codexManifest = JSON.parse(await readFile(resolve(".codex-plugin", "plugin.json"), "utf8"));
@@ -352,16 +352,30 @@ describe("tokengraph release package command", () => {
     const claudeMarketplace = JSON.parse(await readFile(resolve(repoRoot, ".claude-plugin", "marketplace.json"), "utf8"));
     const serverSource = await readFile(resolve("src", "server.ts"), "utf8");
     const validatorSource = await readFile(resolve("scripts", "validate-plugin.mjs"), "utf8");
+    const license = await readFile(resolve(repoRoot, "LICENSE"), "utf8");
+    const notice = await readFile(resolve(repoRoot, "NOTICE"), "utf8");
+    const lockfile = await readFile(resolve("pnpm-lock.yaml"), "utf8");
     const limitations = await readFile(resolve(repoRoot, "docs", "trust", "limitations.md"), "utf8");
     const rootReadme = await readFile(resolve(repoRoot, "README.md"), "utf8");
     const firstUse = rootReadme.split("## First use")[1]?.split("## What agents can use")[0] ?? "";
     const troubleshooting = rootReadme.split("## Troubleshooting")[1]?.split("## Maintainer workflow")[0] ?? "";
 
-    expect(packageJson.version).toBe("0.23.0");
-    expect(codexManifest.version).toBe("0.23.0");
-    expect(claudeManifest.version).toBe("0.23.0");
-    expect(claudeMarketplace.plugins[0].version).toBe("0.23.0");
-    expect(serverSource).toContain('version: "0.23.0"');
+    expect(packageJson.version).toBe("0.23.1");
+    expect(packageJson.license).toBe("Apache-2.0");
+    expect(codexManifest.version).toBe("0.23.1");
+    expect(codexManifest.license).toBe("Apache-2.0");
+    expect(claudeManifest.version).toBe("0.23.1");
+    expect(claudeManifest.license).toBe("Apache-2.0");
+    expect(claudeMarketplace.plugins[0].version).toBe("0.23.1");
+    expect(serverSource).toContain('version: "0.23.1"');
+    expect(license).toContain("Apache License");
+    expect(license).toContain("Version 2.0, January 2004");
+    expect(notice).toContain("Copyright 2026 Mujadarah");
+    expect(lockfile).toContain("postcss@8.5.18");
+    expect(lockfile).not.toContain("postcss@8.5.16");
+    expect(validatorSource).toContain('packageJson.license === "Apache-2.0"');
+    expect(validatorSource).toContain("releaseLicense.equals(license)");
+    expect(validatorSource).toContain("releaseNotice.equals(notice)");
     expect(validatorSource).not.toContain("STALE_RELEASE_HOOK_TRANSITION_SHA256");
     expect(limitations).not.toMatch(/Phase 5.*remove this transition allowance/i);
     expect(firstUse).toMatch(/tokengraph_setup[\s\S]*tokengraph_prepare_context[\s\S]*task id/i);
@@ -464,11 +478,11 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.23.0"
+      version: "0.23.1"
     });
-    expect(report.bundleDir).toBe(resolve(outRoot, "tokengraph-0.23.0"));
+    expect(report.bundleDir).toBe(resolve(outRoot, "tokengraph-0.23.1"));
     expect(report.packageDir).toBe(resolve(report.bundleDir, "tokengraph"));
-    expect(report.archivePath).toBe(resolve(outRoot, "tokengraph-0.23.0.zip"));
+    expect(report.archivePath).toBe(resolve(outRoot, "tokengraph-0.23.1.zip"));
     expect(report.codexMarketplacePath).toBe(resolve(report.bundleDir, ".agents", "plugins", "marketplace.json"));
     expect(report.claudeMarketplacePath).toBe(resolve(report.bundleDir, ".claude-plugin", "marketplace.json"));
     expect(report.files).toEqual(
@@ -485,6 +499,7 @@ describe("tokengraph release package command", () => {
         "skills/tokengraph/SKILL.md",
         "README.md",
         "LICENSE",
+        "NOTICE",
         "package.json"
       ])
     );
@@ -588,7 +603,7 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.23.0",
+      version: "0.23.1",
       releaseDir: releaseRoot
     });
     expect(report.files).toEqual(
@@ -605,6 +620,7 @@ describe("tokengraph release package command", () => {
         "skills/tokengraph/SKILL.md",
         "README.md",
         "LICENSE",
+        "NOTICE",
         "package.json"
       ])
     );

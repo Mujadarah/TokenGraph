@@ -1,6 +1,6 @@
 # TokenGraph Source Plugin
 
-This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.23.0. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
+This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.23.1. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
 
 ## Development
 
@@ -139,7 +139,7 @@ the per-project kill switch. See the repository
 
 ## Packaging contract
 
-The installable plugin contains host manifests, MCP configuration, `hooks/hooks.json`, pinned standalone Tree-sitter WASM grammar assets, the bundled `dist/index.js`, `dist/cli.js`, and `dist/hooks.js` entries, skills, README, package metadata, and license. It excludes source, tests, scripts, development dependencies, local state, `dist/server.js`, and `dist/core/`.
+The installable plugin contains host manifests, MCP configuration, `hooks/hooks.json`, pinned standalone Tree-sitter WASM grammar assets, the bundled `dist/index.js`, `dist/cli.js`, and `dist/hooks.js` entries, skills, README, package metadata, `LICENSE`, and `NOTICE`. It excludes source, tests, scripts, development dependencies, local state, `dist/server.js`, and `dist/core/`.
 
 ## Lifecycle hooks
 
@@ -155,4 +155,4 @@ Do not edit `release/tokengraph/` by hand. Change source or the package generato
 
 ## Privacy and license
 
-TokenGraph is local-first and does not require an OpenAI API key, cloud sync, embeddings service, telemetry, or paid external API. Token savings are estimates. See the repository `LICENSE`.
+TokenGraph is local-first and does not require an OpenAI API key, cloud sync, embeddings service, telemetry, or paid external API. Token savings are estimates. TokenGraph is licensed under Apache License 2.0; see the repository `LICENSE` and `NOTICE`.

@@ -12,7 +12,7 @@ TokenGraph is a local-first MCP plugin for Codex and Claude Code that helps codi
 - **Trust-bounded:** the host must identify the workspace; installed plugin launches fail closed instead of trusting an arbitrary path.
 - **Evidence-led:** deterministic benchmarks and reviewed real-host traces are checked into the repository, while automatic routing stays in shadow mode until every promotion gate passes.
 
-Current source version: `0.23.0` | Runtime: Node.js 22 or newer | Source-available under the repository [license](LICENSE). The downloadable version is the one shown by the GitHub Latest release badge; a source version is not a published release asset.
+Current source version: `0.23.1` | Runtime: Node.js 22 or newer | Open source under the [Apache License 2.0](LICENSE). The downloadable version is the one shown by the GitHub Latest release badge; a source version is not a published release asset.
 
 ## Install from GitHub
 
@@ -124,6 +124,9 @@ Lifecycle hooks are cooperative automation. Users must review and trust them; th
 - [Codex installation and runtime](docs/hosts/codex.md)
 - [Claude Code installation and runtime](docs/hosts/claude-code.md)
 - [Generic MCP clients](docs/hosts/generic-mcp.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security reporting](SECURITY.md)
+- [Project governance](GOVERNANCE.md)
 - [Privacy and local storage](docs/trust/privacy.md)
 - [Security and workspace trust](docs/trust/security.md)
 - [Release installation](docs/trust/release-install.md)
@@ -159,3 +162,7 @@ The default package command creates `artifacts/tokengraph-<version>/` and a dete
 ## Privacy
 
 Indexes, configuration, wiki pages, token events, rules, and memories stay under `.tokengraph/` in the trusted workspace. Token savings are estimates, and TokenGraph does not replace code review or guarantee correctness.
+
+## License
+
+TokenGraph is open-source software licensed under the [Apache License 2.0](LICENSE). The [NOTICE](NOTICE) file contains the project attribution that must accompany redistributed copies. Contributions accepted into this repository are licensed on the same terms.

@@ -1,5 +1,6 @@
 overrides:
   vite: 6.4.3
+  postcss: 8.5.18
 allowBuilds:
   esbuild: true
 onlyBuiltDependencies:
