@@ -374,6 +374,8 @@ describe("tokengraph release package command", () => {
     expect(lockfile).toContain("postcss@8.5.18");
     expect(lockfile).not.toContain("postcss@8.5.16");
     expect(validatorSource).toContain('packageJson.license === "Apache-2.0"');
+    expect(validatorSource).toContain("releaseLicense.equals(license)");
+    expect(validatorSource).toContain("releaseNotice.equals(notice)");
     expect(validatorSource).not.toContain("STALE_RELEASE_HOOK_TRANSITION_SHA256");
     expect(limitations).not.toMatch(/Phase 5.*remove this transition allowance/i);
     expect(firstUse).toMatch(/tokengraph_setup[\s\S]*tokengraph_prepare_context[\s\S]*task id/i);

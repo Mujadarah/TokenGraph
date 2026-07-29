@@ -378,10 +378,10 @@ const releaseClaudeManifest = await readJson(resolve(releaseRoot, ".claude-plugi
 const releaseClaudeMcp = await readJson(resolve(releaseRoot, ".mcp.claude.json"));
 const releasePackageJson = await readJson(releasePackageJsonPath);
 const releaseReadme = await readFile(releaseReadmePath, "utf8").catch((error) => fail(`cannot read release README: ${error.message}`));
-const license = await readFile(licensePath, "utf8").catch((error) => fail(`cannot read repository license: ${error.message}`));
-const notice = await readFile(noticePath, "utf8").catch((error) => fail(`cannot read repository notice: ${error.message}`));
-const releaseLicense = await readFile(releaseLicensePath, "utf8").catch((error) => fail(`cannot read release license: ${error.message}`));
-const releaseNotice = await readFile(releaseNoticePath, "utf8").catch((error) => fail(`cannot read release notice: ${error.message}`));
+const license = await readFile(licensePath).catch((error) => fail(`cannot read repository license: ${error.message}`));
+const notice = await readFile(noticePath).catch((error) => fail(`cannot read repository notice: ${error.message}`));
+const releaseLicense = await readFile(releaseLicensePath).catch((error) => fail(`cannot read release license: ${error.message}`));
+const releaseNotice = await readFile(releaseNoticePath).catch((error) => fail(`cannot read release notice: ${error.message}`));
 const rootReadme = await readFile(rootReadmePath, "utf8").catch((error) => fail(`cannot read root README: ${error.message}`));
 const sourceReadme = await readFile(sourceReadmePath, "utf8").catch((error) => fail(`cannot read source plugin README: ${error.message}`));
 const codexHostGuide = await readFile(resolve(hostDocsPath, "codex.md"), "utf8").catch((error) => fail(`cannot read Codex host guide: ${error.message}`));
@@ -438,10 +438,12 @@ assert(releasePackageJson.version === packageJson.version, "release package vers
 assert(manifest.license === "Apache-2.0", "Codex plugin manifest license must be Apache-2.0");
 assert(claudeManifest.license === "Apache-2.0", "Claude plugin manifest license must be Apache-2.0");
 assert(releasePackageJson.license === "Apache-2.0", "release package metadata license must be Apache-2.0");
-assert(license.includes("Apache License") && license.includes("Version 2.0, January 2004"), "repository license must contain the Apache License 2.0 text");
-assert(notice.includes("Copyright 2026 Mujadarah"), "repository notice must contain the TokenGraph copyright attribution");
-assert(releaseLicense === license, "release license must match the repository license byte-for-byte");
-assert(releaseNotice === notice, "release notice must match the repository notice byte-for-byte");
+const licenseText = license.toString("utf8");
+const noticeText = notice.toString("utf8");
+assert(licenseText.includes("Apache License") && licenseText.includes("Version 2.0, January 2004"), "repository license must contain the Apache License 2.0 text");
+assert(noticeText.includes("Copyright 2026 Mujadarah"), "repository notice must contain the TokenGraph copyright attribution");
+assert(releaseLicense.equals(license), "release license must match the repository license byte-for-byte");
+assert(releaseNotice.equals(notice), "release notice must match the repository notice byte-for-byte");
 assert(releaseMcp.mcpServers?.tokengraph?.command === "node", "release tokengraph MCP command must be node");
 assert(
   Array.isArray(releaseMcp.mcpServers.tokengraph.args) && releaseMcp.mcpServers.tokengraph.args.includes("./dist/index.js"),
