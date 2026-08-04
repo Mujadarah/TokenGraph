@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   __getKnowledgeReviewQueueSizeForTests,
@@ -258,24 +258,30 @@ describe("knowledge review queue", () => {
   });
 
   it("does not silently migrate an approved schema-v1 proposal with bare fingerprints", async () => {
-    const root = await makeRoot();
-    const legacyInput = proposal();
-    const createdAt = "2026-07-01T10:00:00.000Z";
-    const fingerprint = await import("node:crypto").then(({ createHash }) => createHash("sha256").update(JSON.stringify({
-      type: legacyInput.type, title: legacyInput.title, proposedContent: legacyInput.proposedContent,
-      sourceFingerprints: legacyInput.sourceFingerprints.slice().sort(), affectedIdentifiers: legacyInput.affectedIdentifiers
-    })).digest("hex"));
-    const id = crypto.randomUUID();
-    await mkdir(join(root, ".tokengraph"), { recursive: true });
-    await writeFile(queuePath(root), JSON.stringify({ schemaVersion: 1, suggestions: [{
-      id, fingerprint, type: legacyInput.type, status: "approved", title: legacyInput.title,
-      rationale: legacyInput.rationale, proposedContent: legacyInput.proposedContent,
-      sourceFingerprints: legacyInput.sourceFingerprints, affectedIdentifiers: legacyInput.affectedIdentifiers,
-      createdAt, updatedAt: createdAt, reviewedAt: createdAt
-    }] }));
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-02T12:00:00.000Z"));
+    try {
+      const root = await makeRoot();
+      const legacyInput = proposal();
+      const createdAt = "2026-07-01T10:00:00.000Z";
+      const fingerprint = await import("node:crypto").then(({ createHash }) => createHash("sha256").update(JSON.stringify({
+        type: legacyInput.type, title: legacyInput.title, proposedContent: legacyInput.proposedContent,
+        sourceFingerprints: legacyInput.sourceFingerprints.slice().sort(), affectedIdentifiers: legacyInput.affectedIdentifiers
+      })).digest("hex"));
+      const id = crypto.randomUUID();
+      await mkdir(join(root, ".tokengraph"), { recursive: true });
+      await writeFile(queuePath(root), JSON.stringify({ schemaVersion: 1, suggestions: [{
+        id, fingerprint, type: legacyInput.type, status: "approved", title: legacyInput.title,
+        rationale: legacyInput.rationale, proposedContent: legacyInput.proposedContent,
+        sourceFingerprints: legacyInput.sourceFingerprints, affectedIdentifiers: legacyInput.affectedIdentifiers,
+        createdAt, updatedAt: createdAt, reviewedAt: createdAt
+      }] }));
 
-    await expect(reviewKnowledgeSuggestion(root, id, "approve")).rejects.toThrow(/legacy|canonical path|unverifiable/i);
-    expect(await listAppliedKnowledge(root)).toEqual([]);
+      await expect(reviewKnowledgeSuggestion(root, id, "approve")).rejects.toThrow(/legacy|canonical path|unverifiable/i);
+      expect(await listAppliedKnowledge(root)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not recover approved schema-v1 or schema-v2 records after expiry", async () => {
