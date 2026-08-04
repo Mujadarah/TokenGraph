@@ -442,7 +442,13 @@ export async function updateProjectIndexIncremental(
     sqlGraphForFiles(existingIndex.sql ?? emptySqlGraph(), unchangedPathSet),
     ...parsedSqlGraphs
   ]);
-  const inconsistency = consistencyFailure(metadata, graph);
+  const candidateInconsistency = consistencyFailure(metadata, graph);
+  // Re-scan after candidate construction so files classified as unchanged cannot
+  // change between the initial metadata snapshot and promotion unnoticed.
+  const validationMetadata = candidateInconsistency
+    ? metadata
+    : await scanner.scanProjectFileMetadata(root, scanLimits);
+  const inconsistency = candidateInconsistency ?? consistencyFailure(validationMetadata, graph);
   if (inconsistency) {
     const index = await indexProjectWithScanner(root, options, scanner);
     return {
@@ -455,8 +461,16 @@ export async function updateProjectIndexIncremental(
       fallbackReason: `Incremental scan was inconsistent: ${inconsistency}. Completed a full-scan fallback.`
     };
   }
+  graph.exclusions = validationMetadata.exclusions;
   return {
-    index: await buildProjectIndex(root, graph, sql, metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits),
+    index: await buildProjectIndex(
+      root,
+      graph,
+      sql,
+      validationMetadata.scanSignature,
+      scanMetadataFromFiles(validationMetadata.files),
+      options.parserLimits
+    ),
     mode: "incremental",
     addedFiles,
     changedFiles,

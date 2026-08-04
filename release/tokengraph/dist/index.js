@@ -23052,7 +23052,9 @@ async function scanProjectFileMetadata(root, options) {
     try {
       entries = await readdir4(current, { withFileTypes: true });
     } catch {
-      rows.push({ path: normalizePath(relative4(root, current)), reason: "unreadable" });
+      const path = normalizePath(relative4(root, current)) || ".";
+      rows.push({ path, reason: "unreadable" });
+      exclusions.push({ path, reason: "unreadable" });
       return;
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -24147,7 +24149,9 @@ async function updateProjectIndexIncremental(root, existingIndex, options = {}, 
     sqlGraphForFiles(existingIndex.sql ?? emptySqlGraph(), unchangedPathSet),
     ...parsedSqlGraphs
   ]);
-  const inconsistency = consistencyFailure(metadata, graph);
+  const candidateInconsistency = consistencyFailure(metadata, graph);
+  const validationMetadata = candidateInconsistency ? metadata : await scanner.scanProjectFileMetadata(root, scanLimits);
+  const inconsistency = candidateInconsistency ?? consistencyFailure(validationMetadata, graph);
   if (inconsistency) {
     const index = await indexProjectWithScanner(root, options, scanner);
     return {
@@ -24160,8 +24164,16 @@ async function updateProjectIndexIncremental(root, existingIndex, options = {}, 
       fallbackReason: `Incremental scan was inconsistent: ${inconsistency}. Completed a full-scan fallback.`
     };
   }
+  graph.exclusions = validationMetadata.exclusions;
   return {
-    index: await buildProjectIndex(root, graph, sql, metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits),
+    index: await buildProjectIndex(
+      root,
+      graph,
+      sql,
+      validationMetadata.scanSignature,
+      scanMetadataFromFiles(validationMetadata.files),
+      options.parserLimits
+    ),
     mode: "incremental",
     addedFiles,
     changedFiles,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseConfigurationData, parseConfigurationDataBounded } from "../src/core/configData.js";
-import { scanProjectGeneration } from "../src/core/fileScanner.js";
+import { scanProjectFileMetadata, scanProjectGeneration } from "../src/core/fileScanner.js";
 import { buildSymbolChunks } from "../src/core/symbolChunks.js";
 import { indexProject, updateProjectIndexIncremental } from "../src/core/projectIndexer.js";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -13,6 +13,25 @@ describe("bounded configuration parsing", () => {
     expect(() => parseConfigurationData('{ "__proto__": { "polluted": true } }')).toThrow(/unsafe/i);
     expect(() => parseConfigurationData(JSON.stringify({ nested: { value: 1 } }), { maxDepth: 1 })).toThrow(/nesting/i);
     expect(() => parseConfigurationData("x".repeat(20), { maxBytes: 10 })).toThrow(/byte/i);
+  });
+});
+
+describe("scan generation signatures", () => {
+  it("normalizes an unreadable root consistently across content and metadata scans", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-unreadable-root-"));
+    const nonDirectoryRoot = join(root, "not-a-directory.ts");
+    try {
+      await writeFile(nonDirectoryRoot, "export const value = true;\n");
+
+      const generation = await scanProjectGeneration(nonDirectoryRoot);
+      const metadata = await scanProjectFileMetadata(nonDirectoryRoot);
+
+      expect(generation.metadata.exclusions).toEqual([{ path: ".", reason: "unreadable" }]);
+      expect(metadata.exclusions).toEqual(generation.metadata.exclusions);
+      expect(metadata.scanSignature).toBe(generation.metadata.scanSignature);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

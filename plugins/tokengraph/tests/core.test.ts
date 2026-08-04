@@ -1108,6 +1108,39 @@ describe("indexProject", () => {
     expect(result.index.files.find((file) => file.path === "src/race.ts")?.contentHash).not.toBe(metadata.files[0]?.contentHash);
   });
 
+  it("falls back to a full scan when an unchanged file changes after metadata collection", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    const path = join(root, "src", "race.ts");
+    await writeFile(path, "export const race = 'before';\n");
+    const first = await indexProject(root);
+    let metadataCalls = 0;
+
+    const result = await updateProjectIndexIncremental(root, first, {}, {
+      scanner: {
+        scanProjectFileMetadata: async (scanRoot, options) => {
+          metadataCalls += 1;
+          const metadata = await scanProjectFileMetadata(scanRoot, options);
+          if (metadataCalls === 1) await writeFile(path, "export const race = 'after';\n");
+          return metadata;
+        }
+      }
+    });
+
+    expect(metadataCalls).toBe(2);
+    expect(result).toMatchObject({
+      mode: "full",
+      addedFiles: [],
+      changedFiles: [],
+      deletedFiles: [],
+      parsedFiles: ["src/race.ts"],
+      fallbackReason: expect.stringMatching(/content hash changed.*full-scan fallback/i)
+    });
+    expect(result.index.files.find((file) => file.path === "src/race.ts")?.contentHash).not.toBe(
+      first.files.find((file) => file.path === "src/race.ts")?.contentHash
+    );
+  });
+
   it("leaves the prior persisted index stale when the server refresh fallback is also inconsistent", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });

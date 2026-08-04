@@ -681,7 +681,9 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
     try {
       entries = await readdir(current, { withFileTypes: true });
     } catch {
-      rows.push({ path: normalizePath(relative(root, current)), reason: "unreadable" });
+      const path = normalizePath(relative(root, current)) || ".";
+      rows.push({ path, reason: "unreadable" });
+      exclusions.push({ path, reason: "unreadable" });
       return;
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
