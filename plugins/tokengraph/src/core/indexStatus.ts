@@ -60,7 +60,7 @@ export async function getIndexStatus(root: string, options: { probeOnly?: boolea
   const storedFingerprint = typeof stored.fingerprint === "string" ? stored.fingerprint : undefined;
   const storedScanSignature = stored.scanSignature;
   const signatureFresh = storedScanSignature !== undefined && storedScanSignature === currentScanSignature;
-  const current = signatureFresh ? undefined : await indexProject(root, { ...options.projectOptions, scanSignature: currentScanSignature });
+  const current = signatureFresh ? undefined : await indexProject(root, options.projectOptions);
   const state = signatureFresh || (current && isFreshProjectIndex(stored, current)) ? "fresh" : "stale";
 
   return {

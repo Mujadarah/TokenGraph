@@ -18,7 +18,7 @@ import {
   setTokenSavingProfile,
   updateTokenGraphConfig
 } from "../src/core/config.js";
-import { scanProject } from "../src/core/fileScanner.js";
+import { scanProject, scanProjectFile, scanProjectFileMetadata, scanProjectGeneration } from "../src/core/fileScanner.js";
 import { MemoryStore } from "../src/core/memoryStore.js";
 import { buildContextPlan } from "../src/core/planner.js";
 import {
@@ -35,8 +35,9 @@ import {
   saveProjectWiki,
   wikiDir
 } from "../src/core/persistence.js";
-import { CURRENT_INDEX_SCHEMA_VERSION, indexProject, updateProjectIndexIncremental } from "../src/core/projectIndexer.js";
+import { CURRENT_INDEX_SCHEMA_VERSION, IndexingRaceError, indexProject, updateProjectIndexIncremental } from "../src/core/projectIndexer.js";
 import { getIndexStatus } from "../src/core/indexStatus.js";
+import { refreshProjectIndex } from "../src/server.js";
 import { parsePostgresMigration } from "../src/core/sqlParser.js";
 import { JsonTokenGraphStore, SqliteTokenGraphStore } from "../src/core/storage.js";
 import { exportProjectMap, reviewMemories } from "../src/core/review.js";
@@ -52,6 +53,15 @@ async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "tokengraph-"));
   tempRoots.push(root);
   return root;
+}
+
+async function metadataWithChangedHash(root: string, path: string) {
+  const metadata = await scanProjectFileMetadata(root);
+  return {
+    ...metadata,
+    scanSignature: `race-${metadata.scanSignature}`,
+    files: metadata.files.map((file) => file.path === path ? { ...file, contentHash: `race-${file.contentHash}` } : file)
+  };
 }
 
 function testMemory(input: MemoryInput & { id: string; createdAt: string }): MemoryEntry {
@@ -904,6 +914,18 @@ describe("indexProject", () => {
     expect(new Date(second.scannedAt).toISOString()).toBe(second.scannedAt);
   });
 
+  it("uses the full generation signature instead of an earlier caller-provided signature", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "entry.ts"), "export const entry = true;\n");
+    const metadata = await scanProjectFileMetadata(root);
+
+    const project = await indexProject(root, { scanSignature: "stale-pre-scan-signature" });
+
+    expect(project.scanSignature).toBe(metadata.scanSignature);
+    expect(project.scanSignature).not.toBe("stale-pre-scan-signature");
+  });
+
   it("includes Git recency signals in the stable project fingerprint", async () => {
     const root = await makeRoot();
     await execFile("git", ["init", "-q", "-b", "main", root]);
@@ -1007,6 +1029,139 @@ describe("indexProject", () => {
     expect(result.index.sql.policies).not.toContainEqual(expect.objectContaining({ name: "old patient policy" }));
   });
 
+  it("falls back to a full scan when a changed file disappears after metadata collection", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "race.ts"), "export const race = 'before';\n");
+    const first = await indexProject(root);
+    const racedMetadata = await metadataWithChangedHash(root, "src/race.ts");
+    await rm(join(root, "src", "race.ts"));
+    let metadataCalls = 0;
+
+    const result = await updateProjectIndexIncremental(root, first, {}, {
+      scanner: {
+        scanProjectFileMetadata: async (scanRoot, options) => ++metadataCalls === 1 ? racedMetadata : scanProjectFileMetadata(scanRoot, options)
+      }
+    });
+
+    expect(result).toMatchObject({
+      mode: "full",
+      changedFiles: ["src/race.ts"],
+      parsedFiles: [],
+      fallbackReason: expect.stringMatching(/missing indexed paths.*full-scan fallback/i)
+    });
+    expect(result.index.files).toEqual([]);
+  });
+
+  it("falls back to a full scan when a changed file becomes unreadable after metadata collection", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "race.ts"), "export const race = 'before';\n");
+    const first = await indexProject(root);
+    await writeFile(join(root, "src", "race.ts"), "export const race = 'after';\n");
+    const racedMetadata = await metadataWithChangedHash(root, "src/race.ts");
+    let metadataCalls = 0;
+    let fileCalls = 0;
+
+    const result = await updateProjectIndexIncremental(root, first, {}, {
+      scanner: {
+        scanProjectFileMetadata: async (scanRoot, options) => ++metadataCalls === 1 ? racedMetadata : scanProjectFileMetadata(scanRoot, options),
+        scanProjectFile: async (scanRoot, metadata, options) => ++fileCalls === 1 ? undefined : scanProjectFile(scanRoot, metadata, options)
+      }
+    });
+
+    expect(result).toMatchObject({
+      mode: "full",
+      parsedFiles: ["src/race.ts"],
+      fallbackReason: expect.stringMatching(/missing indexed paths.*full-scan fallback/i)
+    });
+    expect(result.index.files).toContainEqual(expect.objectContaining({ path: "src/race.ts", contentHash: expect.not.stringContaining("race-") }));
+  });
+
+  it("falls back to a full scan when a changed file's content changes after metadata collection", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    const path = join(root, "src", "race.ts");
+    await writeFile(path, "export const race = 'before';\n");
+    const first = await indexProject(root);
+    await writeFile(path, "export const race = 'during-metadata';\n");
+    const metadata = await scanProjectFileMetadata(root);
+    let metadataCalls = 0;
+    let fileCalls = 0;
+
+    const result = await updateProjectIndexIncremental(root, first, {}, {
+      scanner: {
+        scanProjectFileMetadata: async (scanRoot, options) => ++metadataCalls === 1 ? metadata : scanProjectFileMetadata(scanRoot, options),
+        scanProjectFile: async (scanRoot, fileMetadata, options) => {
+          if (++fileCalls === 1) await writeFile(path, "export const race = 'after-metadata';\n");
+          return scanProjectFile(scanRoot, fileMetadata, options);
+        }
+      }
+    });
+
+    expect(result).toMatchObject({
+      mode: "full",
+      parsedFiles: ["src/race.ts"],
+      fallbackReason: expect.stringMatching(/content hash changed.*full-scan fallback/i)
+    });
+    expect(result.index.symbols).toContainEqual(expect.objectContaining({ name: "race", filePath: "src/race.ts" }));
+    expect(result.index.files.find((file) => file.path === "src/race.ts")?.contentHash).not.toBe(metadata.files[0]?.contentHash);
+  });
+
+  it("falls back to a full scan when an unchanged file changes after metadata collection", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    const path = join(root, "src", "race.ts");
+    await writeFile(path, "export const race = 'before';\n");
+    const first = await indexProject(root);
+    let metadataCalls = 0;
+
+    const result = await updateProjectIndexIncremental(root, first, {}, {
+      scanner: {
+        scanProjectFileMetadata: async (scanRoot, options) => {
+          metadataCalls += 1;
+          const metadata = await scanProjectFileMetadata(scanRoot, options);
+          if (metadataCalls === 1) await writeFile(path, "export const race = 'after';\n");
+          return metadata;
+        }
+      }
+    });
+
+    expect(metadataCalls).toBe(2);
+    expect(result).toMatchObject({
+      mode: "full",
+      addedFiles: [],
+      changedFiles: [],
+      deletedFiles: [],
+      parsedFiles: ["src/race.ts"],
+      fallbackReason: expect.stringMatching(/content hash changed.*full-scan fallback/i)
+    });
+    expect(result.index.files.find((file) => file.path === "src/race.ts")?.contentHash).not.toBe(
+      first.files.find((file) => file.path === "src/race.ts")?.contentHash
+    );
+  });
+
+  it("leaves the prior persisted index stale when the server refresh fallback is also inconsistent", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "race.ts"), "export const race = 'before';\n");
+    const first = await indexProject(root);
+    await saveProjectIndex(root, first);
+    await writeFile(join(root, "src", "race.ts"), "export const race = 'after';\n");
+    const racedMetadata = await metadataWithChangedHash(root, "src/race.ts");
+    const racedGeneration = await scanProjectGeneration(root);
+
+    await expect(refreshProjectIndex(root, first, {}, {
+      scanner: {
+        scanProjectFileMetadata: async () => racedMetadata,
+        scanProjectGeneration: async () => ({ ...racedGeneration, metadata: racedMetadata })
+      }
+    })).rejects.toBeInstanceOf(IndexingRaceError);
+
+    await expect(loadProjectIndex(root)).resolves.toMatchObject({ fingerprint: first.fingerprint, scanSignature: first.scanSignature });
+    await expect(getIndexStatus(root)).resolves.toMatchObject({ state: "stale", storedFingerprint: first.fingerprint });
+  });
+
   it("falls back to full reindex when stored schema metadata is incompatible", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
@@ -1017,6 +1172,7 @@ describe("indexProject", () => {
 
     expect(result.mode).toBe("full");
     expect(result.fallbackReason).toMatch(/schema/i);
+    expect(result.parsedFiles).toEqual(["src/patientSummary.ts"]);
     expect(result.index.schemaVersion).toBe(CURRENT_INDEX_SCHEMA_VERSION);
     expect(result.index.files.map((file) => file.path)).toEqual(["src/patientSummary.ts"]);
   });

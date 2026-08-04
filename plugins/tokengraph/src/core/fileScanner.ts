@@ -53,6 +53,8 @@ interface WalkState {
   totalBytes: number;
   generatedFiles: number;
   onFileContent?: (file: { path: string; language: string; content: string }) => void;
+  metadataFiles?: FileScanMetadata[];
+  signatureRows?: Array<Record<string, unknown>>;
   deadline: number;
 }
 
@@ -65,6 +67,11 @@ export interface ProjectFileMetadataScan {
   files: FileScanMetadata[];
   exclusions: Exclusion[];
   scanSignature: string;
+}
+
+export interface ProjectScanGeneration {
+  graph: CodeGraph;
+  metadata: ProjectFileMetadataScan;
 }
 
 export interface ParsedProjectFile {
@@ -103,7 +110,8 @@ async function loadIgnoreScopes(base: string, inherited: IgnoreScope[] = []): Pr
   try {
     content = await readFile(join(base, ".gitignore"), "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") {
       throw error;
     }
     return inherited;
@@ -443,8 +451,10 @@ function budgetFromOptions(options?: ScanBudget): Required<Omit<ScanBudget, "onF
   };
 }
 
-function addUnreadable(graph: CodeGraph, path: string): void {
-  graph.exclusions.push({ path: path || ".", reason: "unreadable" });
+function addExclusion(graph: CodeGraph, state: WalkState, path: string, reason: Exclusion["reason"], includeInSignature = true): void {
+  const normalizedPath = path || ".";
+  graph.exclusions.push({ path: normalizedPath, reason });
+  if (includeInSignature) state.signatureRows?.push({ path: normalizedPath, reason });
 }
 
 async function walk(root: string, current: string, graph: CodeGraph, ignoreScopes: IgnoreScope[], state: WalkState, depth: number): Promise<void> {
@@ -453,14 +463,14 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreScope
   try {
     entries = await readdir(current, { withFileTypes: true });
   } catch {
-    addUnreadable(graph, normalizePath(relative(root, current)));
+    addExclusion(graph, state, normalizePath(relative(root, current)), "unreadable");
     return;
   }
   entries.sort((a, b) => a.name.localeCompare(b.name));
 
   for (const entry of entries) {
     if (Date.now() >= state.deadline) {
-      graph.exclusions.push({ path: normalizePath(relative(root, current)) || ".", reason: "budget" });
+      addExclusion(graph, state, normalizePath(relative(root, current)), "budget");
       break;
     }
     const absolute = join(current, entry.name);
@@ -469,25 +479,25 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreScope
       continue;
     }
     if (relativePath && isIgnored(currentScopes, absolute, entry.isDirectory())) {
-      graph.exclusions.push({ path: relativePath, reason: "ignored" });
+      addExclusion(graph, state, relativePath, "ignored");
       continue;
     }
     const exclusionReason = exclusionForName(entry.name);
     if (exclusionReason) {
-      graph.exclusions.push({ path: relativePath, reason: exclusionReason });
+      addExclusion(graph, state, relativePath, exclusionReason);
       continue;
     }
     if (entry.name.startsWith(".")) {
-      graph.exclusions.push({ path: relativePath, reason: "hidden" });
+      addExclusion(graph, state, relativePath, "hidden");
       continue;
     }
     if (entry.isSymbolicLink()) {
-      graph.exclusions.push({ path: relativePath, reason: "symlink" });
+      addExclusion(graph, state, relativePath, "symlink");
       continue;
     }
     if (entry.isDirectory()) {
       if (depth + 1 > state.budget.maxDepth || state.directories >= state.budget.maxDirectories) {
-        graph.exclusions.push({ path: relativePath, reason: "budget" });
+        addExclusion(graph, state, relativePath, "budget");
         continue;
       }
       state.directories += 1;
@@ -500,38 +510,39 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreScope
 
     const extension = extname(entry.name).toLowerCase();
     if (!SUPPORTED_EXTENSIONS.has(extension)) {
-      graph.exclusions.push({ path: relativePath, reason: "unsupported" });
+      addExclusion(graph, state, relativePath, "unsupported");
       continue;
     }
     let fileStat;
     try {
-      fileStat = await stat(absolute);
+      fileStat = await stat(absolute, { bigint: true });
     } catch {
-      addUnreadable(graph, relativePath);
+      addExclusion(graph, state, relativePath, "unreadable");
       continue;
     }
-    if (graph.files.length >= state.budget.maxFiles || state.totalBytes + fileStat.size > state.budget.maxTotalBytes) {
-      graph.exclusions.push({ path: relativePath, reason: "budget" });
+    const rawSize = Number(fileStat.size);
+    if (graph.files.length >= state.budget.maxFiles || state.totalBytes + rawSize > state.budget.maxTotalBytes) {
+      addExclusion(graph, state, relativePath, "budget");
       continue;
     }
-    if (fileStat.size > state.budget.maxFileBytes) {
-      graph.exclusions.push({ path: relativePath, reason: "large-file" });
+    if (rawSize > state.budget.maxFileBytes) {
+      addExclusion(graph, state, relativePath, "large-file");
       continue;
     }
     let content;
     try {
       content = await readFile(absolute, "utf8");
     } catch {
-      addUnreadable(graph, relativePath);
+      addExclusion(graph, state, relativePath, "unreadable");
       continue;
     }
     if (content.includes("\u0000")) {
-      graph.exclusions.push({ path: relativePath, reason: "binary" });
+      addExclusion(graph, state, relativePath, "binary");
       continue;
     }
     if (isGeneratedFile(relativePath, content)) {
       if (state.generatedFiles >= state.budget.maxGeneratedFiles) {
-        graph.exclusions.push({ path: relativePath, reason: "budget" });
+        addExclusion(graph, state, relativePath, "budget");
         continue;
       }
       state.generatedFiles += 1;
@@ -549,21 +560,48 @@ async function walk(root: string, current: string, graph: CodeGraph, ignoreScope
       isTest: isTestPath(relativePath)
     };
     graph.files.push(file);
-    state.totalBytes += fileStat.size;
+    const metadata: FileScanMetadata = {
+      path: relativePath,
+      size: rawSize,
+      mtimeNs: fileStat.mtimeNs.toString(),
+      ctimeNs: fileStat.ctimeNs.toString(),
+      contentHash: file.contentHash,
+      language: file.language,
+      extension,
+      route: file.route,
+      isTest: file.isTest
+    };
+    state.metadataFiles?.push(metadata);
+    state.signatureRows?.push({
+      path: relativePath,
+      size: rawSize,
+      mtimeNs: metadata.mtimeNs,
+      ctimeNs: metadata.ctimeNs,
+      contentHash: metadata.contentHash
+    });
+    state.totalBytes += rawSize;
     state.onFileContent?.({ path: relativePath, language: file.language, content });
 
     if (CODE_EXTENSIONS.has(extension)) {
       graph.imports.push(...extractImports(relativePath, content));
       if (TYPESCRIPT_EXTENSIONS.has(extension)) {
         const extracted = await extractTypeScriptSymbols(relativePath, content, state.budget);
-        if (extracted.degradedReason) graph.exclusions.push({ path: relativePath, reason: "budget" });
+        if (extracted.degradedReason) addExclusion(graph, state, relativePath, "budget", false);
+        graph.symbols.push(...extracted.symbols);
+      } else if (state.budget.polyglotEnabled) {
+        const extracted = await extractPolyglotSymbols(relativePath, extension, content, state.budget);
+        if (extracted.degradedReason) addExclusion(graph, state, relativePath, "budget", false);
         graph.symbols.push(...extracted.symbols);
       }
     }
   }
 }
 
-export async function scanProject(root: string, options?: ScanBudget): Promise<CodeGraph> {
+async function scanProjectContent(root: string, options: ScanBudget | undefined, collectMetadata: boolean): Promise<{
+  graph: CodeGraph;
+  metadataFiles: FileScanMetadata[];
+  signatureRows: Array<Record<string, unknown>>;
+}> {
   const ignoreScopes = await loadIgnoreScopes(root);
   const graph: CodeGraph = {
     root,
@@ -572,14 +610,54 @@ export async function scanProject(root: string, options?: ScanBudget): Promise<C
     imports: [],
     exclusions: []
   };
+  const metadataFiles: FileScanMetadata[] = [];
+  const signatureRows: Array<Record<string, unknown>> = [];
   const budget = budgetFromOptions(options);
-  await walk(root, root, graph, ignoreScopes, { budget, directories: 0, totalBytes: 0, generatedFiles: 0, onFileContent: options?.onFileContent, deadline: Date.now() + budget.wholeIndexTimeoutMs }, 0);
+  await walk(root, root, graph, ignoreScopes, {
+    budget,
+    directories: 0,
+    totalBytes: 0,
+    generatedFiles: 0,
+    onFileContent: options?.onFileContent,
+    ...(collectMetadata ? { metadataFiles, signatureRows } : {}),
+    deadline: Date.now() + budget.wholeIndexTimeoutMs
+  }, 0);
   graph.files.sort((a, b) => a.path.localeCompare(b.path));
   resolveLocalImports(root, graph);
   graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name));
   graph.imports.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.source.localeCompare(b.source));
   graph.exclusions.sort((a, b) => a.path.localeCompare(b.path));
-  return graph;
+  metadataFiles.sort((a, b) => a.path.localeCompare(b.path));
+  return { graph, metadataFiles, signatureRows };
+}
+
+export async function scanProject(root: string, options?: ScanBudget): Promise<CodeGraph> {
+  return (await scanProjectContent(root, options, false)).graph;
+}
+
+async function configurationSignatureRows(root: string): Promise<Array<{ path: string; contentHash: string }>> {
+  const configurationRows: Array<{ path: string; contentHash: string }> = [];
+  for (const path of CONFIGURATION_FILES) {
+    try {
+      configurationRows.push({ path, contentHash: hashText(await readFile(join(root, path), "utf8")) });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") configurationRows.push({ path, contentHash: "unreadable" });
+    }
+  }
+  return configurationRows;
+}
+
+export async function scanProjectGeneration(root: string, options?: ScanBudget): Promise<ProjectScanGeneration> {
+  const { graph, metadataFiles, signatureRows } = await scanProjectContent(root, options, true);
+  const configurationRows = await configurationSignatureRows(root);
+  return {
+    graph,
+    metadata: {
+      files: metadataFiles,
+      exclusions: [...graph.exclusions],
+      scanSignature: hashText(JSON.stringify({ rows: signatureRows, configurationRows }))
+    }
+  };
 }
 
 export async function scanProjectSignature(root: string, options?: ScanBudget): Promise<string> {
@@ -604,7 +682,9 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
     try {
       entries = await readdir(current, { withFileTypes: true });
     } catch {
-      rows.push({ path: normalizePath(relative(root, current)), reason: "unreadable" });
+      const path = normalizePath(relative(root, current)) || ".";
+      rows.push({ path, reason: "unreadable" });
+      exclusions.push({ path, reason: "unreadable" });
       return;
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -716,14 +796,7 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
   await walkSignature(root, 0, ignoreScopes);
   files.sort((a, b) => a.path.localeCompare(b.path));
   exclusions.sort((a, b) => a.path.localeCompare(b.path));
-  const configurationRows: Array<{ path: string; contentHash: string }> = [];
-  for (const path of CONFIGURATION_FILES) {
-    try {
-      configurationRows.push({ path, contentHash: hashText(await readFile(join(root, path), "utf8")) });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") configurationRows.push({ path, contentHash: "unreadable" });
-    }
-  }
+  const configurationRows = await configurationSignatureRows(root);
   return { files, exclusions, scanSignature: hashText(JSON.stringify({ rows, configurationRows })) };
 }
 

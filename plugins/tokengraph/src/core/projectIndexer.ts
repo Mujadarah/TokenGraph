@@ -1,7 +1,16 @@
 import { createHash } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
-import { resolveProjectImports, scanProject, scanProjectFile, scanProjectFileMetadata, type ScanBudget } from "./fileScanner.js";
+import {
+  resolveProjectImports,
+  scanProjectFile,
+  scanProjectFileMetadata,
+  scanProjectGeneration,
+  type ParsedProjectFile,
+  type ProjectFileMetadataScan,
+  type ProjectScanGeneration,
+  type ScanBudget
+} from "./fileScanner.js";
 import { mergeSqlGraphs, parsePostgresMigration } from "./sqlParser.js";
 import type { CodeGraph, FileScanMetadata, ProjectIndex, ProjectScanMetadata, SqlGraph } from "./types.js";
 import { buildSymbolChunks } from "./symbolChunks.js";
@@ -27,10 +36,40 @@ export interface ParserResourceLimits extends ConfigurationLimits, ScanBudget {
 }
 
 export interface ProjectIndexOptions {
+  /** @deprecated Full indexes always persist the signature of their own scan generation. */
   scanSignature?: string;
   parserLimits?: ParserResourceLimits;
   /** B7 polyglot parsing is active by default and can be disabled per project. */
   polyglotEnabled?: boolean;
+}
+
+interface ProjectIndexerScanner {
+  scanProjectFile: (root: string, metadata: FileScanMetadata, options?: ScanBudget) => Promise<ParsedProjectFile | undefined>;
+  scanProjectFileMetadata: (root: string, options?: ScanBudget) => Promise<ProjectFileMetadataScan>;
+  scanProjectGeneration: (root: string, options?: ScanBudget) => Promise<ProjectScanGeneration>;
+}
+
+/** @internal Injectable only for deterministic indexing-race tests. */
+export interface ProjectIndexerDependencies {
+  scanner?: Partial<ProjectIndexerScanner>;
+}
+
+export class IndexingRaceError extends Error {
+  readonly code = "TOKENGRAPH_INDEXING_RACE";
+  readonly retriable = true;
+
+  constructor(detail: string) {
+    super(`Retriable indexing race: ${detail}`);
+    this.name = "IndexingRaceError";
+  }
+}
+
+function projectScanner(dependencies: ProjectIndexerDependencies = {}): ProjectIndexerScanner {
+  return {
+    scanProjectFile: dependencies.scanner?.scanProjectFile ?? scanProjectFile,
+    scanProjectFileMetadata: dependencies.scanner?.scanProjectFileMetadata ?? scanProjectFileMetadata,
+    scanProjectGeneration: dependencies.scanner?.scanProjectGeneration ?? scanProjectGeneration
+  };
 }
 
 function fingerprintPayload(value: unknown): string {
@@ -68,6 +107,36 @@ function scanMetadataFromFiles(files: FileScanMetadata[]): ProjectScanMetadata {
   return {
     files: Object.fromEntries(files.map((file) => [file.path, file]))
   };
+}
+
+function consistencyFailure(metadata: ProjectFileMetadataScan, graph: CodeGraph): string | undefined {
+  const metadataPaths = Object.keys(scanMetadataFromFiles(metadata.files).files).sort();
+  const indexedPaths = graph.files.map((file) => file.path).sort();
+  const metadataPathSet = new Set(metadataPaths);
+  const indexedPathSet = new Set(indexedPaths);
+  const duplicatePath = indexedPaths.find((path, index) => index > 0 && path === indexedPaths[index - 1]);
+  if (duplicatePath) return `indexed file path ${JSON.stringify(duplicatePath)} was emitted more than once`;
+  const missingPaths = metadataPaths.filter((path) => !indexedPathSet.has(path));
+  const unexpectedPaths = indexedPaths.filter((path) => !metadataPathSet.has(path));
+  if (missingPaths.length || unexpectedPaths.length) {
+    const details = [
+      ...(missingPaths.length ? [`missing indexed paths: ${missingPaths.join(", ")}`] : []),
+      ...(unexpectedPaths.length ? [`unexpected indexed paths: ${unexpectedPaths.join(", ")}`] : [])
+    ];
+    return `metadata and indexed file paths differ (${details.join("; ")})`;
+  }
+  const metadataByPath = scanMetadataFromFiles(metadata.files).files;
+  for (const file of graph.files) {
+    if (metadataByPath[file.path]?.contentHash !== file.contentHash) {
+      return `content hash changed after metadata collection for ${JSON.stringify(file.path)}`;
+    }
+  }
+  return undefined;
+}
+
+function assertConsistentScan(metadata: ProjectFileMetadataScan, graph: CodeGraph, phase: string): void {
+  const failure = consistencyFailure(metadata, graph);
+  if (failure) throw new IndexingRaceError(`${phase} is inconsistent: ${failure}.`);
 }
 
 function isCompatibleIndex(index: ProjectIndex): boolean {
@@ -228,7 +297,7 @@ async function buildProjectIndex(root: string, graph: CodeGraph, sql: SqlGraph, 
   };
 }
 
-export async function indexProject(root: string, options: ProjectIndexOptions = {}): Promise<ProjectIndex> {
+async function indexProjectWithScanner(root: string, options: ProjectIndexOptions, scanner: ProjectIndexerScanner): Promise<ProjectIndex> {
   const scanLimits: ScanBudget = {
     maxFileBytes: options.parserLimits?.maxFileBytes ?? options.parserLimits?.maxBytes,
     maxTotalBytes: options.parserLimits?.maxTotalBytes,
@@ -240,9 +309,8 @@ export async function indexProject(root: string, options: ProjectIndexOptions = 
     maxGeneratedFiles: options.parserLimits?.maxGeneratedFiles,
     polyglotEnabled: options.polyglotEnabled !== false
   };
-  const metadata = await scanProjectFileMetadata(root, scanLimits);
   const sqlContents = new Map<string, string>();
-  const graph = await scanProject(root, {
+  const generation = await scanner.scanProjectGeneration(root, {
     ...scanLimits,
     onFileContent: (file) => {
       if (file.language === "sql") {
@@ -250,13 +318,8 @@ export async function indexProject(root: string, options: ProjectIndexOptions = 
       }
     }
   });
-  for (const file of options.polyglotEnabled !== false ? metadata.files.filter((candidate) => [".py", ".go", ".rs", ".java"].includes(candidate.extension)) : []) {
-    const parsed = await scanProjectFile(root, file, scanLimits);
-    if (parsed) {
-      graph.symbols.push(...parsed.symbols);
-      if (parsed.degradedReason) graph.exclusions.push({ path: file.path, reason: "budget" });
-    }
-  }
+  const { graph, metadata } = generation;
+  assertConsistentScan(metadata, graph, "Full scan");
   graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name) || (a.startLine ?? 0) - (b.startLine ?? 0));
   const sqlGraphs = [];
   for (const file of graph.files.filter((candidate) => candidate.language === "sql").sort((a, b) => a.path.localeCompare(b.path))) {
@@ -267,14 +330,24 @@ export async function indexProject(root: string, options: ProjectIndexOptions = 
     sqlGraphs.push(parsePostgresMigration(file.path, sql));
   }
 
-  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), options.scanSignature ?? metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits);
+  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits);
+}
+
+export async function indexProject(root: string, options: ProjectIndexOptions = {}, dependencies: ProjectIndexerDependencies = {}): Promise<ProjectIndex> {
+  return indexProjectWithScanner(root, options, projectScanner(dependencies));
 }
 
 function metadataChanged(previous: FileScanMetadata | undefined, current: FileScanMetadata): boolean {
   return !previous || previous.contentHash !== current.contentHash || previous.language !== current.language || previous.extension !== current.extension;
 }
 
-export async function updateProjectIndexIncremental(root: string, existingIndex: ProjectIndex, options: Omit<ProjectIndexOptions, "scanSignature"> = {}): Promise<IndexUpdateResult> {
+export async function updateProjectIndexIncremental(
+  root: string,
+  existingIndex: ProjectIndex,
+  options: Omit<ProjectIndexOptions, "scanSignature"> = {},
+  dependencies: ProjectIndexerDependencies = {}
+): Promise<IndexUpdateResult> {
+  const scanner = projectScanner(dependencies);
   const scanLimits: ScanBudget = {
     maxFileBytes: options.parserLimits?.maxFileBytes ?? options.parserLimits?.maxBytes,
     maxTotalBytes: options.parserLimits?.maxTotalBytes,
@@ -287,29 +360,31 @@ export async function updateProjectIndexIncremental(root: string, existingIndex:
     polyglotEnabled: options.polyglotEnabled !== false
   };
   if (existingIndex.root !== root) {
+    const index = await indexProjectWithScanner(root, options, scanner);
     return {
-      index: await indexProject(root, options),
+      index,
       mode: "full",
       addedFiles: [],
       changedFiles: [],
       deletedFiles: [],
-      parsedFiles: [],
+      parsedFiles: index.files.map((file) => file.path),
       fallbackReason: "Stored index root does not match requested root."
     };
   }
   if (!isCompatibleIndex(existingIndex)) {
+    const index = await indexProjectWithScanner(root, options, scanner);
     return {
-      index: await indexProject(root, options),
+      index,
       mode: "full",
       addedFiles: [],
       changedFiles: [],
       deletedFiles: [],
-      parsedFiles: [],
+      parsedFiles: index.files.map((file) => file.path),
       fallbackReason: "Stored index schema metadata is incompatible with incremental indexing."
     };
   }
 
-  const metadata = await scanProjectFileMetadata(root, scanLimits);
+  const metadata = await scanner.scanProjectFileMetadata(root, scanLimits);
   const currentByPath = new Map(metadata.files.map((file) => [file.path, file]));
   const previousMetadata = existingIndex.scanMetadata?.files ?? {};
   const previousPaths = new Set(existingIndex.files.map((file) => file.path));
@@ -332,7 +407,7 @@ export async function updateProjectIndexIncremental(root: string, existingIndex:
     if (!fileMetadata) {
       continue;
     }
-    const parsed = await scanProjectFile(root, fileMetadata, scanLimits);
+    const parsed = await scanner.scanProjectFile(root, fileMetadata, scanLimits);
     if (!parsed) {
       continue;
     }
@@ -367,8 +442,35 @@ export async function updateProjectIndexIncremental(root: string, existingIndex:
     sqlGraphForFiles(existingIndex.sql ?? emptySqlGraph(), unchangedPathSet),
     ...parsedSqlGraphs
   ]);
+  const candidateInconsistency = consistencyFailure(metadata, graph);
+  // Re-scan after candidate construction so files classified as unchanged cannot
+  // change between the initial metadata snapshot and promotion unnoticed.
+  const validationMetadata = candidateInconsistency
+    ? metadata
+    : await scanner.scanProjectFileMetadata(root, scanLimits);
+  const inconsistency = candidateInconsistency ?? consistencyFailure(validationMetadata, graph);
+  if (inconsistency) {
+    const index = await indexProjectWithScanner(root, options, scanner);
+    return {
+      index,
+      mode: "full",
+      addedFiles,
+      changedFiles,
+      deletedFiles,
+      parsedFiles: index.files.map((file) => file.path),
+      fallbackReason: `Incremental scan was inconsistent: ${inconsistency}. Completed a full-scan fallback.`
+    };
+  }
+  graph.exclusions = validationMetadata.exclusions;
   return {
-    index: await buildProjectIndex(root, graph, sql, metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits),
+    index: await buildProjectIndex(
+      root,
+      graph,
+      sql,
+      validationMetadata.scanSignature,
+      scanMetadataFromFiles(validationMetadata.files),
+      options.parserLimits
+    ),
     mode: "incremental",
     addedFiles,
     changedFiles,

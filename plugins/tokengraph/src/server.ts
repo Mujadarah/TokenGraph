@@ -46,12 +46,12 @@ import { buildEvidenceBackedSliceRecommendation, buildRetrievalCapsule, capsuleA
 import { loadRun, summarizeRun } from "./core/runner.js";
 import { assertStorageReplacementAllowed, enforceStorageClassQuotas } from "./core/storagePolicy.js";
 import { scanProjectSignature } from "./core/fileScanner.js";
-import { getIndexStatus, isFreshProjectIndex } from "./core/indexStatus.js";
+import { getIndexStatus } from "./core/indexStatus.js";
 import { loadHostWorkspaceAttestation } from "./core/hostWorkspace.js";
 import { traceFailure } from "./core/failureTracer.js";
 import { MemoryStore } from "./core/memoryStore.js";
 import { buildContextPlan } from "./core/planner.js";
-import { indexProject, updateProjectIndexIncremental, type ProjectIndexOptions } from "./core/projectIndexer.js";
+import { indexProject, updateProjectIndexIncremental, type ProjectIndexerDependencies, type ProjectIndexOptions } from "./core/projectIndexer.js";
 import { assessChangeRisk } from "./core/regressionRisk.js";
 import {
   clearProjectIndex,
@@ -470,6 +470,28 @@ async function enqueueProjectWrite<T>(root: string, operation: () => Promise<T>)
   return current;
 }
 
+/** @internal Shared persistence boundary for every server-driven index refresh. */
+export async function refreshProjectIndex(
+  root: string,
+  existing: ProjectIndex | undefined,
+  options: ProjectIndexOptions,
+  dependencies: ProjectIndexerDependencies = {}
+) {
+  const result = existing
+    ? await updateProjectIndexIncremental(root, existing, options, dependencies)
+    : {
+        index: await indexProject(root, options, dependencies),
+        mode: "full" as const,
+        addedFiles: [],
+        changedFiles: [],
+        deletedFiles: [],
+        parsedFiles: [] as string[]
+      };
+  if (!existing) result.parsedFiles = result.index.files.map((file) => file.path);
+  await saveProjectIndex(root, result.index);
+  return result;
+}
+
 async function ensureProject(root: string): Promise<ProjectIndex> {
   return enqueueProjectWrite(root, async () => {
     const config = await loadTokenGraphConfig(root);
@@ -480,21 +502,13 @@ async function ensureProject(root: string): Promise<ProjectIndex> {
       if (existing.scanSignature === currentScanSignature) {
         return existing;
       }
-      const updated = await updateProjectIndexIncremental(root, existing, options);
-      const current = updated.index;
-      if (isFreshProjectIndex(existing, current)) {
-        await saveProjectIndex(root, current);
-        await enforceStorageClassQuotas(root, config.storage);
-        return current;
-      }
-      await saveProjectIndex(root, current);
+      const updated = await refreshProjectIndex(root, existing, options);
       await enforceStorageClassQuotas(root, config.storage);
-      return current;
+      return updated.index;
     }
-    const indexed = await indexProject(root, { ...options, scanSignature: currentScanSignature });
-    await saveProjectIndex(root, indexed);
+    const indexed = await refreshProjectIndex(root, undefined, options);
     await enforceStorageClassQuotas(root, config.storage);
-    return indexed;
+    return indexed.index;
   });
 }
 
@@ -883,22 +897,22 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       } else if (!refreshIndex) {
         throw new Error("The TokenGraph index is missing or stale and refreshIndex is false.");
       } else if (existing && isSafeProjectIndex(resolvedRoot, existing)) {
-        const updated = await updateProjectIndexIncremental(resolvedRoot, existing, indexOptions);
+        const updated = await refreshProjectIndex(resolvedRoot, existing, indexOptions);
         project = updated.index;
         indexingMode = updated.mode;
         changes = {
           addedFiles: updated.addedFiles,
           changedFiles: updated.changedFiles,
           deletedFiles: updated.deletedFiles,
-          parsedFiles: updated.parsedFiles
+          parsedFiles: updated.parsedFiles,
+          ...(updated.fallbackReason ? { fallbackReason: updated.fallbackReason } : {})
         };
-        await saveProjectIndex(resolvedRoot, project);
         await enforceStorageClassQuotas(resolvedRoot, config.storage);
       } else {
-        project = await indexProject(resolvedRoot, indexOptions);
+        const updated = await refreshProjectIndex(resolvedRoot, undefined, indexOptions);
+        project = updated.index;
         indexingMode = "full";
-        changes.parsedFiles = project.files.map((file) => file.path);
-        await saveProjectIndex(resolvedRoot, project);
+        changes.parsedFiles = updated.parsedFiles;
         await enforceStorageClassQuotas(resolvedRoot, config.storage);
       }
 
@@ -1385,18 +1399,12 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const config = await loadTokenGraphConfig(resolvedRoot);
       const indexOptions = projectIndexOptions(config);
       const existing = fullReindex ? undefined : await loadProjectIndex(resolvedRoot);
-      const result = existing && isSafeProjectIndex(resolvedRoot, existing)
-        ? await updateProjectIndexIncremental(resolvedRoot, existing, indexOptions)
-        : {
-            index: await indexProject(resolvedRoot, indexOptions),
-            mode: "full" as const,
-            addedFiles: [],
-            changedFiles: [],
-            deletedFiles: [],
-            parsedFiles: []
-          };
+      const result = await refreshProjectIndex(
+        resolvedRoot,
+        existing && isSafeProjectIndex(resolvedRoot, existing) ? existing : undefined,
+        indexOptions
+      );
       const project = result.index;
-      await saveProjectIndex(resolvedRoot, project);
       await enforceStorageClassQuotas(resolvedRoot, config.storage);
       let wikiRefreshed = false;
       let wikiWarning: string | undefined;
@@ -1419,7 +1427,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
           addedFiles: result.addedFiles,
           changedFiles: result.changedFiles,
           deletedFiles: result.deletedFiles,
-          parsedFiles: result.parsedFiles
+          parsedFiles: result.parsedFiles,
+          ...(result.fallbackReason ? { fallbackReason: result.fallbackReason } : {})
         },
         map: projectMap(project),
         exclusions: project.exclusions.slice(0, 25)
