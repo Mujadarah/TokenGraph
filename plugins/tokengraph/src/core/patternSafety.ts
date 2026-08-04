@@ -13,33 +13,47 @@ const PATTERN_FIELDS = [
 ] as const;
 const PROBE = `${"a".repeat(12_000)}!`;
 const TIMEOUT_MS = 250;
+const STARTUP_TIMEOUT_MS = 5_000;
 
 function assertSafePattern(pattern: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
       `const { parentPort, workerData } = require("node:worker_threads");
-try {
-  new RegExp(workerData.pattern).test(workerData.probe);
-  parentPort.postMessage({ ok: true });
-} catch (error) {
-  parentPort.postMessage({ ok: false, message: error instanceof Error ? error.message : String(error) });
-}`,
+parentPort.postMessage({ ready: true });
+parentPort.once("message", () => {
+  try {
+    new RegExp(workerData.pattern).test(workerData.probe);
+    parentPort.postMessage({ ok: true });
+  } catch (error) {
+    parentPort.postMessage({ ok: false, message: error instanceof Error ? error.message : String(error) });
+  }
+});`,
       { eval: true, workerData: { pattern, probe: PROBE } }
     );
     let settled = false;
+    let evaluationTimeout: NodeJS.Timeout | undefined;
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      clearTimeout(startupTimeout);
+      if (evaluationTimeout) clearTimeout(evaluationTimeout);
       void worker.terminate();
       if (error) reject(error);
       else resolve();
     };
-    const timeout = setTimeout(() => {
-      finish(new Error("pattern evaluation exceeded the safety time limit"));
-    }, TIMEOUT_MS);
+    const startupTimeout = setTimeout(() => {
+      finish(new Error("pattern worker startup exceeded the safety time limit"));
+    }, STARTUP_TIMEOUT_MS);
 
-    worker.once("message", (message: { ok?: boolean; message?: string }) => {
+    worker.on("message", (message: { ready?: boolean; ok?: boolean; message?: string }) => {
+      if (message.ready) {
+        clearTimeout(startupTimeout);
+        evaluationTimeout = setTimeout(() => {
+          finish(new Error("pattern evaluation exceeded the safety time limit"));
+        }, TIMEOUT_MS);
+        worker.postMessage(undefined);
+        return;
+      }
       if (message.ok) finish();
       else finish(new Error(message.message ?? "pattern could not be compiled"));
     });
