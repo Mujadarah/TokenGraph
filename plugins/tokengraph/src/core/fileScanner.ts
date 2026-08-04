@@ -110,7 +110,8 @@ async function loadIgnoreScopes(base: string, inherited: IgnoreScope[] = []): Pr
   try {
     content = await readFile(join(base, ".gitignore"), "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") {
       throw error;
     }
     return inherited;

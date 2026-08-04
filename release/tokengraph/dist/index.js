@@ -22542,7 +22542,8 @@ async function loadIgnoreScopes(base2, inherited = []) {
   try {
     content = await readFile11(join8(base2, ".gitignore"), "utf8");
   } catch (error2) {
-    if (error2.code !== "ENOENT") {
+    const code = error2.code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") {
       throw error2;
     }
     return inherited;
