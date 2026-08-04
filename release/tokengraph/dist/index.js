@@ -22840,8 +22840,10 @@ function budgetFromOptions(options) {
     polyglotEnabled: options?.polyglotEnabled ?? DEFAULT_SCAN_BUDGET.polyglotEnabled
   };
 }
-function addUnreadable(graph, path) {
-  graph.exclusions.push({ path: path || ".", reason: "unreadable" });
+function addExclusion(graph, state, path, reason, includeInSignature = true) {
+  const normalizedPath = path || ".";
+  graph.exclusions.push({ path: normalizedPath, reason });
+  if (includeInSignature) state.signatureRows?.push({ path: normalizedPath, reason });
 }
 async function walk(root, current, graph, ignoreScopes, state, depth) {
   const currentScopes = current === root ? ignoreScopes : await loadIgnoreScopes(current, ignoreScopes);
@@ -22849,13 +22851,13 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
   try {
     entries = await readdir4(current, { withFileTypes: true });
   } catch {
-    addUnreadable(graph, normalizePath(relative4(root, current)));
+    addExclusion(graph, state, normalizePath(relative4(root, current)), "unreadable");
     return;
   }
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
     if (Date.now() >= state.deadline) {
-      graph.exclusions.push({ path: normalizePath(relative4(root, current)) || ".", reason: "budget" });
+      addExclusion(graph, state, normalizePath(relative4(root, current)), "budget");
       break;
     }
     const absolute = join8(current, entry.name);
@@ -22864,25 +22866,25 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
       continue;
     }
     if (relativePath && isIgnored(currentScopes, absolute, entry.isDirectory())) {
-      graph.exclusions.push({ path: relativePath, reason: "ignored" });
+      addExclusion(graph, state, relativePath, "ignored");
       continue;
     }
     const exclusionReason = exclusionForName(entry.name);
     if (exclusionReason) {
-      graph.exclusions.push({ path: relativePath, reason: exclusionReason });
+      addExclusion(graph, state, relativePath, exclusionReason);
       continue;
     }
     if (entry.name.startsWith(".")) {
-      graph.exclusions.push({ path: relativePath, reason: "hidden" });
+      addExclusion(graph, state, relativePath, "hidden");
       continue;
     }
     if (entry.isSymbolicLink()) {
-      graph.exclusions.push({ path: relativePath, reason: "symlink" });
+      addExclusion(graph, state, relativePath, "symlink");
       continue;
     }
     if (entry.isDirectory()) {
       if (depth + 1 > state.budget.maxDepth || state.directories >= state.budget.maxDirectories) {
-        graph.exclusions.push({ path: relativePath, reason: "budget" });
+        addExclusion(graph, state, relativePath, "budget");
         continue;
       }
       state.directories += 1;
@@ -22894,38 +22896,39 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
     }
     const extension = extname(entry.name).toLowerCase();
     if (!SUPPORTED_EXTENSIONS.has(extension)) {
-      graph.exclusions.push({ path: relativePath, reason: "unsupported" });
+      addExclusion(graph, state, relativePath, "unsupported");
       continue;
     }
     let fileStat;
     try {
-      fileStat = await stat2(absolute);
+      fileStat = await stat2(absolute, { bigint: true });
     } catch {
-      addUnreadable(graph, relativePath);
+      addExclusion(graph, state, relativePath, "unreadable");
       continue;
     }
-    if (graph.files.length >= state.budget.maxFiles || state.totalBytes + fileStat.size > state.budget.maxTotalBytes) {
-      graph.exclusions.push({ path: relativePath, reason: "budget" });
+    const rawSize = Number(fileStat.size);
+    if (graph.files.length >= state.budget.maxFiles || state.totalBytes + rawSize > state.budget.maxTotalBytes) {
+      addExclusion(graph, state, relativePath, "budget");
       continue;
     }
-    if (fileStat.size > state.budget.maxFileBytes) {
-      graph.exclusions.push({ path: relativePath, reason: "large-file" });
+    if (rawSize > state.budget.maxFileBytes) {
+      addExclusion(graph, state, relativePath, "large-file");
       continue;
     }
     let content;
     try {
       content = await readFile11(absolute, "utf8");
     } catch {
-      addUnreadable(graph, relativePath);
+      addExclusion(graph, state, relativePath, "unreadable");
       continue;
     }
     if (content.includes("\0")) {
-      graph.exclusions.push({ path: relativePath, reason: "binary" });
+      addExclusion(graph, state, relativePath, "binary");
       continue;
     }
     if (isGeneratedFile(relativePath, content)) {
       if (state.generatedFiles >= state.budget.maxGeneratedFiles) {
-        graph.exclusions.push({ path: relativePath, reason: "budget" });
+        addExclusion(graph, state, relativePath, "budget");
         continue;
       }
       state.generatedFiles += 1;
@@ -22942,19 +22945,42 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
       isTest: isTestPath(relativePath)
     };
     graph.files.push(file);
-    state.totalBytes += fileStat.size;
+    const metadata = {
+      path: relativePath,
+      size: rawSize,
+      mtimeNs: fileStat.mtimeNs.toString(),
+      ctimeNs: fileStat.ctimeNs.toString(),
+      contentHash: file.contentHash,
+      language: file.language,
+      extension,
+      route: file.route,
+      isTest: file.isTest
+    };
+    state.metadataFiles?.push(metadata);
+    state.signatureRows?.push({
+      path: relativePath,
+      size: rawSize,
+      mtimeNs: metadata.mtimeNs,
+      ctimeNs: metadata.ctimeNs,
+      contentHash: metadata.contentHash
+    });
+    state.totalBytes += rawSize;
     state.onFileContent?.({ path: relativePath, language: file.language, content });
     if (CODE_EXTENSIONS.has(extension)) {
       graph.imports.push(...extractImports(relativePath, content));
       if (TYPESCRIPT_EXTENSIONS.has(extension)) {
         const extracted = await extractTypeScriptSymbols(relativePath, content, state.budget);
-        if (extracted.degradedReason) graph.exclusions.push({ path: relativePath, reason: "budget" });
+        if (extracted.degradedReason) addExclusion(graph, state, relativePath, "budget", false);
+        graph.symbols.push(...extracted.symbols);
+      } else if (state.budget.polyglotEnabled) {
+        const extracted = await extractPolyglotSymbols(relativePath, extension, content, state.budget);
+        if (extracted.degradedReason) addExclusion(graph, state, relativePath, "budget", false);
         graph.symbols.push(...extracted.symbols);
       }
     }
   }
 }
-async function scanProject(root, options) {
+async function scanProjectContent(root, options, collectMetadata) {
   const ignoreScopes = await loadIgnoreScopes(root);
   const graph = {
     root,
@@ -22963,14 +22989,48 @@ async function scanProject(root, options) {
     imports: [],
     exclusions: []
   };
+  const metadataFiles = [];
+  const signatureRows = [];
   const budget = budgetFromOptions(options);
-  await walk(root, root, graph, ignoreScopes, { budget, directories: 0, totalBytes: 0, generatedFiles: 0, onFileContent: options?.onFileContent, deadline: Date.now() + budget.wholeIndexTimeoutMs }, 0);
+  await walk(root, root, graph, ignoreScopes, {
+    budget,
+    directories: 0,
+    totalBytes: 0,
+    generatedFiles: 0,
+    onFileContent: options?.onFileContent,
+    ...collectMetadata ? { metadataFiles, signatureRows } : {},
+    deadline: Date.now() + budget.wholeIndexTimeoutMs
+  }, 0);
   graph.files.sort((a, b) => a.path.localeCompare(b.path));
   resolveLocalImports(root, graph);
   graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name));
   graph.imports.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.source.localeCompare(b.source));
   graph.exclusions.sort((a, b) => a.path.localeCompare(b.path));
-  return graph;
+  metadataFiles.sort((a, b) => a.path.localeCompare(b.path));
+  return { graph, metadataFiles, signatureRows };
+}
+async function configurationSignatureRows(root) {
+  const configurationRows = [];
+  for (const path of CONFIGURATION_FILES) {
+    try {
+      configurationRows.push({ path, contentHash: hashText(await readFile11(join8(root, path), "utf8")) });
+    } catch (error2) {
+      if (error2.code !== "ENOENT") configurationRows.push({ path, contentHash: "unreadable" });
+    }
+  }
+  return configurationRows;
+}
+async function scanProjectGeneration(root, options) {
+  const { graph, metadataFiles, signatureRows } = await scanProjectContent(root, options, true);
+  const configurationRows = await configurationSignatureRows(root);
+  return {
+    graph,
+    metadata: {
+      files: metadataFiles,
+      exclusions: [...graph.exclusions],
+      scanSignature: hashText(JSON.stringify({ rows: signatureRows, configurationRows }))
+    }
+  };
 }
 async function scanProjectSignature(root, options) {
   return (await scanProjectFileMetadata(root, options)).scanSignature;
@@ -23103,14 +23163,7 @@ async function scanProjectFileMetadata(root, options) {
   await walkSignature(root, 0, ignoreScopes);
   files.sort((a, b) => a.path.localeCompare(b.path));
   exclusions.sort((a, b) => a.path.localeCompare(b.path));
-  const configurationRows = [];
-  for (const path of CONFIGURATION_FILES) {
-    try {
-      configurationRows.push({ path, contentHash: hashText(await readFile11(join8(root, path), "utf8")) });
-    } catch (error2) {
-      if (error2.code !== "ENOENT") configurationRows.push({ path, contentHash: "unreadable" });
-    }
-  }
+  const configurationRows = await configurationSignatureRows(root);
   return { files, exclusions, scanSignature: hashText(JSON.stringify({ rows, configurationRows })) };
 }
 async function scanProjectFile(root, metadata, options = {}) {
@@ -23752,6 +23805,21 @@ async function parseConfigurationDataBounded(text, options = {}) {
 
 // src/core/projectIndexer.ts
 var CURRENT_INDEX_SCHEMA_VERSION = 4;
+var IndexingRaceError = class extends Error {
+  code = "TOKENGRAPH_INDEXING_RACE";
+  retriable = true;
+  constructor(detail) {
+    super(`Retriable indexing race: ${detail}`);
+    this.name = "IndexingRaceError";
+  }
+};
+function projectScanner(dependencies = {}) {
+  return {
+    scanProjectFile: dependencies.scanner?.scanProjectFile ?? scanProjectFile,
+    scanProjectFileMetadata: dependencies.scanner?.scanProjectFileMetadata ?? scanProjectFileMetadata,
+    scanProjectGeneration: dependencies.scanner?.scanProjectGeneration ?? scanProjectGeneration
+  };
+}
 function fingerprintPayload(value) {
   return createHash8("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -23784,6 +23852,34 @@ function scanMetadataFromFiles(files) {
   return {
     files: Object.fromEntries(files.map((file) => [file.path, file]))
   };
+}
+function consistencyFailure(metadata, graph) {
+  const metadataPaths = Object.keys(scanMetadataFromFiles(metadata.files).files).sort();
+  const indexedPaths = graph.files.map((file) => file.path).sort();
+  const metadataPathSet = new Set(metadataPaths);
+  const indexedPathSet = new Set(indexedPaths);
+  const duplicatePath = indexedPaths.find((path, index) => index > 0 && path === indexedPaths[index - 1]);
+  if (duplicatePath) return `indexed file path ${JSON.stringify(duplicatePath)} was emitted more than once`;
+  const missingPaths = metadataPaths.filter((path) => !indexedPathSet.has(path));
+  const unexpectedPaths = indexedPaths.filter((path) => !metadataPathSet.has(path));
+  if (missingPaths.length || unexpectedPaths.length) {
+    const details = [
+      ...missingPaths.length ? [`missing indexed paths: ${missingPaths.join(", ")}`] : [],
+      ...unexpectedPaths.length ? [`unexpected indexed paths: ${unexpectedPaths.join(", ")}`] : []
+    ];
+    return `metadata and indexed file paths differ (${details.join("; ")})`;
+  }
+  const metadataByPath = scanMetadataFromFiles(metadata.files).files;
+  for (const file of graph.files) {
+    if (metadataByPath[file.path]?.contentHash !== file.contentHash) {
+      return `content hash changed after metadata collection for ${JSON.stringify(file.path)}`;
+    }
+  }
+  return void 0;
+}
+function assertConsistentScan(metadata, graph, phase) {
+  const failure = consistencyFailure(metadata, graph);
+  if (failure) throw new IndexingRaceError(`${phase} is inconsistent: ${failure}.`);
 }
 function isCompatibleIndex(index) {
   return index.schemaVersion === CURRENT_INDEX_SCHEMA_VERSION && Boolean(index.scanMetadata?.files);
@@ -23924,7 +24020,7 @@ async function buildProjectIndex(root, graph, sql, scanSignature, scanMetadata, 
     ...configuration.length ? { configuration } : {}
   };
 }
-async function indexProject(root, options = {}) {
+async function indexProjectWithScanner(root, options, scanner) {
   const scanLimits = {
     maxFileBytes: options.parserLimits?.maxFileBytes ?? options.parserLimits?.maxBytes,
     maxTotalBytes: options.parserLimits?.maxTotalBytes,
@@ -23936,9 +24032,8 @@ async function indexProject(root, options = {}) {
     maxGeneratedFiles: options.parserLimits?.maxGeneratedFiles,
     polyglotEnabled: options.polyglotEnabled !== false
   };
-  const metadata = await scanProjectFileMetadata(root, scanLimits);
   const sqlContents = /* @__PURE__ */ new Map();
-  const graph = await scanProject(root, {
+  const generation = await scanner.scanProjectGeneration(root, {
     ...scanLimits,
     onFileContent: (file) => {
       if (file.language === "sql") {
@@ -23946,13 +24041,8 @@ async function indexProject(root, options = {}) {
       }
     }
   });
-  for (const file of options.polyglotEnabled !== false ? metadata.files.filter((candidate) => [".py", ".go", ".rs", ".java"].includes(candidate.extension)) : []) {
-    const parsed = await scanProjectFile(root, file, scanLimits);
-    if (parsed) {
-      graph.symbols.push(...parsed.symbols);
-      if (parsed.degradedReason) graph.exclusions.push({ path: file.path, reason: "budget" });
-    }
-  }
+  const { graph, metadata } = generation;
+  assertConsistentScan(metadata, graph, "Full scan");
   graph.symbols.sort((a, b) => a.filePath.localeCompare(b.filePath) || a.name.localeCompare(b.name) || (a.startLine ?? 0) - (b.startLine ?? 0));
   const sqlGraphs = [];
   for (const file of graph.files.filter((candidate) => candidate.language === "sql").sort((a, b) => a.path.localeCompare(b.path))) {
@@ -23962,12 +24052,16 @@ async function indexProject(root, options = {}) {
     }
     sqlGraphs.push(parsePostgresMigration(file.path, sql));
   }
-  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), options.scanSignature ?? metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits);
+  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits);
+}
+async function indexProject(root, options = {}, dependencies = {}) {
+  return indexProjectWithScanner(root, options, projectScanner(dependencies));
 }
 function metadataChanged(previous, current) {
   return !previous || previous.contentHash !== current.contentHash || previous.language !== current.language || previous.extension !== current.extension;
 }
-async function updateProjectIndexIncremental(root, existingIndex, options = {}) {
+async function updateProjectIndexIncremental(root, existingIndex, options = {}, dependencies = {}) {
+  const scanner = projectScanner(dependencies);
   const scanLimits = {
     maxFileBytes: options.parserLimits?.maxFileBytes ?? options.parserLimits?.maxBytes,
     maxTotalBytes: options.parserLimits?.maxTotalBytes,
@@ -23980,28 +24074,30 @@ async function updateProjectIndexIncremental(root, existingIndex, options = {}) 
     polyglotEnabled: options.polyglotEnabled !== false
   };
   if (existingIndex.root !== root) {
+    const index = await indexProjectWithScanner(root, options, scanner);
     return {
-      index: await indexProject(root, options),
+      index,
       mode: "full",
       addedFiles: [],
       changedFiles: [],
       deletedFiles: [],
-      parsedFiles: [],
+      parsedFiles: index.files.map((file) => file.path),
       fallbackReason: "Stored index root does not match requested root."
     };
   }
   if (!isCompatibleIndex(existingIndex)) {
+    const index = await indexProjectWithScanner(root, options, scanner);
     return {
-      index: await indexProject(root, options),
+      index,
       mode: "full",
       addedFiles: [],
       changedFiles: [],
       deletedFiles: [],
-      parsedFiles: [],
+      parsedFiles: index.files.map((file) => file.path),
       fallbackReason: "Stored index schema metadata is incompatible with incremental indexing."
     };
   }
-  const metadata = await scanProjectFileMetadata(root, scanLimits);
+  const metadata = await scanner.scanProjectFileMetadata(root, scanLimits);
   const currentByPath = new Map(metadata.files.map((file) => [file.path, file]));
   const previousMetadata = existingIndex.scanMetadata?.files ?? {};
   const previousPaths = new Set(existingIndex.files.map((file) => file.path));
@@ -24020,7 +24116,7 @@ async function updateProjectIndexIncremental(root, existingIndex, options = {}) 
     if (!fileMetadata) {
       continue;
     }
-    const parsed = await scanProjectFile(root, fileMetadata, scanLimits);
+    const parsed = await scanner.scanProjectFile(root, fileMetadata, scanLimits);
     if (!parsed) {
       continue;
     }
@@ -24051,6 +24147,19 @@ async function updateProjectIndexIncremental(root, existingIndex, options = {}) 
     sqlGraphForFiles(existingIndex.sql ?? emptySqlGraph(), unchangedPathSet),
     ...parsedSqlGraphs
   ]);
+  const inconsistency = consistencyFailure(metadata, graph);
+  if (inconsistency) {
+    const index = await indexProjectWithScanner(root, options, scanner);
+    return {
+      index,
+      mode: "full",
+      addedFiles,
+      changedFiles,
+      deletedFiles,
+      parsedFiles: index.files.map((file) => file.path),
+      fallbackReason: `Incremental scan was inconsistent: ${inconsistency}. Completed a full-scan fallback.`
+    };
+  }
   return {
     index: await buildProjectIndex(root, graph, sql, metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits),
     mode: "incremental",
@@ -24111,7 +24220,7 @@ async function getIndexStatus(root, options = {}) {
   const storedFingerprint = typeof stored.fingerprint === "string" ? stored.fingerprint : void 0;
   const storedScanSignature = stored.scanSignature;
   const signatureFresh = storedScanSignature !== void 0 && storedScanSignature === currentScanSignature;
-  const current = signatureFresh ? void 0 : await indexProject(root, { ...options.projectOptions, scanSignature: currentScanSignature });
+  const current = signatureFresh ? void 0 : await indexProject(root, options.projectOptions);
   const state = signatureFresh || current && isFreshProjectIndex(stored, current) ? "fresh" : "stale";
   return {
     root,
@@ -26661,6 +26770,19 @@ async function enqueueProjectWrite(root, operation) {
   );
   return current;
 }
+async function refreshProjectIndex(root, existing, options, dependencies = {}) {
+  const result = existing ? await updateProjectIndexIncremental(root, existing, options, dependencies) : {
+    index: await indexProject(root, options, dependencies),
+    mode: "full",
+    addedFiles: [],
+    changedFiles: [],
+    deletedFiles: [],
+    parsedFiles: []
+  };
+  if (!existing) result.parsedFiles = result.index.files.map((file) => file.path);
+  await saveProjectIndex(root, result.index);
+  return result;
+}
 async function ensureProject(root) {
   return enqueueProjectWrite(root, async () => {
     const config2 = await loadTokenGraphConfig(root);
@@ -26671,21 +26793,13 @@ async function ensureProject(root) {
       if (existing.scanSignature === currentScanSignature) {
         return existing;
       }
-      const updated = await updateProjectIndexIncremental(root, existing, options);
-      const current = updated.index;
-      if (isFreshProjectIndex(existing, current)) {
-        await saveProjectIndex(root, current);
-        await enforceStorageClassQuotas(root, config2.storage);
-        return current;
-      }
-      await saveProjectIndex(root, current);
+      const updated = await refreshProjectIndex(root, existing, options);
       await enforceStorageClassQuotas(root, config2.storage);
-      return current;
+      return updated.index;
     }
-    const indexed = await indexProject(root, { ...options, scanSignature: currentScanSignature });
-    await saveProjectIndex(root, indexed);
+    const indexed = await refreshProjectIndex(root, void 0, options);
     await enforceStorageClassQuotas(root, config2.storage);
-    return indexed;
+    return indexed.index;
   });
 }
 function isSafeRelativePath(path) {
@@ -27039,22 +27153,22 @@ function createTokenGraphServer(options = {}) {
       } else if (!refreshIndex) {
         throw new Error("The TokenGraph index is missing or stale and refreshIndex is false.");
       } else if (existing && isSafeProjectIndex(resolvedRoot, existing)) {
-        const updated = await updateProjectIndexIncremental(resolvedRoot, existing, indexOptions);
+        const updated = await refreshProjectIndex(resolvedRoot, existing, indexOptions);
         project = updated.index;
         indexingMode = updated.mode;
         changes = {
           addedFiles: updated.addedFiles,
           changedFiles: updated.changedFiles,
           deletedFiles: updated.deletedFiles,
-          parsedFiles: updated.parsedFiles
+          parsedFiles: updated.parsedFiles,
+          ...updated.fallbackReason ? { fallbackReason: updated.fallbackReason } : {}
         };
-        await saveProjectIndex(resolvedRoot, project);
         await enforceStorageClassQuotas(resolvedRoot, config2.storage);
       } else {
-        project = await indexProject(resolvedRoot, indexOptions);
+        const updated = await refreshProjectIndex(resolvedRoot, void 0, indexOptions);
+        project = updated.index;
         indexingMode = "full";
-        changes.parsedFiles = project.files.map((file) => file.path);
-        await saveProjectIndex(resolvedRoot, project);
+        changes.parsedFiles = updated.parsedFiles;
         await enforceStorageClassQuotas(resolvedRoot, config2.storage);
       }
       const appliedKnowledge = await listAppliedKnowledge(resolvedRoot);
@@ -27568,16 +27682,12 @@ ${changedFiles.join("\n")}`, 8);
         const config2 = await loadTokenGraphConfig(resolvedRoot);
         const indexOptions = projectIndexOptions(config2);
         const existing = fullReindex ? void 0 : await loadProjectIndex(resolvedRoot);
-        const result = existing && isSafeProjectIndex(resolvedRoot, existing) ? await updateProjectIndexIncremental(resolvedRoot, existing, indexOptions) : {
-          index: await indexProject(resolvedRoot, indexOptions),
-          mode: "full",
-          addedFiles: [],
-          changedFiles: [],
-          deletedFiles: [],
-          parsedFiles: []
-        };
+        const result = await refreshProjectIndex(
+          resolvedRoot,
+          existing && isSafeProjectIndex(resolvedRoot, existing) ? existing : void 0,
+          indexOptions
+        );
         const project = result.index;
-        await saveProjectIndex(resolvedRoot, project);
         await enforceStorageClassQuotas(resolvedRoot, config2.storage);
         let wikiRefreshed = false;
         let wikiWarning;
@@ -27600,7 +27710,8 @@ ${changedFiles.join("\n")}`, 8);
             addedFiles: result.addedFiles,
             changedFiles: result.changedFiles,
             deletedFiles: result.deletedFiles,
-            parsedFiles: result.parsedFiles
+            parsedFiles: result.parsedFiles,
+            ...result.fallbackReason ? { fallbackReason: result.fallbackReason } : {}
           },
           map: projectMap(project),
           exclusions: project.exclusions.slice(0, 25)

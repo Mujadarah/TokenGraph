@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseConfigurationData, parseConfigurationDataBounded } from "../src/core/configData.js";
+import { scanProjectGeneration } from "../src/core/fileScanner.js";
 import { buildSymbolChunks } from "../src/core/symbolChunks.js";
 import { indexProject, updateProjectIndexIncremental } from "../src/core/projectIndexer.js";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -112,6 +113,28 @@ describe("source-free SymbolChunk records", () => {
       const index = await indexProject(root, { parserLimits: { wholeIndexTimeoutMs: 1, perFileTimeoutMs: 1 } });
       expect(Date.now() - started).toBeLessThan(2_000);
       expect(index.exclusions.some((entry) => entry.reason === "budget")).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("builds a full index from one scan generation instead of independent bounded walks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-single-generation-"));
+    try {
+      await writeFile(join(root, "source.ts"), "export const source = true;\n");
+      let generationScans = 0;
+
+      const index = await indexProject(root, {}, {
+        scanner: {
+          scanProjectGeneration: async (scanRoot, options) => {
+            generationScans += 1;
+            return scanProjectGeneration(scanRoot, options);
+          }
+        }
+      });
+
+      expect(index.files.map((file) => file.path)).toEqual(["source.ts"]);
+      expect(generationScans).toBe(1);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
