@@ -6,6 +6,9 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   release:
@@ -70,20 +73,108 @@ jobs:
       - name: Build standalone release archive
         run: pnpm --silent package:plugin -- --json > bundle-package.json
 
-      - name: Verify generated release and create checksum
+      - name: Prepare release assets
         id: artifact
         shell: bash
         run: |
           set -euo pipefail
           archive=$(node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync("bundle-package.json", "utf8")); if (!value.archivePath) throw new Error("bundle package did not report archivePath"); process.stdout.write(value.archivePath);')
-          checksum="${archive}.sha256"
-          # Write the checksum against the bare filename so users can run
-          # "sha256sum -c" next to the downloaded asset and no runner paths
-          # leak into published files.
-          (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" > "$(basename "$checksum")")
-          cat "$checksum"
+          archive_base="${archive%.zip}"
+          checksum="$archive.sha256"
+          sbom="$archive_base.spdx.json"
+          archive_bundle="$archive.sigstore.json"
+          sbom_bundle="$sbom.sigstore.json"
+          checksums="$archive_base.checksums.txt"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+          echo "checksums=$checksums" >> "$GITHUB_OUTPUT"
+          echo "sbom=$sbom" >> "$GITHUB_OUTPUT"
+          echo "archive_bundle=$archive_bundle" >> "$GITHUB_OUTPUT"
+          echo "sbom_bundle=$sbom_bundle" >> "$GITHUB_OUTPUT"
+
+      - name: Extract installable plugin for SBOM
+        id: extract
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${{ steps.artifact.outputs.archive }}"
+          extract_dir="$RUNNER_TEMP/tokengraph-release-$GITHUB_RUN_ID"
+          plugin_dir="$extract_dir/tokengraph"
+          mkdir -p "$extract_dir"
+          unzip -q "$archive" -d "$extract_dir"
+          test -f "$plugin_dir/.codex-plugin/plugin.json"
+          test -f "$plugin_dir/package.json"
+          test ! -e "$plugin_dir/node_modules"
+          echo "plugin_dir=$plugin_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: ${{ steps.extract.outputs.plugin_dir }}
+          format: spdx-json
+          output-file: ${{ steps.artifact.outputs.sbom }}
+          dependency-snapshot: false
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+
+      - name: Sign release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${{ steps.artifact.outputs.archive }}"
+          sbom="${{ steps.artifact.outputs.sbom }}"
+          archive_bundle="${{ steps.artifact.outputs.archive_bundle }}"
+          sbom_bundle="${{ steps.artifact.outputs.sbom_bundle }}"
+          test -s "$archive"
+          test -s "$sbom"
+          cosign sign-blob --yes --bundle "$archive_bundle" "$archive"
+          cosign sign-blob --yes --bundle "$sbom_bundle" "$sbom"
+
+      - name: Verify release signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${{ steps.artifact.outputs.archive }}"
+          sbom="${{ steps.artifact.outputs.sbom }}"
+          archive_bundle="${{ steps.artifact.outputs.archive_bundle }}"
+          sbom_bundle="${{ steps.artifact.outputs.sbom_bundle }}"
+          workflow_identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+          cosign verify-blob "$archive" --bundle "$archive_bundle" --certificate-identity "$workflow_identity" --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+          cosign verify-blob "$sbom" --bundle "$sbom_bundle" --certificate-identity "$workflow_identity" --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+
+      - name: Create checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${{ steps.artifact.outputs.archive }}"
+          checksum="${{ steps.artifact.outputs.checksum }}"
+          checksums="${{ steps.artifact.outputs.checksums }}"
+          sbom="${{ steps.artifact.outputs.sbom }}"
+          archive_bundle="${{ steps.artifact.outputs.archive_bundle }}"
+          sbom_bundle="${{ steps.artifact.outputs.sbom_bundle }}"
+          # Checksums use bare names so users can verify downloaded assets
+          # without exposing CI runner paths in a public release asset.
+          (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" > "$(basename "$checksum")")
+          (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" "$(basename "$sbom")" "$(basename "$archive_bundle")" "$(basename "$sbom_bundle")" > "$(basename "$checksums")")
+          (cd "$(dirname "$archive")" && sha256sum -c "$(basename "$checksum")" && sha256sum -c "$(basename "$checksums")")
+          cat "$checksum"
+          cat "$checksums"
+
+      - name: Create GitHub build provenance attestation
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: ${{ steps.artifact.outputs.archive }}
+
+      - name: Create GitHub SBOM attestation
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: ${{ steps.artifact.outputs.archive }}
+          sbom-path: ${{ steps.artifact.outputs.sbom }}
 
       - name: Build and validate draft release notes
         working-directory: .
@@ -113,4 +204,8 @@ jobs:
             --title "TokenGraph $TAG_NAME" \
             --notes-file release-notes.md \
             "${{ steps.artifact.outputs.archive }}" \
-            "${{ steps.artifact.outputs.checksum }}"
+            "${{ steps.artifact.outputs.checksum }}" \
+            "${{ steps.artifact.outputs.checksums }}" \
+            "${{ steps.artifact.outputs.sbom }}" \
+            "${{ steps.artifact.outputs.archive_bundle }}" \
+            "${{ steps.artifact.outputs.sbom_bundle }}"

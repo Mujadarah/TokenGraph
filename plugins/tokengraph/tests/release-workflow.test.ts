@@ -10,7 +10,10 @@ describe("tagged release workflow", () => {
     const approvedActions = new Map([
       ["actions/checkout", "11d5960a326750d5838078e36cf38b85af677262"],
       ["pnpm/action-setup", "b906affcce14559ad1aafd4ab0e942779e9f58b1"],
-      ["actions/setup-node", "49933ea5288caeca8642d1e84afbd3f7d6820020"]
+      ["actions/setup-node", "49933ea5288caeca8642d1e84afbd3f7d6820020"],
+      ["actions/attest", "508db95dd578ae2727ebd6217d5ba78e4fbda05d"],
+      ["anchore/sbom-action", "e22c389904149dbc22b58101806040fa8d37a610"],
+      ["sigstore/cosign-installer", "6f9f17788090df1f26f669e9d70d6ae9567deba6"]
     ]);
     expect(workflow).toContain("tags: ['v*']");
     expect(ciWorkflow).toMatch(/^permissions:\r?\n  contents: read$/m);
@@ -18,7 +21,7 @@ describe("tagged release workflow", () => {
     for (const configuredWorkflow of [workflow, ciWorkflow]) {
       expect(configuredWorkflow).not.toMatch(/uses:\s+\S+@v\d+/);
       const references = Array.from(configuredWorkflow.matchAll(/uses:\s+([^@\s]+)@([^\s#]+)/g));
-      expect(references).toHaveLength(approvedActions.size);
+      expect(references).toHaveLength(configuredWorkflow === workflow ? 7 : 3);
       for (const [, action, revision] of references) {
         expect(revision).toBe(approvedActions.get(action));
       }
@@ -42,6 +45,74 @@ describe("tagged release workflow", () => {
     expect(workflow).toContain('node plugins/tokengraph/scripts/validate-release-notes.mjs --file release-notes.md --version "$VERSION"');
     expect(workflow).toContain('"${{ steps.artifact.outputs.archive }}"');
     expect(workflow).not.toContain('"plugins/tokengraph/${{ steps.artifact.outputs.archive }}"');
+  });
+  it("requires pinned SBOM, Sigstore, attestation, checksum, and upload contracts", () => {
+    const workflow = readFileSync(resolve(process.cwd(), "../..", ".github/workflows/release.yml"), "utf8");
+    const output = (value: string) => "$" + "{{ " + value + " }}";
+    const archive = output("steps.artifact.outputs.archive");
+    const checksum = output("steps.artifact.outputs.checksum");
+    const checksums = output("steps.artifact.outputs.checksums");
+    const sbom = output("steps.artifact.outputs.sbom");
+    const archiveBundle = output("steps.artifact.outputs.archive_bundle");
+    const sbomBundle = output("steps.artifact.outputs.sbom_bundle");
+
+    expect(workflow).toMatch(/^permissions:\r?\n  contents: write\r?\n  id-token: write\r?\n  attestations: write\r?\n  artifact-metadata: write$/m);
+    expect(workflow).toContain("tags: ['v*']");
+    expect(workflow).not.toMatch(/^\s*branches:/m);
+    for (const [action, revision] of [
+      ["actions/attest", "508db95dd578ae2727ebd6217d5ba78e4fbda05d"],
+      ["anchore/sbom-action", "e22c389904149dbc22b58101806040fa8d37a610"],
+      ["sigstore/cosign-installer", "6f9f17788090df1f26f669e9d70d6ae9567deba6"]
+    ]) {
+      expect(workflow).toContain("uses: " + action + "@" + revision);
+    }
+    expect(workflow).not.toMatch(/uses:\s+\S+@v\d+/);
+    expect(workflow).toContain("cosign-release: v3.0.6");
+    expect(workflow).toContain(String.raw`unzip -q "$archive" -d "$extract_dir"`);
+    expect(workflow).toContain(String.raw`plugin_dir="$extract_dir/tokengraph"`);
+    expect(workflow).toContain("path: " + output("steps.extract.outputs.plugin_dir"));
+    expect(workflow).toContain("format: spdx-json");
+    expect(workflow).toContain("output-file: " + sbom);
+    expect(workflow).toContain("dependency-snapshot: false");
+    expect(workflow).toContain("upload-artifact: false");
+    expect(workflow).toContain("upload-release-assets: false");
+    expect(workflow).toContain(String.raw`checksum="$archive.sha256"`);
+    expect(workflow).toContain(String.raw`sbom="$archive_base.spdx.json"`);
+    expect(workflow).toContain(String.raw`archive_bundle="$archive.sigstore.json"`);
+    expect(workflow).toContain(String.raw`sbom_bundle="$sbom.sigstore.json"`);
+    expect(workflow).toContain(String.raw`checksums="$archive_base.checksums.txt"`);
+    expect(workflow).toContain(String.raw`sha256sum "$(basename "$archive")" > "$(basename "$checksum")"`);
+    expect(workflow).toContain(String.raw`sha256sum "$(basename "$archive")" "$(basename "$sbom")" "$(basename "$archive_bundle")" "$(basename "$sbom_bundle")" > "$(basename "$checksums")"`);
+    expect(workflow.match(/cosign sign-blob --yes --bundle/g)).toHaveLength(2);
+    expect(workflow.match(/cosign verify-blob/g)).toHaveLength(2);
+    expect(workflow.split(String.raw`--certificate-identity "$workflow_identity"`)).toHaveLength(3);
+    expect(workflow.split(String.raw`--certificate-oidc-issuer "https://token.actions.githubusercontent.com"`)).toHaveLength(3);
+    expect(workflow).toContain(String.raw`workflow_identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"`);
+    for (const forbiddenKeyInput of ["--key", "COSIGN_KEY", "COSIGN_PASSWORD", "secrets.COSIGN", "secrets.SIGSTORE"]) {
+      expect(workflow).not.toContain(forbiddenKeyInput);
+    }
+    expect(workflow.match(/uses:\s+actions\/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d/g)).toHaveLength(2);
+    expect(workflow).toContain("subject-path: " + archive);
+    expect(workflow).toContain("sbom-path: " + sbom);
+    for (const asset of [archive, checksum, checksums, sbom, archiveBundle, sbomBundle]) {
+      expect(workflow).toContain("\"" + asset + "\"");
+    }
+
+    const orderedSteps = [
+      "Build standalone release archive",
+      "Prepare release assets",
+      "Extract installable plugin for SBOM",
+      "Generate SPDX SBOM",
+      "Install Cosign",
+      "Sign release assets",
+      "Verify release signatures",
+      "Create GitHub build provenance attestation",
+      "Create GitHub SBOM attestation",
+      "Create draft GitHub release"
+    ];
+    const positions = orderedSteps.map((step) => workflow.indexOf("- name: " + step));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual(positions.slice().sort((left, right) => left - right));
   });
 });
 
