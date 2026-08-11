@@ -72,7 +72,9 @@ export const analyzeInputSchema = z.object({
   if (input.mode === "risk" && !input.changedFiles) context.addIssue({ code: "custom", message: "risk mode requires changedFiles." });
 });
 
-export const setupInputSchema = z.object({});
+export const setupInputSchema = z.object({
+  confirmNoLegacyProcesses: z.literal(true).describe("Confirm that every TokenGraph v0.23.1 MCP and CLI process has been stopped before activating native locks in this MCP process.")
+});
 
 export const proposeKnowledgeInputSchema = z.object({
   taskId: taskIdSchema, root: z.string().optional(), action: z.enum(["propose", "list", "approve", "reject"]),

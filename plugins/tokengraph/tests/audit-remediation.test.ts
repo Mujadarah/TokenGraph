@@ -11,6 +11,7 @@ import { indexPath, loadProjectIndex, repositoryMemoryPath, repositoryRulesPath,
 import { CURRENT_INDEX_SCHEMA_VERSION, indexProject } from "../src/core/projectIndexer.js";
 import { getRepositoryIdentity } from "../src/core/repositoryIdentity.js";
 import { MemoryStore } from "../src/core/memoryStore.js";
+import { canonicalPersistenceLock } from "../src/core/lockDomain.js";
 import { filterUntrustedSourceText } from "../src/core/storagePolicy.js";
 import { writeTextAtomic } from "../src/core/storage.js";
 import { createTaskLedger } from "../src/core/taskLedger.js";
@@ -93,7 +94,7 @@ describe("audit remediation persistence contracts", () => {
   it("sanitizes repository-sourced memories before persistence but preserves reviewed decisions", async () => {
     const root = await makeRoot();
     const memoryFile = join(root, ".tokengraph", "repository", "memory.json");
-    const store = new MemoryStore(memoryFile);
+    const store = new MemoryStore(memoryFile, await canonicalPersistenceLock(root, "repository-state", "memory.json"));
     const hostile = await store.add({
       type: "security",
       title: "Repository note",

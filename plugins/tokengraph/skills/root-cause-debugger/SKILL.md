@@ -13,7 +13,7 @@ Do not use for a tiny self-contained failure whose complete raw evidence is alre
 
 Follow the common lifecycle in the general `tokengraph` skill:
 
-1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root; on blocked setup follow recovery and do not invent a taskId.
+1. After confirming every TokenGraph v0.23.1 MCP and CLI process is stopped, call `tokengraph_setup({ confirmNoLegacyProcesses: true })` and capture `trustedWorkspace.root` as the trusted root; if that confirmation is not true, stop without activating, and on blocked setup follow recovery and do not invent a taskId.
 2. Use `tokengraph_prepare_context({ task })` only when a retrieval plan is needed. Otherwise omit `taskId` from the first failure analysis so it can auto-start the ledger and return a taskId; capture the returned taskId.
 3. Call `tokengraph_analyze({ taskId?, mode: "failure", kind, text, task? })` with the original failure text exactly once. Its returned compressed evidence and taskId drive follow-up `tokengraph_query_context` calls that confirm or disprove the analysis; never substitute a possibly incomplete pre-compression for the original text. The trusted root may be omitted after ready setup when host workspace resolution is stable; otherwise pass only the captured trusted root.
 4. Use standalone `tokengraph_compress({ taskId, mode: "output", kind, text })` for oversized output only when failure analysis is not the consumer. Preserve exact errors, tests, stack paths, and line numbers; key fallback reads off `omittedLineCount` and the returned token estimate.

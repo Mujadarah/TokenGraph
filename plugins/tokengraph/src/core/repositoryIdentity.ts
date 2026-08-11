@@ -5,7 +5,8 @@ import { access, lstat, readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import type { RepositoryIdentity, RetrievalSignals } from "./types.js";
-import { canonicalPersistenceLockKey, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
+import { canonicalPersistenceLock } from "./lockDomain.js";
+import { withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -62,8 +63,8 @@ async function ensureLocalExclude(root: string): Promise<void> {
   if (!exclude) return;
   const path = resolve(root, exclude);
   try {
-    const lockKey = await canonicalPersistenceLockKey(path);
-    await withFileLock(`${lockKey}.lock`, async () => {
+    const lock = await canonicalPersistenceLock(root, "git-info", "exclude");
+    await withFileLock(lock, async () => {
       let existing = "";
       try {
         existing = await readFile(path, "utf8");
@@ -112,7 +113,9 @@ interface PersistedIdentity {
   repositoryId: string;
 }
 
-async function loadOrCreateRepositoryId(directory: string): Promise<string> {
+const repositoryIdLoads = new Map<string, Promise<string>>();
+
+async function loadOrCreateRepositoryIdUnqueued(workspaceRoot: string, directory: string): Promise<string> {
   const path = join(directory, "identity.json");
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<PersistedIdentity>;
@@ -121,8 +124,8 @@ async function loadOrCreateRepositoryId(directory: string): Promise<string> {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
   }
   const repositoryId = digest(`${directory}\n${Date.now()}\n${Math.random()}`);
-  const lockKey = await canonicalPersistenceLockKey(directory, "identity.json");
-  await withFileLock(`${lockKey}.lock`, async () => {
+  const lock = await canonicalPersistenceLock(workspaceRoot, "repository-state", "identity.json");
+  await withFileLock(lock, async () => {
     try {
       const existing = JSON.parse(await readFile(path, "utf8")) as Partial<PersistedIdentity>;
       if (existing.schemaVersion === 1 && typeof existing.repositoryId === "string" && existing.repositoryId.length >= 16) return;
@@ -136,6 +139,19 @@ async function loadOrCreateRepositoryId(directory: string): Promise<string> {
     return typeof persisted.repositoryId === "string" ? persisted.repositoryId : repositoryId;
   } catch {
     return repositoryId;
+  }
+}
+
+async function loadOrCreateRepositoryId(workspaceRoot: string, directory: string): Promise<string> {
+  const key = process.platform === "win32" ? resolve(directory).toLowerCase() : resolve(directory);
+  const existing = repositoryIdLoads.get(key);
+  if (existing) return existing;
+  const current = loadOrCreateRepositoryIdUnqueued(workspaceRoot, directory);
+  repositoryIdLoads.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (repositoryIdLoads.get(key) === current) repositoryIdLoads.delete(key);
   }
 }
 
@@ -161,7 +177,7 @@ async function getRepositoryIdentityUncached(workspaceRoot: string): Promise<Rep
   const normalizedGitDir = gitDir ? resolve(workspaceRoot, gitDir) : undefined;
   if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
   const repositoryState = await resolveRepositoryStateDirectory(normalizedRoot);
-  const repositoryId = await loadOrCreateRepositoryId(repositoryState);
+  const repositoryId = await loadOrCreateRepositoryId(workspaceRoot, repositoryState);
   const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
   const repositoryFingerprint = digest(`${repositoryId}\n${firstCommit}`);
   return {
@@ -202,7 +218,7 @@ export async function resolveRepositoryStateDirectory(root: string): Promise<str
   const normalizedRoot = resolve(root);
   const target = repositoryStateDirectory(normalizedRoot);
   const commonDirectory = await gitCommonDirectory(normalizedRoot);
-  if (commonDirectory) await migrateLegacyRepositoryState(join(commonDirectory, "tokengraph"), target);
+  if (commonDirectory) await migrateLegacyRepositoryState(normalizedRoot, join(commonDirectory, "tokengraph"), target);
   return target;
 }
 
@@ -217,7 +233,7 @@ interface LegacyMigrationReport {
   skippedSymlink: string[];
 }
 
-async function migrateLegacyRepositoryState(source: string, target: string): Promise<void> {
+async function migrateLegacyRepositoryState(workspaceRoot: string, source: string, target: string): Promise<void> {
   try {
     await lstat(join(target, "migration.json"));
     return;
@@ -233,8 +249,8 @@ async function migrateLegacyRepositoryState(source: string, target: string): Pro
   }
   if (!sourceStats.isDirectory()) return;
 
-  const lockKey = await canonicalPersistenceLockKey(target, "migration.json");
-  await withFileLock(`${lockKey}.lock`, async () => {
+  const lock = await canonicalPersistenceLock(workspaceRoot, "repository-state", "migration.json");
+  await withFileLock(lock, async () => {
     try {
       await lstat(join(target, "migration.json"));
       return;

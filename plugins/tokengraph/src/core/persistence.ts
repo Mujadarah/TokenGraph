@@ -1,7 +1,8 @@
 import { readFile, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
-import { canonicalPersistenceLockKey, quarantineCorruptJson, resolveConfinedPath, withFileLock, writeJsonAtomic, writeTextAtomic, writeTextAtomicConfined, SAFE_WIKI_SLUG_PATTERN } from "./storage.js";
+import { canonicalPersistenceLock } from "./lockDomain.js";
+import { quarantineCorruptJson, resolveConfinedPath, withDestructiveMaintenance, withFileLock, writeJsonAtomic, writeTextAtomic, writeTextAtomicConfined, SAFE_WIKI_SLUG_PATTERN, type DestructiveMaintenanceConfirmation } from "./storage.js";
 import { getRepositoryIdentity, resolveRepositoryStateDirectory } from "./repositoryIdentity.js";
 import type { ProjectIndex, ProjectWiki, WikiPage } from "./types.js";
 import type { VaultNote } from "./vaultProjection.js";
@@ -39,8 +40,8 @@ async function migrateRepositoryRecord(root: string, fileName: "memory.json" | "
   const legacy = join(stateDir(root), fileName);
   try {
     const contents = await readFile(legacy, "utf8");
-    const key = await canonicalPersistenceLockKey(directory, fileName);
-    await withFileLock(`${key}.lock`, async () => {
+    const lock = await canonicalPersistenceLock(root, "repository-state", fileName);
+    await withFileLock(lock, async () => {
       try {
         await readFile(target, "utf8");
       } catch (targetError) {
@@ -114,8 +115,8 @@ async function saveVaultProjectionUnlocked(root: string, notes: VaultNote[]): Pr
 }
 
 export async function saveVaultProjection(root: string, notes: VaultNote[]): Promise<void> {
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "vault", "manifest.json");
-  await withFileLock(`${key}.lock`, () => saveVaultProjectionUnlocked(root, notes));
+  const lock = await canonicalPersistenceLock(root, "vault", "manifest.json");
+  await withFileLock(lock, () => saveVaultProjectionUnlocked(root, notes));
 }
 
 export async function saveProjectIndex(root: string, index: ProjectIndex): Promise<void> {
@@ -126,8 +127,8 @@ export async function saveProjectIndex(root: string, index: ProjectIndex): Promi
     throw new Error("TokenGraph index schema 4 has malformed retrieval signals; refusing to persist it.");
   }
   const worktreePath = indexPath(root);
-  const worktreeKey = await canonicalPersistenceLockKey(worktreePath);
-  await withFileLock(`${worktreeKey}.lock`, async () => {
+  const worktreeLock = await canonicalPersistenceLock(root, "workspace-state", "index.json");
+  await withFileLock(worktreeLock, async () => {
     // Index snapshots are derived caches and remain worktree-scoped. Repository
     // knowledge uses the git-common store, but branch/HEAD snapshots must not.
     await writeJsonAtomic(worktreePath, index);
@@ -325,8 +326,8 @@ async function saveProjectWikiUnlocked(root: string, wiki: ProjectWiki): Promise
 }
 
 export async function saveProjectWiki(root: string, wiki: ProjectWiki): Promise<void> {
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "wiki", "manifest.json");
-  await withFileLock(`${key}.lock`, () => saveProjectWikiUnlocked(root, wiki));
+  const lock = await canonicalPersistenceLock(root, "wiki", "manifest.json");
+  await withFileLock(lock, () => saveProjectWikiUnlocked(root, wiki));
 }
 
 export async function loadProjectWiki(root: string): Promise<ProjectWiki | undefined> {
@@ -365,8 +366,10 @@ export async function loadProjectWiki(root: string): Promise<ProjectWiki | undef
   }
 }
 
-export async function clearProjectWiki(root: string): Promise<void> {
-  await rm(wikiDir(root), { recursive: true, force: true });
+export async function clearProjectWiki(root: string, confirmation: DestructiveMaintenanceConfirmation): Promise<void> {
+  await withDestructiveMaintenance(root, ["wiki"], confirmation, async (context) => {
+    await context.remove([{ domain: "wiki" }]);
+  });
 }
 
 export async function getWikiStatus(root: string): Promise<{
@@ -391,12 +394,19 @@ export async function getWikiStatus(root: string): Promise<{
   };
 }
 
-export async function clearProjectIndex(root: string): Promise<void> {
-  await rm(indexPath(root), { force: true });
-  await rm(await repositoryIndexPath(root), { force: true });
-  await clearProjectWiki(root);
+export async function clearProjectIndex(root: string, confirmation: DestructiveMaintenanceConfirmation): Promise<void> {
+  await withDestructiveMaintenance(root, ["workspace-state", "repository-state", "wiki"], confirmation, async (context) => {
+    await context.remove([
+      { domain: "workspace-state", relativePath: "index.json" },
+      { domain: "repository-state", relativePath: "index.json" },
+      { domain: "wiki" }
+    ]);
+  });
 }
 
-export async function clearProjectState(root: string): Promise<void> {
-  await rm(stateDir(root), { recursive: true, force: true });
+export async function clearProjectState(root: string, confirmation: DestructiveMaintenanceConfirmation): Promise<void> {
+  const domains = ["workspace-state", "repository-state", "runs", "tasks", "vault", "wiki", "artifacts"] as const;
+  await withDestructiveMaintenance(root, domains, confirmation, async (context) => {
+    await context.remove(domains.map((domain) => ({ domain })));
+  });
 }

@@ -1,8 +1,15 @@
-import { chmod, lstat, mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { chmod, lstat, mkdir, readFile, readdir } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
-import { resolveRepositoryStateDirectory } from "./repositoryIdentity.js";
+import { repositoryStateDirectory } from "./repositoryIdentity.js";
 import { runsDir, stateDir, vaultDir, wikiDir } from "./persistence.js";
+import {
+  withAutomaticMaintenance,
+  withDestructiveMaintenance,
+  type DestructiveMaintenanceConfirmation,
+  type DestructiveMaintenanceContext,
+  type DestructiveMaintenanceTarget
+} from "./storage.js";
 
 export interface StorageQuota {
   maxBytes: number;
@@ -43,10 +50,17 @@ export interface PurgeStorageResult {
   removed: string[];
 }
 
+const STORAGE_INFRASTRUCTURE_NAMES = new Set([
+  ".tokengraph-native-anchor-v2.lock",
+  ".tokengraph-native-journal-v2.lock",
+  ".tokengraph-native-journal-v2.lock.tokengraph-write-v2.tmp"
+]);
+
 async function usage(path: string): Promise<StorageUsage> {
   try {
     const info = await lstat(path);
     if (info.isSymbolicLink()) throw new Error(`TokenGraph storage accounting refuses symbolic-link paths: ${path}`);
+    if (STORAGE_INFRASTRUCTURE_NAMES.has(basename(path))) return { bytes: 0, files: 0 };
     if (info.isFile()) return { bytes: info.size, files: 1 };
     if (!info.isDirectory()) return { bytes: 0, files: 0 };
     const entries = await readdir(path);
@@ -58,24 +72,23 @@ async function usage(path: string): Promise<StorageUsage> {
   }
 }
 
-function containsPath(parent: string, child: string): boolean {
-  const nested = relative(resolve(parent), resolve(child));
-  return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
-}
-
 async function usageMany(paths: string[]): Promise<StorageUsage> {
   const unique = paths.map((path) => resolve(path)).filter((path, index, all) => all.indexOf(path) === index);
-  const roots = unique.filter((path, index, all) => !all.some((candidate, candidateIndex) => candidateIndex !== index && containsPath(candidate, path)));
+  const roots = unique.filter((path, index, all) => !all.some((candidate, candidateIndex) => {
+    if (candidateIndex === index) return false;
+    const nested = relative(candidate, path);
+    return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
+  }));
   const values = await Promise.all(roots.map((path) => usage(path)));
   return values.reduce((total, current) => ({ bytes: total.bytes + current.bytes, files: total.files + current.files }), { bytes: 0, files: 0 });
 }
 
 export async function storageUsage(root: string): Promise<StorageUsage> {
-  return usageMany([stateDir(root), await resolveRepositoryStateDirectory(root)]);
+  return usageMany([stateDir(root), repositoryStateDirectory(root)]);
 }
 
 export async function storageClassUsage(root: string): Promise<StorageClassUsage> {
-  const repository = await resolveRepositoryStateDirectory(root);
+  const repository = repositoryStateDirectory(root);
   const [total, runs, cache, vault] = await Promise.all([
     storageUsage(root),
     usage(runsDir(root)),
@@ -120,52 +133,10 @@ function quotaExceededError(storageClass: StorageClass, current: number, maximum
   return new Error(`TokenGraph cache item exceeds its storage quota (${current}/${maximum} bytes); raise storage.cacheMaxBytes.`);
 }
 
-async function safeRemoveUnderBase(base: string, relativeTarget: string, recursive: boolean): Promise<boolean> {
-  if (!relativeTarget || isAbsolute(relativeTarget) || relativeTarget.replaceAll("\\", "/").split("/").includes("..")) throw new Error("Storage purge target must be a safe relative path.");
-  let canonicalBase: string;
-  try {
-    if ((await lstat(base)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link base paths: ${base}`);
-    canonicalBase = await realpath(base);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
-  const target = join(canonicalBase, relativeTarget);
-  if (!containsPath(canonicalBase, target) || target === canonicalBase) throw new Error("Storage purge target escapes its approved base directory.");
-  let current = canonicalBase;
-  for (const segment of relativeTarget.replaceAll("\\", "/").split("/").filter(Boolean)) {
-    current = join(current, segment);
-    try {
-      if ((await lstat(current)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link or junction paths: ${current}`);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw error;
-    }
-  }
-  await rm(target, { recursive, force: true });
-  return true;
-}
-
-async function removeWorktreeState(root: string, relativeTarget: string, recursive: boolean, label: string): Promise<string[]> {
-  const workspace = await realpath(resolve(root));
-  return await safeRemoveUnderBase(workspace, join(".tokengraph", relativeTarget), recursive) ? [label] : [];
-}
-
-async function purgeCache(root: string): Promise<string[]> {
-  const repository = await resolveRepositoryStateDirectory(root);
-  const removed = [
-    ...await removeWorktreeState(root, "index.json", false, ".tokengraph/index.json"),
-    ...await removeWorktreeState(root, "wiki", true, ".tokengraph/wiki")
-  ];
-  if (await safeRemoveUnderBase(repository, "index.json", false)) removed.push("repository/index.json");
-  if (await safeRemoveUnderBase(repository, "artifacts", true)) removed.push("repository/artifacts");
-  return removed;
-}
-
-async function purgeOutcomes(root: string): Promise<string[]> {
-  const directory = join(await realpath(resolve(root)), ".tokengraph", "tasks");
+async function outcomeTargets(root: string): Promise<Array<{ target: DestructiveMaintenanceTarget; label: string }>> {
+  const directory = join(resolve(root), ".tokengraph", "tasks");
   const entries = await readdir(directory).catch((error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : Promise.reject(error));
-  const removed: string[] = [];
+  const targets: Array<{ target: DestructiveMaintenanceTarget; label: string }> = [];
   for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
     try {
       const parsed = JSON.parse(await readFile(join(directory, entry), "utf8")) as { status?: unknown };
@@ -173,19 +144,60 @@ async function purgeOutcomes(root: string): Promise<string[]> {
     } catch {
       continue;
     }
-    removed.push(...await removeWorktreeState(root, join("tasks", entry), false, `.tokengraph/tasks/${entry}`));
+    targets.push({ target: { domain: "tasks", relativePath: entry }, label: `.tokengraph/tasks/${entry}` });
   }
-  removed.push(...await removeWorktreeState(root, join("tasks", "completed-outcomes.json"), false, ".tokengraph/tasks/completed-outcomes.json"));
-  return removed;
+  targets.push({ target: { domain: "tasks", relativePath: "completed-outcomes.json" }, label: ".tokengraph/tasks/completed-outcomes.json" });
+  return targets;
 }
 
-export async function purgeStorageClass(root: string, storageClass: PurgeStorageClass): Promise<PurgeStorageResult> {
-  let removed: string[] = [];
-  if (storageClass === "runs" || storageClass === "derived") removed.push(...await removeWorktreeState(root, "runs", true, ".tokengraph/runs"));
-  if (storageClass === "cache" || storageClass === "derived") removed.push(...await purgeCache(root));
-  if (storageClass === "outcomes" || storageClass === "derived") removed.push(...await purgeOutcomes(root));
-  if (storageClass === "derived") removed.push(...await removeWorktreeState(root, "vault", true, ".tokengraph/vault"));
+function purgeDomains(storageClass: PurgeStorageClass) {
+  const domains = [] as Array<"runs" | "workspace-state" | "wiki" | "repository-state" | "artifacts" | "tasks" | "vault">;
+  if (storageClass === "runs" || storageClass === "derived") domains.push("runs");
+  if (storageClass === "cache" || storageClass === "derived") domains.push("workspace-state", "wiki", "repository-state", "artifacts");
+  if (storageClass === "outcomes" || storageClass === "derived") domains.push("tasks");
+  if (storageClass === "derived") domains.push("vault");
+  return domains;
+}
+
+async function purgeStorageClassUnlocked(
+  root: string,
+  storageClass: PurgeStorageClass,
+  context: DestructiveMaintenanceContext
+): Promise<PurgeStorageResult> {
+  const targets: Array<{ target: DestructiveMaintenanceTarget; label: string }> = [];
+  if (storageClass === "runs" || storageClass === "derived") targets.push({ target: { domain: "runs" }, label: ".tokengraph/runs" });
+  if (storageClass === "cache" || storageClass === "derived") targets.push(
+    { target: { domain: "workspace-state", relativePath: "index.json" }, label: ".tokengraph/index.json" },
+    { target: { domain: "wiki" }, label: ".tokengraph/wiki" },
+    { target: { domain: "repository-state", relativePath: "index.json" }, label: "repository/index.json" },
+    { target: { domain: "artifacts" }, label: "repository/artifacts" }
+  );
+  if (storageClass === "outcomes" || storageClass === "derived") targets.push(...await outcomeTargets(root));
+  if (storageClass === "derived") targets.push({ target: { domain: "vault" }, label: ".tokengraph/vault" });
+  const removedPaths = await context.remove(targets.map(({ target }) => target));
+  const locks = new Map(context.locks.map((lock) => [lock.domain, lock]));
+  const removed = targets.filter(({ target }) => {
+    const lock = locks.get(target.domain)!;
+    const path = target.relativePath ? join(lock.domainRoot, ...target.relativePath.split("/")) : lock.domainRoot;
+    const key = process.platform === "win32" ? path.toLowerCase() : path;
+    return [...removedPaths].some((removedPath) => {
+      const candidate = process.platform === "win32" ? removedPath.toLowerCase() : removedPath;
+      return candidate === key || candidate.startsWith(`${key}${process.platform === "win32" ? "\\" : "/"}`);
+    });
+  }).map(({ label }) => label);
   return { class: storageClass, removed: [...new Set(removed)] };
+}
+
+export async function purgeStorageClass(
+  root: string,
+  storageClass: PurgeStorageClass,
+  confirmation: DestructiveMaintenanceConfirmation
+): Promise<PurgeStorageResult> {
+  return withDestructiveMaintenance(root, purgeDomains(storageClass), confirmation, (context) => purgeStorageClassUnlocked(root, storageClass, context));
+}
+
+async function purgeStorageClassAutomatically(root: string, storageClass: PurgeStorageClass): Promise<PurgeStorageResult> {
+  return withAutomaticMaintenance(root, purgeDomains(storageClass), (context) => purgeStorageClassUnlocked(root, storageClass, context));
 }
 
 export async function enforceStorageClassQuotas(root: string, quotas: StorageClassQuotas): Promise<StorageQuotaReport> {
@@ -194,7 +206,7 @@ export async function enforceStorageClassQuotas(root: string, quotas: StorageCla
   const cleaned: StorageClass[] = [];
   if (current.cache.bytes > quotas.cacheMaxBytes || current.total.bytes > quotas.maxBytes) {
     if (current.cache.bytes > 0) {
-      await purgeStorageClass(root, "cache");
+      await purgeStorageClassAutomatically(root, "cache");
       cleaned.push("cache");
       current = await storageClassUsage(root);
     }
@@ -213,7 +225,7 @@ export async function assertStorageWriteAllowed(root: string, storageClass: Stor
   let report = await enforceStorageClassQuotas(root, quotas);
   let projectedClassBytes = report.usage[storageClass].bytes + incomingBytes;
   if (storageClass === "cache" && projectedClassBytes > quotas.cacheMaxBytes && report.usage.cache.bytes > 0) {
-    await purgeStorageClass(root, "cache");
+    await purgeStorageClassAutomatically(root, "cache");
     report = { usage: await storageClassUsage(root), cleaned: [...new Set([...report.cleaned, "cache" as const])] };
     projectedClassBytes = incomingBytes;
   }
@@ -221,7 +233,7 @@ export async function assertStorageWriteAllowed(root: string, storageClass: Stor
   if (projectedClassBytes > maximum) throw quotaExceededError(storageClass, projectedClassBytes, maximum);
   let projectedTotal = report.usage.total.bytes + incomingBytes;
   if (projectedTotal > quotas.maxBytes && report.usage.cache.bytes > 0 && storageClass !== "cache") {
-    await purgeStorageClass(root, "cache");
+    await purgeStorageClassAutomatically(root, "cache");
     report = { usage: await storageClassUsage(root), cleaned: [...new Set([...report.cleaned, "cache" as const])] };
     projectedTotal = report.usage.total.bytes + incomingBytes;
   }
@@ -236,7 +248,7 @@ export async function assertStorageReplacementAllowed(root: string, storageClass
   if (replacementBytes > maximum) throw quotaExceededError(storageClass, replacementBytes, maximum);
   let projectedTotal = report.usage.total.bytes - report.usage[storageClass].bytes + replacementBytes;
   if (projectedTotal > quotas.maxBytes && storageClass !== "cache" && report.usage.cache.bytes > 0) {
-    await purgeStorageClass(root, "cache");
+    await purgeStorageClassAutomatically(root, "cache");
     report = { usage: await storageClassUsage(root), cleaned: [...new Set([...report.cleaned, "cache" as const])] };
     projectedTotal = report.usage.total.bytes - report.usage[storageClass].bytes + replacementBytes;
   }
@@ -246,17 +258,22 @@ export async function assertStorageReplacementAllowed(root: string, storageClass
 
 export async function hardenStoragePermissions(root: string): Promise<void> {
   if (process.platform === "win32") return;
-  for (const directory of [stateDir(root), await resolveRepositoryStateDirectory(root)]) {
+  for (const directory of [stateDir(root), repositoryStateDirectory(root)]) {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await chmod(directory, 0o700);
   }
 }
 
-export async function purgeTokenGraphStorage(root: string, options: { repository?: boolean } = {}): Promise<void> {
-  const repository = options.repository ? await resolveRepositoryStateDirectory(root) : undefined;
-  const workspace = await realpath(resolve(root));
-  await safeRemoveUnderBase(workspace, ".tokengraph", true);
-  if (repository) await safeRemoveUnderBase(dirname(repository), basename(repository), true);
+export async function purgeTokenGraphStorage(
+  root: string,
+  confirmation: DestructiveMaintenanceConfirmation,
+  options: { repository?: boolean } = {}
+): Promise<void> {
+  void options;
+  const domains = ["workspace-state", "repository-state", "runs", "tasks", "vault", "wiki", "artifacts"] as const;
+  await withDestructiveMaintenance(root, domains, confirmation, async (context) => {
+    await context.remove(domains.map((domain) => ({ domain })));
+  });
 }
 
 export function isConfinedStoragePath(root: string, candidate: string): boolean {

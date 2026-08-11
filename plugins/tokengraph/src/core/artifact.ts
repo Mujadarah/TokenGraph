@@ -3,7 +3,8 @@ import { join } from "node:path";
 
 import { canonicalHash, canonicalize } from "./canonical.js";
 import { repositoryDir } from "./persistence.js";
-import { canonicalPersistenceLockKey, quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
+import { canonicalPersistenceLock } from "./lockDomain.js";
+import { quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
 
 export const CURRENT_ARTIFACT_SCHEMA_VERSION = 5;
 export type ExpectedBenefit = "none" | "low" | "medium" | "high";
@@ -71,8 +72,8 @@ export async function saveStableArtifact<T>(root: string, artifact: StableArtifa
   if (!/^[a-f0-9]{64}$/.test(artifact.hash)) throw new Error("Stable artifact hash is invalid.");
   const directory = await repositoryDir(root);
   const path = artifactPath(directory, artifact.hash);
-  const key = await canonicalPersistenceLockKey(directory, "artifacts", `${artifact.hash}.json`);
-  await withFileLock(`${key}.lock`, () => writeJsonAtomic(path, artifact));
+  const lock = await canonicalPersistenceLock(root, "artifacts", `${artifact.hash}.json`);
+  await withFileLock(lock, () => writeJsonAtomic(path, artifact));
 }
 
 export async function loadStableArtifact<T = unknown>(root: string, hash: string): Promise<StableArtifact<T> | undefined> {

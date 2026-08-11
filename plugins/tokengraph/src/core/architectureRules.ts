@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { ArchitectureCheckReport, ArchitectureFinding, ArchitectureRule, ArchitectureRuleInput, ArchitectureRuleSeverity, ProjectIndex } from "./types.js";
 import { assertSafeArchitectureRulePatterns } from "./patternSafety.js";
+import type { CanonicalPersistenceLock } from "./lockDomain.js";
 import { withFileLock } from "./storage.js";
 
 const DEFAULT_SEVERITY: ArchitectureRuleSeverity = "warning";
@@ -50,7 +51,10 @@ function importTarget(edge: ProjectIndex["imports"][number]): string {
 export class ArchitectureRuleStore {
   private static readonly writeChains = new Map<string, Promise<void>>();
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly lock: CanonicalPersistenceLock
+  ) {}
 
   async list(): Promise<ArchitectureRule[]> {
     try {
@@ -116,11 +120,11 @@ export class ArchitectureRuleStore {
   }
 
   private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
-    const key = resolve(this.filePath);
+    const key = this.lock.compatibilityPath;
     const previous = ArchitectureRuleStore.writeChains.get(key) ?? Promise.resolve();
     const current = previous.then(
-      () => withFileLock(`${key}.lock`, operation),
-      () => withFileLock(`${key}.lock`, operation)
+      () => withFileLock(this.lock, operation),
+      () => withFileLock(this.lock, operation)
     );
     ArchitectureRuleStore.writeChains.set(
       key,

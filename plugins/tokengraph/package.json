@@ -15,11 +15,15 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "pretest": "pnpm build",
-    "test": "vitest run",
+    "test": "node scripts/run-tests.mjs",
+    "test:preactivation": "node scripts/run-tests.mjs --preactivation-only",
+    "test:activated": "node scripts/run-tests.mjs --activated-only --",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "smoke": "node scripts/smoke.mjs",
     "benchmark": "node scripts/benchmark.mjs",
+    "native:build": "node scripts/build-native-lock-addon.mjs",
+    "native:manifest": "node scripts/generate-native-lock-manifest.mjs",
+    "native:validate": "node scripts/validate-native-lock-addon.mjs",
     "package:plugin": "node scripts/package-plugin.mjs",
     "validate:plugin": "node scripts/validate-plugin.mjs"
   },

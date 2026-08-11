@@ -1,7 +1,8 @@
 import { copyFile, readFile } from "node:fs/promises";
 
 import { configPath, stateDir } from "./persistence.js";
-import { canonicalPersistenceLockKey, quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
+import { canonicalPersistenceLock } from "./lockDomain.js";
+import { quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
 import type { RoutingMode, TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
 
 export const CURRENT_CONFIG_SCHEMA_VERSION = 3;
@@ -183,8 +184,8 @@ function unwrapPersistedConfig(value: unknown): { config: unknown; needsMigratio
 
 export async function saveTokenGraphConfig(root: string, config: TokenGraphConfig): Promise<TokenGraphConfig> {
   const persisted = normalizeConfig(config, false);
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "config.json");
-  await withFileLock(`${key}.lock`, () => writeJsonAtomic(configPath(root), {
+  const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+  await withFileLock(lock, () => writeJsonAtomic(configPath(root), {
     schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
     config: persisted
   }));

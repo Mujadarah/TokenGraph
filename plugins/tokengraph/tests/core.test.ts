@@ -20,6 +20,7 @@ import {
 } from "../src/core/config.js";
 import { scanProject, scanProjectFile, scanProjectFileMetadata, scanProjectGeneration } from "../src/core/fileScanner.js";
 import { MemoryStore } from "../src/core/memoryStore.js";
+import { canonicalPersistenceLock } from "../src/core/lockDomain.js";
 import { buildContextPlan } from "../src/core/planner.js";
 import {
   clearProjectIndex,
@@ -48,11 +49,20 @@ import type { MemoryEntry, MemoryInput } from "../src/core/types.js";
 const execFile = promisify(execFileCallback);
 
 const tempRoots: string[] = [];
+const maintenanceConfirmation = { confirmedNoLegacyTokenGraphProcesses: true } as const;
 
 async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "tokengraph-"));
   tempRoots.push(root);
   return root;
+}
+
+async function memoryStore(root: string, filePath = memoryPath(root)): Promise<MemoryStore> {
+  return new MemoryStore(filePath, await canonicalPersistenceLock(root, "repository-state", "memory.json"));
+}
+
+async function architectureRuleStore(root: string, filePath = rulesPath(root)): Promise<ArchitectureRuleStore> {
+  return new ArchitectureRuleStore(filePath, await canonicalPersistenceLock(root, "repository-state", "rules.json"));
 }
 
 async function metadataWithChangedHash(root: string, path: string) {
@@ -562,6 +572,74 @@ describe("scanProject", () => {
     expect(graph.files.map((file) => file.path)).toEqual(["src/real.ts"]);
     expect(project.files.map((file) => file.path)).toEqual(["src/real.ts"]);
     expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/generated", reason: "ignored" }));
+  });
+
+  it("lets a nested negation re-include a file ignored by a root rule in both scan modes", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "sub"), { recursive: true });
+    await writeFile(join(root, ".gitignore"), "*.log\n");
+    await writeFile(join(root, "sub", ".gitignore"), "!keep.log\n");
+    await writeFile(join(root, "sub", "keep.log"), "keep this file\n");
+
+    const graph = await scanProject(root);
+    const metadata = await scanProjectFileMetadata(root);
+
+    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "sub/keep.log", reason: "unsupported" }));
+    expect(graph.exclusions).not.toContainEqual(expect.objectContaining({ path: "sub/keep.log", reason: "ignored" }));
+    expect(metadata.exclusions).toContainEqual(expect.objectContaining({ path: "sub/keep.log", reason: "unsupported" }));
+    expect(metadata.exclusions).not.toContainEqual(expect.objectContaining({ path: "sub/keep.log", reason: "ignored" }));
+  });
+
+  it("does not traverse an excluded directory just because its own ignore file re-includes a child", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "blocked"), { recursive: true });
+    await writeFile(join(root, ".gitignore"), "blocked/\n");
+    await writeFile(join(root, "blocked", ".gitignore"), "!keep.ts\n");
+    await writeFile(join(root, "blocked", "keep.ts"), "export const keep = true;\n");
+
+    const graph = await scanProject(root);
+    const metadata = await scanProjectFileMetadata(root);
+
+    expect(graph.files.map((file) => file.path)).toEqual([]);
+    expect(metadata.files.map((file) => file.path)).toEqual([]);
+    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "blocked", reason: "ignored" }));
+    expect(metadata.exclusions).toContainEqual(expect.objectContaining({ path: "blocked", reason: "ignored" }));
+    expect(graph.exclusions.some((exclusion) => exclusion.path === "blocked/keep.ts")).toBe(false);
+    expect(metadata.exclusions.some((exclusion) => exclusion.path === "blocked/keep.ts")).toBe(false);
+  });
+
+  it("applies a deeper negation after an explicitly re-included directory", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "sub"), { recursive: true });
+    await writeFile(join(root, ".gitignore"), "sub/*\n!sub/\n");
+    await writeFile(join(root, "sub", ".gitignore"), "*.ts\n!keep.ts\n");
+    await writeFile(join(root, "sub", "drop.ts"), "export const drop = true;\n");
+    await writeFile(join(root, "sub", "keep.ts"), "export const keep = true;\n");
+
+    const graph = await scanProject(root);
+    const metadata = await scanProjectFileMetadata(root);
+
+    expect(graph.files.map((file) => file.path)).toEqual(["sub/keep.ts"]);
+    expect(metadata.files.map((file) => file.path)).toEqual(["sub/keep.ts"]);
+    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "sub/drop.ts", reason: "ignored" }));
+    expect(metadata.exclusions).toContainEqual(expect.objectContaining({ path: "sub/drop.ts", reason: "ignored" }));
+  });
+
+  it("keeps nested ignore decisions normalized to forward-slash paths", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src", "generated"), { recursive: true });
+    await writeFile(join(root, "src", ".gitignore"), "generated/\n");
+    await writeFile(join(root, "src", "generated", "client.ts"), "export const generated = true;\n");
+    await writeFile(join(root, "src", "real.ts"), "export const real = true;\n");
+
+    const graph = await scanProject(root);
+    const metadata = await scanProjectFileMetadata(root);
+
+    expect(graph.files.map((file) => file.path)).toEqual(["src/real.ts"]);
+    expect(metadata.files.map((file) => file.path)).toEqual(["src/real.ts"]);
+    expect(graph.exclusions).toContainEqual(expect.objectContaining({ path: "src/generated", reason: "ignored" }));
+    expect(metadata.exclusions).toContainEqual(expect.objectContaining({ path: "src/generated", reason: "ignored" }));
+    expect([...graph.exclusions, ...metadata.exclusions].every((exclusion) => !exclusion.path.includes("\\"))).toBe(true);
   });
 
   it("records symlink entries as explicit exclusions", async () => {
@@ -1231,14 +1309,14 @@ describe("index status and reset", () => {
     await mkdir(join(root, "src"), { recursive: true });
     await writeFile(join(root, "src", "patientSummary.ts"), "export const patientSummary = 'old';");
     await saveProjectIndex(root, await indexProject(root));
-    await new MemoryStore(memoryPath(root)).add({
+    await (await memoryStore(root)).add({
       type: "convention",
       title: "Keep index reset narrow",
       body: "Index resets should preserve project memories by default.",
       tags: ["reset", "memory"]
     });
 
-    await clearProjectIndex(root);
+    await clearProjectIndex(root, maintenanceConfirmation);
 
     await expect(access(indexPath(root))).rejects.toThrow();
     await expect(access(memoryPath(root))).resolves.toBeUndefined();
@@ -1400,8 +1478,13 @@ describe("project wiki", () => {
 
     await saveProjectWiki(stateRoot, wiki);
 
-    const files = (await readdir(wikiDir(stateRoot))).sort();
+    const allFiles = (await readdir(wikiDir(stateRoot))).sort();
+    const files = allFiles.filter((file) => !file.startsWith(".tokengraph-native-"));
     expect(files).toEqual(["database.md", "manifest.json", "overview.md", "routes.md", "structure.md"]);
+    expect(allFiles).toEqual(expect.arrayContaining([
+      ".tokengraph-native-anchor-v2.lock",
+      ".tokengraph-native-journal-v2.lock"
+    ]));
     expect(JSON.parse(await readFile(join(wikiDir(stateRoot), "manifest.json"), "utf8"))).toMatchObject({
       schemaVersion: 1,
       fingerprint: wiki.fingerprint,
@@ -1530,7 +1613,7 @@ describe("project wiki", () => {
       indexFingerprint: staleProject.fingerprint
     });
 
-    await clearProjectIndex(root);
+    await clearProjectIndex(root, maintenanceConfirmation);
     await saveProjectWiki(root, buildProjectWiki(project, []));
     await expect(getWikiStatus(root)).resolves.toMatchObject({
       state: "stale",
@@ -1546,7 +1629,7 @@ describe("project wiki", () => {
     const project = await indexProject(root);
     await saveProjectIndex(root, project);
     await saveProjectWiki(root, buildProjectWiki(project, []));
-    await new MemoryStore(memoryPath(root)).add({
+    await (await memoryStore(root)).add({
       type: "convention",
       title: "Keep reset narrow",
       body: "Index resets preserve memory and config.",
@@ -1554,20 +1637,26 @@ describe("project wiki", () => {
     });
     await loadTokenGraphConfig(root);
 
-    await clearProjectIndex(root);
+    await clearProjectIndex(root, maintenanceConfirmation);
 
     await expect(access(indexPath(root))).rejects.toThrow();
-    await expect(access(wikiDir(root))).rejects.toThrow();
+    await expect(readdir(wikiDir(root))).resolves.toEqual([
+      ".tokengraph-native-anchor-v2.lock",
+      ".tokengraph-native-journal-v2.lock"
+    ]);
     await expect(access(memoryPath(root))).resolves.toBeUndefined();
     await expect(access(configPath(root))).resolves.toBeUndefined();
 
     await saveProjectIndex(root, project);
     await saveProjectWiki(root, buildProjectWiki(project, []));
-    await clearProjectState(root);
+    await clearProjectState(root, maintenanceConfirmation);
 
     await expect(access(memoryPath(root))).rejects.toThrow();
     await expect(access(configPath(root))).rejects.toThrow();
-    await expect(access(wikiDir(root))).rejects.toThrow();
+    await expect(readdir(wikiDir(root))).resolves.toEqual([
+      ".tokengraph-native-anchor-v2.lock",
+      ".tokengraph-native-journal-v2.lock"
+    ]);
   });
 });
 
@@ -1718,7 +1807,7 @@ describe("buildContextPlan", () => {
     await writeFile(join(root, "supabase", "migrations", "001_patients.sql"), "create table public.patients (id uuid primary key, full_name text);");
 
     const project = await indexProject(root);
-    const memory = new MemoryStore(join(root, ".tokengraph", "memory.json"));
+    const memory = await memoryStore(root, join(root, ".tokengraph", "memory.json"));
     await memory.add({
       type: "architecture",
       title: "Patient summaries stay tenant scoped",
@@ -1976,7 +2065,7 @@ describe("compressContext", () => {
       "import { loadPatientSummary } from './patientService'; test('keeps tenant scoped rows', () => loadPatientSummary());"
     );
     const project = await indexProject(root);
-    const memory = new MemoryStore(memoryPath(root));
+    const memory = await memoryStore(root);
     await memory.add({
       type: "bug",
       title: "Patient RLS failures keep exact test output",
@@ -2060,7 +2149,7 @@ describe("traceFailure", () => {
       "create table public.patients (id uuid primary key, tenant_id uuid); create policy \"tenant can read patients\" on public.patients for select using (tenant_id = auth.uid());"
     );
     const project = await indexProject(root);
-    const memory = new MemoryStore(memoryPath(root));
+    const memory = await memoryStore(root);
     await memory.add({
       type: "bug",
       title: "Patient summaries must stay tenant scoped",
@@ -2188,14 +2277,14 @@ describe("assessChangeRisk", () => {
       ].join("\n")
     );
     const project = await indexProject(root);
-    const memory = new MemoryStore(memoryPath(root));
+    const memory = await memoryStore(root);
     await memory.add({
       type: "bug",
       title: "Patient tenant scoping is fragile",
       body: "Past patient summary bugs leaked tenant rows when auth and RLS context were skipped.",
       tags: ["patient", "tenant", "fragile", "rls"]
     });
-    const rules = new ArchitectureRuleStore(rulesPath(root));
+    const rules = await architectureRuleStore(root);
     const rule = await rules.add({
       type: "forbidden-import",
       name: "Routes cannot import services directly",
@@ -2265,7 +2354,7 @@ describe("MemoryStore", () => {
   it("persists searchable project decisions locally", async () => {
     const root = await makeRoot();
     const storePath = join(root, ".tokengraph", "memory.json");
-    const store = new MemoryStore(storePath);
+    const store = await memoryStore(root, storePath);
 
     await store.add({
       type: "convention",
@@ -2274,7 +2363,7 @@ describe("MemoryStore", () => {
       tags: ["patients", "server-actions"]
     });
 
-    const loaded = new MemoryStore(storePath);
+    const loaded = await memoryStore(root, storePath);
     const result = await loaded.search("patient server action");
     const raw = JSON.parse(await readFile(storePath, "utf8"));
 
@@ -2304,7 +2393,7 @@ describe("MemoryStore", () => {
       ])
     );
 
-    const store = new MemoryStore(storePath);
+    const store = await memoryStore(root, storePath);
     expect(await store.list()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "mem_legacy", status: "active" })]));
 
     await store.update("mem_legacy", { confidence: "high" });
@@ -2320,7 +2409,7 @@ describe("MemoryStore", () => {
     await mkdir(join(root, ".tokengraph"), { recursive: true });
     await writeFile(storePath, "{ not json");
 
-    const store = new MemoryStore(storePath);
+    const store = await memoryStore(root, storePath);
 
     await expect(store.list()).resolves.toEqual([]);
     await expect(access(storePath)).rejects.toThrow();
@@ -2331,8 +2420,8 @@ describe("MemoryStore", () => {
   it("serializes concurrent memory writes without losing decisions", async () => {
     const root = await makeRoot();
     const storePath = join(root, ".tokengraph", "memory.json");
-    const first = new MemoryStore(storePath);
-    const second = new MemoryStore(storePath);
+    const first = await memoryStore(root, storePath);
+    const second = await memoryStore(root, storePath);
 
     await Promise.all([
       first.add({ type: "architecture", title: "First decision", body: "Keep the first decision.", tags: ["memory"] }),
@@ -2345,7 +2434,7 @@ describe("MemoryStore", () => {
 
   it("preserves concurrent memory lifecycle mutations", async () => {
     const root = await makeRoot();
-    const store = new MemoryStore(memoryPath(root));
+    const store = await memoryStore(root);
     const memory = await store.add({
       type: "architecture",
       title: "Keep lifecycle evidence",
@@ -2376,7 +2465,7 @@ describe("MemoryStore", () => {
 
   it("tracks lifecycle metadata and excludes deprecated or deleted memories from normal recall", async () => {
     const root = await makeRoot();
-    const store = new MemoryStore(memoryPath(root));
+    const store = await memoryStore(root);
 
     const active = await store.add({
       type: "architecture",
@@ -2440,7 +2529,7 @@ describe("MemoryStore", () => {
 
   it("surfaces memory conflicts without resolving them automatically", async () => {
     const root = await makeRoot();
-    const store = new MemoryStore(memoryPath(root));
+    const store = await memoryStore(root);
     const existing = await store.add({
       type: "architecture",
       title: "Use REST patient API",
@@ -2470,7 +2559,7 @@ describe("MemoryStore", () => {
 
   it("does not flag same-type memories when only one body term overlaps", async () => {
     const root = await makeRoot();
-    const store = new MemoryStore(memoryPath(root));
+    const store = await memoryStore(root);
     await store.add({ type: "architecture", title: "Patient read", body: "Cache patient rows.", tags: [] });
 
     const conflicts = await store.findConflicts({
@@ -2507,7 +2596,7 @@ describe("ArchitectureRuleStore and checkArchitecture", () => {
       })
     );
 
-    const store = new ArchitectureRuleStore(rulesPath(root));
+    const store = await architectureRuleStore(root);
     const project = await indexProject(root);
     const report = await checkArchitecture({ root, project, rules: await store.list() });
 
@@ -2519,7 +2608,7 @@ describe("ArchitectureRuleStore and checkArchitecture", () => {
 
   it("rejects a catastrophic architecture rule before persistence", async () => {
     const root = await makeRoot();
-    const store = new ArchitectureRuleStore(rulesPath(root));
+    const store = await architectureRuleStore(root);
 
     await expect(
       store.add({
@@ -2534,7 +2623,7 @@ describe("ArchitectureRuleStore and checkArchitecture", () => {
 
   it("persists a normal anchored architecture rule", async () => {
     const root = await makeRoot();
-    const store = new ArchitectureRuleStore(rulesPath(root));
+    const store = await architectureRuleStore(root);
 
     const rule = await store.add({
       type: "forbidden-import",
@@ -2549,7 +2638,7 @@ describe("ArchitectureRuleStore and checkArchitecture", () => {
 
   it("rejects an unsafe architecture pattern during update", async () => {
     const root = await makeRoot();
-    const store = new ArchitectureRuleStore(rulesPath(root));
+    const store = await architectureRuleStore(root);
     const rule = await store.add({ type: "forbidden-import", name: "Safe rule", fromPattern: "^app/" });
 
     await expect(store.update(rule.id, { fromPattern: "^(a+)+$" })).rejects.toThrow(/unsafe architecture rule pattern/i);
@@ -2558,7 +2647,7 @@ describe("ArchitectureRuleStore and checkArchitecture", () => {
 
   it("persists, updates, and deletes local architecture rules", async () => {
     const root = await makeRoot();
-    const store = new ArchitectureRuleStore(rulesPath(root));
+    const store = await architectureRuleStore(root);
 
     const created = await store.add({
       type: "forbidden-import",
@@ -2593,7 +2682,7 @@ describe("ArchitectureRuleStore and checkArchitecture", () => {
 
   it("migrates legacy rule arrays to schema-versioned storage on write", async () => {
     const root = await makeRoot();
-    const store = new ArchitectureRuleStore(rulesPath(root));
+    const store = await architectureRuleStore(root);
     await mkdir(join(root, ".tokengraph"), { recursive: true });
     await writeFile(
       rulesPath(root),
@@ -2642,7 +2731,7 @@ describe("ArchitectureRuleStore and checkArchitecture", () => {
       })
     );
     const project = await indexProject(root);
-    const store = new ArchitectureRuleStore(rulesPath(root));
+    const store = await architectureRuleStore(root);
     await store.add({
       type: "forbidden-import",
       name: "UI cannot import server",
@@ -2697,7 +2786,7 @@ describe("ArchitectureRuleStore and checkArchitecture", () => {
 describe("v0.7 review and export helpers", () => {
   it("reviews stored memories without mutating local memory state", async () => {
     const root = await makeRoot();
-    const store = new MemoryStore(memoryPath(root));
+    const store = await memoryStore(root);
     const unrelated = await store.add({
       type: "convention",
       title: "Billing export names",

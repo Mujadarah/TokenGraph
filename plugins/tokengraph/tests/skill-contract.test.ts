@@ -48,9 +48,9 @@ function expectCommonContract(name: string): void {
 
   const references = [...text.matchAll(/\btokengraph_[a-z0-9_]+\b/g)].map((match) => match[0]);
   expect([...new Set(references)].filter((tool) => !coreTools.has(tool)), `${name} references non-core tools`).toEqual([]);
-  expect(body).toContain("tokengraph_setup({})");
+  expect(body).toContain("tokengraph_setup({ confirmNoLegacyProcesses: true })");
   expect(body).toContain("tokengraph_prepare_context");
-  expect(body).toMatch(/tokengraph_setup\(\{\}\)[^\n]*capture[^\n]*trustedWorkspace\.root[^\n]*trusted root/i);
+  expect(body).toMatch(/tokengraph_setup\(\{ confirmNoLegacyProcesses: true \}\)[^\n]*capture[^\n]*trustedWorkspace\.root[^\n]*trusted root/i);
   expect(body).toMatch(/prepare_context[^.]*only when[^.]*plan/i);
   expect(body).toMatch(/omit[^.]*taskId[^.]*auto-start[^.]*return[^.]*taskId/i);
   expect(body).toMatch(/capture[^.]*returned taskId/i);

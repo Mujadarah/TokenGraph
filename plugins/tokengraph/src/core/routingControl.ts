@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
-import { canonicalPersistenceLockKey, quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
+import { canonicalPersistenceLock } from "./lockDomain.js";
+import { quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
 import { repositoryDir } from "./persistence.js";
 import type { RoutingControl, RoutingPromotionReport } from "./types.js";
 
@@ -80,7 +81,7 @@ export async function saveRoutingControl(root: string, control: RoutingControl):
   const directory = await repositoryDir(root);
   const path = routingControlPath(directory);
   const normalized = normalize(control);
-  const key = await canonicalPersistenceLockKey(directory, "routing-control.json");
-  await withFileLock(`${key}.lock`, () => writeJsonAtomic(path, normalized));
+  const lock = await canonicalPersistenceLock(root, "repository-state", "routing-control.json");
+  await withFileLock(lock, () => writeJsonAtomic(path, normalized));
   return normalized;
 }

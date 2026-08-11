@@ -145,13 +145,22 @@ class JsonRpcClient {
 
   async close() {
     if (this.child.exitCode !== null) return;
-    await new Promise((resolveClose) => {
-      const timeout = setTimeout(resolveClose, 1000);
-      this.child.once("exit", () => {
-        clearTimeout(timeout);
-        resolveClose();
-      });
-      this.child.kill();
+    this.child.stdin.end();
+    if (await this.waitForExit(1000)) return;
+    if (!this.child.kill() && this.child.exitCode === null) {
+      throw new Error("Timed out waiting for the MCP server process to exit cleanly.");
+    }
+    if (await this.waitForExit(5000)) return;
+    throw new Error("Timed out waiting for the MCP server process to exit cleanly.");
+  }
+
+  async waitForExit(timeoutMs) {
+    if (this.child.exitCode !== null) return true;
+    return await new Promise((resolveExit) => {
+      const timeout = setTimeout(() => { cleanup(); resolveExit(false); }, timeoutMs);
+      const onExit = () => { cleanup(); resolveExit(true); };
+      const cleanup = () => { clearTimeout(timeout); this.child.off("exit", onExit); };
+      this.child.once("exit", onExit);
     });
   }
 }
@@ -207,7 +216,7 @@ async function runSmoke() {
     }
 
     const setup = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_setup", arguments: {} }),
+      await client.request("tools/call", { name: "tokengraph_setup", arguments: { confirmNoLegacyProcesses: true } }),
       "tokengraph_setup"
     );
     const prepared = assertToolResult(

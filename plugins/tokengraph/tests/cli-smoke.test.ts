@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { access, copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { unzipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
+import { externalRuntimeEnvironment, externalRuntimeRoot, externalServerEntry } from "./support/externalRuntime.js";
 
 const execFileAsync = promisify(execFile);
 const tempRoots: string[] = [];
@@ -53,8 +54,8 @@ describe("tokengraph CLI smoke command", () => {
 
     const { stdout } = await execFileAsync(
       process.execPath,
-      [resolve("scripts", "smoke.mjs"), "--root", root, "--json"],
-      { cwd: process.cwd() }
+      [resolve("scripts", "smoke.mjs"), "--root", root, "--server", externalServerEntry, "--json"],
+      { cwd: process.cwd(), env: externalRuntimeEnvironment() }
     );
 
     const report = JSON.parse(stdout) as {
@@ -86,8 +87,8 @@ describe("tokengraph CLI smoke command", () => {
 
     const { stdout } = await execFileAsync(
       process.execPath,
-      [resolve("scripts", "smoke.mjs"), "--root", root, "--surface", "full", "--json"],
-      { cwd: process.cwd() }
+      [resolve("scripts", "smoke.mjs"), "--root", root, "--server", externalServerEntry, "--surface", "full", "--json"],
+      { cwd: process.cwd(), env: externalRuntimeEnvironment() }
     );
     const report = JSON.parse(stdout) as { status: string; toolSurface: string; tools: string[] };
     expect(report).toMatchObject({ status: "ok", toolSurface: "full" });
@@ -140,8 +141,8 @@ describe("tokengraph CLI smoke command", () => {
 
     const { stdout } = await execFileAsync(
       process.execPath,
-      [resolve("scripts", "smoke.mjs"), "--", "--root", root, "--json"],
-      { cwd: process.cwd() }
+      [resolve("scripts", "smoke.mjs"), "--", "--root", root, "--server", externalServerEntry, "--json"],
+      { cwd: process.cwd(), env: externalRuntimeEnvironment() }
     );
 
     expect(JSON.parse(stdout)).toMatchObject({
@@ -160,20 +161,20 @@ describe("tokengraph CLI smoke command", () => {
   });
 
   it("runs from a copied plugin cache without node_modules", async () => {
-    const cacheRoot = await makeRoot();
+    const cacheParent = await makeRoot();
+    const cacheRoot = join(cacheParent, "plugin");
     const projectRoot = await makeRoot();
     await mkdir(join(projectRoot, "src"), { recursive: true });
     await writeFile(join(projectRoot, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
-    await cp(resolve("dist"), join(cacheRoot, "dist"), { recursive: true });
+    await cp(externalRuntimeRoot, cacheRoot, { recursive: true });
     await cp(resolve(".codex-plugin"), join(cacheRoot, ".codex-plugin"), { recursive: true });
     await cp(resolve(".mcp.json"), join(cacheRoot, ".mcp.json"));
-    await cp(resolve("package.json"), join(cacheRoot, "package.json"));
 
     await expect(access(join(cacheRoot, "node_modules"))).rejects.toThrow();
     const { stdout } = await execFileAsync(
       process.execPath,
       [resolve("scripts", "smoke.mjs"), "--root", projectRoot, "--server", join(cacheRoot, "dist", "index.js"), "--json"],
-      { cwd: process.cwd() }
+      { cwd: process.cwd(), env: externalRuntimeEnvironment() }
     );
 
     expect(JSON.parse(stdout)).toMatchObject({
@@ -220,8 +221,8 @@ describe("tokengraph benchmark harness and trust docs", () => {
       criticalConstraintPreservationRate: 1,
       criticalFalseNegativeCount: 0,
       requiredFileRecall: 1,
-      medianNetSavings: 182.53333333333333,
-      executionInclusiveP25: 40.53333333333333,
+      medianNetSavings: 180.53333333333333,
+      executionInclusiveP25: 38.53333333333333,
       nonNegativeActivatedRate: expect.any(Number),
       taskFailures: []
     });
@@ -331,7 +332,7 @@ describe("tokengraph focused skills", () => {
 
       expect(skill).toMatch(/^---[\s\S]*\nname:\s*\S+[\s\S]*\ndescription:\s*Use when\b[^\n]+\n---/);
       expect(skill).toMatch(/When not to use/i);
-      expect(skill).toMatch(/tokengraph_setup\(\{\}\)/);
+      expect(skill).toMatch(/tokengraph_setup\(\{ confirmNoLegacyProcesses: true \}\)/);
       expect(skill).toMatch(/tokengraph_prepare_context/);
       expect(skill).toMatch(/tokengraph_task_report/);
       expect(skill).toMatch(/disposition: "pause"/);
@@ -575,9 +576,9 @@ describe("tokengraph release package command", () => {
       filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts"].includes(source.split(/[\\/]/).at(-1) ?? "")
     });
     const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
-    const copiedReleaseDist = join(repoCopy, "release", "tokengraph", "dist");
-    await copyFile(join(copiedPlugin, "dist", "polyglot-worker.js"), join(copiedReleaseDist, "polyglot-worker.js"));
-    await copyFile(join(copiedPlugin, "dist", "typescript-worker.cjs"), join(copiedReleaseDist, "typescript-worker.cjs"));
+    await execFileAsync(process.execPath, [resolve("scripts", "package-plugin.mjs"), "--release", "--out-release", join(repoCopy, "release", "tokengraph"), "--json"], {
+      cwd: process.cwd()
+    });
     const driftedSkill = join(repoCopy, "release", "tokengraph", "skills", "tokengraph", "SKILL.md");
     await writeFile(driftedSkill, `${await readFile(driftedSkill, "utf8")}\nDrifted release copy.\n`);
 

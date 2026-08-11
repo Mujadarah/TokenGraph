@@ -8,13 +8,29 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_TOKEN_GRAPH_CONFIG, saveTokenGraphConfig } from "../src/core/config.js";
 import { createTaskLedger, loadTaskLedger, setTaskDisposition } from "../src/core/taskLedger.js";
+import { externalCliEntry, externalRuntimeEnvironment } from "./support/externalRuntime.js";
 
 const execFileAsync = promisify(execFile);
+const cliOptions = { cwd: process.cwd(), env: externalRuntimeEnvironment() };
 
 describe("tokengraph run CLI", () => {
   it("prints evaluate-host help without starting a host run", async () => {
-    const result = await execFileAsync(process.execPath, [resolve("dist", "cli.js"), "evaluate-host", "--help"], { cwd: process.cwd() });
+    const result = await execFileAsync(process.execPath, [externalCliEntry, "evaluate-host", "--help"], cliOptions);
     expect(result.stdout).toMatch(/evaluate-host.*--controller-root.*--protocol.*--dry-run/is);
+  });
+
+  it("requires explicit no-legacy confirmation before a lock-taking invocation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-cli-confirmation-"));
+    const marker = join(root, "spawned.marker");
+    try {
+      await expect(execFileAsync(process.execPath, [
+        externalCliEntry, "run", "--root", root,
+        "--", process.execPath, "-e", `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'spawned')`
+      ], cliOptions)).rejects.toMatchObject({ stderr: expect.stringMatching(/--confirm-no-legacy-processes/i) });
+      await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("links a real failed command to an active task as a verified scoped outcome", async () => {
@@ -22,10 +38,11 @@ describe("tokengraph run CLI", () => {
     try {
       const ledger = await createTaskLedger(root, { host: "codex" });
       const result = await execFileAsync(process.execPath, [
-        resolve("dist", "cli.js"), "run", "--root", root, "--task-id", ledger.taskId,
+        externalCliEntry, "run", "--root", root, "--task-id", ledger.taskId, "--confirm-no-legacy-processes",
         "--", process.execPath, "-e", "process.exit(7)"
-      ], { cwd: process.cwd() }).catch((error: unknown) => error as { stdout: string });
+      ], cliOptions).catch((error: unknown) => error as { message: string; code: number | string; signal?: string; stdout: string; stderr: string });
 
+      if (!result.stdout.trim()) throw new Error(`CLI produced no JSON result: ${JSON.stringify(result, Object.getOwnPropertyNames(result))}`);
       expect(JSON.parse(result.stdout)).toMatchObject({ status: "failed", exitCode: 7 });
       const stored = await loadTaskLedger(root, ledger.taskId);
       expect(stored?.outcomes).toEqual([
@@ -50,9 +67,9 @@ describe("tokengraph run CLI", () => {
       const ledger = await createTaskLedger(root, { host: "codex" });
       const path = join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`);
       const result = await execFileAsync(process.execPath, [
-        resolve("dist", "cli.js"), "run", "--root", root, "--task-id", ledger.taskId,
+        externalCliEntry, "run", "--root", root, "--task-id", ledger.taskId, "--confirm-no-legacy-processes",
         "--", process.execPath, "-e", `require('node:fs').unlinkSync(${JSON.stringify(path)}); process.exit(7)`
-      ], { cwd: process.cwd() }).catch((error: unknown) => error) as { code: number; stdout: string; stderr: string };
+      ], cliOptions).catch((error: unknown) => error) as { code: number; stdout: string; stderr: string };
 
       expect(result.code).toBe(1);
       expect(JSON.parse(result.stdout)).toMatchObject({ status: "failed", exitCode: 7 });
@@ -83,9 +100,9 @@ describe("tokengraph run CLI", () => {
       ]) {
         const marker = join(root, `${label}.marker`);
         await expect(execFileAsync(process.execPath, [
-          resolve("dist", "cli.js"), "run", "--root", root, "--task-id", taskId,
+          externalCliEntry, "run", "--root", root, "--task-id", taskId, "--confirm-no-legacy-processes",
           "--", process.execPath, "-e", `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'spawned')`
-        ], { cwd: process.cwd() })).rejects.toMatchObject({ stderr: expect.stringMatching(/task|ledger|branch/i) });
+        ], cliOptions)).rejects.toMatchObject({ stderr: expect.stringMatching(/task|ledger|branch/i) });
         await expect(access(marker)).rejects.toThrow();
       }
     } finally {
@@ -133,8 +150,8 @@ describe("tokengraph run CLI", () => {
         tasks, traces
       }));
       const evaluated = await execFileAsync(process.execPath, [
-        resolve("dist", "cli.js"), "evaluate-routing", "--root", root, "--manifest", manifestPath
-      ], { cwd: process.cwd() });
+        externalCliEntry, "evaluate-routing", "--root", root, "--manifest", manifestPath, "--confirm-no-legacy-processes"
+      ], cliOptions);
       expect(JSON.parse(evaluated.stdout)).toMatchObject({ enforcementEnabled: true, promotion: { enforcementEnabled: true } });
       expect(JSON.parse(await readFile(join(root, ".tokengraph", "repository", "routing-control.json"), "utf8"))).toMatchObject({ promotion: { enforcementEnabled: true } });
     } finally {
@@ -147,10 +164,10 @@ describe("tokengraph run CLI", () => {
     try {
       await saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
       const first = await execFileAsync(process.execPath, [
-        resolve("dist", "cli.js"), "run", "--root", root,
+        externalCliEntry, "run", "--root", root, "--confirm-no-legacy-processes",
         "--file", "src/example.ts", "--error-class", "ExplicitFailure",
         "--", process.execPath, "-e", "console.log('ok')"
-      ], { cwd: process.cwd() });
+      ], cliOptions);
       const firstReport = JSON.parse(first.stdout) as { runId: string };
       const saved = JSON.parse(await readFile(join(root, ".tokengraph", "runs", `${firstReport.runId}.json`), "utf8")) as { metadata?: object };
       expect(saved.metadata).toEqual({ file: "src/example.ts", errorClass: "ExplicitFailure" });
@@ -160,9 +177,9 @@ describe("tokengraph run CLI", () => {
         storage: { ...DEFAULT_TOKEN_GRAPH_CONFIG.storage, runRetentionDays: 0 }
       });
       await execFileAsync(process.execPath, [
-        resolve("dist", "cli.js"), "run", "--root", root,
+        externalCliEntry, "run", "--root", root, "--confirm-no-legacy-processes",
         "--", process.execPath, "-e", "console.log('purge')"
-      ], { cwd: process.cwd() });
+      ], cliOptions);
       expect((await readdir(join(root, ".tokengraph", "runs"))).filter((entry) => entry.endsWith(".json"))).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -177,17 +194,17 @@ describe("tokengraph run CLI", () => {
         storage: { ...DEFAULT_TOKEN_GRAPH_CONFIG.storage, runsMaxBytes: 1 }
       });
       await expect(execFileAsync(process.execPath, [
-        resolve("dist", "cli.js"), "run", "--root", root,
+        externalCliEntry, "run", "--root", root, "--confirm-no-legacy-processes",
         "--", process.execPath, "-e", "console.log('too large')"
-      ], { cwd: process.cwd() })).rejects.toMatchObject({ stderr: expect.stringMatching(/runs.*purge/i) });
+      ], cliOptions)).rejects.toMatchObject({ stderr: expect.stringMatching(/runs.*purge/i) });
       expect((await readdir(join(root, ".tokengraph", "runs")).catch(() => [])).filter((entry) => entry.endsWith(".json"))).toEqual([]);
 
       await mkdir(join(root, ".tokengraph", "wiki"), { recursive: true });
       await writeFile(join(root, ".tokengraph", "index.json"), "{}");
       await writeFile(join(root, ".tokengraph", "wiki", "page.md"), "derived");
       const purge = await execFileAsync(process.execPath, [
-        resolve("dist", "cli.js"), "purge", "--root", root, "--class", "cache"
-      ], { cwd: process.cwd() });
+        externalCliEntry, "purge", "--root", root, "--class", "cache", "--confirm-no-legacy-processes"
+      ], cliOptions);
       expect(JSON.parse(purge.stdout)).toMatchObject({ class: "cache", removed: expect.arrayContaining([".tokengraph/index.json", ".tokengraph/wiki"]) });
       await expect(access(join(root, ".tokengraph", "index.json"))).rejects.toThrow();
     } finally {

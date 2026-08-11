@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, win32 } from "node:path";
 
-import { canonicalPersistenceLockKey, quarantineCorruptJson, resolveConfinedPath, SAFE_WIKI_SLUG_PATTERN, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
+import { canonicalPersistenceLock } from "./lockDomain.js";
+import { quarantineCorruptJson, resolveConfinedPath, SAFE_WIKI_SLUG_PATTERN, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
 
 export type KnowledgeSuggestionType = "wiki" | "memory" | "skill";
 export type KnowledgeSuggestionStatus = "proposed" | "approved" | "rejected" | "expired";
@@ -484,11 +485,12 @@ async function assertFreshForApproval(root: string, suggestion: KnowledgeSuggest
 }
 
 async function enqueueQueueOperation<T>(root: string, operation: () => Promise<T>): Promise<T> {
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "review-queue.json");
+  const lock = await canonicalPersistenceLock(root, "workspace-state", "review-queue.json");
+  const key = lock.compatibilityPath;
   const previous = queueWriteChains.get(key) ?? Promise.resolve();
   const current = previous.then(
-    () => withFileLock(`${key}.lock`, operation),
-    () => withFileLock(`${key}.lock`, operation)
+    () => withFileLock(lock, operation),
+    () => withFileLock(lock, operation)
   );
   let settled: Promise<void>;
   const cleanUp = (): void => {

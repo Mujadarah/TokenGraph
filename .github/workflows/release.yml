@@ -36,6 +36,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install pinned native-test Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup target add x86_64-unknown-linux-gnu --toolchain 1.97.1
+
       - name: Typecheck
         run: pnpm typecheck
 

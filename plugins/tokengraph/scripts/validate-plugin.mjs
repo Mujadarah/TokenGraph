@@ -114,7 +114,7 @@ async function assertRequiredFocusedSkills(skillsRoot, label, coreLifecycle = fa
     assert(/^---[\s\S]*\nname:\s*\S+[\s\S]*\ndescription:\s*\S+[\s\S]*\n---/.test(skill), `${label} skill ${skillDir} must include name and description frontmatter`);
     if (coreLifecycle) {
       assert(/When not to use/i.test(skill), `${label} skill ${skillDir} must define a negative trigger boundary`);
-      assert(/tokengraph_setup\(\{\}\)/.test(skill), `${label} skill ${skillDir} must begin with core setup`);
+      assert(/tokengraph_setup\(\{ confirmNoLegacyProcesses: true \}\)/.test(skill), `${label} skill ${skillDir} must begin with core setup`);
       assert(/tokengraph_prepare_context/.test(skill), `${label} skill ${skillDir} must create a task`);
       assert(/tokengraph_task_report/.test(skill), `${label} skill ${skillDir} must report its disposition`);
       assert(/disposition: "pause"/.test(skill) && /tokengraph_task_report\(\{ taskId \}\)/.test(skill) && /compact reporting is the default/i.test(skill), `${label} skill ${skillDir} must define pause and default compact completion behavior`);

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rename } from "node:fs/promises";
-import { resolve } from "node:path";
 
 import { filterUntrustedSourceText } from "./storagePolicy.js";
+import type { CanonicalPersistenceLock } from "./lockDomain.js";
 import { tokenize } from "./token.js";
 import { withFileLock, writeJsonAtomic } from "./storage.js";
 import type { MemoryConflict, MemoryEntry, MemoryInput, MemoryRecall, MemoryStatus, MemoryUpdateInput } from "./types.js";
@@ -152,7 +152,10 @@ function filterByStatus(memories: MemoryEntry[], options: MemoryListOptions): Me
 export class MemoryStore {
   private static readonly writeChains = new Map<string, Promise<void>>();
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly lock: CanonicalPersistenceLock
+  ) {}
 
   async list(options: MemoryListOptions = {}): Promise<MemoryEntry[]> {
     return filterByStatus(await this.readAll(), options);
@@ -361,11 +364,11 @@ export class MemoryStore {
   }
 
   private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
-    const key = resolve(this.filePath);
+    const key = this.lock.compatibilityPath;
     const previous = MemoryStore.writeChains.get(key) ?? Promise.resolve();
     const current = previous.then(
-      () => withFileLock(`${key}.lock`, operation),
-      () => withFileLock(`${key}.lock`, operation)
+      () => withFileLock(this.lock, operation),
+      () => withFileLock(this.lock, operation)
     );
     MemoryStore.writeChains.set(
       key,

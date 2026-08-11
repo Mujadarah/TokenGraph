@@ -13,7 +13,7 @@ Do not use for source-only changes that cannot affect packaging, installation, v
 
 Follow the common lifecycle in the general `tokengraph` skill:
 
-1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root; if blocked, follow recovery and do not invent a taskId.
+1. After confirming every TokenGraph v0.23.1 MCP and CLI process is stopped, call `tokengraph_setup({ confirmNoLegacyProcesses: true })` and capture `trustedWorkspace.root` as the trusted root; if that confirmation is not true, stop without activating, and if setup is blocked, follow recovery and do not invent a taskId.
 2. Use `tokengraph_prepare_context({ task })` only when a release retrieval plan is needed; capture the returned taskId. Otherwise omit `taskId` from the first direct intent call so it can auto-start the ledger and return a taskId; capture the returned taskId. Use `tokengraph_query_context` to locate manifests, scripts, validators, source/release boundaries, and install docs.
 3. Call `tokengraph_analyze({ taskId, mode: "risk", changedFiles, diffSummary?, task? })`. Reuse the exact taskId. Compress oversized gate failures with `tokengraph_compress({ taskId, mode: "output", kind, text })`. The trusted root may be omitted after ready setup when host workspace resolution is stable; otherwise pass only the captured trusted root.
 4. Run exact source gates: `pnpm typecheck`, full tests (`pnpm test`), `pnpm build`, core smoke, full smoke, and `pnpm validate:plugin`. Run the package command required by the repository.

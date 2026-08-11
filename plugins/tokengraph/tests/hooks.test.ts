@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -8,14 +8,21 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { formatTaskReportFooter } from "../src/core/taskEstimator.js";
 import {
+  __compareHostWorkspaceStatsForTests,
+  attestHostWorkspace,
+  loadHostWorkspaceAttestation,
+  removeHostWorkspaceAttestation
+} from "../src/core/hostWorkspace.js";
+import {
   createTaskLedger,
   loadTaskLedger,
   recordTaskEvent,
   setTaskDisposition,
   type TaskEvent
 } from "../src/core/taskLedger.js";
+import { externalHooksEntry, externalRuntimeEnvironment } from "./support/externalRuntime.js";
 
-const hookEntry = resolve(process.env.TOKENGRAPH_HOOK_ENTRY ?? resolve("dist", "hooks.js"));
+const hookEntry = process.env.TOKENGRAPH_HOOK_ENTRY ? resolve(process.env.TOKENGRAPH_HOOK_ENTRY) : externalHooksEntry;
 const hookPluginRoot = resolve(dirname(hookEntry), "..");
 const roots: string[] = [];
 const attestationPaths: string[] = [];
@@ -49,24 +56,24 @@ interface HookRun {
 }
 
 async function runHook(
-  event: "post-tool-use" | "session-end" | "session-start" | "stop" | "stop-failure" | "user-prompt-submit",
-  input: Record<string, unknown>,
-  env: Record<string, string | undefined> = {}
+  event: string,
+  input: unknown,
+  env: Record<string, string | undefined> = {},
+  options: { extraArgs?: string[]; rawInput?: string } = {}
 ): Promise<HookRun> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
+    const childEnv: NodeJS.ProcessEnv = externalRuntimeEnvironment({
       PLUGIN_ROOT: undefined,
       PLUGIN_DATA: undefined,
       CLAUDE_PLUGIN_ROOT: undefined,
       CLAUDE_PLUGIN_DATA: undefined,
       TOKENGRAPH_HOOK_HOST: undefined,
       ...env
-    };
+    });
     for (const key of Object.keys(childEnv)) {
       if (childEnv[key] === undefined) delete childEnv[key];
     }
-    const child = spawn(process.execPath, [hookEntry, event], {
+    const child = spawn(process.execPath, [hookEntry, event, ...(options.extraArgs ?? [])], {
       cwd: process.cwd(),
       env: childEnv,
       stdio: ["pipe", "pipe", "pipe"]
@@ -88,17 +95,35 @@ async function runHook(
       }
       resolvePromise({ code, stdout, stderr, output });
     });
-    child.stdin.end(`${JSON.stringify(input)}\n`);
+    child.stdin.end(options.rawInput ?? `${JSON.stringify(input)}\n`);
   });
 }
 
-async function attestationPath(sessionId: string): Promise<string> {
-  const canonicalPluginRoot = await realpath(hookPluginRoot);
+async function attestationPath(sessionId: string, pluginRoot = hookPluginRoot): Promise<string> {
+  const canonicalPluginRoot = await realpath(pluginRoot);
   const pluginHash = createHash("sha256").update(canonicalPluginRoot).digest("hex");
   const sessionIdHash = createHash("sha256").update(sessionId).digest("hex");
   const path = join(tmpdir(), "tokengraph-host-workspaces", pluginHash, `${sessionIdHash}.json`);
   attestationPaths.push(path);
   return path;
+}
+
+function pluginEnvironment(dataRoot: string): Record<string, string> {
+  return { PLUGIN_ROOT: hookPluginRoot, PLUGIN_DATA: dataRoot };
+}
+
+async function attestWorkspace(
+  root: string,
+  dataRoot: string,
+  sessionId = "session-private-value",
+  env: Record<string, string | undefined> = pluginEnvironment(dataRoot)
+): Promise<HookRun> {
+  await attestationPath(sessionId, env.PLUGIN_ROOT ?? env.CLAUDE_PLUGIN_ROOT ?? hookPluginRoot);
+  return runHook("session-start", {
+    hook_event_name: "SessionStart",
+    session_id: sessionId,
+    cwd: root
+  }, env);
 }
 
 function pointerPath(dataRoot: string, sessionId: string): string {
@@ -134,19 +159,25 @@ async function attachPointer(
   root: string,
   dataRoot: string,
   taskId: string,
-  options: { sessionId?: string; turnId?: string; toolName?: string; env?: Record<string, string | undefined> } = {}
+  options: { sessionId?: string; turnId?: string; toolName?: string; env?: Record<string, string | undefined>; attest?: boolean } = {}
 ): Promise<HookRun> {
   const sessionId = options.sessionId ?? "session-private-value";
+  const env = {
+    CLAUDE_PLUGIN_ROOT: hookPluginRoot,
+    CLAUDE_PLUGIN_DATA: dataRoot,
+    ...options.env
+  };
+  if (options.attest !== false) {
+    const attested = await attestWorkspace(root, dataRoot, sessionId, env);
+    expect(attested.output).toEqual({});
+  }
   return runHook("post-tool-use", postInput({
     session_id: sessionId,
     turn_id: options.turnId ?? "turn-1",
     tool_name: options.toolName ?? "mcp__tokengraph__tokengraph_query_context",
-    tool_input: { taskId, root }
-  }), {
-    CLAUDE_PLUGIN_ROOT: process.cwd(),
-    CLAUDE_PLUGIN_DATA: dataRoot,
-    ...options.env
-  });
+    tool_input: { root },
+    tool_response: { structuredContent: { taskId, root } }
+  }), env);
 }
 
 afterEach(async () => {
@@ -157,10 +188,42 @@ afterEach(async () => {
 });
 
 describe("built lifecycle hook process", () => {
+  it("compares exact bigint identities for files, directories, and same-directory renames", () => {
+    const base = {
+      dev: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+      ino: BigInt(Number.MAX_SAFE_INTEGER) + 3n,
+      mode: 0o100600n,
+      nlink: 1n,
+      size: 257n,
+      birthtimeNs: 9_000_000_000_000_000_001n,
+      mtimeNs: 9_000_000_000_000_000_101n,
+      ctimeNs: 9_000_000_000_000_000_201n
+    };
+    expect(Number(base.dev)).toBe(Number(base.dev + 1n));
+    expect(__compareHostWorkspaceStatsForTests(base, { ...base, dev: base.dev + 1n }, "file")).toBe(false);
+    expect(Number(base.mtimeNs) / 1_000_000).toBe(Number(base.mtimeNs + 1n) / 1_000_000);
+    expect(__compareHostWorkspaceStatsForTests(base, { ...base, mtimeNs: base.mtimeNs + 1n }, "file")).toBe(false);
+
+    expect(__compareHostWorkspaceStatsForTests(base, {
+      ...base, nlink: 5n, size: 263n, mtimeNs: 9_000_000_000_000_000_301n, ctimeNs: 9_000_000_000_000_000_401n
+    }, "directory")).toBe(true);
+    for (const field of ["dev", "ino", "mode", "birthtimeNs"] as const) {
+      expect(__compareHostWorkspaceStatsForTests(base, { ...base, [field]: base[field] + 1n }, "directory"), field).toBe(false);
+    }
+
+    expect(__compareHostWorkspaceStatsForTests(base, {
+      ...base, birthtimeNs: base.birthtimeNs + 1n, ctimeNs: base.ctimeNs + 1n
+    }, "rename")).toBe(true);
+    for (const field of ["dev", "ino", "mode", "nlink", "size", "mtimeNs"] as const) {
+      expect(__compareHostWorkspaceStatsForTests(base, { ...base, [field]: base[field] + 1n }, "rename"), field).toBe(false);
+    }
+  });
+
   it("refreshes the same Desktop session attestation from SessionStart through UserPromptSubmit", async () => {
     const root = await makeRoot("tokengraph-hook-workspace-");
+    const dataRoot = await makeRoot("tokengraph-hook-workspace-data-");
     const secret = "prompt-content-must-not-persist";
-    const env = { PLUGIN_ROOT: hookPluginRoot };
+    const env = pluginEnvironment(dataRoot);
     const sessionId = randomUUID();
     const path = await attestationPath(sessionId);
 
@@ -212,23 +275,63 @@ describe("built lifecycle hook process", () => {
     await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("extracts compact prepare from the real single-TextContent response and host cwd without persisting response text", async () => {
+  it("refreshes fixed-name host and pointer entries without delaying or retrying NTFS publication", async () => {
+    const root = await makeRoot("tokengraph-hook-fixed-refresh-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-fixed-refresh-data-");
+    const sessionId = `fixed-refresh-${randomUUID()}`;
+    const ledger = await createTaskLedger(root, { host: "unknown" });
+    const hostPath = await attestationPath(sessionId);
+    const sessionPath = pointerPath(dataRoot, sessionId);
+    const env = pluginEnvironment(dataRoot);
+
+    expect((await attestWorkspace(root, dataRoot, sessionId, env)).output).toEqual({});
+    expect((await runHook("post-tool-use", postInput({
+      session_id: sessionId,
+      turn_id: "fixed-refresh-1",
+      tool_input: { root },
+      tool_response: { structuredContent: { taskId: ledger.taskId, root } }
+    }), env)).output).toEqual({});
+    const [hostBefore, pointerBefore] = await Promise.all([
+      lstat(hostPath, { bigint: true }), lstat(sessionPath, { bigint: true })
+    ]);
+
+    expect((await attestWorkspace(root, dataRoot, sessionId, env)).output).toEqual({});
+    expect((await runHook("post-tool-use", postInput({
+      session_id: sessionId,
+      turn_id: "fixed-refresh-2",
+      tool_input: { root },
+      tool_response: { structuredContent: { taskId: ledger.taskId, root } }
+    }), env)).output).toEqual({});
+    const [hostAfter, pointerAfter] = await Promise.all([
+      lstat(hostPath, { bigint: true }), lstat(sessionPath, { bigint: true })
+    ]);
+
+    for (const [before, after] of [[hostBefore, hostAfter], [pointerBefore, pointerAfter]] as const) {
+      expect(after.nlink).toBe(1n);
+      expect({ dev: after.dev, ino: after.ino }).not.toEqual({ dev: before.dev, ino: before.ino });
+    }
+  });
+
+  it("never treats JSON TextContent as initial task authority", async () => {
     const root = await makeRoot("tokengraph-hook-root-");
     const dataRoot = await makeRoot("tokengraph-hook-data-");
     const ledger = await createTaskLedger(root, { host: "unknown" });
     const secret = "raw-response-secret-that-must-not-persist";
+    const ledgerBefore = await readFile(join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`), "utf8");
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
 
     const run = await runHook("post-tool-use", postInput({
       tool_name: "mcp__any_namespace__tokengraph_prepare_context",
-      tool_input: { task: "prepare", nested: { taskId: randomUUID(), root: "C:/wrong" } },
+      tool_input: { task: "prepare", privatePrompt: secret, nested: { taskId: randomUUID(), root: "C:/wrong" } },
       tool_response: {
-        content: [{ type: "text", text: JSON.stringify({ taskId: ledger.taskId, plan: { confidence: "high" } }) }]
+        content: [{ type: "text", text: JSON.stringify({ taskId: ledger.taskId, root, secret, plan: { confidence: "high" } }) }]
       },
       cwd: root,
+      prompt: secret,
+      transcript: secret,
       raw_payload: secret
     }), {
-      PLUGIN_ROOT: process.cwd(),
-      PLUGIN_DATA: dataRoot
+      ...pluginEnvironment(dataRoot)
     });
 
     expect(run.code).toBe(0);
@@ -236,24 +339,8 @@ describe("built lifecycle hook process", () => {
     expect(run.stdout.trim().split(/\r?\n/)).toHaveLength(1);
     expect(run.stderr).not.toContain(secret);
     const path = pointerPath(dataRoot, "session-private-value");
-    const pointerText = await readFile(path, "utf8");
-    const pointer = JSON.parse(pointerText) as Record<string, unknown>;
-    expect(Object.keys(pointer).sort()).toEqual([
-      "root", "schemaId", "schemaVersion", "sessionHash", "taskId", "turnId", "updatedAt"
-    ].sort());
-    expect(pointer).toMatchObject({
-      schemaId: "tokengraph-hook-session",
-      schemaVersion: 1,
-      sessionHash: createHash("sha256").update("session-private-value").digest("hex"),
-      taskId: ledger.taskId,
-      root,
-      turnId: "turn-1"
-    });
-    expect(pointerText).not.toContain("session-private-value");
-    expect(pointerText).not.toContain(secret);
-    expect(await loadTaskLedger(root, ledger.taskId)).toMatchObject({
-      host: "codex", sessionId: "session-private-value", turnId: "turn-1"
-    });
+    await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`), "utf8")).toBe(ledgerBefore);
   });
 
   it.each([
@@ -266,18 +353,19 @@ describe("built lifecycle hook process", () => {
     const dataRoot = await makeRoot("tokengraph-hook-direct-data-");
     const ledger = await createTaskLedger(root, { host: "unknown" });
     await recordTaskEvent(root, ledger.taskId, taskEvent());
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
     const run = await runHook("post-tool-use", postInput({
       tool_name: `mcp__tokengraph__${toolName}`,
       tool_input: { mode: "overview" },
-      tool_response: { content: [{ type: "text", text: JSON.stringify({ taskId: ledger.taskId, confidence: "high" }) }] },
+      tool_response: { structuredContent: { taskId: ledger.taskId, confidence: "high" } },
       cwd: root
-    }), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot });
+    }), pluginEnvironment(dataRoot));
 
     expect(run.code).toBe(0);
     expect(JSON.parse(await readFile(pointerPath(dataRoot, "session-private-value"), "utf8"))).toMatchObject({
-      taskId: ledger.taskId, root
+      taskId: ledger.taskId, schemaVersion: 2
     });
-    const stopped = await runHook("stop", stopInput(), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot });
+    const stopped = await runHook("stop", stopInput(), pluginEnvironment(dataRoot));
     expect(stopped.output).toMatchObject({ decision: "block", reason: expect.stringContaining("tokengraph_task_report") });
   });
 
@@ -285,13 +373,14 @@ describe("built lifecycle hook process", () => {
     const root = await makeRoot("tokengraph-hook-explicit-root-");
     const dataRoot = await makeRoot("tokengraph-hook-explicit-data-");
     const ledger = await createTaskLedger(root, { host: "unknown" });
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
     const run = await runHook("post-tool-use", postInput({
       tool_name: "mcp__tokengraph__tokengraph_query_context",
       tool_input: { root, mode: "overview" },
-      tool_response: { content: [{ type: "text", text: JSON.stringify({ taskId: ledger.taskId, confidence: "high" }) }] }
-    }), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot });
+      tool_response: { structuredContent: { taskId: ledger.taskId, confidence: "high" } }
+    }), pluginEnvironment(dataRoot));
     expect(run.code).toBe(0);
-    expect(JSON.parse(await readFile(pointerPath(dataRoot, "session-private-value"), "utf8"))).toMatchObject({ taskId: ledger.taskId, root });
+    expect(JSON.parse(await readFile(pointerPath(dataRoot, "session-private-value"), "utf8"))).toMatchObject({ taskId: ledger.taskId, schemaVersion: 2 });
   });
 
   it.each([
@@ -311,7 +400,8 @@ describe("built lifecycle hook process", () => {
     });
     expect(run.code).toBe(0);
     expect(run.output).toEqual({});
-    expect(await loadTaskLedger(root, ledger.taskId)).toMatchObject({ host: "claude" });
+    expect(await loadTaskLedger(root, ledger.taskId)).toMatchObject({ host: "unknown" });
+    expect(await loadTaskLedger(root, ledger.taskId)).not.toHaveProperty("sessionId");
   });
 
   it("ignores unrelated tools and nested task-looking payloads", async () => {
@@ -319,7 +409,7 @@ describe("built lifecycle hook process", () => {
     const run = await runHook("post-tool-use", postInput({
       tool_name: "mcp__other__search",
       tool_input: { nested: { taskId: randomUUID(), root: "C:/private" } }
-    }), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot });
+    }), pluginEnvironment(dataRoot));
     expect(run.output).toEqual({});
     await expect(readdir(join(dataRoot, "sessions"))).rejects.toThrow();
   });
@@ -335,60 +425,60 @@ describe("built lifecycle hook process", () => {
     const run = await runHook("post-tool-use", postInput({
       turn_id: "turn-malformed",
       tool_input: { taskId: randomUUID(), root: "relative-root", nested: { taskId: ledger.taskId, root } }
-    }), { CLAUDE_PLUGIN_ROOT: process.cwd(), CLAUDE_PLUGIN_DATA: dataRoot });
+    }), { CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: dataRoot });
 
-    expect(run.output).toEqual({});
+    expect(run.output).toMatchObject({ systemMessage: expect.stringMatching(/root.*match|tracking.*skipped/i) });
     expect(await readFile(path, "utf8")).toBe(before);
-    expect(await loadTaskLedger(root, ledger.taskId)).toMatchObject({ turnId: "turn-1" });
+    expect(await loadTaskLedger(root, ledger.taskId)).not.toHaveProperty("turnId");
   });
 
-  it("uses explicit host detection first and preserves a known host when detection is unresolved", async () => {
+  it("keeps host association project state immutable while selecting private turn metadata", async () => {
     const root = await makeRoot("tokengraph-hook-host-root-");
     const dataRoot = await makeRoot("tokengraph-hook-host-data-");
     const explicit = await createTaskLedger(root, { host: "unknown" });
     const explicitRun = await attachPointer(root, dataRoot, explicit.taskId, {
-      env: { TOKENGRAPH_HOOK_HOST: "claude", PLUGIN_ROOT: process.cwd() }
+      env: { TOKENGRAPH_HOOK_HOST: "claude" }
     });
     expect(explicitRun.output).toEqual({});
-    expect(await loadTaskLedger(root, explicit.taskId)).toMatchObject({ host: "claude" });
+    expect(await loadTaskLedger(root, explicit.taskId)).toMatchObject({ host: "unknown" });
+    expect(await loadTaskLedger(root, explicit.taskId)).not.toHaveProperty("sessionId");
 
     const implicit = await createTaskLedger(root, { host: "unknown" });
     const implicitSession = "implicit-claude-session";
+    const claudeEnv = { CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: dataRoot };
+    expect((await attestWorkspace(root, dataRoot, implicitSession, claudeEnv)).output).toEqual({});
     const implicitRun = await runHook("post-tool-use", postInput({
       session_id: implicitSession,
       turn_id: undefined,
       prompt_id: "claude-prompt-id",
       tool_use_id: "claude-tool-use-id",
       tool_name: "mcp__tokengraph__tokengraph_recall",
-      tool_input: { taskId: implicit.taskId, root }
-    }), { CLAUDE_PLUGIN_ROOT: process.cwd(), CLAUDE_PLUGIN_DATA: dataRoot });
+      tool_input: { root },
+      tool_response: { structuredContent: { taskId: implicit.taskId, root } }
+    }), claudeEnv);
     expect(implicitRun.output).toEqual({});
-    expect(await loadTaskLedger(root, implicit.taskId)).toMatchObject({
-      host: "claude", sessionId: implicitSession, turnId: "claude-prompt-id"
-    });
+    expect(await loadTaskLedger(root, implicit.taskId)).toMatchObject({ host: "unknown" });
     expect(JSON.parse(await readFile(pointerPath(dataRoot, implicitSession), "utf8"))).toMatchObject({
       turnId: "claude-prompt-id"
     });
 
     const known = await createTaskLedger(root, { host: "codex" });
-    const run = await attachPointer(root, dataRoot, known.taskId, { sessionId: "known-session", env: {
-      PLUGIN_ROOT: undefined,
-      CLAUDE_PLUGIN_ROOT: undefined,
-      TOKENGRAPH_HOOK_HOST: undefined
-    } });
+    const run = await attachPointer(root, dataRoot, known.taskId, { sessionId: "known-session" });
     expect(run.output).toEqual({});
     expect(await loadTaskLedger(root, known.taskId)).toMatchObject({ host: "codex" });
 
     const unknown = await createTaskLedger(root, { host: "unknown" });
+    const unknownSession = "unknown-host-session";
+    expect((await attestWorkspace(root, dataRoot, unknownSession, claudeEnv)).output).toEqual({});
     const unknownRun = await runHook("post-tool-use", postInput({
-      session_id: "unknown-host-session",
+      session_id: unknownSession,
       turn_id: "unknown-host-turn",
-      tool_input: { taskId: unknown.taskId, root }
-    }), { CLAUDE_PLUGIN_DATA: dataRoot });
+      tool_input: { root },
+      tool_response: { structuredContent: { taskId: unknown.taskId, root } }
+    }), claudeEnv);
     expect(unknownRun.output).toEqual({});
-    expect(await loadTaskLedger(root, unknown.taskId)).toMatchObject({
-      host: "unknown", sessionId: "unknown-host-session", turnId: "unknown-host-turn"
-    });
+    expect(await loadTaskLedger(root, unknown.taskId)).toMatchObject({ host: "unknown" });
+    expect(await loadTaskLedger(root, unknown.taskId)).not.toHaveProperty("sessionId");
   });
 
   it("serializes concurrent pointer writes and prunes valid pointers older than 30 days", async () => {
@@ -397,21 +487,43 @@ describe("built lifecycle hook process", () => {
     const ledger = await createTaskLedger(root, { host: "unknown" });
     const sessionsDir = join(dataRoot, "sessions");
     await mkdir(sessionsDir, { recursive: true });
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
     const oldSession = "old-session";
     const oldHash = createHash("sha256").update(oldSession).digest("hex");
     await writeFile(join(sessionsDir, `${oldHash}.json`), `${JSON.stringify({
-      schemaId: "tokengraph-hook-session", schemaVersion: 1, sessionHash: oldHash,
-      taskId: ledger.taskId, root, turnId: "old-turn", updatedAt: "2026-05-01T00:00:00.000Z"
+      schemaId: "tokengraph-hook-session", schemaVersion: 2, sessionHash: oldHash,
+      taskId: ledger.taskId, turnId: "old-turn", updatedAt: "2026-05-01T00:00:00.000Z"
     })}\n`);
 
     const runs = await Promise.all(Array.from({ length: 8 }, (_, index) =>
-      attachPointer(root, dataRoot, ledger.taskId, { turnId: `turn-${index}` })
+      attachPointer(root, dataRoot, ledger.taskId, { turnId: `turn-${index}`, attest: false })
     ));
     expect(runs.map((run) => run.output)).toEqual(Array.from({ length: 8 }, () => ({})));
     const pointer = JSON.parse(await readFile(pointerPath(dataRoot, "session-private-value"), "utf8")) as Record<string, unknown>;
-    expect(pointer).toMatchObject({ taskId: ledger.taskId, root });
+    expect(pointer).toMatchObject({ taskId: ledger.taskId, schemaVersion: 2 });
     expect(pointer.turnId).toMatch(/^turn-[0-7]$/);
     await expect(readFile(join(sessionsDir, `${oldHash}.json`), "utf8")).rejects.toThrow();
+  });
+
+  it("isolates concurrent first writes for different session hashes without lock or temporary residue", async () => {
+    const root = await makeRoot("tokengraph-hook-different-session-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-different-session-data-");
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const sessionIds = Array.from({ length: 8 }, (_, index) => `different-session-${index}`);
+    for (const sessionId of sessionIds) {
+      expect((await attestWorkspace(root, dataRoot, sessionId)).output).toEqual({});
+    }
+    const runs = await Promise.all(sessionIds.map((sessionId, index) =>
+      attachPointer(root, dataRoot, ledger.taskId, {
+        sessionId,
+        turnId: `different-turn-${index}`,
+        attest: false
+      })
+    ));
+    expect(runs.map((run) => run.output)).toEqual(sessionIds.map(() => ({})));
+    const names = (await readdir(join(dataRoot, "sessions"))).sort();
+    expect(names).toEqual(sessionIds.map((sessionId) => `${createHash("sha256").update(sessionId).digest("hex")}.json`).sort());
+    expect(names.some((name) => name.endsWith(".lock") || name.endsWith(".tmp"))).toBe(false);
   });
 
   it("serializes hook host attachment with concurrent server event writes without losing events", async () => {
@@ -419,34 +531,39 @@ describe("built lifecycle hook process", () => {
     const dataRoot = await makeRoot("tokengraph-hook-ledger-race-data-");
     const ledger = await createTaskLedger(root, { host: "unknown" });
     const events = Array.from({ length: 40 }, () => taskEvent());
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
 
     await Promise.all([
       ...events.map((item) => recordTaskEvent(root, ledger.taskId, item)),
-      ...Array.from({ length: 8 }, (_, index) => attachPointer(root, dataRoot, ledger.taskId, { turnId: `race-turn-${index}` }))
+      ...Array.from({ length: 8 }, (_, index) => attachPointer(root, dataRoot, ledger.taskId, { turnId: `race-turn-${index}`, attest: false }))
     ]);
 
     const stored = await loadTaskLedger(root, ledger.taskId);
     expect(stored?.events.map((item) => item.fingerprint).sort()).toEqual(events.map((item) => item.fingerprint).sort());
-    expect(stored).toMatchObject({ host: "claude", sessionId: "session-private-value" });
+    expect(stored).toMatchObject({ host: "unknown" });
+    expect(stored).not.toHaveProperty("sessionId");
   });
 
-  it("locks and rechecks retention so pruning cannot delete a concurrently refreshed pointer", async () => {
+  it("keeps a concurrently refreshed valid same-session pointer complete", async () => {
     const root = await makeRoot("tokengraph-hook-prune-race-root-");
     const dataRoot = await makeRoot("tokengraph-hook-prune-race-data-");
     const refreshLedger = await createTaskLedger(root, { host: "unknown" });
-    const triggerLedger = await createTaskLedger(root, { host: "unknown" });
     const refreshSession = "refresh-session";
     const refreshHash = createHash("sha256").update(refreshSession).digest("hex");
     await mkdir(join(dataRoot, "sessions"), { recursive: true });
     await writeFile(pointerPath(dataRoot, refreshSession), `${JSON.stringify({
-      schemaId: "tokengraph-hook-session", schemaVersion: 1, sessionHash: refreshHash,
-      taskId: refreshLedger.taskId, root, turnId: "old-turn", updatedAt: "2026-05-01T00:00:00.000Z"
+      schemaId: "tokengraph-hook-session", schemaVersion: 2, sessionHash: refreshHash,
+      taskId: refreshLedger.taskId, turnId: "old-turn", updatedAt: "2026-05-01T00:00:00.000Z"
     })}\n`);
+    expect((await attestWorkspace(root, dataRoot, refreshSession)).output).toEqual({});
 
-    await Promise.all(Array.from({ length: 12 }, (_, index) => Promise.all([
-      attachPointer(root, dataRoot, refreshLedger.taskId, { sessionId: refreshSession, turnId: `fresh-${index}` }),
-      attachPointer(root, dataRoot, triggerLedger.taskId, { sessionId: `trigger-${index}`, turnId: `trigger-${index}` })
-    ])));
+    await Promise.all(Array.from({ length: 12 }, (_, index) =>
+      attachPointer(root, dataRoot, refreshLedger.taskId, {
+        sessionId: refreshSession,
+        turnId: `fresh-${index}`,
+        attest: false
+      })
+    ));
 
     expect(JSON.parse(await readFile(pointerPath(dataRoot, refreshSession), "utf8"))).toMatchObject({
       taskId: refreshLedger.taskId,
@@ -454,7 +571,7 @@ describe("built lifecycle hook process", () => {
     });
   });
 
-  it("prunes corrupt hash-named pointers by safe file age without ingesting their content", async () => {
+  it("preserves corrupt hash-named pointer evidence without ingesting its content", async () => {
     const root = await makeRoot("tokengraph-hook-corrupt-prune-root-");
     const dataRoot = await makeRoot("tokengraph-hook-corrupt-prune-data-");
     const ledger = await createTaskLedger(root, { host: "unknown" });
@@ -466,7 +583,7 @@ describe("built lifecycle hook process", () => {
     await utimes(corruptPath, old, old);
 
     expect((await attachPointer(root, dataRoot, ledger.taskId)).output).toEqual({});
-    await expect(readFile(corruptPath, "utf8")).rejects.toThrow();
+    await expect(readFile(corruptPath, "utf8")).resolves.toBe("{private-corrupt-payload\n");
   });
 
   it("blocks an open task with one exact report call and prevents a retry loop", async () => {
@@ -474,8 +591,10 @@ describe("built lifecycle hook process", () => {
     const dataRoot = await makeRoot("tokengraph-hook-open-data-");
     const ledger = await createTaskLedger(root, { host: "unknown" });
     expect((await attachPointer(root, dataRoot, ledger.taskId)).output).toEqual({});
+    const ledgerPath = join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`);
+    const ledgerBefore = await readFile(ledgerPath, "utf8");
 
-    const blocked = await runHook("stop", stopInput(), { CLAUDE_PLUGIN_ROOT: process.cwd(), CLAUDE_PLUGIN_DATA: dataRoot });
+    const blocked = await runHook("stop", stopInput(), { CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: dataRoot });
     expect(blocked.output).toMatchObject({ decision: "block", reason: expect.stringContaining("tokengraph_task_report") });
     expect(String(blocked.output.reason)).toContain(ledger.taskId);
     expect(String(blocked.output.reason)).toContain(
@@ -488,10 +607,11 @@ describe("built lifecycle hook process", () => {
     expect(String(blocked.output.reason)).toMatch(/pause.*complete|complete.*pause/i);
 
     const retried = await runHook("stop", stopInput({ stop_hook_active: true }), {
-      CLAUDE_PLUGIN_ROOT: process.cwd(), CLAUDE_PLUGIN_DATA: dataRoot
+      CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: dataRoot
     });
     expect(retried.output).not.toHaveProperty("decision");
     expect(retried.output).toMatchObject({ systemMessage: expect.stringMatching(/still open|report/i) });
+    expect(await readFile(ledgerPath, "utf8")).toBe(ledgerBefore);
   });
 
   it("allows paused tasks and completed tasks whose message contains the exact canonical footer", async () => {
@@ -500,10 +620,8 @@ describe("built lifecycle hook process", () => {
     const paused = await createTaskLedger(root, { host: "unknown" });
     await attachPointer(root, dataRoot, paused.taskId);
     await setTaskDisposition(root, paused.taskId, "pause");
-    expect((await runHook("stop", stopInput(), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot })).output).toEqual({});
-    expect((await attachPointer(root, dataRoot, paused.taskId)).output).toMatchObject({
-      systemMessage: expect.stringMatching(/paused task.*terminal.*new task.*tokengraph_prepare_context/i)
-    });
+    expect((await runHook("stop", stopInput(), pluginEnvironment(dataRoot))).output).toEqual({});
+    expect((await attachPointer(root, dataRoot, paused.taskId)).output).toEqual({});
 
     const completed = await createTaskLedger(root, { host: "unknown" });
     await recordTaskEvent(root, completed.taskId, taskEvent());
@@ -511,7 +629,7 @@ describe("built lifecycle hook process", () => {
     const footer = formatTaskReportFooter(result.report!);
     await attachPointer(root, dataRoot, completed.taskId);
     expect((await runHook("stop", stopInput({ last_assistant_message: `Done.\n\n${footer}` }), {
-      PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot
+      ...pluginEnvironment(dataRoot)
     })).output).toEqual({});
   });
 
@@ -524,35 +642,38 @@ describe("built lifecycle hook process", () => {
     const footer = formatTaskReportFooter(result.report!);
     expect((await attachPointer(root, dataRoot, ledger.taskId)).output).toEqual({});
 
-    const blocked = await runHook("stop", stopInput(), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot });
+    const blocked = await runHook("stop", stopInput(), pluginEnvironment(dataRoot));
     expect(blocked.output).toEqual({ decision: "block", reason: expect.stringContaining(footer) });
     const retried = await runHook("stop", stopInput({ stop_hook_active: true }), {
-      PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: dataRoot
+      ...pluginEnvironment(dataRoot)
     });
     expect(retried.output).not.toHaveProperty("decision");
     expect(retried.output).toMatchObject({ systemMessage: expect.stringContaining(footer) });
   });
 
   it("allows silently without a pointer, but fails open honestly for unavailable or corrupt state", async () => {
+    const root = await makeRoot("tokengraph-hook-empty-root-");
     const emptyData = await makeRoot("tokengraph-hook-empty-data-");
-    expect((await runHook("stop", stopInput(), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: emptyData })).output).toEqual({});
+    expect((await attestWorkspace(root, emptyData)).output).toEqual({});
+    expect((await runHook("stop", stopInput(), pluginEnvironment(emptyData))).output).toEqual({});
 
-    const noData = await runHook("stop", stopInput(), { PLUGIN_ROOT: process.cwd() });
-    expect(noData.output).toMatchObject({ systemMessage: expect.stringMatching(/plugin data.*unavailable/i) });
+    const noData = await runHook("stop", stopInput(), { PLUGIN_ROOT: hookPluginRoot });
+    expect(noData.output).toMatchObject({ systemMessage: expect.stringMatching(/safely processed|skipped/i) });
 
     const corruptData = await makeRoot("tokengraph-hook-corrupt-data-");
     await mkdir(join(corruptData, "sessions"), { recursive: true });
     await writeFile(pointerPath(corruptData, "session-private-value"), "{not-json\n");
-    const corrupt = await runHook("stop", stopInput(), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: corruptData });
+    expect((await attestWorkspace(root, corruptData)).output).toEqual({});
+    const corrupt = await runHook("stop", stopInput(), pluginEnvironment(corruptData));
     expect(corrupt.output).not.toHaveProperty("decision");
-    expect(corrupt.output).toMatchObject({ systemMessage: expect.stringMatching(/pointer.*corrupt|state.*corrupt/i) });
+    expect(corrupt.output).toMatchObject({ systemMessage: expect.stringMatching(/pointer.*invalid|state.*invalid/i) });
 
     const missingRoot = await makeRoot("tokengraph-hook-missing-root-");
     const missingData = await makeRoot("tokengraph-hook-missing-data-");
     const missing = await createTaskLedger(missingRoot, { host: "unknown" });
     await attachPointer(missingRoot, missingData, missing.taskId);
     await rm(join(missingRoot, ".tokengraph", "tasks", `${missing.taskId}.json`), { force: true });
-    const missingLedger = await runHook("stop", stopInput(), { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: missingData });
+    const missingLedger = await runHook("stop", stopInput(), pluginEnvironment(missingData));
     expect(missingLedger.output).not.toHaveProperty("decision");
     expect(missingLedger.output).toMatchObject({ systemMessage: expect.stringMatching(/ledger.*unavailable|ledger.*missing/i) });
 
@@ -562,10 +683,10 @@ describe("built lifecycle hook process", () => {
     expect((await attachPointer(corruptRoot, corruptLedgerData, corruptLedger.taskId)).output).toEqual({});
     await writeFile(join(corruptRoot, ".tokengraph", "tasks", `${corruptLedger.taskId}.json`), "{broken\n");
     const corruptLedgerStop = await runHook("stop", stopInput(), {
-      PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: corruptLedgerData
+      ...pluginEnvironment(corruptLedgerData)
     });
     expect(corruptLedgerStop.output).not.toHaveProperty("decision");
-    expect(corruptLedgerStop.output).toMatchObject({ systemMessage: expect.stringMatching(/ledger.*unavailable|ledger.*missing/i) });
+    expect(corruptLedgerStop.output).toMatchObject({ systemMessage: expect.stringMatching(/ledger.*invalid/i) });
   });
 
   it("does not enforce StopFailure interrupts or API failures as completion", async () => {
@@ -574,10 +695,395 @@ describe("built lifecycle hook process", () => {
       session_id: "session-private-value",
       error: "API failure detail that must not be echoed",
       is_interrupt: true
-    }, { PLUGIN_ROOT: process.cwd(), PLUGIN_DATA: await makeRoot("tokengraph-hook-failure-") });
-    expect(run).toMatchObject({ code: 0, output: {} });
+    }, pluginEnvironment(await makeRoot("tokengraph-hook-failure-")));
+    expect(run).toMatchObject({ code: 0, output: { systemMessage: expect.any(String) } });
     expect(run.stdout).not.toMatch(/complete|saved/i);
     expect(run.stderr).not.toContain("API failure detail");
+  });
+
+  it("requires exact argv, event/input pairing, bounded identifiers, and rejects confirmation-like fields without mutation", async () => {
+    const root = await makeRoot("tokengraph-hook-input-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-input-data-");
+    const env = pluginEnvironment(dataRoot);
+    const sessionId = "exact-input-session";
+    const path = await attestationPath(sessionId);
+    const invalidRuns = [
+      runHook("session-start", { hook_event_name: "UserPromptSubmit", session_id: sessionId, cwd: root }, env),
+      runHook("session-start", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root }, env, { extraArgs: ["unexpected"] }),
+      runHook("unknown-event", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root }, env),
+      runHook("session-start", { hook_event_name: "SessionStart", session_id: " ", cwd: root }, env),
+      runHook("session-start", { hook_event_name: "SessionStart", session_id: "x".repeat(1_025), cwd: root }, env),
+      runHook("session-start", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root, confirmNoLegacyProcesses: true }, env),
+      runHook("session-start", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root, confirmedNoLegacyTokenGraphProcesses: true }, env),
+      runHook("session-start", {}, env, { rawInput: "{broken\n" }),
+      runHook("session-start", {}, env, { rawInput: JSON.stringify({ padding: "x".repeat(1024 * 1024) }) })
+    ];
+    for (const run of await Promise.all(invalidRuns)) {
+      expect(run.code).toBe(0);
+      expect(String(run.output.systemMessage ?? "").length).toBeLessThanOrEqual(512);
+      expect(run.stdout).not.toContain(root);
+    }
+    await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readdir(dataRoot)).resolves.toEqual([]);
+  });
+
+  it("accepts only complete matching host storage pairs and rejects overlap or linked data roots before mutation", async () => {
+    const root = await makeRoot("tokengraph-hook-env-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-env-data-");
+    const sessionId = "host-pair-session";
+    const validDual = {
+      PLUGIN_ROOT: hookPluginRoot,
+      PLUGIN_DATA: dataRoot,
+      CLAUDE_PLUGIN_ROOT: hookPluginRoot,
+      CLAUDE_PLUGIN_DATA: dataRoot
+    };
+    expect((await attestWorkspace(root, dataRoot, sessionId, validDual)).output).toEqual({});
+
+    const invalidData = await makeRoot("tokengraph-hook-env-invalid-");
+    const conflictingData = await makeRoot("tokengraph-hook-env-conflict-");
+    const cases: Array<Record<string, string | undefined>> = [
+      { PLUGIN_ROOT: hookPluginRoot },
+      { PLUGIN_DATA: invalidData },
+      { PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: invalidData },
+      { PLUGIN_ROOT: ".", PLUGIN_DATA: invalidData },
+      { ...pluginEnvironment(invalidData), CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: conflictingData }
+    ];
+    for (const [index, candidate] of cases.entries()) {
+      const run = await runHook("session-start", {
+        hook_event_name: "SessionStart",
+        session_id: `invalid-pair-${index}`,
+        cwd: root
+      }, candidate);
+      expect(run.output).toHaveProperty("systemMessage");
+    }
+    await expect(readdir(invalidData)).resolves.toEqual([]);
+    await expect(readdir(conflictingData)).resolves.toEqual([]);
+
+    const overlap = await runHook("session-start", {
+      hook_event_name: "SessionStart",
+      session_id: "overlap-session",
+      cwd: root
+    }, { PLUGIN_ROOT: hookPluginRoot, PLUGIN_DATA: root });
+    expect(overlap.output).toHaveProperty("systemMessage");
+
+    const linkedTarget = await makeRoot("tokengraph-hook-env-linked-target-");
+    const linkedParent = await makeRoot("tokengraph-hook-env-linked-parent-");
+    const linkedData = join(linkedParent, "data-link");
+    await symlink(linkedTarget, linkedData, process.platform === "win32" ? "junction" : "dir");
+    const linked = await runHook("session-start", {
+      hook_event_name: "SessionStart",
+      session_id: "linked-data-session",
+      cwd: root
+    }, { PLUGIN_ROOT: hookPluginRoot, PLUGIN_DATA: linkedData });
+    expect(linked.output).toHaveProperty("systemMessage");
+    await expect(readdir(linkedTarget)).resolves.toEqual([]);
+  });
+
+  it("classifies host attestations exactly and preserves unsafe refresh/removal evidence", async () => {
+    const pluginRoot = hookPluginRoot;
+    const workspace = await makeRoot("tokengraph-host-state-root-");
+    const sessionId = `host-state-${randomUUID()}`;
+    const path = await attestationPath(sessionId, pluginRoot);
+    await attestHostWorkspace(pluginRoot, sessionId, workspace);
+    await expect(loadHostWorkspaceAttestation(pluginRoot, sessionId)).resolves.toEqual({ status: "valid", root: await realpath(workspace) });
+
+    const valid = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    await writeFile(path, `${JSON.stringify({ ...valid, schemaVersion: 2 })}\n`);
+    const unsupportedBytes = await readFile(path, "utf8");
+    await expect(loadHostWorkspaceAttestation(pluginRoot, sessionId)).resolves.toEqual({ status: "unsupported" });
+    await expect(attestHostWorkspace(pluginRoot, sessionId, workspace)).rejects.toThrow();
+    await expect(removeHostWorkspaceAttestation(pluginRoot, sessionId)).rejects.toThrow();
+    expect(await readFile(path, "utf8")).toBe(unsupportedBytes);
+
+    await writeFile(path, `${JSON.stringify({ ...valid, unexpected: true })}\n`);
+    await expect(loadHostWorkspaceAttestation(pluginRoot, sessionId)).resolves.toEqual({ status: "invalid" });
+    await writeFile(path, `${JSON.stringify({ ...valid, sessionHash: "0".repeat(64) })}\n`);
+    await expect(loadHostWorkspaceAttestation(pluginRoot, sessionId)).resolves.toEqual({ status: "mismatched" });
+    await writeFile(path, `${JSON.stringify({ ...valid, updatedAt: "2000-01-01T00:00:00.000Z" })}\n`);
+    await expect(loadHostWorkspaceAttestation(pluginRoot, sessionId)).resolves.toEqual({ status: "expired" });
+    await expect(removeHostWorkspaceAttestation(pluginRoot, sessionId)).resolves.toBe(true);
+    await attestHostWorkspace(pluginRoot, sessionId, workspace);
+    const refreshed = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    await writeFile(path, Buffer.alloc(64 * 1024 + 1, 0x20));
+    await expect(loadHostWorkspaceAttestation(pluginRoot, sessionId)).resolves.toEqual({ status: "invalid" });
+
+    await writeFile(path, `${JSON.stringify(refreshed)}\n`);
+    const linkedCopy = join(await makeRoot("tokengraph-host-hardlink-"), "attestation.json");
+    await link(path, linkedCopy);
+    await expect(loadHostWorkspaceAttestation(pluginRoot, sessionId)).resolves.toEqual({ status: "unstable" });
+    await expect(removeHostWorkspaceAttestation(pluginRoot, sessionId)).rejects.toThrow();
+    await expect(readFile(path, "utf8")).resolves.toBe(await readFile(linkedCopy, "utf8"));
+  });
+
+  it("keeps unsafe pointer targets and linked sessions children unchanged", async () => {
+    const root = await makeRoot("tokengraph-hook-pointer-unsafe-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-pointer-unsafe-data-");
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
+    await mkdir(join(dataRoot, "sessions"));
+    const path = pointerPath(dataRoot, "session-private-value");
+    await writeFile(path, "{foreign-pointer-evidence\n");
+    const before = await readFile(path, "utf8");
+    const run = await runHook("post-tool-use", postInput({
+      tool_response: { structuredContent: { taskId: ledger.taskId, root } }
+    }), pluginEnvironment(dataRoot));
+    expect(run.output).toHaveProperty("systemMessage");
+    expect(await readFile(path, "utf8")).toBe(before);
+
+    const expectedHash = createHash("sha256").update("session-private-value").digest("hex");
+    const exactBase = {
+      schemaId: "tokengraph-hook-session",
+      schemaVersion: 2,
+      sessionHash: expectedHash,
+      taskId: ledger.taskId,
+      turnId: "existing-turn",
+      updatedAt: new Date().toISOString()
+    };
+    for (const unsafeRecord of [
+      { ...exactBase, schemaVersion: 1 },
+      { ...exactBase, sessionHash: "0".repeat(64) },
+      { ...exactBase, unexpected: true }
+    ]) {
+      await writeFile(path, `${JSON.stringify(unsafeRecord)}\n`);
+      const unsafeBefore = await readFile(path, "utf8");
+      const unsafeRun = await runHook("post-tool-use", postInput({
+        tool_response: { structuredContent: { taskId: ledger.taskId, root } }
+      }), pluginEnvironment(dataRoot));
+      expect(unsafeRun.output).toHaveProperty("systemMessage");
+      expect(await readFile(path, "utf8")).toBe(unsafeBefore);
+    }
+    await writeFile(path, Buffer.alloc(16 * 1024 + 1, 0x20));
+    const oversizedRun = await runHook("post-tool-use", postInput({
+      tool_response: { structuredContent: { taskId: ledger.taskId, root } }
+    }), pluginEnvironment(dataRoot));
+    expect(oversizedRun.output).toHaveProperty("systemMessage");
+    expect((await readFile(path)).byteLength).toBe(16 * 1024 + 1);
+
+    await writeFile(path, `${JSON.stringify(exactBase)}\n`);
+    const pointerHardLink = join(root, "pointer-hardlink.json");
+    await link(path, pointerHardLink);
+    const hardLinkedRun = await runHook("post-tool-use", postInput({
+      tool_response: { structuredContent: { taskId: ledger.taskId, root } }
+    }), pluginEnvironment(dataRoot));
+    expect(hardLinkedRun.output).toHaveProperty("systemMessage");
+    await expect(readFile(pointerHardLink, "utf8")).resolves.toBe(await readFile(path, "utf8"));
+
+    const linkedData = await makeRoot("tokengraph-hook-sessions-link-data-");
+    const sessionsTarget = await makeRoot("tokengraph-hook-sessions-link-target-");
+    expect((await attestWorkspace(root, linkedData, "linked-sessions")).output).toEqual({});
+    await symlink(sessionsTarget, join(linkedData, "sessions"), process.platform === "win32" ? "junction" : "dir");
+    const linkedRun = await runHook("post-tool-use", postInput({
+      session_id: "linked-sessions",
+      tool_response: { structuredContent: { taskId: ledger.taskId, root } }
+    }), pluginEnvironment(linkedData));
+    expect(linkedRun.output).toHaveProperty("systemMessage");
+    await expect(readdir(sessionsTarget)).resolves.toEqual([]);
+  });
+
+  it("accepts an input-only task id only after an exact valid response-bound session pointer", async () => {
+    const root = await makeRoot("tokengraph-hook-task-authority-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-task-authority-data-");
+    const first = await createTaskLedger(root, { host: "codex" });
+    const second = await createTaskLedger(root, { host: "codex" });
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
+    const path = pointerPath(dataRoot, "session-private-value");
+
+    const inputOnly = await runHook("post-tool-use", postInput({
+      tool_input: { taskId: first.taskId, root }
+    }), pluginEnvironment(dataRoot));
+    expect(inputOnly.output).toEqual({});
+    await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    expect((await attachPointer(root, dataRoot, first.taskId, { attest: false })).output).toEqual({});
+    const before = await readFile(path, "utf8");
+    const mismatched = await runHook("post-tool-use", postInput({
+      turn_id: "turn-mismatch",
+      tool_input: { taskId: second.taskId, root }
+    }), pluginEnvironment(dataRoot));
+    expect(mismatched.output).toEqual({});
+    expect(await readFile(path, "utf8")).toBe(before);
+
+    const matching = await runHook("post-tool-use", postInput({
+      turn_id: "turn-matching",
+      tool_input: { taskId: first.taskId, root },
+      tool_response: { isError: false, content: [{ type: "text", text: "successful" }] }
+    }), pluginEnvironment(dataRoot));
+    expect(matching.output).toEqual({});
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ taskId: first.taskId, turnId: "turn-matching" });
+
+    const stable = await readFile(path, "utf8");
+    const malformedPriority = await runHook("post-tool-use", postInput({
+      turn_id: " ",
+      prompt_id: "must-not-fallback",
+      tool_input: { taskId: first.taskId, root }
+    }), pluginEnvironment(dataRoot));
+    expect(malformedPriority.output).toHaveProperty("systemMessage");
+    expect(await readFile(path, "utf8")).toBe(stable);
+  });
+
+  it("accepts task authority only from a successful unambiguous structured response", async () => {
+    const root = await makeRoot("tokengraph-hook-response-authority-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-response-authority-data-");
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const conflicting = await createTaskLedger(root, { host: "codex" });
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
+    const path = pointerPath(dataRoot, "session-private-value");
+
+    const rejectedResponses = [
+      { isError: true, structuredContent: { taskId: ledger.taskId, root } },
+      { is_error: true, structuredContent: { taskId: ledger.taskId, root } },
+      { isError: "false", structuredContent: { taskId: ledger.taskId, root } },
+      { is_error: 0, structuredContent: { taskId: ledger.taskId, root } },
+      { isError: false, is_error: true, structuredContent: { taskId: ledger.taskId, root } },
+      { error: { message: "failed" }, structuredContent: { taskId: ledger.taskId, root } },
+      {
+        isError: false,
+        structuredContent: { taskId: ledger.taskId, root },
+        structured_content: { taskId: conflicting.taskId, root }
+      }
+    ];
+    for (const [index, toolResponse] of rejectedResponses.entries()) {
+      const run = await runHook("post-tool-use", postInput({ turn_id: `turn-rejected-${index}`, tool_response: toolResponse }), pluginEnvironment(dataRoot));
+      expect(run.output, `response ${index}`).toEqual({});
+      await expect(readFile(path, "utf8"), `response ${index}`).rejects.toMatchObject({ code: "ENOENT" });
+    }
+
+    const taskConflict = await runHook("post-tool-use", postInput({
+      tool_input: { taskId: conflicting.taskId, root },
+      tool_response: { isError: false, structuredContent: { taskId: ledger.taskId, root } }
+    }), pluginEnvironment(dataRoot));
+    expect(taskConflict.output).toEqual({});
+    await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const rootConflict = await runHook("post-tool-use", postInput({
+      tool_input: { root },
+      tool_response: { isError: false, structuredContent: { taskId: ledger.taskId, root: dataRoot } }
+    }), pluginEnvironment(dataRoot));
+    expect(rootConflict.output).toHaveProperty("systemMessage");
+    await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const accepted = await runHook("post-tool-use", postInput({
+      turn_id: "turn-accepted",
+      tool_input: { root },
+      tool_response: {
+        isError: false,
+        is_error: false,
+        structuredContent: { taskId: ledger.taskId, root },
+        structured_content: { root, taskId: ledger.taskId }
+      }
+    }), pluginEnvironment(dataRoot));
+    expect(accepted.output).toEqual({});
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ taskId: ledger.taskId, turnId: "turn-accepted" });
+
+    const beforeFailure = await readFile(path, "utf8");
+    const inputOnlyFailure = await runHook("post-tool-use", postInput({
+      turn_id: "turn-input-failed",
+      tool_input: { taskId: ledger.taskId, root },
+      tool_response: { isError: true }
+    }), pluginEnvironment(dataRoot));
+    expect(inputOnlyFailure.output).toEqual({});
+    expect(await readFile(path, "utf8")).toBe(beforeFailure);
+  });
+
+  it("does not create plugin-data state before root and ledger authority are valid", async () => {
+    const root = await makeRoot("tokengraph-hook-preauthority-root-");
+    const otherRoot = await makeRoot("tokengraph-hook-preauthority-other-");
+    const dataRoot = await makeRoot("tokengraph-hook-preauthority-data-");
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
+
+    const missingLedger = await runHook("post-tool-use", postInput({
+      tool_response: { structuredContent: { taskId: randomUUID(), root } }
+    }), pluginEnvironment(dataRoot));
+    expect(missingLedger.output).toHaveProperty("systemMessage");
+    await expect(readdir(dataRoot)).resolves.toEqual([]);
+
+    const wrongRoot = await runHook("post-tool-use", postInput({
+      tool_input: { root: otherRoot },
+      tool_response: { structuredContent: { taskId: ledger.taskId } }
+    }), pluginEnvironment(dataRoot));
+    expect(wrongRoot.output).toHaveProperty("systemMessage");
+    await expect(readdir(dataRoot)).resolves.toEqual([]);
+
+    const nestedConfirmation = await runHook("post-tool-use", postInput({
+      tool_input: { root, nested: { confirmNoLegacyProcesses: true } },
+      tool_response: { structuredContent: { taskId: ledger.taskId, root } }
+    }), pluginEnvironment(dataRoot));
+    expect(nestedConfirmation.output).toHaveProperty("systemMessage");
+    await expect(readdir(dataRoot)).resolves.toEqual([]);
+  });
+
+  it("prunes only expired exact pointer and temporary identities within the bounded sorted window", async () => {
+    const root = await makeRoot("tokengraph-hook-prune-v2-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-prune-v2-data-");
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
+    const sessions = join(dataRoot, "sessions");
+    await mkdir(sessions);
+    const expiredSession = "expired-v2-session";
+    const expiredHash = createHash("sha256").update(expiredSession).digest("hex");
+    const expiredPath = pointerPath(dataRoot, expiredSession);
+    const expiredAt = new Date(Date.now() - 31 * 24 * 60 * 60 * 1_000);
+    await writeFile(expiredPath, `${JSON.stringify({
+      schemaId: "tokengraph-hook-session",
+      schemaVersion: 2,
+      sessionHash: expiredHash,
+      taskId: ledger.taskId,
+      turnId: "expired-turn",
+      updatedAt: expiredAt.toISOString()
+    })}\n`);
+    const tempName = `.tg-pointer-${expiredHash}-${process.pid}-${randomUUID()}.tmp`;
+    const tempPath = join(sessions, tempName);
+    await writeFile(tempPath, "expired temporary bytes\n");
+    await utimes(tempPath, expiredAt, expiredAt);
+    const foreignTemp = join(sessions, ".tg-pointer-not-owned.tmp");
+    await writeFile(foreignTemp, "foreign\n");
+
+    expect((await attachPointer(root, dataRoot, ledger.taskId, { attest: false })).output).toEqual({});
+    await expect(readFile(expiredPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(tempPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(foreignTemp, "utf8")).resolves.toBe("foreign\n");
+    expect((await readdir(sessions)).some((name) => name.endsWith(".lock"))).toBe(false);
+  });
+
+  it("removes only exact SessionEnd pointer and attestation identities", async () => {
+    const root = await makeRoot("tokengraph-hook-end-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-end-data-");
+    const sessionId = "end-session";
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    expect((await attachPointer(root, dataRoot, ledger.taskId, { sessionId })).output).toEqual({});
+    const hostPath = await attestationPath(sessionId);
+    const sessionPath = pointerPath(dataRoot, sessionId);
+    const ended = await runHook("session-end", {
+      hook_event_name: "SessionEnd",
+      session_id: sessionId,
+      cwd: root
+    }, { CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: dataRoot });
+    expect(ended.output).toEqual({});
+    await expect(readFile(hostPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(sessionPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves pointer and attestation evidence when SessionEnd host state is unsupported", async () => {
+    const root = await makeRoot("tokengraph-hook-end-unsafe-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-end-unsafe-data-");
+    const sessionId = "unsafe-end-session";
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    expect((await attachPointer(root, dataRoot, ledger.taskId, { sessionId })).output).toEqual({});
+    const hostPath = await attestationPath(sessionId);
+    const sessionPath = pointerPath(dataRoot, sessionId);
+    const hostRecord = JSON.parse(await readFile(hostPath, "utf8")) as Record<string, unknown>;
+    await writeFile(hostPath, `${JSON.stringify({ ...hostRecord, schemaVersion: 2 })}\n`);
+    const hostBefore = await readFile(hostPath, "utf8");
+    const pointerBefore = await readFile(sessionPath, "utf8");
+    const ended = await runHook("session-end", {
+      hook_event_name: "SessionEnd",
+      session_id: sessionId,
+      cwd: root
+    }, pluginEnvironment(dataRoot));
+    expect(ended.output).toHaveProperty("systemMessage");
+    expect(await readFile(hostPath, "utf8")).toBe(hostBefore);
+    expect(await readFile(sessionPath, "utf8")).toBe(pointerBefore);
   });
 
   it("keeps canonical footer and Stop outcomes byte-equivalent across Codex and Claude adapter environments", async () => {
@@ -589,9 +1095,11 @@ describe("built lifecycle hook process", () => {
       const env = host === "codex"
         ? { PLUGIN_ROOT: hookPluginRoot, PLUGIN_DATA: dataRoot, TOKENGRAPH_HOOK_HOST: host }
         : { CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: dataRoot, TOKENGRAPH_HOOK_HOST: host };
+      expect((await attestWorkspace(root, dataRoot, sessionId, env)).output).toEqual({});
       const attach = async (taskId: string) => runHook("post-tool-use", postInput({
         session_id: sessionId,
-        tool_input: { taskId, root }
+        tool_input: { root },
+        tool_response: { structuredContent: { taskId, root } }
       }), env);
       const stop = async (overrides: Record<string, unknown> = {}) => runHook("stop", stopInput({ session_id: sessionId, ...overrides }), env);
 
@@ -622,6 +1130,7 @@ describe("built lifecycle hook process", () => {
       const emptyEnv = host === "codex"
         ? { PLUGIN_ROOT: hookPluginRoot, PLUGIN_DATA: emptyData, TOKENGRAPH_HOOK_HOST: host }
         : { CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: emptyData, TOKENGRAPH_HOOK_HOST: host };
+      expect((await attestWorkspace(root, emptyData, `empty-${host}`, emptyEnv)).output).toEqual({});
       const noState = await runHook("stop", stopInput({ session_id: `empty-${host}` }), emptyEnv);
       await mkdir(join(emptyData, "sessions"), { recursive: true });
       await writeFile(pointerPath(emptyData, `empty-${host}`), "{corrupt\n");
@@ -648,12 +1157,27 @@ describe("built lifecycle hook process", () => {
       missingFooterIncludesCanonicalBytes: true,
       repeatedStopIncludesCanonicalBytes: true,
       noState: {},
-      corruptState: { systemMessage: expect.stringMatching(/corrupt/i) }
+      corruptState: { systemMessage: expect.stringMatching(/invalid/i) }
     });
   });
 });
 
 describe("hook manifest contract", () => {
+  it("keeps the manifest bytes and unactivated hook capability boundary exact", async () => {
+    const manifestBytes = await readFile(resolve("hooks", "hooks.json"));
+    expect(createHash("sha256").update(manifestBytes).digest("hex"))
+      .toBe("21997194c231aecea3505680f6d5db61accea9d8cfc949e63d66f310c28feb07");
+
+    for (const path of [resolve("src", "hooks.ts"), hookEntry]) {
+      const source = await readFile(path, "utf8");
+      expect(source).toContain("inspectTaskLedgerReadOnly");
+      for (const forbidden of [
+        "activateLegacyRuntimeShutdown", "nativeLockProvider", "loadNativeLockAddon",
+        "withFileLock", "canonicalPersistenceLock", "attachTaskHostContext", "loadTaskLedger"
+      ]) expect(source).not.toContain(forbidden);
+    }
+  });
+
   it("wires workspace attestation and task lifecycle through the self-contained Node adapter only", async () => {
     const manifest = JSON.parse(await readFile(resolve("hooks", "hooks.json"), "utf8")) as {
       hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command: string }> }>>;

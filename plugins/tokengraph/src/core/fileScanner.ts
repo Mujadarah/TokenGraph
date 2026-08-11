@@ -122,10 +122,15 @@ async function loadIgnoreScopes(base: string, inherited: IgnoreScope[] = []): Pr
 }
 
 function isIgnored(scopes: IgnoreScope[], absolutePath: string, isDirectory: boolean): boolean {
-  return scopes.some(({ base, matcher }) => {
+  let ignored = false;
+  for (const { base, matcher } of scopes) {
     const path = normalizePath(relative(base, absolutePath));
-    return Boolean(path) && matcher.ignores(isDirectory ? `${path}/` : path);
-  });
+    if (!path) continue;
+    const decision = matcher.test(isDirectory ? `${path}/` : path);
+    if (decision.ignored) ignored = true;
+    if (decision.unignored) ignored = false;
+  }
+  return ignored;
 }
 
 function languageForExtension(extension: string): string {

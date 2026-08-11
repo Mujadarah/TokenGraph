@@ -258,7 +258,7 @@ describe("knowledge review queue", () => {
   });
 
   it("does not silently migrate an approved schema-v1 proposal with bare fingerprints", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-07-02T12:00:00.000Z"));
     try {
       const root = await makeRoot();

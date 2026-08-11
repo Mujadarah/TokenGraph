@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,10 +7,12 @@ import { buildTaskReport, formatTaskReportFooter } from "../src/core/taskEstimat
 import { createTaskOutcome, verifiedOutcomes, type TaskOutcome } from "../src/core/memoryCore.js";
 import { purgeStorageClass } from "../src/core/storagePolicy.js";
 import {
+  __compareTaskLedgerStatsForTests,
   __getTaskLedgerWriteQueueSizeForTests,
   attachTaskHostContext,
   createTaskLedger,
   discardEmptyTaskLedger,
+  inspectTaskLedgerReadOnly,
   listCompletedTaskOutcomes,
   loadTaskLedger,
   pruneTaskLedgers,
@@ -25,6 +27,200 @@ import {
 import type { TaskEvent, TaskLedger } from "../src/core/taskLedger.js";
 
 const roots: string[] = [];
+const maintenanceConfirmation = { confirmedNoLegacyTokenGraphProcesses: true } as const;
+
+describe("strict read-only task ledger inspection", () => {
+  it("accepts only the exact current schema without repairing or creating state", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const path = join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`);
+    const before = await readFile(path, "utf8");
+
+    await expect(inspectTaskLedgerReadOnly(root, ledger.taskId)).resolves.toEqual({
+      status: "valid",
+      ledger
+    });
+    expect(await readFile(path, "utf8")).toBe(before);
+
+    const missingRoot = await makeRoot();
+    await expect(inspectTaskLedgerReadOnly(missingRoot, ledger.taskId)).resolves.toEqual({ status: "missing" });
+    await expect(readdir(missingRoot)).resolves.toEqual([]);
+
+    await writeFile(path, `${JSON.stringify({ ...ledger, schemaVersion: 2 })}\n`);
+    await expect(inspectTaskLedgerReadOnly(root, ledger.taskId)).resolves.toEqual({ status: "unsupported" });
+    await writeFile(path, `${JSON.stringify({ ...ledger, unexpected: true })}\n`);
+    await expect(inspectTaskLedgerReadOnly(root, ledger.taskId)).resolves.toEqual({ status: "invalid" });
+  });
+
+  it("rejects relative roots, malformed ids, missing required keys, and malformed JSON without residue", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const path = join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`);
+
+    await expect(inspectTaskLedgerReadOnly(".", ledger.taskId)).resolves.toEqual({ status: "invalid" });
+    await expect(inspectTaskLedgerReadOnly(root, "../not-a-task")).resolves.toEqual({ status: "invalid" });
+
+    const withoutRequiredKey = { ...ledger } as Partial<TaskLedger>;
+    delete withoutRequiredKey.deliveredArtifacts;
+    await writeFile(path, `${JSON.stringify(withoutRequiredKey)}\n`);
+    await expect(inspectTaskLedgerReadOnly(root, ledger.taskId)).resolves.toEqual({ status: "invalid" });
+
+    await writeFile(path, "{broken\n");
+    const before = await readFile(path, "utf8");
+    await expect(inspectTaskLedgerReadOnly(root, ledger.taskId)).resolves.toEqual({ status: "invalid" });
+    expect(await readFile(path, "utf8")).toBe(before);
+    await expect(readdir(join(root, ".tokengraph", "tasks"))).resolves.not.toContain("quarantine");
+  });
+
+  it("classifies oversized and multiply linked entries without repairing or deleting evidence", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const path = join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`);
+
+    await writeFile(path, Buffer.alloc(8 * 1024 * 1024 + 1, 0x20));
+    await expect(inspectTaskLedgerReadOnly(root, ledger.taskId)).resolves.toEqual({ status: "invalid" });
+    expect((await readFile(path)).byteLength).toBe(8 * 1024 * 1024 + 1);
+
+    await writeFile(path, `${JSON.stringify(ledger)}\n`);
+    const secondLink = join(root, ".tokengraph", "tasks", `${crypto.randomUUID()}.json`);
+    await link(path, secondLink);
+    await expect(inspectTaskLedgerReadOnly(root, ledger.taskId)).resolves.toEqual({ status: "unstable" });
+    await expect(readFile(secondLink, "utf8")).resolves.toBe(await readFile(path, "utf8"));
+  });
+
+  it("returns a fresh deeply frozen current-schema view", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const inspected = await inspectTaskLedgerReadOnly(root, ledger.taskId);
+    expect(inspected.status).toBe("valid");
+    if (inspected.status !== "valid") return;
+    expect(inspected.ledger).not.toBe(ledger);
+    expect(Object.isFrozen(inspected.ledger)).toBe(true);
+    expect(Object.isFrozen(inspected.ledger.events)).toBe(true);
+    expect(Object.isFrozen(inspected.ledger.repositoryIdentity)).toBe(true);
+  });
+
+  it("rejects a linked project-state ancestor without following it", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const state = join(root, ".tokengraph");
+    const moved = join(root, "held-state");
+    await rename(state, moved);
+    await symlink(moved, state, process.platform === "win32" ? "junction" : "dir");
+    await expect(inspectTaskLedgerReadOnly(root, ledger.taskId)).resolves.toEqual({ status: "unstable" });
+    await expect(readFile(join(moved, "tasks", `${ledger.taskId}.json`), "utf8")).resolves.toContain(ledger.taskId);
+  });
+
+  it("keeps exact bigint and nanosecond identities without rounded collisions", () => {
+    const base = {
+      dev: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+      ino: BigInt(Number.MAX_SAFE_INTEGER) + 3n,
+      mode: 0o100600n,
+      nlink: 1n,
+      size: 512n,
+      birthtimeNs: 1_000_000_000_000_000_001n,
+      mtimeNs: 1_000_000_000_000_000_101n,
+      ctimeNs: 1_000_000_000_000_000_201n
+    };
+    expect(Number(base.dev)).toBe(Number(base.dev + 1n));
+    expect(__compareTaskLedgerStatsForTests(base, { ...base, dev: base.dev + 1n }, "file")).toBe(false);
+    expect(Number(base.mtimeNs) / 1_000_000).toBe(Number(base.mtimeNs + 1n) / 1_000_000);
+    expect(__compareTaskLedgerStatsForTests(base, { ...base, mtimeNs: base.mtimeNs + 1n }, "file")).toBe(false);
+  });
+
+  it("binds immutable directory identity while files retain every stable field", () => {
+    const base = {
+      dev: 11n, ino: 13n, mode: 0o100600n, nlink: 1n, size: 17n,
+      birthtimeNs: 19n, mtimeNs: 23n, ctimeNs: 29n
+    };
+    for (const field of ["dev", "ino", "mode", "nlink", "size", "birthtimeNs", "mtimeNs", "ctimeNs"] as const) {
+      expect(__compareTaskLedgerStatsForTests(base, { ...base, [field]: base[field] + 1n }, "file"), field).toBe(false);
+    }
+    expect(__compareTaskLedgerStatsForTests(base, {
+      ...base, nlink: 7n, size: 31n, mtimeNs: 37n, ctimeNs: 41n
+    }, "directory")).toBe(true);
+    for (const field of ["dev", "ino", "mode", "birthtimeNs"] as const) {
+      expect(__compareTaskLedgerStatsForTests(base, { ...base, [field]: base[field] + 1n }, "directory"), field).toBe(false);
+    }
+  });
+
+  it("decodes every current-schema subobject with exact key sets and no normalization", async () => {
+    const root = await makeRoot();
+    const created = await createTaskLedger(root, { host: "codex" });
+    await updateTaskRoutingObservation(root, created.taskId, {
+      decision: "activate", stage: 2, reason: "exact", expectedOverheadTokens: 4, mode: "enforced", enforced: true
+    });
+    await updateTaskReadPolicy(root, created.taskId, {
+      level: "L2", allowRawReads: false, reason: "targeted", targetedReads: 1,
+      recommendedReadsThisResponse: 2, requiresReassessment: true, hasReassessed: false, evidenceGap: "none"
+    });
+    await recordTaskArtifactDelivery(root, created.taskId, ["artifact-a"]);
+    await recordTaskEvent(root, created.taskId, event({ qualityChecks: [{ name: "tests", passed: true }] }));
+    await recordTaskOutcome(root, created.taskId, outcomeFor(created, { evidence: ["run:exact"] }));
+    const completed = (await setTaskDisposition(root, created.taskId, "complete")).ledger;
+    const path = ledgerPath(root, created.taskId);
+    const fixture = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+
+    const nestedRows = [
+      { path: ["repositoryIdentity"], required: "repositoryId" },
+      { path: ["routingObservation"], required: "decision" },
+      { path: ["readPolicy"], required: "level" },
+      { path: ["events", 0], required: "id" },
+      { path: ["events", 0, "qualityChecks", 0], required: "name" },
+      { path: ["outcomes", 0], required: "id" },
+      { path: ["completedReport"], required: "taskId" },
+      { path: ["completedReport", "estimate"], required: "range" },
+      { path: ["completedReport", "estimate", "range"], required: "low" },
+      { path: ["completedReport", "categories", 0], required: "category" },
+      { path: ["completedReport", "categories", 0, "range"], required: "low" },
+      { path: ["completedReport", "quality"], required: "status" }
+    ] as const;
+
+    for (const row of nestedRows) {
+      const withExtra = structuredClone(fixture);
+      (nestedRecord(withExtra, row.path) as Record<string, unknown>).unexpected = true;
+      await writeFile(path, `${JSON.stringify(withExtra)}\n`);
+      await expect(inspectTaskLedgerReadOnly(root, created.taskId), `${row.path.join(".")}:extra`)
+        .resolves.toEqual({ status: "invalid" });
+
+      const withoutRequired = structuredClone(fixture);
+      delete (nestedRecord(withoutRequired, row.path) as Record<string, unknown>)[row.required];
+      await writeFile(path, `${JSON.stringify(withoutRequired)}\n`);
+      await expect(inspectTaskLedgerReadOnly(root, created.taskId), `${row.path.join(".")}:missing`)
+        .resolves.toEqual({ status: "invalid" });
+    }
+
+    const duplicateArtifacts = structuredClone(fixture);
+    duplicateArtifacts.deliveredArtifacts = ["artifact-a", "artifact-a"];
+    await writeFile(path, `${JSON.stringify(duplicateArtifacts)}\n`);
+    const inspected = await inspectTaskLedgerReadOnly(root, created.taskId);
+    expect(inspected.status).toBe("valid");
+    if (inspected.status === "valid") {
+      expect(inspected.ledger.deliveredArtifacts).toEqual(["artifact-a", "artifact-a"]);
+      expect(inspected.ledger).not.toBe(completed);
+      expect(Object.isFrozen(inspected.ledger.completedReport?.estimate.range)).toBe(true);
+    }
+  });
+
+  it("classifies only integral non-current versions of the correct schema as unsupported", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const path = ledgerPath(root, ledger.taskId);
+    for (const [value, status] of [
+      [{ ...ledger, schemaVersion: 4 }, "unsupported"],
+      [{ ...ledger, schemaVersion: 2 }, "unsupported"],
+      [{ ...ledger, schemaVersion: 3.5 }, "invalid"],
+      [{ ...ledger, schemaId: "foreign-ledger", schemaVersion: 2 }, "invalid"]
+    ] as const) {
+      await writeFile(path, `${JSON.stringify(value)}\n`);
+      await expect(inspectTaskLedgerReadOnly(root, ledger.taskId)).resolves.toEqual({ status });
+    }
+  });
+});
+
+function nestedRecord(root: Record<string, unknown>, path: readonly (string | number)[]): unknown {
+  return path.reduce<unknown>((value, key) => (value as Record<string | number, unknown>)[key], root);
+}
 
 async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "tokengraph-task-ledger-"));
@@ -560,7 +756,7 @@ describe("task savings estimator", () => {
 
 describe("task lifecycle and retention", () => {
   it("attaches and updates serialized host context while rejecting known conflicts", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-07-12T12:00:00.000Z"));
     const root = await makeRoot();
     const ledger = await createTaskLedger(root, { host: "unknown" });
@@ -594,7 +790,7 @@ describe("task lifecycle and retention", () => {
 
     await expect(attachTaskHostContext(root, ledger.taskId, invalidContext)).rejects.toThrow(/host.*codex.*claude/i);
     expect(await loadTaskLedger(root, ledger.taskId)).toEqual(ledger);
-    expect(await readdir(join(root, ".tokengraph", "tasks"))).toEqual([`${ledger.taskId}.json`]);
+    expect((await readdir(join(root, ".tokengraph", "tasks"))).filter((entry) => !entry.startsWith(".tokengraph-native-"))).toEqual([`${ledger.taskId}.json`]);
   });
 
   it("serializes concurrent host-context updates without losing association invariants", async () => {
@@ -850,7 +1046,7 @@ describe("task lifecycle and retention", () => {
   });
 
   it("prunes terminal and unreachable empty ledgers older than 30 days while preserving active open ledgers", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
     const root = await makeRoot();
     const open = await createTaskLedger(root, { host: "codex" });
@@ -880,13 +1076,13 @@ describe("task lifecycle and retention", () => {
     await setTaskDisposition(root, completed.taskId, "complete");
     expect((await listCompletedTaskOutcomes(root)).map((outcome) => outcome.id)).toContain("purged-outcome");
 
-    await purgeStorageClass(root, "outcomes");
+    await purgeStorageClass(root, "outcomes", maintenanceConfirmation);
 
     expect(await listCompletedTaskOutcomes(root)).toEqual([]);
   });
 
   it("quarantines a corrupt ledger during pruning and continues pruning another eligible ledger", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
     const root = await makeRoot();
     const eligible = await createTaskLedger(root, { host: "codex" });

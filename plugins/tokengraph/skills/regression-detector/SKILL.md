@@ -13,7 +13,7 @@ Do not use when no change set can be identified or as a substitute for running t
 
 Follow the common lifecycle in the general `tokengraph` skill:
 
-1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root; if blocked, follow recovery and do not invent a taskId.
+1. After confirming every TokenGraph v0.23.1 MCP and CLI process is stopped, call `tokengraph_setup({ confirmNoLegacyProcesses: true })` and capture `trustedWorkspace.root` as the trusted root; if that confirmation is not true, stop without activating, and if setup is blocked, follow recovery and do not invent a taskId.
 2. Use `tokengraph_prepare_context({ task })` only when a retrieval plan is needed. Otherwise omit `taskId` from `tokengraph_analyze({ mode: "risk", changedFiles, diffSummary?, task? })` so it can auto-start the ledger and return a taskId; capture the returned taskId.
 3. Reuse that exact taskId with the actual change set. The trusted root may be omitted after ready setup when host workspace resolution is stable; otherwise pass only the captured trusted root.
 4. Call `tokengraph_query_context({ taskId, mode: "symbol", target })` for changed exports and dependents, and `tokengraph_query_context({ taskId, mode: "sql", query })` for schema, policy, auth, or migration impact. Search or overview queries may narrow additional targets.

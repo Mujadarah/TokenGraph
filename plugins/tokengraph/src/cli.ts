@@ -6,10 +6,18 @@ import { evaluateManifest, loadEvaluationManifest, persistPromotionReport } from
 import { loadPairedHostProtocol, runPairedHostEvaluation } from "./core/pairedHost.js";
 import { recordTaskOutcome, requireOpenTaskForOutcome } from "./core/taskLedger.js";
 import { getRepositoryIdentity } from "./core/repositoryIdentity.js";
+import { activateLegacyRuntimeShutdown } from "./core/legacyRuntimeActivation.js";
 
 function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
+}
+
+function activateConfirmedInvocation(options: string[], usage: string): void {
+  if (!options.includes("--confirm-no-legacy-processes")) {
+    throw new Error(`${usage} This lock-taking command requires --confirm-no-legacy-processes.`);
+  }
+  activateLegacyRuntimeShutdown({ confirmedNoLegacyTokenGraphProcesses: true });
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -39,6 +47,7 @@ async function main(argv: string[]): Promise<void> {
   }
   if (argv[0] === "evaluate-routing") {
     const options = argv.slice(1);
+    activateConfirmedInvocation(options, "Usage: tokengraph evaluate-routing [--root <path>] --manifest <path> --confirm-no-legacy-processes");
     const root = optionValue(options, "--root") ?? process.cwd();
     const manifestPath = optionValue(options, "--manifest");
     if (!manifestPath) throw new Error("Usage: tokengraph evaluate-routing [--root <path>] --manifest <path>");
@@ -49,19 +58,24 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
   if (argv[0] === "purge") {
-    const root = optionValue(argv.slice(1), "--root") ?? process.cwd();
-    const storageClass = optionValue(argv.slice(1), "--class");
+    const options = argv.slice(1);
+    activateConfirmedInvocation(options, "Usage: tokengraph purge [--root <path>] --class runs|cache|outcomes|derived --confirm-no-legacy-processes");
+    const root = optionValue(options, "--root") ?? process.cwd();
+    const storageClass = optionValue(options, "--class");
     if (!storageClass || !(["runs", "cache", "outcomes", "derived"] as string[]).includes(storageClass)) {
       throw new Error("Usage: tokengraph purge [--root <path>] --class runs|cache|outcomes|derived");
     }
-    process.stdout.write(`${JSON.stringify(await purgeStorageClass(root, storageClass as PurgeStorageClass))}\n`);
+    process.stdout.write(`${JSON.stringify(await purgeStorageClass(root, storageClass as PurgeStorageClass, {
+      confirmedNoLegacyTokenGraphProcesses: true
+    }))}\n`);
     return;
   }
-  if (argv[0] !== "run") throw new Error("Usage: tokengraph run [--root <path>] [--task-id <uuid>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived; tokengraph evaluate-routing [--root <path>] --manifest <path>; or tokengraph evaluate-host --protocol <path> [--dry-run]");
+  if (argv[0] !== "run") throw new Error("Usage: tokengraph run [--root <path>] [--task-id <uuid>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] --confirm-no-legacy-processes -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived --confirm-no-legacy-processes; tokengraph evaluate-routing [--root <path>] --manifest <path> --confirm-no-legacy-processes; or tokengraph evaluate-host --protocol <path> [--dry-run]");
   const separator = argv.indexOf("--");
   if (separator < 0 || separator === argv.length - 1) throw new Error("tokengraph run requires `-- <command> [args...]`.");
   const commandArgs = argv.slice(separator + 1);
   const options = argv.slice(1, separator);
+  activateConfirmedInvocation(options, "Usage: tokengraph run [options] --confirm-no-legacy-processes -- <command> [args...]");
   const root = optionValue(options, "--root") ?? process.cwd();
   const taskId = optionValue(options, "--task-id");
   const config = await loadTokenGraphConfig(root);
@@ -92,7 +106,12 @@ async function main(argv: string[]): Promise<void> {
   if (run.status !== "completed") process.exitCode = run.status === "timed-out" ? 124 : 1;
 }
 
-main(process.argv.slice(2)).catch((error: unknown) => {
+// Native addon promises do not by themselves keep Node's event loop alive.
+// Hold one bounded process-local handle until the CLI invocation settles.
+const cliKeepAlive = setInterval(() => undefined, 1_000);
+void main(process.argv.slice(2)).catch((error: unknown) => {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 2;
+}).finally(() => {
+  clearInterval(cliKeepAlive);
 });

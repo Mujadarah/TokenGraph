@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 // src/core/runner.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
 import { spawn } from "node:child_process";
 import { readFile as readFile4, readdir as readdir3, rm as rm3 } from "node:fs/promises";
 import { join as join5 } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 // src/core/storage.ts
 import { randomUUID } from "node:crypto";
@@ -568,14 +569,127 @@ function createTaskOutcome(input) {
 
 // src/core/runner.ts
 var ANSI_PATTERN = /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g;
-var SECRET_PATTERNS2 = [
-  /\b(?:api[_-]?key|access[_-]?token|secret|password)\s*([:=])\s*[^\s]+/gi,
-  /\b(?:sk|ghp|github_pat)_[A-Za-z0-9_-]{12,}/g
-];
 var INTERACTIVE_COMMANDS = /* @__PURE__ */ new Set(["ssh", "vim", "vi", "nano", "less", "more", "top", "htop", "pwsh", "powershell"]);
-function redact(value) {
-  return SECRET_PATTERNS2.reduce((result, pattern) => result.replace(pattern, (match, separator) => separator ? `[REDACTED]${separator}[REDACTED]` : "[REDACTED]"), value);
-}
+var SENSITIVE_ARGUMENT_NAMES = /* @__PURE__ */ new Set([
+  "api-key",
+  "apikey",
+  "access-token",
+  "auth-token",
+  "authorization",
+  "client-secret",
+  "cookie",
+  "password",
+  "passwd",
+  "refresh-token",
+  "secret",
+  "token"
+]);
+var SENSITIVE_ENVIRONMENT_NAME = /^(?:AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AZURE_CLIENT_SECRET|CLIENT_SECRET|DATABASE_URL|GITHUB_TOKEN|NPM_TOKEN|OPENAI_API_KEY|PASSWORD|SLACK_TOKEN|TOKEN)$/i;
+var SENSITIVE_HEADER_NAME = /^(?:authorization|cookie|proxy-authorization|set-cookie)$|(?:^|[-_])(?:api[-_]?key|credential|password|secret|token)(?:$|[-_])/i;
+var CREDENTIAL_CONTEXT = /\b(?:api[ _-]?key|authorization|client[ _-]?secret|cookie|credential(?:s)?|password|private[ _-]?key)\b/i;
+var RunnerSanitizer = class {
+  constructor(prior) {
+    this.prior = prior;
+  }
+  prior;
+  categories = /* @__PURE__ */ new Set();
+  withheldLineCount = 0;
+  replace(value, pattern, replacement, category) {
+    pattern.lastIndex = 0;
+    if (!pattern.test(value)) return value;
+    this.categories.add(category);
+    pattern.lastIndex = 0;
+    return value.replace(pattern, replacement);
+  }
+  sanitizeText(value) {
+    let sanitized = value.replace(ANSI_PATTERN, "");
+    sanitized = this.replace(
+      sanitized,
+      /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|$)/gi,
+      "[REDACTED PRIVATE KEY]",
+      "private-key"
+    );
+    return sanitized.split(/(\r?\n)/).map((line) => {
+      if (/^\r?\n$/.test(line) || !line) return line;
+      let result = line;
+      result = this.replace(result, /\b(authorization|proxy-authorization)\s*:\s*[^\r\n]*/gi, "$1: [REDACTED]", "authorization-header");
+      result = this.replace(result, /\b(cookie|set-cookie)\s*:\s*[^\r\n]+/gi, "$1: [REDACTED]", "cookie-header");
+      result = this.replace(result, /\b([a-z][a-z0-9+.-]*:\/\/)([^\s/:@]+):([^\s/@]+)@/gi, "$1[REDACTED]:[REDACTED]@", "url-credentials");
+      result = this.replace(result, /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g, "[REDACTED]", "jwt");
+      result = this.replace(result, /\b(?:npm_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,})\b/g, "[REDACTED]", "service-token");
+      result = this.replace(result, /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[REDACTED]", "aws-access-key");
+      result = this.replace(
+        result,
+        /\b(api[ _-]?key|access[ _-]?token|auth[ _-]?token|client[ _-]?secret|password|passwd|refresh[ _-]?token|secret)\s*([:=])\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+        (_match, name, separator) => `${name}${separator}[REDACTED]`,
+        "credential-assignment"
+      );
+      const unresolvedContext = result.replace(/\b(?:authorization|cookie|set-cookie)\s*:\s*\[REDACTED\]/gi, "").replace(/\b(?:api[ _-]?key|access[ _-]?token|auth[ _-]?token|client[ _-]?secret|password|passwd|refresh[ _-]?token|secret)\s*[:=]\s*\[REDACTED\]/gi, "").replace(/\b[a-z][a-z0-9+.-]*:\/\/\[REDACTED\]:\[REDACTED\]@/gi, "").replace(/\[(?:REDACTED(?: PRIVATE KEY)?|WITHHELD CREDENTIAL LINE)\]/g, "");
+      if (CREDENTIAL_CONTEXT.test(unresolvedContext)) {
+        this.categories.add("credential-line");
+        this.withheldLineCount += 1;
+        return "[WITHHELD CREDENTIAL LINE]";
+      }
+      return result;
+    }).join("");
+  }
+  sanitizeArguments(args) {
+    const sanitized = [];
+    for (let index = 0; index < args.length; index += 1) {
+      const argument = args[index];
+      const normalizedName = argument.replace(/^--?/, "").toLowerCase().replaceAll("_", "-");
+      if (SENSITIVE_ARGUMENT_NAMES.has(normalizedName) || SENSITIVE_ENVIRONMENT_NAME.test(argument)) {
+        sanitized.push(argument);
+        if (index + 1 < args.length) {
+          sanitized.push("[REDACTED]");
+          this.categories.add("sensitive-argument");
+          index += 1;
+        }
+        continue;
+      }
+      if (argument === "--header" || argument === "-H") {
+        sanitized.push(argument);
+        if (index + 1 < args.length) {
+          sanitized.push(this.sanitizeHeader(args[index + 1]));
+          index += 1;
+        }
+        continue;
+      }
+      const inlineHeader = argument.match(/^(--header|-H)=([\s\S]*)$/i);
+      if (inlineHeader) {
+        sanitized.push(`${inlineHeader[1]}=${this.sanitizeHeader(inlineHeader[2])}`);
+        continue;
+      }
+      const inlineSwitch = argument.match(/^(--?)([^=]+)=(.*)$/s);
+      if (inlineSwitch && SENSITIVE_ARGUMENT_NAMES.has(inlineSwitch[2].toLowerCase().replaceAll("_", "-"))) {
+        sanitized.push(`${inlineSwitch[1]}${inlineSwitch[2]}=[REDACTED]`);
+        this.categories.add("sensitive-argument");
+        continue;
+      }
+      const environmentAssignment = argument.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s);
+      if (environmentAssignment && SENSITIVE_ENVIRONMENT_NAME.test(environmentAssignment[1])) {
+        sanitized.push(`${environmentAssignment[1]}=[REDACTED]`);
+        this.categories.add("sensitive-argument");
+        continue;
+      }
+      sanitized.push(this.sanitizeText(argument));
+    }
+    return sanitized;
+  }
+  sanitizeHeader(value) {
+    const header = value.match(/^\s*([^:]+)\s*:\s*([\s\S]*)$/);
+    if (header && SENSITIVE_HEADER_NAME.test(header[1].trim())) {
+      this.categories.add(/cookie/i.test(header[1]) ? "cookie-header" : "authorization-header");
+      return `${header[1]}: [REDACTED]`;
+    }
+    return this.sanitizeText(value);
+  }
+  metadata() {
+    const categories = [.../* @__PURE__ */ new Set([...this.prior?.categories ?? [], ...this.categories])].sort();
+    const withheldLineCount = (this.prior?.withheldLineCount ?? 0) + this.withheldLineCount;
+    return categories.length || withheldLineCount ? { categories, withheldLineCount } : void 0;
+  }
+};
 function compactRepeatedLines(value) {
   const lines = value.split("\n");
   const output = [];
@@ -595,31 +709,47 @@ var StreamCapture = class {
   }
   maxBytes;
   chunks = [];
-  bytes = 0;
+  hash = createHash3("sha256");
+  capturedBytes = 0;
+  observedBytes = 0;
   truncated = false;
   binary = false;
   append(chunk) {
+    this.hash.update(chunk);
+    this.observedBytes += chunk.length;
     if (chunk.includes(0)) this.binary = true;
-    if (this.bytes >= this.maxBytes) {
+    if (this.capturedBytes >= this.maxBytes) {
       this.truncated = true;
       return;
     }
-    const remaining = this.maxBytes - this.bytes;
+    const remaining = this.maxBytes - this.capturedBytes;
     const selected = chunk.subarray(0, remaining);
     this.chunks.push(Buffer.from(selected));
-    this.bytes += selected.length;
+    this.capturedBytes += selected.length;
     if (selected.length < chunk.length) this.truncated = true;
   }
   get hasBinary() {
     return this.binary;
   }
-  finish() {
-    const raw = redact(compactRepeatedLines(Buffer.concat(this.chunks).toString("utf8").replace(ANSI_PATTERN, "")));
+  finish(sanitizer) {
+    const sha2562 = this.hash.digest("hex");
+    if (this.binary) {
+      return { text: "", truncated: this.truncated, bytes: this.observedBytes, sha256: sha2562, binary: true };
+    }
+    const raw = sanitizer.sanitizeText(compactRepeatedLines(Buffer.concat(this.chunks).toString("utf8")));
     const bytes = Buffer.byteLength(raw, "utf8");
-    if (bytes <= this.maxBytes && !this.truncated) return { text: raw, truncated: false };
+    if (bytes <= this.maxBytes && !this.truncated) {
+      return { text: raw, truncated: false, bytes: this.observedBytes, sha256: sha2562, binary: false };
+    }
     const buffer = Buffer.from(raw, "utf8");
-    return { text: `${buffer.subarray(0, Math.max(0, this.maxBytes - 32)).toString("utf8")}
-[truncated]`, truncated: true };
+    return {
+      text: `${buffer.subarray(0, Math.max(0, this.maxBytes - 32)).toString("utf8")}
+[truncated]`,
+      truncated: true,
+      bytes: this.observedBytes,
+      sha256: sha2562,
+      binary: false
+    };
   }
 };
 function validateCommand(command, interactive) {
@@ -628,11 +758,9 @@ function validateCommand(command, interactive) {
     throw new Error("Interactive commands are refused unless interactive mode is explicitly enabled.");
   }
 }
-function redactRunnerArguments(args) {
-  return args.map((arg) => redact(arg));
-}
 function taskOutcomeFromRun(run, taskId, identity) {
-  const command = redactRunnerArguments([run.command, ...run.args]).join(" ");
+  const sanitizer = new RunnerSanitizer(run.redaction);
+  const command = sanitizer.sanitizeArguments([run.command, ...run.args]).join(" ");
   return createTaskOutcome({
     id: `run-${run.runId}`,
     taskId,
@@ -654,6 +782,36 @@ ${stdout}`;
   const metadata = { ...test ? { test } : {}, ...file ? { file } : {}, ...errorClass ? { errorClass } : {} };
   return Object.keys(metadata).length ? metadata : void 0;
 }
+function sanitizeRunMetadata(metadata, sanitizer) {
+  if (!metadata) return void 0;
+  const sanitized = {
+    ...metadata.test ? { test: sanitizer.sanitizeText(metadata.test) } : {},
+    ...metadata.file ? { file: sanitizer.sanitizeText(metadata.file) } : {},
+    ...metadata.errorClass ? { errorClass: sanitizer.sanitizeText(metadata.errorClass) } : {}
+  };
+  return Object.keys(sanitized).length ? sanitized : void 0;
+}
+function signalPosixProcessGroup(pid, signal) {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+}
+async function taskkillProcessTree(pid) {
+  await new Promise((resolve7, reject) => {
+    const killer = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
+      windowsHide: true,
+      shell: false,
+      stdio: "ignore"
+    });
+    killer.once("error", (error) => reject(new Error(`taskkill failed to spawn: ${error.message}`)));
+    killer.once("close", (code, signal) => {
+      if (code === 0) resolve7();
+      else reject(new Error(`taskkill failed with exit code ${code ?? "null"}${signal ? ` (signal ${signal})` : ""}.`));
+    });
+  });
+}
 async function executeRun(options, signal) {
   const interactive = options.interactive === true;
   validateCommand(options.command, interactive);
@@ -662,56 +820,80 @@ async function executeRun(options, signal) {
   const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? 12e4, 15 * 6e4));
   const terminateGraceMs = Math.max(100, Math.min(options.terminateGraceMs ?? 2e3, 15e3));
   const startedAt = /* @__PURE__ */ new Date();
+  const sanitizer = new RunnerSanitizer();
   const stdout = new StreamCapture(maxBytes);
   const stderr = new StreamCapture(maxBytes);
-  const child = spawn(options.command, options.args ?? [], { cwd: options.root, env: options.env ? { ...process.env, ...options.env } : process.env, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(options.command, options.args ?? [], {
+    cwd: options.root,
+    env: options.env ? { ...process.env, ...options.env } : process.env,
+    shell: false,
+    windowsHide: true,
+    detached: process.platform !== "win32",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
   let binaryOutput = false;
   child.stdout.on("data", (chunk) => stdout.append(chunk));
   child.stderr.on("data", (chunk) => stderr.append(chunk));
   let timedOut = false;
   let cancelled = false;
-  let escalationTimer;
+  let terminationPromise;
   const terminate = () => {
-    if (child.exitCode !== null || child.killed) return;
-    child.kill("SIGTERM");
-    escalationTimer = setTimeout(() => {
-      if (child.exitCode !== null) return;
-      if (process.platform === "win32" && child.pid) {
-        spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
-      } else {
-        child.kill("SIGKILL");
+    if (terminationPromise) return terminationPromise;
+    const pid = child.pid;
+    if (!pid) return Promise.resolve();
+    terminationPromise = (async () => {
+      if (process.platform !== "win32") signalPosixProcessGroup(pid, "SIGTERM");
+      await delay(terminateGraceMs);
+      if (process.platform === "win32") await taskkillProcessTree(pid);
+      else signalPosixProcessGroup(pid, "SIGKILL");
+    })();
+    return terminationPromise;
+  };
+  let rejectResult;
+  const resultPromise = new Promise((resolve7, reject) => {
+    rejectResult = reject;
+    child.once("error", reject);
+    child.once("close", (code, childSignal) => resolve7({ code, signal: childSignal }));
+  });
+  const requestTermination = () => {
+    void terminate().catch((error) => {
+      if (process.platform === "win32") {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+        }
       }
-    }, terminateGraceMs);
+      rejectResult(error);
+    });
   };
   const timer = setTimeout(() => {
     timedOut = true;
-    terminate();
+    requestTermination();
   }, timeoutMs);
   const abort = () => {
     cancelled = true;
-    terminate();
+    requestTermination();
   };
-  signal?.addEventListener("abort", abort, { once: true });
-  const result = await new Promise((resolve7, reject) => {
-    child.once("error", reject);
-    child.once("close", (code, childSignal) => resolve7({ code, signal: childSignal }));
-  }).finally(() => {
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const result = await resultPromise.finally(() => {
     clearTimeout(timer);
-    if (escalationTimer) clearTimeout(escalationTimer);
     signal?.removeEventListener("abort", abort);
   });
-  const stdoutCapture = stdout.finish();
-  const stderrCapture = stderr.finish();
-  binaryOutput = stdout.hasBinary || stderr.hasBinary;
-  if (binaryOutput) stderrCapture.text = `${stderrCapture.text}
-[binary output refused]`;
+  if (terminationPromise) await terminationPromise;
+  const stdoutCapture = stdout.finish(sanitizer);
+  const stderrCapture = stderr.finish(sanitizer);
+  binaryOutput = stdoutCapture.binary || stderrCapture.binary;
   const inferredMetadata = inferRunMetadata(stdoutCapture.text, stderrCapture.text);
-  const metadata = inferredMetadata || options.metadata ? { ...inferredMetadata ?? {}, ...options.metadata ?? {} } : void 0;
+  const metadata = sanitizeRunMetadata(
+    inferredMetadata || options.metadata ? { ...inferredMetadata ?? {}, ...options.metadata ?? {} } : void 0,
+    sanitizer
+  );
   return {
     runId: randomUUID2(),
     root: options.root,
-    command: options.command,
-    args: redactRunnerArguments(options.args ?? []),
+    command: sanitizer.sanitizeText(options.command),
+    args: sanitizer.sanitizeArguments(options.args ?? []),
     startedAt: startedAt.toISOString(),
     finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
     status: cancelled ? "cancelled" : timedOut ? "timed-out" : binaryOutput ? "failed" : result.code === 0 ? "completed" : "failed",
@@ -722,18 +904,40 @@ async function executeRun(options, signal) {
     stderr: stderrCapture.text,
     stdoutTruncated: stdoutCapture.truncated,
     stderrTruncated: stderrCapture.truncated,
+    stdoutBytes: stdoutCapture.bytes,
+    stderrBytes: stderrCapture.bytes,
+    stdoutSha256: stdoutCapture.sha256,
+    stderrSha256: stderrCapture.sha256,
+    stdoutBinary: stdoutCapture.binary,
+    stderrBinary: stderrCapture.binary,
     ...binaryOutput ? { binaryOutput: true } : {},
+    ...sanitizer.metadata() ? { redaction: sanitizer.metadata() } : {},
     ...metadata ? { metadata } : {}
   };
 }
+function sanitizeSavedRun(run) {
+  const sanitizer = new RunnerSanitizer(run.redaction);
+  const metadata = sanitizeRunMetadata(run.metadata, sanitizer);
+  const sanitized = {
+    ...run,
+    command: sanitizer.sanitizeText(run.command),
+    args: sanitizer.sanitizeArguments(run.args),
+    stdout: sanitizer.sanitizeText(run.stdout),
+    stderr: sanitizer.sanitizeText(run.stderr),
+    ...metadata && Object.keys(metadata).length ? { metadata } : {}
+  };
+  const redaction = sanitizer.metadata();
+  if (redaction) sanitized.redaction = redaction;
+  return sanitized;
+}
 async function saveRun(root, run) {
   const key = await canonicalPersistenceLockKey(root, ".tokengraph", "runs", `${run.runId}.json`);
-  await withFileLock(`${key}.lock`, () => writeJsonAtomic(runPath(root, run.runId), run));
+  await withFileLock(`${key}.lock`, () => writeJsonAtomic(runPath(root, run.runId), sanitizeSavedRun(run)));
 }
 async function loadRun(root, runId) {
   try {
     const parsed = JSON.parse(await readFile4(runPath(root, runId), "utf8"));
-    return parsed && parsed.runId === runId && parsed.root === root ? parsed : void 0;
+    return parsed && parsed.runId === runId && parsed.root === root ? sanitizeSavedRun(parsed) : void 0;
   } catch (error) {
     if (error.code === "ENOENT") return void 0;
     if (error instanceof SyntaxError) {
@@ -744,8 +948,9 @@ async function loadRun(root, runId) {
   }
 }
 function summarizeRun(run) {
-  const combined = `${run.stderr}
-${run.stdout}`;
+  const sanitizer = new RunnerSanitizer(run.redaction);
+  const combined = sanitizer.sanitizeText(`${run.stderr}
+${run.stdout}`);
   const lines = combined.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const firstError = lines.find((line) => /\b(error|failed|failure|exception)\b/i.test(line));
   const tests = lines.filter((line) => /(?:test|spec)\b|\b(pass|fail)ed\b/i.test(line)).slice(0, 20);
@@ -762,7 +967,8 @@ ${run.stdout}`;
     repeatCount,
     tests,
     stackFrames,
-    locations
+    locations,
+    ...sanitizer.metadata() ? { redaction: sanitizer.metadata() } : {}
   };
 }
 async function purgeRuns(root, before) {
@@ -1324,7 +1530,7 @@ async function persistPromotionReport(root, report) {
 
 // src/core/pairedHost.ts
 import { spawn as spawn2 } from "node:child_process";
-import { createHash as createHash3, randomUUID as randomUUID3 } from "node:crypto";
+import { createHash as createHash4, randomUUID as randomUUID3 } from "node:crypto";
 import { access as access2, chmod as chmod3, mkdir as mkdir3, open as open2, readFile as readFile8, rm as rm4, symlink, writeFile as writeFile2 } from "node:fs/promises";
 import { dirname as dirname3, isAbsolute as isAbsolute4, relative as relative4, resolve as resolve5, sep } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -1374,10 +1580,10 @@ var ALLOWED_MCP_ENVIRONMENT = /* @__PURE__ */ new Set(["TOKENGRAPH_TOOL_SURFACE"
 var APPROVED_VERIFIER_DIRECTORY = "docs/benchmarks/host-evaluations/verifiers";
 var APPROVED_VERIFIER_FILE = "plugins/tokengraph/scripts/paired-host-acceptance.mjs";
 function hashNumber(value) {
-  return Number.parseInt(createHash3("sha256").update(value).digest("hex").slice(0, 12), 16);
+  return Number.parseInt(createHash4("sha256").update(value).digest("hex").slice(0, 12), 16);
 }
 function sha256(value) {
-  return createHash3("sha256").update(value).digest("hex");
+  return createHash4("sha256").update(value).digest("hex");
 }
 function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;

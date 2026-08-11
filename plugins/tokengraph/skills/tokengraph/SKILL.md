@@ -9,7 +9,7 @@ Use this skill as the router.
 
 ## Common lifecycle
 
-1. Call `tokengraph_setup({})` before project tools and capture `trustedWorkspace.root` as the trusted root. If blocked, follow recovery, do not invent a taskId, and do not use an arbitrary root.
+1. After stopping every TokenGraph v0.23.1 process, call `tokengraph_setup({ confirmNoLegacyProcesses: true })` before project tools and capture `trustedWorkspace.root` as the trusted root. If blocked, follow recovery, do not invent a taskId, and do not use an arbitrary root.
 2. Use `tokengraph_prepare_context({ task, constraints?, profile?, maxTokens?, host? })` only when a retrieval plan is needed; capture its returned taskId. For direct query, compress, recall, or analyze work, omit `taskId` from the first intent call so it can auto-start the ledger and return a taskId; capture the returned taskId. Forward user constraints verbatim.
 3. Pass that exact taskId to subsequent task-aware calls. The trusted root may be omitted after ready setup when host workspace resolution is stable; otherwise pass only the captured trusted root. Never merge tasks or workspaces, invent an id, reuse another task's id, or reuse a completed taskId.
 4. Route evidence through the core surface as needed:

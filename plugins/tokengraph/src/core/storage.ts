@@ -1,64 +1,211 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readdir, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
+
+import { runWithFileLock, type FileLockOptions } from "./fileLockLease.js";
+import { canonicalPersistenceLock, isCanonicalPersistenceLock, type CanonicalPersistenceLock, type LockDomain } from "./lockDomain.js";
+import { requireLegacyRuntimeShutdownCapability } from "./legacyRuntimeActivation.js";
 
 export interface JsonTokenGraphStoreOptions {
   schemaVersion: number;
   dataKey: string;
 }
 
-const FILE_LOCK_ATTEMPTS = 200;
-const FILE_LOCK_WAIT_MS = 10;
-const FILE_LOCK_STALE_MS = 30_000;
+export interface DestructiveMaintenanceConfirmation {
+  readonly confirmedNoLegacyTokenGraphProcesses: true;
+}
+
+export interface DestructiveMaintenanceTarget {
+  readonly domain: LockDomain;
+  readonly relativePath?: string;
+}
+
+export interface DestructiveMaintenanceContext {
+  readonly locks: readonly CanonicalPersistenceLock[];
+  remove(targets: readonly DestructiveMaintenanceTarget[]): Promise<ReadonlySet<string>>;
+}
+
+export class DestructiveMaintenanceConfirmationError extends Error {
+  readonly code = "DESTRUCTIVE_MAINTENANCE_UNCONFIRMED" as const;
+
+  constructor() {
+    super("Destructive TokenGraph maintenance requires a fresh confirmation that no legacy TokenGraph process is running.");
+    this.name = "DestructiveMaintenanceConfirmationError";
+  }
+}
 
 export const SAFE_WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
 
-async function wait(milliseconds: number): Promise<void> {
-  await new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+export async function withFileLock<T>(
+  lock: CanonicalPersistenceLock,
+  operation: () => Promise<T>,
+  options: FileLockOptions = {}
+): Promise<T> {
+  return runWithFileLock(lock, operation, options);
 }
 
-function isTransientWindowsFsError(error: unknown): boolean {
-  return process.platform === "win32" && ["EPERM", "EBUSY", "EACCES"].includes(String((error as NodeJS.ErrnoException).code));
+function maintenanceSortKey(path: string): string {
+  return process.platform === "win32" ? path.toLowerCase() : path;
 }
 
-async function retryTransientWindowsFs<T>(operation: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await operation();
-    } catch (error) {
-      if (!isTransientWindowsFsError(error) || attempt >= 19) throw error;
-      await wait(FILE_LOCK_WAIT_MS);
-    }
+export async function canonicalMaintenanceLocks(
+  root: string,
+  domains: readonly LockDomain[]
+): Promise<readonly CanonicalPersistenceLock[]> {
+  const locks = await Promise.all([...new Set(domains)].map((domain) => canonicalPersistenceLock(root, domain, "maintenance")));
+  const unique = new Map<string, CanonicalPersistenceLock>();
+  for (const lock of locks) unique.set(maintenanceSortKey(lock.anchorPath), lock);
+  return Object.freeze([...unique.values()].sort((left, right) => {
+    const leftKey = maintenanceSortKey(left.anchorPath);
+    const rightKey = maintenanceSortKey(right.anchorPath);
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  }));
+}
+
+function assertMaintenanceConfirmation(value: unknown): asserts value is DestructiveMaintenanceConfirmation {
+  if (value === null || typeof value !== "object" ||
+      (value as { confirmedNoLegacyTokenGraphProcesses?: unknown }).confirmedNoLegacyTokenGraphProcesses !== true) {
+    throw new DestructiveMaintenanceConfirmationError();
   }
 }
 
-export async function withFileLock<T>(lockPath: string, operation: () => Promise<T>): Promise<T> {
-  await assertNoSymbolicLinkComponents(lockPath);
-  await mkdir(dirname(lockPath), { recursive: true });
-  await assertNoSymbolicLinkComponents(lockPath);
-  for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
-    try {
-      const handle = await open(lockPath, "wx", 0o600);
-      try {
-        return await operation();
-      } finally {
-        await handle.close();
-        await retryTransientWindowsFs(async () => rm(lockPath, { force: true }));
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST" && !isTransientWindowsFsError(error)) throw error;
-      try {
-        const lockStats = await stat(lockPath);
-        if (Date.now() - lockStats.mtimeMs > FILE_LOCK_STALE_MS) {
-          await retryTransientWindowsFs(async () => rm(lockPath, { force: true }));
+function pathIdentity(stats: Awaited<ReturnType<typeof lstat>>): string {
+  return `${stats.dev}:${stats.ino}:${stats.birthtimeMs}`;
+}
+
+function safeMaintenanceRelativePath(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (value.length === 0 || isAbsolute(value) || value.includes("\0")) throw new Error("Maintenance target must be a safe relative path.");
+  const segments = value.replaceAll("\\", "/").split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) throw new Error("Maintenance target must be a safe relative path.");
+  return segments.join("/");
+}
+
+interface PlannedMaintenanceEntry {
+  readonly path: string;
+  readonly identity: string;
+  readonly directory: boolean;
+}
+
+async function planMaintenanceEntry(
+  path: string,
+  protectedPaths: ReadonlySet<string>,
+  plan: PlannedMaintenanceEntry[]
+): Promise<void> {
+  const key = maintenanceSortKey(path);
+  if (protectedPaths.has(key)) return;
+  let stats;
+  try {
+    stats = await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (stats.isSymbolicLink()) throw new Error("Destructive maintenance refuses a symbolic-link or junction entry.");
+  if (path.toLowerCase().endsWith(".lock")) throw new Error("Destructive maintenance refuses an unexplained legacy lock or compatibility barrier.");
+  if (stats.isFile()) {
+    if (stats.nlink !== 1) throw new Error("Destructive maintenance refuses a multiply linked file.");
+    plan.push({ path, identity: pathIdentity(stats), directory: false });
+    return;
+  }
+  if (!stats.isDirectory()) throw new Error("Destructive maintenance refuses a non-regular filesystem entry.");
+  for (const entry of (await readdir(path)).sort()) await planMaintenanceEntry(join(path, entry), protectedPaths, plan);
+  plan.push({ path, identity: pathIdentity(stats), directory: true });
+}
+
+async function removePlannedMaintenanceEntries(plan: readonly PlannedMaintenanceEntry[]): Promise<ReadonlySet<string>> {
+  const removed = new Set<string>();
+  for (const entry of plan) {
+    const current = await lstat(entry.path).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("Destructive maintenance target identity changed before deletion.");
+      throw error;
+    });
+    if (pathIdentity(current) !== entry.identity || current.isSymbolicLink() ||
+        (entry.directory ? !current.isDirectory() : !current.isFile() || current.nlink !== 1)) {
+      throw new Error("Destructive maintenance target identity changed before deletion.");
+    }
+    if (entry.directory) await rmdir(entry.path);
+    else await unlink(entry.path);
+    removed.add(entry.path);
+  }
+  return removed;
+}
+
+function createMaintenanceContext(locks: readonly CanonicalPersistenceLock[]): DestructiveMaintenanceContext {
+  const byDomain = new Map<LockDomain, CanonicalPersistenceLock>();
+  const protectedPaths = new Set<string>();
+  for (const lock of locks) {
+    if (!isCanonicalPersistenceLock(lock)) throw new Error("Maintenance requires canonical persistence locks.");
+    byDomain.set(lock.domain, lock);
+    for (const path of [
+      lock.domainRoot,
+      lock.anchorPath,
+      lock.journalPath,
+      `${lock.journalPath}.tokengraph-write-v2.tmp`,
+      lock.compatibilityPath
+    ]) protectedPaths.add(maintenanceSortKey(path));
+  }
+  return Object.freeze({
+    locks,
+    async remove(targets: readonly DestructiveMaintenanceTarget[]): Promise<ReadonlySet<string>> {
+      const plans: PlannedMaintenanceEntry[] = [];
+      const roots = new Set<string>();
+      for (const target of targets) {
+        const lock = byDomain.get(target.domain);
+        if (!lock) throw new Error("Maintenance target domain was not acquired.");
+        const relativePath = safeMaintenanceRelativePath(target.relativePath);
+        const targetPath = relativePath === undefined ? lock.domainRoot : join(lock.domainRoot, ...relativePath.split("/"));
+        const difference = relative(lock.domainRoot, targetPath);
+        if (difference.startsWith("..") || isAbsolute(difference)) throw new Error("Maintenance target escapes its canonical domain.");
+        if (relativePath === undefined) {
+          let entries: string[];
+          try { entries = (await readdir(lock.domainRoot)).sort(); }
+          catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+            throw error;
+          }
+          for (const entry of entries) await planMaintenanceEntry(join(lock.domainRoot, entry), protectedPaths, plans);
+        } else if (!roots.has(maintenanceSortKey(targetPath))) {
+          roots.add(maintenanceSortKey(targetPath));
+          await planMaintenanceEntry(targetPath, protectedPaths, plans);
         }
-      } catch (lockError) {
-        if ((lockError as NodeJS.ErrnoException).code !== "ENOENT" && !isTransientWindowsFsError(lockError)) throw lockError;
       }
-      await wait(FILE_LOCK_WAIT_MS);
+      return removePlannedMaintenanceEntries(plans);
     }
-  }
-  throw new Error("Timed out waiting for a persistence file lock.");
+  });
+}
+
+async function withMaintenanceLocks<T>(
+  root: string,
+  domains: readonly LockDomain[],
+  operation: (context: DestructiveMaintenanceContext) => Promise<T>
+): Promise<T> {
+  const locks = await canonicalMaintenanceLocks(root, domains);
+  const context = createMaintenanceContext(locks);
+  const acquire = async (index: number): Promise<T> => index === locks.length
+    ? operation(context)
+    : withFileLock(locks[index]!, () => acquire(index + 1));
+  return acquire(0);
+}
+
+export async function withDestructiveMaintenance<T>(
+  root: string,
+  domains: readonly LockDomain[],
+  confirmation: DestructiveMaintenanceConfirmation,
+  operation: (context: DestructiveMaintenanceContext) => Promise<T>
+): Promise<T> {
+  assertMaintenanceConfirmation(confirmation);
+  requireLegacyRuntimeShutdownCapability();
+  return withMaintenanceLocks(root, domains, operation);
+}
+
+export async function withAutomaticMaintenance<T>(
+  root: string,
+  domains: readonly LockDomain[],
+  operation: (context: DestructiveMaintenanceContext) => Promise<T>
+): Promise<T> {
+  requireLegacyRuntimeShutdownCapability();
+  return withMaintenanceLocks(root, domains, operation);
 }
 
 export async function canonicalPersistenceLockKey(root: string, ...segments: string[]): Promise<string> {
