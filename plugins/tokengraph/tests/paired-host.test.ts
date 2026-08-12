@@ -153,7 +153,7 @@ describe("paired Codex host adapter", () => {
   });
 
   it("uses isolated worktrees, persists raw evidence, runs acceptance, and emits a privacy-minimal manifest", async () => {
-    const root = await mkdtemp(join(tmpdir(), "tokengraph-paired-host-"));
+    const root = await mkdtemp(join(tmpdir(), "tg-ph-"));
     try {
       await execFileAsync("git", ["init"], { cwd: root });
       await writeFile(join(root, "README.md"), "fixture\n");
@@ -234,7 +234,7 @@ describe("paired Codex host adapter", () => {
         commandHash: createHash("sha256").update(verifierSource).digest("hex")
       });
 
-      const controllerRoot = await mkdtemp(join(tmpdir(), "tokengraph-paired-host-controller-"));
+      const controllerRoot = await mkdtemp(join(tmpdir(), "tg-ph-ctl-"));
       try {
         await execFileAsync("git", ["init"], { cwd: controllerRoot });
         await mkdir(join(controllerRoot, "dist"));
@@ -320,7 +320,7 @@ describe("paired Codex host adapter", () => {
       })).rejects.toThrow(/verifier is not tracked by the attested verifier commit/i);
       await rm(untrackedVerifier, { force: true });
 
-      const escapedManifestTarget = await mkdtemp(join(tmpdir(), "tokengraph-paired-host-manifest-escape-"));
+      const escapedManifestTarget = await mkdtemp(join(tmpdir(), "tg-ph-esc-"));
       const escapedManifestLink = join(root, "escaped-artifacts");
       try {
         await symlink(escapedManifestTarget, escapedManifestLink, process.platform === "win32" ? "junction" : "dir");
