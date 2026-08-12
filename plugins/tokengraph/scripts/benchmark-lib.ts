@@ -778,7 +778,13 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
   const tools = coreToolsListDefinitions();
   const discoveryRequest = { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} };
   const discoveryResponse = { tools };
-  const setupRequest = { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "tokengraph_setup", arguments: {} } };
+  // tokengraph_setup requires the literal confirmation argument, so the modeled
+  // session must carry it or the benchmark accounts for a request the server
+  // would reject.
+  const setupRequest = {
+    jsonrpc: "2.0", id: 2, method: "tools/call",
+    params: { name: "tokengraph_setup", arguments: { confirmNoLegacyProcesses: true } }
+  };
   const setupResponse = compactToolResultEnvelope({
     status: "ready", host: "unknown", trustedWorkspace: { source: "injected", root: "tests/fixtures/evidence-project" },
     blockingReason: null, pluginRootLaunch: false, message: "TokenGraph has a safe host-provided workspace boundary.", nextSteps: [],
