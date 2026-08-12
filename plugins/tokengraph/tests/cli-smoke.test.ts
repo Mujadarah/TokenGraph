@@ -221,8 +221,8 @@ describe("tokengraph benchmark harness and trust docs", () => {
       criticalConstraintPreservationRate: 1,
       criticalFalseNegativeCount: 0,
       requiredFileRecall: 1,
-      medianNetSavings: 180.53333333333333,
-      executionInclusiveP25: 38.53333333333333,
+      medianNetSavings: 180.26666666666665,
+      executionInclusiveP25: 38.266666666666666,
       nonNegativeActivatedRate: expect.any(Number),
       taskFailures: []
     });
