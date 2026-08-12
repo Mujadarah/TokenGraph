@@ -270,7 +270,9 @@ export async function resolveConfinedPath(root: string, relativeFile: string, cr
   let parent = canonicalRoot;
   for (const segment of segments) {
     const candidate = join(parent, segment);
-    if (createParents) await mkdir(candidate, { recursive: false }).catch((error) => {
+    // Created restrictively so TokenGraph never produces a project-state
+    // directory that its own persistence-lock layer would later refuse.
+    if (createParents) await mkdir(candidate, { recursive: false, mode: 0o700 }).catch((error) => {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     });
     parent = await realpath(candidate);

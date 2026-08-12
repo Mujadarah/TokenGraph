@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -7,7 +7,8 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runWithFileLock } from "../src/core/fileLockLease.js";
-import { canonicalPersistenceLock } from "../src/core/lockDomain.js";
+import { LOCK_DOMAINS, canonicalPersistenceLock } from "../src/core/lockDomain.js";
+import { resolveConfinedPath } from "../src/core/storage.js";
 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -296,5 +297,60 @@ describe("real native test runner contract", () => {
       expect(source).not.toMatch(/\baccess\(/u);
     }
     expect(provider).not.toMatch(/split\(\/\[\\\\\/\]/u);
+  });
+});
+
+// The POSIX mode branch is skipped entirely on Windows, so these assertions are
+// the only place the adopt-and-tighten boundary is exercised. Windows evidence
+// cannot substitute for them.
+describe.skipIf(process.platform === "win32")("posix domain root mode boundary", () => {
+  const owned = LOCK_DOMAINS.filter((domain) => domain !== "git-info");
+
+  it("adopts and tightens a permissive domain root that TokenGraph owns", async () => {
+    for (const domain of owned) {
+      const root = await mkdtemp(join(tmpdir(), "tokengraph-domain-mode-"));
+      roots.push(root);
+      const lock = await canonicalPersistenceLock(root, domain, "example.json");
+      await mkdir(lock.domainRoot, { recursive: true, mode: 0o755 });
+      await chmod(lock.domainRoot, 0o755);
+
+      await expect(runWithFileLock(lock, async () => domain), domain).resolves.toBe(domain);
+      expect(Number((await lstat(lock.domainRoot)).mode) & 0o777, domain).toBe(0o700);
+    }
+  });
+
+  it("locks git-info in a real repository without changing the Git directory mode", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-git-info-mode-"));
+    roots.push(root);
+    await execFileAsync("git", ["init", "--quiet", root]);
+    const info = join(root, ".git", "info");
+    await mkdir(info, { recursive: true });
+    await chmod(info, 0o755);
+
+    const lock = await canonicalPersistenceLock(root, "git-info", "exclude");
+    await expect(runWithFileLock(lock, async () => "owned")).resolves.toBe("owned");
+    expect(Number((await lstat(info)).mode) & 0o777).toBe(0o755);
+  });
+
+  it("still refuses a linked domain root instead of tightening it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-domain-link-"));
+    roots.push(root);
+    const elsewhere = join(root, "elsewhere");
+    await mkdir(elsewhere, { mode: 0o700 });
+    await symlink(elsewhere, join(root, ".tokengraph"));
+
+    const lock = await canonicalPersistenceLock(root, "workspace-state", "example.json");
+    await expect(runWithFileLock(lock, async () => "owned")).rejects.toMatchObject({
+      code: "UNSAFE_LOCK_DIRECTORY"
+    });
+  });
+
+  it("creates confined parent directories restrictively", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-confined-mode-"));
+    roots.push(root);
+    await resolveConfinedPath(root, ".tokengraph/nested/example.json", true);
+    for (const relative of [".tokengraph", join(".tokengraph", "nested")]) {
+      expect(Number((await lstat(join(root, relative))).mode) & 0o777, relative).toBe(0o700);
+    }
   });
 });

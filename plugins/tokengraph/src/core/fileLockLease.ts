@@ -105,9 +105,9 @@ export interface DirectorySnapshot {
 }
 
 export interface FileLockIo {
-  ensureDirectory(path: string): Promise<void>;
+  ensureDirectory(path: string, requireRestrictiveMode?: boolean): Promise<void>;
   readFile(path: string, maximumBytes: number): Promise<FileSnapshot | undefined>;
-  inspectDirectory(path: string): Promise<DirectorySnapshot | undefined>;
+  inspectDirectory(path: string, requireRestrictiveMode?: boolean): Promise<DirectorySnapshot | undefined>;
   createDirectory(path: string): Promise<DirectorySnapshot>;
   createFileDurable(path: string, text: string): Promise<FileSnapshot>;
   replaceFileFromTemporary(
@@ -526,10 +526,12 @@ function pathForJournal(lock: CanonicalPersistenceLock, journal: ActiveLockRecov
 function validateDirectory(
   snapshot: DirectorySnapshot,
   runtime: FileLockRuntime,
-  expectedIdentity?: string
+  expectedIdentity?: string,
+  requireRestrictiveMode = true
 ): void {
   if (expectedIdentity !== undefined && snapshot.identity !== expectedIdentity) fail("UNSAFE_LOCK_DIRECTORY");
-  if (snapshot.identity.length === 0 || (runtime.platform !== "win32" && (snapshot.mode & 0o077) !== 0)) {
+  if (snapshot.identity.length === 0 ||
+    (requireRestrictiveMode && runtime.platform !== "win32" && (snapshot.mode & 0o077) !== 0)) {
     fail("UNSAFE_LOCK_DIRECTORY");
   }
 }
@@ -584,15 +586,26 @@ function nextJournalRecord<T extends Omit<LockRecoveryJournalV2, "generation" | 
   } as LockRecoveryJournalV2;
 }
 
+// TokenGraph owns every domain root under `.tokengraph` and may tighten it to
+// 0700. The `git-info` domain resolves inside the user's Git directory, which
+// Git creates mode 0755 and which OpenAI Codex additionally exposes read-only
+// to sandboxed tools, so that root is validated for type, link, reparse and
+// ownership but never required to be restrictive and never chmodded.
+function ownsDomainRoot(lock: CanonicalPersistenceLock): boolean {
+  return lock.domain !== "git-info";
+}
+
 async function classifyDomainRoot(
   lock: CanonicalPersistenceLock,
   record: LockRecoveryJournalV2 | undefined,
   runtime: FileLockRuntime,
   policy: FileLockPolicy
 ): Promise<void> {
-  const root = await retryDiagnostic(runtime, policy, undefined, () => runtime.io.inspectDirectory(lock.domainRoot));
+  const requireRestrictiveMode = ownsDomainRoot(lock);
+  const root = await retryDiagnostic(runtime, policy, undefined,
+    () => runtime.io.inspectDirectory(lock.domainRoot, requireRestrictiveMode));
   if (root === undefined) fail("UNSAFE_LOCK_DIRECTORY");
-  validateDirectory(root, runtime);
+  validateDirectory(root, runtime, undefined, requireRestrictiveMode);
   const allowedBarrier = record !== undefined && activeJournal(record) ? record.relativeLegacyName : undefined;
   for (const entry of root.entries) {
     if (entry === NATIVE_ANCHOR || entry === NATIVE_JOURNAL ||
@@ -1251,7 +1264,8 @@ async function runOwnedV2<T>(
   policy: FileLockPolicy
 ): Promise<T> {
   abortIfRequested(options.signal);
-  await retryDiagnostic(runtime, policy, options.signal, () => runtime.io.ensureDirectory(lock.domainRoot));
+  await retryDiagnostic(runtime, policy, options.signal,
+    () => runtime.io.ensureDirectory(lock.domainRoot, ownsDomainRoot(lock)));
   const handle = await acquireNative(lock, runtime, policy, options.signal);
   let owned: OwnedStateV2 | undefined;
   let heartbeat: HeartbeatSchedule | undefined;
@@ -1538,11 +1552,11 @@ function identity(stats: BigIntStats): string {
   return `${stats.dev}:${stats.ino}:${stats.birthtimeNs}`;
 }
 
-function restrictive(stats: BigIntStats, directory: boolean): boolean {
+function restrictive(stats: BigIntStats, directory: boolean, requireRestrictiveMode = true): boolean {
   if (stats.isSymbolicLink() || (directory ? !stats.isDirectory() : !stats.isFile())) return false;
   if (!directory && stats.nlink !== 1n) return false;
   if (process.platform !== "win32") {
-    if ((Number(stats.mode) & 0o077) !== 0) return false;
+    if (requireRestrictiveMode && (Number(stats.mode) & 0o077) !== 0) return false;
     const uid = process.getuid?.();
     if (uid === undefined || stats.uid !== BigInt(uid)) return false;
   }
@@ -1591,7 +1605,10 @@ async function productionReadFile(path: string, maximumBytes: number): Promise<F
   }
 }
 
-async function productionInspectDirectory(path: string): Promise<DirectorySnapshot | undefined> {
+async function productionInspectDirectory(
+  path: string,
+  requireRestrictiveMode = true
+): Promise<DirectorySnapshot | undefined> {
   let stats: BigIntStats;
   try {
     stats = await lstat(path, { bigint: true });
@@ -1599,13 +1616,13 @@ async function productionInspectDirectory(path: string): Promise<DirectorySnapsh
     if (errno(error) === "ENOENT") return undefined;
     throw error;
   }
-  if (!restrictive(stats, true)) {
+  if (!restrictive(stats, true, requireRestrictiveMode)) {
     if (stats.isFile() && !stats.isSymbolicLink()) fail("LEGACY_LOCK_BLOCKED");
     fail("UNSAFE_LOCK_DIRECTORY");
   }
   const entries = (await readdir(path)).sort();
   const after = await lstat(path, { bigint: true });
-  if (!restrictive(after, true) || identity(after) !== identity(stats)) fail("UNSAFE_LOCK_DIRECTORY");
+  if (!restrictive(after, true, requireRestrictiveMode) || identity(after) !== identity(stats)) fail("UNSAFE_LOCK_DIRECTORY");
   return { identity: identity(after), mode: Number(after.mode), entries };
 }
 
@@ -1695,7 +1712,7 @@ export function replaceProductionProtocolFileForTesting(
 }
 
 const productionIo: FileLockIo = Object.freeze({
-  async ensureDirectory(path: string): Promise<void> {
+  async ensureDirectory(path: string, requireRestrictiveMode = true): Promise<void> {
     const absolute = resolve(path);
     const parsed = parse(absolute);
     let current = parsed.root;
@@ -1710,9 +1727,23 @@ const productionIo: FileLockIo = Object.freeze({
         if (process.platform !== "win32") await chmod(current, 0o700);
       }
     }
-    const stats = await lstat(path, { bigint: true });
-    if (!restrictive(stats, true)) fail("UNSAFE_LOCK_DIRECTORY");
-    if (process.platform !== "win32") await chmod(path, 0o700);
+    let stats = await lstat(path, { bigint: true });
+    // TokenGraph owns the directories under `.tokengraph`, so a domain root that
+    // already exists with a permissive mode is tightened before it is validated.
+    // Without this, a `.tokengraph` directory created by the confined-path writer,
+    // an archive extraction, or the user is refused permanently on POSIX.
+    // `git-info` resolves inside the user's Git directory, which TokenGraph does
+    // not own and must never chmod, so that domain validates without the mode
+    // requirement instead.
+    if (requireRestrictiveMode && process.platform !== "win32" &&
+      stats.isDirectory() && !stats.isSymbolicLink() &&
+      stats.uid === BigInt(process.getuid?.() ?? -1) &&
+      (Number(stats.mode) & 0o077) !== 0) {
+      await chmod(path, 0o700);
+      stats = await lstat(path, { bigint: true });
+    }
+    if (!restrictive(stats, true, requireRestrictiveMode)) fail("UNSAFE_LOCK_DIRECTORY");
+    if (requireRestrictiveMode && process.platform !== "win32") await chmod(path, 0o700);
   },
   readFile: productionReadFile,
   inspectDirectory: productionInspectDirectory,
