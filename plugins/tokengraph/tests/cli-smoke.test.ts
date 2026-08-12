@@ -504,6 +504,7 @@ describe("tokengraph release package command", () => {
         "package.json"
       ])
     );
+    expect(report.files).not.toContain("scripts/native-lock-probe.mjs");
     for (const file of report.files.filter((path: string) => /\.(?:c?js|json|md)$/i.test(path))) {
       expect(await readFile(resolve(report.packageDir, file), "utf8"), file).not.toMatch(/[^\x00-\x7F]/);
     }
@@ -546,6 +547,7 @@ describe("tokengraph release package command", () => {
       "tokengraph/dist/typescript-worker.cjs"
     ]));
     expect(archiveListing.join("\n")).not.toMatch(/tokengraph\/(src|tests|node_modules)\//);
+    expect(archiveListing).not.toContain("tokengraph/scripts/native-lock-probe.mjs");
   });
 
   it("validates a freshly generated release with core skill contracts", async () => {

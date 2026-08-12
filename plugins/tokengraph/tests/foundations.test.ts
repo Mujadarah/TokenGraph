@@ -25,6 +25,19 @@ async function makeRoot(): Promise<string> {
 }
 
 describe("repository identity and storage foundations", () => {
+  it("keeps the no-mixed-runtime rollout warning in setup, CLI, limitations, and release guidance", async () => {
+    const repositoryRoot = resolve("..", "..");
+    const sources = await Promise.all([
+      readFile(resolve("src", "core", "toolContracts.ts"), "utf8"),
+      readFile(resolve("src", "cli.ts"), "utf8"),
+      readFile(join(repositoryRoot, "docs", "trust", "limitations.md"), "utf8"),
+      readFile(join(repositoryRoot, "docs", "trust", "release-install.md"), "utf8")
+    ]);
+    for (const source of sources) {
+      expect(source).toMatch(/v0\.23\.1[\s\S]{0,240}stopped[\s\S]{0,240}(?:must not|not be) restarted/iu);
+    }
+  });
+
   it("keeps every production file-lock caller in the closed branded inventory", async () => {
     const core = resolve("src", "core");
     const callers: string[] = [];

@@ -1732,8 +1732,16 @@ const productionIo: FileLockIo = Object.freeze({
         // permissions and is never chmodded, so an absent `.git/info` does not
         // become 0700 state inside the user's Git directory.
         const ownedHere = requireRestrictiveMode || current !== resolve(path);
-        await mkdir(current, { recursive: false, mode: ownedHere ? 0o700 : 0o755 });
-        if (ownedHere && process.platform !== "win32") await chmod(current, 0o700);
+        let created = true;
+        try {
+          await mkdir(current, { recursive: false, mode: ownedHere ? 0o700 : 0o755 });
+        } catch (creationError) {
+          if (errno(creationError) !== "EEXIST") throw creationError;
+          created = false;
+          const raced = await lstat(current, { bigint: true });
+          if (raced.isSymbolicLink() || !raced.isDirectory()) fail("UNSAFE_LOCK_DIRECTORY");
+        }
+        if (created && ownedHere && process.platform !== "win32") await chmod(current, 0o700);
       }
     }
     let stats = await lstat(path, { bigint: true });

@@ -8,6 +8,8 @@ import { recordTaskOutcome, requireOpenTaskForOutcome } from "./core/taskLedger.
 import { getRepositoryIdentity } from "./core/repositoryIdentity.js";
 import { activateLegacyRuntimeShutdown } from "./core/legacyRuntimeActivation.js";
 
+const LEGACY_RUNTIME_ROLLOUT = "Every TokenGraph v0.23.1 MCP and CLI process must be stopped before v2 activation and must not be restarted while v2 runs.";
+
 function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
@@ -15,7 +17,7 @@ function optionValue(args: string[], name: string): string | undefined {
 
 function activateConfirmedInvocation(options: string[], usage: string): void {
   if (!options.includes("--confirm-no-legacy-processes")) {
-    throw new Error(`${usage} This lock-taking command requires --confirm-no-legacy-processes.`);
+    throw new Error(`${usage} This lock-taking command requires --confirm-no-legacy-processes. ${LEGACY_RUNTIME_ROLLOUT}`);
   }
   activateLegacyRuntimeShutdown({ confirmedNoLegacyTokenGraphProcesses: true });
 }
@@ -70,7 +72,7 @@ async function main(argv: string[]): Promise<void> {
     }))}\n`);
     return;
   }
-  if (argv[0] !== "run") throw new Error("Usage: tokengraph run [--root <path>] [--task-id <uuid>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] --confirm-no-legacy-processes -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived --confirm-no-legacy-processes; tokengraph evaluate-routing [--root <path>] --manifest <path> --confirm-no-legacy-processes; or tokengraph evaluate-host --protocol <path> [--dry-run]");
+  if (argv[0] !== "run") throw new Error(`Usage: tokengraph run [--root <path>] [--task-id <uuid>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] --confirm-no-legacy-processes -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived --confirm-no-legacy-processes; tokengraph evaluate-routing [--root <path>] --manifest <path> --confirm-no-legacy-processes; or tokengraph evaluate-host --protocol <path> [--dry-run]. ${LEGACY_RUNTIME_ROLLOUT}`);
   const separator = argv.indexOf("--");
   if (separator < 0 || separator === argv.length - 1) throw new Error("tokengraph run requires `-- <command> [args...]`.");
   const commandArgs = argv.slice(separator + 1);

@@ -2,6 +2,8 @@
 
 TokenGraph does not guarantee correctness. It does not replace code review.
 
+Every TokenGraph v0.23.1 MCP and CLI process must be stopped before v2 activation and must not be restarted while v2 runs. The compatibility barrier is defense in depth against stale files and accidental downgrade attempts; concurrent mixed-runtime operation is unsupported.
+
 SQL parsing is not business understanding. Memory can become stale. Token savings are estimates.
 
 Compression can omit low-priority details, so TokenGraph should recommend targeted raw reads when confidence is low or when security, migration, public API, or failure details matter.

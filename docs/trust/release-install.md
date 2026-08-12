@@ -7,6 +7,8 @@ TokenGraph provides two installable release paths:
 
 Both paths include the bundled runtime and require no `pnpm install`, TypeScript build, OpenAI API key, Anthropic API key, cloud sync, or embeddings service.
 
+Before activating the native-lock runtime, every TokenGraph v0.23.1 MCP and CLI process must be stopped and must not be restarted while v2 runs. If an old runtime starts later, stop it and restart or reactivate v2 before any further lock-taking operation; mixed-runtime concurrency is unsupported.
+
 The plugin (v0.20 and later) also includes `dist/hooks.js` and auto-discovered `hooks/hooks.json`. Review and trust the commands before enabling them. Hook disablement and abnormal stops are documented limitations, not successful completion evidence.
 
 The release plugin does require Node.js 22 or newer. Codex must supply MCP Roots or inherit `TOKENGRAPH_WORKSPACE_ROOT`; Claude Code forwards `CLAUDE_PROJECT_DIR`. Call `tokengraph_setup` to verify the trust boundary before indexing.
