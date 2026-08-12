@@ -447,13 +447,16 @@ export async function saveRun(root: string, run: SavedRun): Promise<void> {
   await withFileLock(lock, () => writeJsonAtomic(runPath(root, run.runId), sanitizeSavedRun(run)));
 }
 
-export async function loadRun(root: string, runId: string): Promise<SavedRun | undefined> {
+// `repairInsideLock` is set only by callers that own the runs domain anchor
+// (purge); quarantining a corrupt run is a mutation and is skipped on the
+// unlocked pure reads used by `loadRun`/`querySavedRuns`.
+export async function loadRun(root: string, runId: string, repairInsideLock = false): Promise<SavedRun | undefined> {
   try {
     const parsed = JSON.parse(await readFile(runPath(root, runId), "utf8")) as SavedRun;
     return parsed && parsed.runId === runId && parsed.root === root ? sanitizeSavedRun(parsed) : undefined;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    if (error instanceof SyntaxError) { await quarantineCorruptJson(runPath(root, runId)); return undefined; }
+    if (error instanceof SyntaxError) { if (repairInsideLock) await quarantineCorruptJson(runPath(root, runId)); return undefined; }
     throw error;
   }
 }
@@ -489,11 +492,20 @@ export async function querySavedRuns(root: string, selector: { test?: string; fi
 }
 
 export async function purgeRuns(root: string, before?: Date): Promise<string[]> {
+  // Retention deletion mutates persistent state and must run while owning the
+  // canonical runs domain anchor. Every runs lock shares the same domain-root
+  // anchor, so a single acquisition serializes purge against run writers; all
+  // primitives inside are unlocked.
+  const lock = await canonicalPersistenceLock(root, "runs", "maintenance");
+  return withFileLock(lock, () => purgeRunsUnlocked(root, before));
+}
+
+async function purgeRunsUnlocked(root: string, before?: Date): Promise<string[]> {
   const entries = await readdir(runsDir(root)).catch((error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : Promise.reject(error));
   const removed: string[] = [];
   for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
     const runId = entry.slice(0, -5);
-    const run = await loadRun(root, runId);
+    const run = await loadRun(root, runId, true);
     if (run && (!before || new Date(run.finishedAt) < before)) { await rm(join(runsDir(root), entry), { force: true }); removed.push(runId); }
   }
   return removed;

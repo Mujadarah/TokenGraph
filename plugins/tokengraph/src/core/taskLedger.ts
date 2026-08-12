@@ -879,7 +879,7 @@ export async function attachTaskHostContext(
   context: TaskHostContext
 ): Promise<TaskLedger> {
   return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await requireTaskLedger(root, taskId);
+    const ledger = await requireTaskLedger(root, taskId, true);
     assertPausedTaskIsTerminal(ledger);
     if (context.host !== "codex" && context.host !== "claude" && context.host !== "unknown") {
       throw new Error("Host context must identify codex, claude, or unknown.");
@@ -902,7 +902,12 @@ export async function attachTaskHostContext(
   });
 }
 
-export async function loadTaskLedger(root: string, taskId: string): Promise<TaskLedger | undefined> {
+// `repairInsideLock` is set only by callers that already own the tasks domain
+// anchor (the per-ledger write queue, prune, and the completed-outcomes scan);
+// migration and quarantine are mutations that use unlocked primitives while
+// that lock is held. A pure read before activation (or outside the tasks lock)
+// returns the same reconstructed value without touching the filesystem.
+export async function loadTaskLedger(root: string, taskId: string, repairInsideLock = false): Promise<TaskLedger | undefined> {
   const path = taskLedgerPath(root, taskId);
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -911,7 +916,7 @@ export async function loadTaskLedger(root: string, taskId: string): Promise<Task
     }
     const ledger = reconstructTaskLedger(parsed, taskId);
     if (!ledger) {
-      await quarantine(path);
+      if (repairInsideLock) await quarantine(path);
       return undefined;
     }
     if (!ledger.repositoryIdentity || (isRecord(parsed) && (parsed.schemaVersion === 1 || parsed.schemaVersion === 2))) {
@@ -920,13 +925,13 @@ export async function loadTaskLedger(root: string, taskId: string): Promise<Task
       ledger.estimatorVersion = TASK_ESTIMATOR_VERSION;
       ledger.outcomes ??= [];
       if (ledger.status === "completed") ledger.completedReport = buildTaskReport(ledger);
-      await writeTaskJson(path, ledger);
+      if (repairInsideLock) await writeTaskJson(path, ledger);
     }
     return ledger;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     if (error instanceof SyntaxError) {
-      await quarantine(path);
+      if (repairInsideLock) await quarantine(path);
       return undefined;
     }
     throw error;
@@ -937,7 +942,7 @@ export async function updateTaskRoutingObservation(root: string, taskId: string,
   const sanitized = reconstructRoutingObservation(observation);
   if (!sanitized) throw new Error("Routing observation is invalid.");
   return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await requireTaskLedger(root, taskId);
+    const ledger = await requireTaskLedger(root, taskId, true);
     assertPausedTaskIsTerminal(ledger);
     ledger.routingObservation = sanitized;
     ledger.updatedAt = new Date().toISOString();
@@ -950,7 +955,7 @@ export async function updateTaskReadPolicy(root: string, taskId: string, state: 
   const sanitized = reconstructReadPolicy(state);
   if (!sanitized) throw new Error("Read policy state is invalid.");
   return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await requireTaskLedger(root, taskId);
+    const ledger = await requireTaskLedger(root, taskId, true);
     assertPausedTaskIsTerminal(ledger);
     ledger.readPolicy = sanitized;
     ledger.updatedAt = new Date().toISOString();
@@ -962,7 +967,7 @@ export async function updateTaskReadPolicy(root: string, taskId: string, state: 
 export async function recordTaskArtifactDelivery(root: string, taskId: string, artifactKeys: string[]): Promise<TaskLedger> {
   const sanitized = [...new Set(artifactKeys.map((entry) => entry.trim()).filter((entry) => entry.length > 0 && entry.length <= 512))];
   return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await requireTaskLedger(root, taskId);
+    const ledger = await requireTaskLedger(root, taskId, true);
     assertPausedTaskIsTerminal(ledger);
     ledger.deliveredArtifacts = [...new Set([...ledger.deliveredArtifacts, ...sanitized])];
     ledger.updatedAt = new Date().toISOString();
@@ -973,15 +978,15 @@ export async function recordTaskArtifactDelivery(root: string, taskId: string, a
 
 export async function discardEmptyTaskLedger(root: string, taskId: string): Promise<boolean> {
   return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await loadTaskLedger(root, taskId);
+    const ledger = await loadTaskLedger(root, taskId, true);
     if (!ledger || ledger.status !== "open" || ledger.events.length !== 0) return false;
     await rm(taskLedgerPath(root, taskId), { force: true });
     return true;
   });
 }
 
-async function requireTaskLedger(root: string, taskId: string): Promise<TaskLedger> {
-  const ledger = await loadTaskLedger(root, taskId);
+async function requireTaskLedger(root: string, taskId: string, repairInsideLock = false): Promise<TaskLedger> {
+  const ledger = await loadTaskLedger(root, taskId, repairInsideLock);
   if (!ledger) throw new Error(`Task ledger ${taskId} was not found or was corrupt.`);
   return ledger;
 }
@@ -994,7 +999,7 @@ function assertPausedTaskIsTerminal(ledger: TaskLedger): void {
 
 export async function recordTaskEvent(root: string, taskId: string, event: TaskEvent): Promise<TaskLedger> {
   return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await requireTaskLedger(root, taskId);
+    const ledger = await requireTaskLedger(root, taskId, true);
     assertPausedTaskIsTerminal(ledger);
     if (ledger.status === "completed") {
       throw new Error("A completed task ledger cannot accept new events.");
@@ -1013,8 +1018,8 @@ export async function recordTaskEvent(root: string, taskId: string, event: TaskE
   });
 }
 
-export async function requireOpenTaskForOutcome(root: string, taskId: string): Promise<TaskLedger> {
-  const ledger = await requireTaskLedger(root, taskId);
+export async function requireOpenTaskForOutcome(root: string, taskId: string, repairInsideLock = false): Promise<TaskLedger> {
+  const ledger = await requireTaskLedger(root, taskId, repairInsideLock);
   if (ledger.status !== "open") {
     throw new Error(`Task ${taskId} must be open to record an outcome; current status is ${ledger.status}.`);
   }
@@ -1060,7 +1065,10 @@ function orderOutcomes(outcomes: TaskOutcome[]): TaskOutcome[] {
     .slice(0, MAX_COMPLETED_OUTCOMES);
 }
 
-async function readCompletedOutcomesIndex(root: string): Promise<TaskOutcome[] | undefined> {
+// `repairInsideLock` is set only by callers holding the tasks anchor (through
+// `withCompletedOutcomesIndexLock`); quarantining is a mutation and is skipped
+// on the unlocked fast-path read used by `listCompletedTaskOutcomes`.
+async function readCompletedOutcomesIndex(root: string, repairInsideLock: boolean): Promise<TaskOutcome[] | undefined> {
   const path = completedOutcomesIndexPath(root);
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -1070,19 +1078,19 @@ async function readCompletedOutcomesIndex(root: string): Promise<TaskOutcome[] |
       parsed.schemaVersion !== COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION ||
       !Array.isArray(parsed.outcomes)
     ) {
-      await quarantine(path);
+      if (repairInsideLock) await quarantine(path);
       return undefined;
     }
     const outcomes = parsed.outcomes.map(reconstructOutcome);
     if (outcomes.some((outcome) => outcome === undefined)) {
-      await quarantine(path);
+      if (repairInsideLock) await quarantine(path);
       return undefined;
     }
     return orderOutcomes(outcomes as TaskOutcome[]);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     if (error instanceof SyntaxError) {
-      await quarantine(path);
+      if (repairInsideLock) await quarantine(path);
       return undefined;
     }
     throw error;
@@ -1107,7 +1115,9 @@ async function scanCompletedTaskOutcomes(root: string): Promise<TaskOutcome[]> {
   }
   const outcomes: TaskOutcome[] = [];
   for (const file of files.filter((name) => UUID_PATTERN.test(name.slice(0, -".json".length)) && name.endsWith(".json")).sort()) {
-    const ledger = await loadTaskLedger(root, file.slice(0, -".json".length));
+    // The completed-outcomes index scan runs while owning the tasks anchor, so
+    // repairing a legacy or corrupt ledger uses unlocked primitives safely.
+    const ledger = await loadTaskLedger(root, file.slice(0, -".json".length), true);
     if (ledger?.status === "completed") outcomes.push(...ledger.outcomes);
   }
   return orderOutcomes(outcomes);
@@ -1120,7 +1130,7 @@ async function withCompletedOutcomesIndexLock<T>(root: string, operation: () => 
 
 async function updateCompletedOutcomesIndex(root: string, added: TaskOutcome[]): Promise<void> {
   await withCompletedOutcomesIndexLock(root, async () => {
-    const cached = await readCompletedOutcomesIndex(root);
+    const cached = await readCompletedOutcomesIndex(root, true);
     if (!cached) {
       await writeCompletedOutcomesIndex(root, await scanCompletedTaskOutcomes(root));
       return;
@@ -1132,10 +1142,10 @@ async function updateCompletedOutcomesIndex(root: string, added: TaskOutcome[]):
 }
 
 export async function listCompletedTaskOutcomes(root: string): Promise<TaskOutcome[]> {
-  const cached = await readCompletedOutcomesIndex(root);
+  const cached = await readCompletedOutcomesIndex(root, false);
   if (cached) return cached;
   return withCompletedOutcomesIndexLock(root, async () => {
-    const existing = await readCompletedOutcomesIndex(root);
+    const existing = await readCompletedOutcomesIndex(root, true);
     if (existing) return existing;
     const outcomes = await scanCompletedTaskOutcomes(root);
     await writeCompletedOutcomesIndex(root, outcomes);
@@ -1155,7 +1165,7 @@ export async function setTaskDisposition(
     result: SetTaskDispositionResult;
     completedOutcomes?: TaskOutcome[];
   }> => {
-    const ledger = await requireTaskLedger(root, taskId);
+    const ledger = await requireTaskLedger(root, taskId, true);
     assertPausedTaskIsTerminal(ledger);
     if (ledger.status === "completed" && ledger.completedReport) {
       if (disposition === "pause") {
@@ -1196,6 +1206,16 @@ export async function setTaskDisposition(
 }
 
 export async function pruneTaskLedgers(root: string, now = new Date()): Promise<PruneTaskLedgersResult> {
+  // Retention deletion mutates persistent state and must run while owning the
+  // canonical tasks domain anchor. Every tasks lock shares the same domain-root
+  // anchor, so a single acquisition serializes prune against per-ledger writers
+  // and the completed-outcomes index; all primitives inside are unlocked (the
+  // completed-outcomes rewrite must not re-acquire the same anchor).
+  const maintenanceLock = await canonicalTaskLock(root, "maintenance");
+  return runWithTaskLock(maintenanceLock, () => pruneTaskLedgersUnlocked(root, now));
+}
+
+async function pruneTaskLedgersUnlocked(root: string, now: Date): Promise<PruneTaskLedgersResult> {
   const directory = tasksDirectory(root);
   let files: string[];
   try {
@@ -1210,7 +1230,7 @@ export async function pruneTaskLedgers(root: string, now = new Date()): Promise<
   for (const file of files.filter((name) => name.endsWith(".json"))) {
     const taskId = file.slice(0, -".json".length);
     if (!UUID_PATTERN.test(taskId)) continue;
-    const ledger = await loadTaskLedger(root, taskId);
+    const ledger = await loadTaskLedger(root, taskId, true);
     if (!ledger) {
       result.quarantined.push(taskId);
       continue;
@@ -1230,13 +1250,11 @@ export async function pruneTaskLedgers(root: string, now = new Date()): Promise<
     }
   }
   if (result.pruned.length) {
-    await withCompletedOutcomesIndexLock(root, async () => {
-      const cached = await readCompletedOutcomesIndex(root);
-      if (cached) {
-        const pruned = new Set(result.pruned);
-        await writeCompletedOutcomesIndex(root, cached.filter((outcome) => !pruned.has(outcome.taskId)));
-      }
-    });
+    const cached = await readCompletedOutcomesIndex(root, true);
+    if (cached) {
+      const pruned = new Set(result.pruned);
+      await writeCompletedOutcomesIndex(root, cached.filter((outcome) => !pruned.has(outcome.taskId)));
+    }
   }
   return result;
 }

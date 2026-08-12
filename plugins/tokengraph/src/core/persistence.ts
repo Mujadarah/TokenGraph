@@ -2,6 +2,7 @@ import { readFile, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { canonicalPersistenceLock } from "./lockDomain.js";
+import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
 import { quarantineCorruptJson, resolveConfinedPath, withDestructiveMaintenance, withFileLock, writeJsonAtomic, writeTextAtomic, writeTextAtomicConfined, SAFE_WIKI_SLUG_PATTERN, type DestructiveMaintenanceConfirmation } from "./storage.js";
 import { getRepositoryIdentity, resolveRepositoryStateDirectory } from "./repositoryIdentity.js";
 import type { ProjectIndex, ProjectWiki, WikiPage } from "./types.js";
@@ -37,6 +38,10 @@ async function migrateRepositoryRecord(root: string, fileName: "memory.json" | "
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
+  // Copying legacy worktree knowledge into the repository store is a mutation
+  // and only runs after activation while owning the repository-state domain. An
+  // unactivated pure path lookup returns the target without migrating.
+  if (!getLegacyRuntimeActivationStatus().activated) return target;
   const legacy = join(stateDir(root), fileName);
   try {
     const contents = await readFile(legacy, "utf8");
@@ -218,7 +223,15 @@ export async function loadProjectIndex(root: string): Promise<ProjectIndex | und
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       if (error instanceof SyntaxError) {
-        await quarantineCorruptJson(path);
+        // Quarantine mutates project state: only after activation and while
+        // owning the domain that holds the corrupt snapshot. An unactivated
+        // pure read continues without touching the filesystem.
+        if (getLegacyRuntimeActivationStatus().activated) {
+          const domain = path === indexPath(root) ? "workspace-state" : "repository-state";
+          const relativeName = path === indexPath(root) ? "index.json" : "repository-index.json";
+          const lock = await canonicalPersistenceLock(root, domain, relativeName);
+          await withFileLock(lock, () => quarantineCorruptJson(path));
+        }
         continue;
       }
       throw error;
@@ -359,7 +372,12 @@ export async function loadProjectWiki(root: string): Promise<ProjectWiki | undef
       return undefined;
     }
     if (error instanceof SyntaxError) {
-      await quarantineCorruptJson(wikiManifestPath(root));
+      // Quarantine mutates project state: only after activation and while owning
+      // the wiki domain. An unactivated pure read returns undefined.
+      if (getLegacyRuntimeActivationStatus().activated) {
+        const lock = await canonicalPersistenceLock(root, "wiki", "manifest.json");
+        await withFileLock(lock, () => quarantineCorruptJson(wikiManifestPath(root)));
+      }
       return undefined;
     }
     throw error;

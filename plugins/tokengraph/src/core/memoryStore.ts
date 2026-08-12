@@ -158,12 +158,12 @@ export class MemoryStore {
   ) {}
 
   async list(options: MemoryListOptions = {}): Promise<MemoryEntry[]> {
-    return filterByStatus(await this.readAll(), options);
+    return filterByStatus(await this.readAll(false), options);
   }
 
   async add(input: MemoryInput): Promise<MemoryEntry> {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const entry = createMemory(input);
       memories.push(entry);
       await this.writeAtomic(memories);
@@ -173,7 +173,7 @@ export class MemoryStore {
 
   async update(id: string, update: MemoryUpdateInput): Promise<MemoryEntry | undefined> {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const index = memories.findIndex((memory) => memory.id === id);
       if (index === -1) return undefined;
       const next = mergeMemory(memories[index], update);
@@ -195,7 +195,7 @@ export class MemoryStore {
 
   async delete(id: string, options: { hard?: boolean } = {}): Promise<boolean> {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const index = memories.findIndex((memory) => memory.id === id);
       if (index === -1) return false;
       if (options.hard) {
@@ -313,7 +313,7 @@ export class MemoryStore {
   private async markUsed(ids: string[]): Promise<void> {
     if (!ids.length) return;
     await this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const timestamp = nowIso();
       let changed = false;
       for (const memory of memories) {
@@ -331,7 +331,7 @@ export class MemoryStore {
 
   private async mutate(id: string, transform: (memory: MemoryEntry) => MemoryEntry): Promise<MemoryEntry | undefined> {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const index = memories.findIndex((memory) => memory.id === id);
       if (index === -1) return undefined;
       const next = transform(memories[index]);
@@ -341,7 +341,10 @@ export class MemoryStore {
     });
   }
 
-  private async readAll(): Promise<MemoryEntry[]> {
+  // `repairInsideLock` is set only by write operations, which already own the
+  // vault domain lock; quarantining a corrupt file is a mutation and must never
+  // happen from an unlocked pure read (`list`/`search`/`recall`/`findConflicts`).
+  private async readAll(repairInsideLock: boolean): Promise<MemoryEntry[]> {
     try {
       const raw = await readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as unknown;
@@ -356,7 +359,7 @@ export class MemoryStore {
         return [];
       }
       if (error instanceof SyntaxError) {
-        await this.quarantineCorruptFile();
+        if (repairInsideLock) await this.quarantineCorruptFile();
         return [];
       }
       throw error;

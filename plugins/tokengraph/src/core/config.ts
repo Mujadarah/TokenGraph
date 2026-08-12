@@ -2,6 +2,7 @@ import { copyFile, readFile } from "node:fs/promises";
 
 import { configPath, stateDir } from "./persistence.js";
 import { canonicalPersistenceLock } from "./lockDomain.js";
+import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
 import { quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
 import type { RoutingMode, TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
 
@@ -198,20 +199,37 @@ export async function loadTokenGraphConfig(root: string): Promise<TokenGraphConf
     const unwrapped = unwrapPersistedConfig(parsed);
     const persistedNormalized = normalizeConfig(unwrapped.config, false);
     const normalized = normalizeConfig(persistedNormalized);
-    if (unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(persistedNormalized)) {
-      await copyFile(configPath(root), `${configPath(root)}.bak`).catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    // Repair (schema migration plus a .bak of the prior bytes) mutates project
+    // state, so it only runs after activation while owning the workspace-state
+    // domain. A pure read before activation returns the identical normalized
+    // value without touching the filesystem.
+    if ((unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(persistedNormalized)) &&
+        getLegacyRuntimeActivationStatus().activated) {
+      const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+      await withFileLock(lock, async () => {
+        await copyFile(configPath(root), `${configPath(root)}.bak`).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        });
+        await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: persistedNormalized });
       });
-      await saveTokenGraphConfig(root, persistedNormalized);
     }
     return normalized;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
+      // Persisting defaults is a mutation; only an activated caller may do it.
+      if (getLegacyRuntimeActivationStatus().activated) return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
+      return normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG);
     }
     if (error instanceof SyntaxError) {
-      await quarantineCorruptJson(configPath(root));
-      return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
+      if (getLegacyRuntimeActivationStatus().activated) {
+        const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+        return withFileLock(lock, async () => {
+          await quarantineCorruptJson(configPath(root));
+          await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG, false) });
+          return normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG);
+        });
+      }
+      return normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG);
     }
     throw error;
   }

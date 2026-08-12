@@ -203,7 +203,11 @@ describe("knowledge review queue", () => {
       appliedAt: suggested.updatedAt
     };
     await writeFile(join(root, ".tokengraph", "knowledge-applications.json"), `${JSON.stringify({ schemaVersion: 1, applications: [application, application] })}\n`);
+    // A pure read never renders the duplicates and never mutates: no quarantine.
     expect(await listAppliedKnowledge(root)).toEqual([]);
+    expect((await readdir(join(root, ".tokengraph"))).some((file) => file.startsWith("knowledge-applications.json.corrupt-"))).toBe(false);
+    // A review runs inside the workspace-state lock and quarantines the store.
+    await reviewKnowledgeSuggestion(root, suggested.id, "approve").catch(() => undefined);
     expect((await readdir(join(root, ".tokengraph"))).some((file) => file.startsWith("knowledge-applications.json.corrupt-"))).toBe(true);
   });
 

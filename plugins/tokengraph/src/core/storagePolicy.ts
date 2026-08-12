@@ -1,5 +1,5 @@
 import { chmod, lstat, mkdir, readFile, readdir } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { repositoryStateDirectory } from "./repositoryIdentity.js";
 import { runsDir, stateDir, vaultDir, wikiDir } from "./persistence.js";
@@ -50,21 +50,48 @@ export interface PurgeStorageResult {
   removed: string[];
 }
 
-const STORAGE_INFRASTRUCTURE_NAMES = new Set([
-  ".tokengraph-native-anchor-v2.lock",
-  ".tokengraph-native-journal-v2.lock",
-  ".tokengraph-native-journal-v2.lock.tokengraph-write-v2.tmp"
-]);
+const NATIVE_ANCHOR_NAME = ".tokengraph-native-anchor-v2.lock";
+const NATIVE_JOURNAL_NAME = ".tokengraph-native-journal-v2.lock";
+const NATIVE_JOURNAL_TEMP_NAME = ".tokengraph-native-journal-v2.lock.tokengraph-write-v2.tmp";
 
-async function usage(path: string): Promise<StorageUsage> {
+// The eight canonical domain roots that live under the accounted state trees.
+// The `git-info` domain resolves inside the user's `.git` directory, which the
+// state-tree walks never reach, so it needs no accounting exclusion here.
+function domainRootSet(root: string): ReadonlySet<string> {
+  const state = resolve(stateDir(root));
+  const repository = resolve(repositoryStateDirectory(root));
+  return new Set([
+    state,
+    repository,
+    resolve(runsDir(root)),
+    join(state, "tasks"),
+    resolve(vaultDir(root)),
+    resolve(wikiDir(root)),
+    join(repository, "artifacts")
+  ]);
+}
+
+// Infrastructure is classified by EXACT canonical path at a domain root, not by
+// basename anywhere: the anchor/journal files and any live journal-authorized
+// `.lock` barrier/lease directory sitting directly in a domain root are lock
+// infrastructure and never billed. A user file or directory that merely reuses
+// a reserved name elsewhere (in a non-domain-root location) counts normally.
+function isDomainRootInfrastructure(path: string, domainRoots: ReadonlySet<string>): boolean {
+  if (!domainRoots.has(resolve(dirname(path)))) return false;
+  const name = basename(path);
+  return name === NATIVE_ANCHOR_NAME || name === NATIVE_JOURNAL_NAME || name === NATIVE_JOURNAL_TEMP_NAME ||
+    name.toLowerCase().endsWith(".lock");
+}
+
+async function usage(path: string, domainRoots: ReadonlySet<string>): Promise<StorageUsage> {
   try {
     const info = await lstat(path);
     if (info.isSymbolicLink()) throw new Error(`TokenGraph storage accounting refuses symbolic-link paths: ${path}`);
-    if (STORAGE_INFRASTRUCTURE_NAMES.has(basename(path))) return { bytes: 0, files: 0 };
+    if (isDomainRootInfrastructure(path, domainRoots)) return { bytes: 0, files: 0 };
     if (info.isFile()) return { bytes: info.size, files: 1 };
     if (!info.isDirectory()) return { bytes: 0, files: 0 };
     const entries = await readdir(path);
-    const children = await Promise.all(entries.map((entry) => usage(join(path, entry))));
+    const children = await Promise.all(entries.map((entry) => usage(join(path, entry), domainRoots)));
     return children.reduce((total, child) => ({ bytes: total.bytes + child.bytes, files: total.files + child.files }), { bytes: 0, files: 0 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { bytes: 0, files: 0 };
@@ -72,28 +99,29 @@ async function usage(path: string): Promise<StorageUsage> {
   }
 }
 
-async function usageMany(paths: string[]): Promise<StorageUsage> {
+async function usageMany(paths: string[], domainRoots: ReadonlySet<string>): Promise<StorageUsage> {
   const unique = paths.map((path) => resolve(path)).filter((path, index, all) => all.indexOf(path) === index);
   const roots = unique.filter((path, index, all) => !all.some((candidate, candidateIndex) => {
     if (candidateIndex === index) return false;
     const nested = relative(candidate, path);
     return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
   }));
-  const values = await Promise.all(roots.map((path) => usage(path)));
+  const values = await Promise.all(roots.map((path) => usage(path, domainRoots)));
   return values.reduce((total, current) => ({ bytes: total.bytes + current.bytes, files: total.files + current.files }), { bytes: 0, files: 0 });
 }
 
 export async function storageUsage(root: string): Promise<StorageUsage> {
-  return usageMany([stateDir(root), repositoryStateDirectory(root)]);
+  return usageMany([stateDir(root), repositoryStateDirectory(root)], domainRootSet(root));
 }
 
 export async function storageClassUsage(root: string): Promise<StorageClassUsage> {
   const repository = repositoryStateDirectory(root);
+  const domainRoots = domainRootSet(root);
   const [total, runs, cache, vault] = await Promise.all([
     storageUsage(root),
-    usage(runsDir(root)),
-    usageMany([join(stateDir(root), "index.json"), wikiDir(root), join(repository, "index.json"), join(repository, "artifacts")]),
-    usage(vaultDir(root))
+    usage(runsDir(root), domainRoots),
+    usageMany([join(stateDir(root), "index.json"), wikiDir(root), join(repository, "index.json"), join(repository, "artifacts")], domainRoots),
+    usage(vaultDir(root), domainRoots)
   ]);
   return {
     total,

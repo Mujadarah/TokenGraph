@@ -315,7 +315,10 @@ function reconstructSuggestion(value: unknown, schemaVersion: number): Knowledge
   };
 }
 
-async function readQueue(root: string): Promise<KnowledgeSuggestion[]> {
+// `repairInsideLock` is set only by callers running inside the workspace-state
+// domain lock (`enqueueQueueOperation`); quarantining is a mutation and must
+// not happen from an unlocked pure read such as `listAppliedKnowledge`.
+async function readQueue(root: string, repairInsideLock: boolean): Promise<KnowledgeSuggestion[]> {
   const path = queuePath(root);
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -327,7 +330,7 @@ async function readQueue(root: string): Promise<KnowledgeSuggestion[]> {
     return queue.suggestions.map((suggestion) => reconstructSuggestion(suggestion, queue.schemaVersion as number));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    await quarantineCorruptJson(path);
+    if (repairInsideLock) await quarantineCorruptJson(path);
     return [];
   }
 }
@@ -384,7 +387,7 @@ function reconstructApplication(value: unknown, schemaVersion: number): AppliedK
   };
 }
 
-async function readApplications(root: string): Promise<AppliedKnowledge[]> {
+async function readApplications(root: string, repairInsideLock: boolean): Promise<AppliedKnowledge[]> {
   const path = applicationPath(root);
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -400,7 +403,7 @@ async function readApplications(root: string): Promise<AppliedKnowledge[]> {
     return applications;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    await quarantineCorruptJson(path);
+    if (repairInsideLock) await quarantineCorruptJson(path);
     return [];
   }
 }
@@ -505,7 +508,7 @@ export async function proposeKnowledgeChange(root: string, input: KnowledgePropo
   const proposal = sanitizeProposal(input);
   const fingerprint = suggestionFingerprint(proposal);
   return enqueueQueueOperation(root, async () => {
-    const suggestions = await readQueue(root);
+    const suggestions = await readQueue(root, true);
     const duplicate = suggestions.find((suggestion) => suggestion.status === "proposed" && suggestion.fingerprint === fingerprint);
     if (duplicate) return duplicate;
     const timestamp = new Date().toISOString();
@@ -530,7 +533,7 @@ export async function listKnowledgeSuggestions(root: string, options: KnowledgeS
   types?.forEach(validateType);
   statuses?.forEach(validateStatus);
   return enqueueQueueOperation(root, async () => {
-    const suggestions = await readQueue(root);
+    const suggestions = await readQueue(root, true);
     const now = Date.now();
     let changed = false;
     const normalized = suggestions.map((suggestion) => {
@@ -546,7 +549,7 @@ export async function listKnowledgeSuggestions(root: string, options: KnowledgeS
 }
 
 export async function listAppliedKnowledge(root: string): Promise<AppliedKnowledge[]> {
-  const [applications, suggestions] = await Promise.all([readApplications(root), readQueue(root)]);
+  const [applications, suggestions] = await Promise.all([readApplications(root, false), readQueue(root, false)]);
   return applications.filter((application) => {
     const suggestion = suggestions.find((candidate) => candidate.id === application.suggestionId && candidate.status === "approved");
     return Boolean(suggestion && applicationMatchesSuggestion(application, suggestion));
@@ -563,11 +566,11 @@ export async function reviewKnowledgeSuggestion(
   if (!REVIEW_DECISIONS.has(decision)) throw new Error("Unknown review decision.");
   const nextStatus: KnowledgeSuggestionStatus = decision === "approve" ? "approved" : "rejected";
   return enqueueQueueOperation(root, async () => {
-    const suggestions = await readQueue(root);
+    const suggestions = await readQueue(root, true);
     const index = suggestions.findIndex((suggestion) => suggestion.id === id);
     if (index < 0) throw new Error(`Knowledge suggestion ${id} was not found.`);
     const current = suggestions[index]!;
-    const applications = await readApplications(root);
+    const applications = await readApplications(root, true);
     const existingApplication = applications.find((application) => application.suggestionId === id);
     if (decision === "approve" && existingApplication && !applicationMatchesSuggestion(existingApplication, current)) {
       throw new Error("Durable application does not match the reviewed proposal payload.");

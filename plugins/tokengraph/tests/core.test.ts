@@ -2411,8 +2411,15 @@ describe("MemoryStore", () => {
 
     const store = await memoryStore(root, storePath);
 
+    // A pure read recovers with an empty list but must not mutate: the corrupt
+    // file stays untouched until a write operation owns the vault domain lock.
     await expect(store.list()).resolves.toEqual([]);
-    await expect(access(storePath)).rejects.toThrow();
+    await expect(access(storePath)).resolves.toBeUndefined();
+    expect((await readdir(join(root, ".tokengraph"))).some((file) => file.startsWith("memory.json.corrupt-"))).toBe(false);
+
+    // A write operation quarantines the corrupt file while owning the lock.
+    await store.add({ type: "convention", title: "t", body: "b", tags: [] });
+    await expect(access(storePath)).resolves.toBeUndefined();
     const files = await readdir(join(root, ".tokengraph"));
     expect(files.some((file) => file.startsWith("memory.json.corrupt-"))).toBe(true);
   });

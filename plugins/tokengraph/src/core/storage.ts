@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 
 import { runWithFileLock, type FileLockOptions } from "./fileLockLease.js";
 import { canonicalPersistenceLock, isCanonicalPersistenceLock, type CanonicalPersistenceLock, type LockDomain } from "./lockDomain.js";
-import { requireLegacyRuntimeShutdownCapability } from "./legacyRuntimeActivation.js";
+import { getLegacyRuntimeActivationStatus, requireLegacyRuntimeShutdownCapability } from "./legacyRuntimeActivation.js";
 
 export interface JsonTokenGraphStoreOptions {
   schemaVersion: number;
@@ -331,7 +331,9 @@ export class JsonTokenGraphStore<T = unknown> {
         return [];
       }
       if (error instanceof SyntaxError) {
-        await quarantineCorruptJson(this.filePath);
+        // Quarantine mutates project state, so it is deferred until the process
+        // is activated. An unactivated pure read returns the same empty list.
+        if (getLegacyRuntimeActivationStatus().activated) await quarantineCorruptJson(this.filePath);
         return [];
       }
       throw error;

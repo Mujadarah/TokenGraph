@@ -57,6 +57,13 @@ export class ArchitectureRuleStore {
   ) {}
 
   async list(): Promise<ArchitectureRule[]> {
+    return this.readAll(false);
+  }
+
+  // `repairInsideLock` is set only by write operations, which already own the
+  // repository-state domain lock; quarantining a corrupt file is a mutation and
+  // must never happen from an unlocked pure `list` read.
+  private async readAll(repairInsideLock: boolean): Promise<ArchitectureRule[]> {
     try {
       const parsed = JSON.parse(await readFile(this.filePath, "utf8")) as unknown;
       const records = Array.isArray(parsed)
@@ -70,7 +77,7 @@ export class ArchitectureRuleStore {
         return [];
       }
       if (error instanceof SyntaxError) {
-        await this.quarantineCorruptFile();
+        if (repairInsideLock) await this.quarantineCorruptFile();
         return [];
       }
       throw error;
@@ -79,7 +86,7 @@ export class ArchitectureRuleStore {
 
   async add(input: ArchitectureRuleInput): Promise<ArchitectureRule> {
     return this.enqueueWrite(async () => {
-      const rules = await this.list();
+      const rules = await this.readAll(true);
       await assertSafeArchitectureRulePatterns(input);
       const rule = normalizeRule(input);
       rules.push(rule);
@@ -90,7 +97,7 @@ export class ArchitectureRuleStore {
 
   async update(id: string, update: Partial<ArchitectureRuleInput>): Promise<ArchitectureRule | undefined> {
     return this.enqueueWrite(async () => {
-      const rules = await this.list();
+      const rules = await this.readAll(true);
       const index = rules.findIndex((rule) => rule.id === id);
       if (index === -1) return undefined;
       const current = rules[index];
@@ -112,7 +119,7 @@ export class ArchitectureRuleStore {
 
   async delete(id: string): Promise<boolean> {
     return this.enqueueWrite(async () => {
-      const rules = await this.list();
+      const rules = await this.readAll(true);
       const next = rules.filter((rule) => rule.id !== id);
       await this.writeAtomic(next);
       return next.length !== rules.length;

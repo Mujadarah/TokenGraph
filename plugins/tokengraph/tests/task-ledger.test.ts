@@ -317,10 +317,13 @@ describe("task ledger persistence", () => {
     delete legacy.repositoryIdentity;
     await writeFile(ledgerPath(root, created.taskId), JSON.stringify(legacy));
 
+    // A pure read migrates the returned value but must not rewrite the file:
+    // repair belongs to an activated operation that owns the tasks domain.
     const migrated = await loadTaskLedger(root, created.taskId);
     expect(migrated).toMatchObject({ schemaVersion: 3, estimatorVersion: "task-estimator-v2", outcomes: [], repositoryIdentity: expect.objectContaining({ repositoryId: expect.any(String) }) });
-    expect(JSON.parse(await readFile(ledgerPath(root, created.taskId), "utf8"))).toMatchObject({ schemaVersion: 3, estimatorVersion: "task-estimator-v2", outcomes: [], repositoryIdentity: expect.any(Object) });
+    expect(JSON.parse(await readFile(ledgerPath(root, created.taskId), "utf8"))).toMatchObject({ schemaVersion: 1 });
 
+    // A locked write operation performs the migration write while owning the lock.
     await updateTaskRoutingObservation(root, created.taskId, {
       decision: "activate", stage: 2, reason: "shadow candidate", expectedOverheadTokens: 24, mode: "shadow", enforced: false
     });
@@ -329,6 +332,7 @@ describe("task ledger persistence", () => {
     });
     expect(updated.routingObservation).toMatchObject({ decision: "activate", mode: "shadow", enforced: false });
     expect(updated.readPolicy).toMatchObject({ level: "L3", targetedReads: 2 });
+    expect(JSON.parse(await readFile(ledgerPath(root, created.taskId), "utf8"))).toMatchObject({ schemaVersion: 3, estimatorVersion: "task-estimator-v2", outcomes: [] });
     expect(await loadTaskLedger(root, created.taskId)).toMatchObject({ routingObservation: updated.routingObservation, readPolicy: updated.readPolicy });
     await recordTaskArtifactDelivery(root, created.taskId, ["capsule:a", "capsule:a", "brief:b"]);
     await recordTaskArtifactDelivery(root, created.taskId, ["brief:b", "wiki:c"]);
@@ -352,6 +356,8 @@ describe("task ledger persistence", () => {
     (legacyReport.estimate as Record<string, unknown>).estimatorVersion = "task-estimator-v1";
     await writeFile(ledgerPath(root, created.taskId), JSON.stringify(legacy));
 
+    // A pure read migrates the returned value but leaves the persisted legacy
+    // bytes untouched; the migration write is deferred to a locked operation.
     const migrated = await loadTaskLedger(root, created.taskId);
 
     expect(migrated).toMatchObject({
@@ -369,6 +375,11 @@ describe("task ledger persistence", () => {
         ]
       }
     });
+    expect(JSON.parse(await readFile(ledgerPath(root, created.taskId), "utf8"))).toMatchObject({ schemaVersion: 2 });
+
+    // A locked retention pass repairs the legacy ledger in place while owning
+    // the tasks domain anchor (the ledger is recent, so it is not pruned).
+    await pruneTaskLedgers(root);
     expect(JSON.parse(await readFile(ledgerPath(root, created.taskId), "utf8"))).toEqual(migrated);
   });
 
@@ -495,7 +506,12 @@ describe("task ledger persistence", () => {
       mutate(persisted);
       await writeFile(ledgerPath(root, ledger.taskId), JSON.stringify(persisted));
 
+      // A pure read rejects the malformed ledger without mutating: no quarantine.
       expect(await loadTaskLedger(root, ledger.taskId)).toBeUndefined();
+      expect((await readdir(join(root, ".tokengraph", "tasks"))).some((name) => name.startsWith(`${ledger.taskId}.json.quarantine-`))).toBe(false);
+      // A locked retention pass quarantines it while owning the tasks domain.
+      const pruneResult = await pruneTaskLedgers(root);
+      expect(pruneResult.quarantined).toContain(ledger.taskId);
       const files = await readdir(join(root, ".tokengraph", "tasks"));
       expect(files.some((name) => name.startsWith(`${ledger.taskId}.json.quarantine-`))).toBe(true);
     }
@@ -520,6 +536,9 @@ describe("task ledger persistence", () => {
       await writeFile(ledgerPath(root, ledger.taskId), JSON.stringify(persisted));
 
       expect(await loadTaskLedger(root, ledger.taskId)).toBeUndefined();
+      expect((await readdir(join(root, ".tokengraph", "tasks"))).some((name) => name.startsWith(`${ledger.taskId}.json.quarantine-`))).toBe(false);
+      const pruneResult = await pruneTaskLedgers(root);
+      expect(pruneResult.quarantined).toContain(ledger.taskId);
       const files = await readdir(join(root, ".tokengraph", "tasks"));
       expect(files.some((name) => name.startsWith(`${ledger.taskId}.json.quarantine-`))).toBe(true);
     }
@@ -616,6 +635,9 @@ describe("task ledger persistence", () => {
       await writeFile(ledgerPath(root, ledger.taskId), JSON.stringify(inconsistent));
 
       expect(await loadTaskLedger(root, ledger.taskId)).toBeUndefined();
+      expect((await readdir(join(root, ".tokengraph", "tasks"))).some((name) => name.startsWith(`${ledger.taskId}.json.quarantine-`))).toBe(false);
+      const pruneResult = await pruneTaskLedgers(root);
+      expect(pruneResult.quarantined).toContain(ledger.taskId);
       const files = await readdir(join(root, ".tokengraph", "tasks"));
       expect(files.some((name) => name.startsWith(`${ledger.taskId}.json.quarantine-`))).toBe(true);
     }

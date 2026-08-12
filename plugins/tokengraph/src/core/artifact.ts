@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { canonicalHash, canonicalize } from "./canonical.js";
 import { repositoryDir } from "./persistence.js";
 import { canonicalPersistenceLock } from "./lockDomain.js";
+import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
 import { quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
 
 export const CURRENT_ARTIFACT_SCHEMA_VERSION = 5;
@@ -88,7 +89,12 @@ export async function loadStableArtifact<T = unknown>(root: string, hash: string
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     if (error instanceof SyntaxError) {
-      await quarantineCorruptJson(path);
+      // Quarantine mutates project state: only after activation and while owning
+      // the artifacts domain. An unactivated pure read returns undefined.
+      if (getLegacyRuntimeActivationStatus().activated) {
+        const lock = await canonicalPersistenceLock(root, "artifacts", `${hash}.json`);
+        await withFileLock(lock, () => quarantineCorruptJson(path));
+      }
       return undefined;
     }
     throw error;

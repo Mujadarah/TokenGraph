@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { canonicalPersistenceLock } from "./lockDomain.js";
+import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
 import { quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
 import { repositoryDir } from "./persistence.js";
 import type { RoutingControl, RoutingPromotionReport } from "./types.js";
@@ -70,7 +71,12 @@ export async function loadRoutingControl(root: string): Promise<RoutingControl> 
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return normalize(undefined);
     if (error instanceof SyntaxError) {
-      await quarantineCorruptJson(path);
+      // Quarantine mutates project state: only after activation and while owning
+      // the repository-state domain. An unactivated pure read returns defaults.
+      if (getLegacyRuntimeActivationStatus().activated) {
+        const lock = await canonicalPersistenceLock(root, "repository-state", "routing-control.json");
+        await withFileLock(lock, () => quarantineCorruptJson(path));
+      }
       return normalize(undefined);
     }
     throw error;

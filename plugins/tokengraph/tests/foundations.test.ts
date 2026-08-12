@@ -138,6 +138,45 @@ describe("repository identity and storage foundations", () => {
     expect(await storageUsage(root)).toEqual({ bytes: 0, files: 0 });
   });
 
+  it("counts a user file that reuses a reserved infrastructure basename outside a domain root", async () => {
+    const root = await makeRoot();
+    // A user file that merely reuses the reserved anchor basename in a nested,
+    // non-domain-root directory is ordinary data and must count toward quota.
+    const nested = join(root, ".tokengraph", "runs", "logs");
+    await mkdir(nested, { recursive: true });
+    await writeFile(join(nested, ".tokengraph-native-anchor-v2.lock"), "0123456789");
+    const usage = await storageUsage(root);
+    expect(usage.files).toBe(1);
+    expect(usage.bytes).toBe(10);
+  });
+
+  it("excludes exact canonical anchor and journal infrastructure at a domain root", async () => {
+    const root = await makeRoot();
+    // Exact-path anchor and journal at a domain root are live infrastructure and
+    // are never billed to user quota.
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(join(root, ".tokengraph", ".tokengraph-native-anchor-v2.lock"), "anchor");
+    await writeFile(join(root, ".tokengraph", ".tokengraph-native-journal-v2.lock"), "journal");
+    await writeFile(join(root, ".tokengraph", ".tokengraph-native-journal-v2.lock.tokengraph-write-v2.tmp"), "temp");
+    await writeFile(join(root, ".tokengraph", "state.json"), "user-bytes");
+    const usage = await storageUsage(root);
+    expect(usage.files).toBe(1);
+    expect(usage.bytes).toBe(10);
+  });
+
+  it("does not bill a live compatibility barrier directory at a domain root", async () => {
+    const root = await makeRoot();
+    // A live journal-authorized compatibility barrier is a `.lock` directory at
+    // a domain root and must not be counted as user quota.
+    const barrier = join(root, ".tokengraph", "config.json.lock");
+    await mkdir(barrier, { recursive: true });
+    await writeFile(join(barrier, "lease.json"), "lease-payload-bytes");
+    await writeFile(join(root, ".tokengraph", "state.json"), "user-bytes");
+    const usage = await storageUsage(root);
+    expect(usage.files).toBe(1);
+    expect(usage.bytes).toBe(10);
+  });
+
   it("accounts for storage classes, cleans cache, and refuses durable class overflow", async () => {
     const root = await makeRoot();
     await mkdir(join(root, ".tokengraph", "runs"), { recursive: true });
