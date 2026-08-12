@@ -9,6 +9,7 @@ import { composeMemoryContext } from "../src/core/memoryCore.js";
 import { assertStorageReplacementAllowed, enforceStorageClassQuotas, enforceStorageQuota, filterUntrustedSourceText, hardenStoragePermissions, isConfinedStoragePath, purgeStorageClass, purgeTokenGraphStorage, storageClassUsage, storageUsage } from "../src/core/storagePolicy.js";
 import { canonicalPersistenceLock } from "../src/core/lockDomain.js";
 import { canonicalMaintenanceLocks, withFileLock } from "../src/core/storage.js";
+import { externalCliEntry, externalRuntimeEnvironment } from "./support/externalRuntime.js";
 
 const execFile = promisify(execFileCallback);
 const roots: string[] = [];
@@ -36,6 +37,13 @@ describe("repository identity and storage foundations", () => {
     for (const source of sources) {
       expect(source).toMatch(/v0\.23\.1[\s\S]{0,240}stopped[\s\S]{0,240}(?:must not|not be) restarted/iu);
     }
+
+    await expect(execFile(process.execPath, [externalCliEntry], {
+      env: externalRuntimeEnvironment()
+    })).rejects.toMatchObject({
+      stderr: expect.stringMatching(/v0\.23\.1[\s\S]{0,240}stopped[\s\S]{0,240}must not be restarted/iu)
+    });
+
   });
 
   it("keeps every production file-lock caller in the closed branded inventory", async () => {

@@ -73,7 +73,7 @@ export const analyzeInputSchema = z.object({
 });
 
 export const setupInputSchema = z.object({
-  confirmNoLegacyProcesses: z.literal(true).describe("Confirm that every TokenGraph v0.23.1 MCP and CLI process has been stopped before activating native locks in this MCP process and must not be restarted while this v2 process runs.")
+  confirmNoLegacyProcesses: z.literal(true).describe("Confirm every TokenGraph v0.23.1 process is stopped and must not be restarted while v2 runs.")
 });
 
 export const proposeKnowledgeInputSchema = z.object({

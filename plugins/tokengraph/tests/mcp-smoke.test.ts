@@ -315,6 +315,9 @@ describe("TokenGraph MCP stdio server", () => {
     expect(JSON.stringify(initialized.instructions)).toMatch(/tokengraph_setup[\s\S]*tokengraph_prepare_context/);
     expect(tools.every((tool) => tool.annotations?.destructiveHint === false)).toBe(true);
     expect(tools.find((tool) => tool.name === "tokengraph_setup")?.annotations?.readOnlyHint).toBe(true);
+    expect(JSON.stringify(tools.find((tool) => tool.name === "tokengraph_setup")?.inputSchema)).toMatch(
+      /v0\.23\.1[\s\S]{0,480}stopped[\s\S]{0,480}must not be restarted/iu
+    );
     expect(tools.find((tool) => tool.name === "tokengraph_recall")?.annotations?.readOnlyHint).toBe(false);
     expect(tools.find((tool) => tool.name === "tokengraph_propose_knowledge")?.annotations?.readOnlyHint).toBe(false);
     expect(tools.find((tool) => tool.name === "tokengraph_task_report")?.annotations?.readOnlyHint).toBe(false);

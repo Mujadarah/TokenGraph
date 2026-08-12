@@ -41,30 +41,48 @@ function boundedInteger(value, minimum, maximum, label) {
 }
 
 function validateRequest(request) {
-  const pausePoints = new Set(["after-barrier-create", "after-journal-barrier-created", "after-journal-lease-created"]);
+  const pausePoints = new Set([
+    "after-barrier-create", "after-barrier-remove", "after-journal-state",
+    "after-journal-create", "after-journal-write", "after-journal-sync", "after-journal-parent-flush",
+    "after-journal-rename", "after-journal-rename-parent-flush",
+    "after-lease-create", "after-lease-write", "after-lease-sync", "after-lease-parent-flush",
+    "after-lease-rename", "after-lease-rename-parent-flush"
+  ]);
+  const pauseStates = new Set(["intent", "barrier-created", "lease-created", "cleanup-with-lease", "cleanup-barrier-only", "idle"]);
   if (!new Set(["hold", "try", "crash", "release"]).has(request.operation) ||
       typeof request.workspaceRoot !== "string" || !isAbsolute(request.workspaceRoot) || request.workspaceRoot.includes("\0") ||
       !DOMAINS.has(request.domain) || typeof request.key !== "string" || !SAFE_KEY.test(request.key) ||
       typeof request.coordinationRoot !== "string" || !isAbsolute(request.coordinationRoot) || request.coordinationRoot.includes("\0") ||
       typeof request.activate !== "boolean" ||
       (request.failOperation !== undefined && typeof request.failOperation !== "boolean") ||
-      (request.pauseAt !== undefined && !pausePoints.has(request.pauseAt))) fail("PROBE_INPUT_INVALID");
+      (request.exerciseKeyCount !== undefined && request.exerciseKeyCount !== 1_000) ||
+      (request.pauseAt !== undefined && !pausePoints.has(request.pauseAt)) ||
+      (request.pauseState !== undefined && !pauseStates.has(request.pauseState))) fail("PROBE_INPUT_INVALID");
   const validated = {
     operation: request.operation,
     workspaceRoot: resolve(request.workspaceRoot),
     domain: request.domain,
     key: request.key,
     coordinationRoot: resolve(request.coordinationRoot),
-    timeoutMs: boundedInteger(request.timeoutMs, 1, 60_000, "PROBE_TIMEOUT_INVALID"),
+    timeoutMs: boundedInteger(request.timeoutMs, 1, 600_000, "PROBE_TIMEOUT_INVALID"),
     holdMs: request.holdMs === undefined ? 0 : boundedInteger(request.holdMs, 0, 60_000, "PROBE_HOLD_INVALID"),
     clockOffsetMs: request.clockOffsetMs === undefined ? 0 : boundedInteger(request.clockOffsetMs, -300_000, 300_000, "PROBE_CLOCK_INVALID"),
     cancelMs: request.cancelMs === undefined ? undefined : boundedInteger(request.cancelMs, 1, request.timeoutMs, "PROBE_CANCEL_INVALID"),
     failOperation: request.failOperation ?? false,
+    exerciseKeyCount: request.exerciseKeyCount,
     pauseAt: request.pauseAt,
+    pauseOccurrence: request.pauseOccurrence === undefined
+      ? 1 : boundedInteger(request.pauseOccurrence, 1, 32, "PROBE_PAUSE_OCCURRENCE_INVALID"),
+    pauseState: request.pauseState,
     activate: request.activate
   };
   if ((validated.operation === "hold" && validated.holdMs === 0) ||
-      (["crash", "release"].includes(validated.operation) && validated.holdMs !== 0)) fail("PROBE_HOLD_INVALID");
+      (["crash", "release"].includes(validated.operation) && validated.holdMs !== 0) ||
+      (validated.pauseAt === "after-journal-state") !== (validated.pauseState !== undefined) ||
+      (validated.exerciseKeyCount !== undefined &&
+        (validated.operation !== "try" || validated.holdMs !== 0 || validated.pauseAt !== undefined || validated.failOperation))) {
+    fail("PROBE_INPUT_INVALID");
+  }
   return Object.freeze(validated);
 }
 
@@ -195,8 +213,27 @@ async function main() {
         await writeCounter(counterPath, { current: Math.max(0, current.current - 1), maxOwners: current.maxOwners });
       });
     }
+    if (request.pauseAt === "after-barrier-remove") {
+      await emit({ status: "operation-complete", owner: process.pid, maxOwners: acquiredMax });
+    }
   };
   try {
+    if (request.exerciseKeyCount !== undefined) {
+      const domains = ["runs", "tasks", "artifacts"];
+      for (let index = 0; index < request.exerciseKeyCount; index += domains.length) {
+        await Promise.all(domains.map(async (domain, offset) => {
+          const keyIndex = index + offset;
+          if (keyIndex >= request.exerciseKeyCount) return;
+          const exerciseLock = await canonicalPersistenceLock(
+            request.workspaceRoot, domain, `key-${keyIndex}.json`
+          );
+          await storage.withFileLock(exerciseLock, async () => undefined, { signal: controller.signal });
+        }));
+      }
+      await emit({ status: "acquired", owner: process.pid, maxOwners: 1 });
+      await emit({ status: "released", owner: process.pid, maxOwners: 1 });
+      return;
+    }
     if (request.clockOffsetMs === 0 && request.pauseAt === undefined) {
       await storage.withFileLock(lock, operation, { signal: controller.signal });
     } else {
@@ -204,12 +241,26 @@ async function main() {
       const provider = await import(moduleUrl("nativeLockProvider"));
       const productionIo = lease.productionFileLockIoForTesting();
       let paused = false;
+      const pauseCounts = new Map();
       const pauseForever = async () => {
         if (paused) return;
         paused = true;
         await emit({ status: "paused", owner: process.pid, maxOwners: 0 });
         await new Promise(() => undefined);
       };
+      const maybePause = async (point) => {
+        const occurrence = (pauseCounts.get(point) ?? 0) + 1;
+        pauseCounts.set(point, occurrence);
+        if (request.pauseAt === point && request.pauseOccurrence === occurrence) await pauseForever();
+      };
+      const journalState = (journal) => {
+        if (journal.phase === "cleanup") return journal.leaseIdentity === undefined ? "cleanup-barrier-only" : "cleanup-with-lease";
+        if ((journal.phase === "barrier-created" || journal.phase === "lease-created") && journal.pendingLeaseWrite !== undefined) return undefined;
+        return journal.phase;
+      };
+      const journalTemporaryPath = `${lock.journalPath}.tokengraph-write-v2.tmp`;
+      const leasePath = join(lock.compatibilityPath, "lease.json");
+      const leaseTemporaryPath = `${leasePath}.tokengraph-write-v2.tmp`;
       const io = Object.freeze({
         ...productionIo,
         async createDirectory(path) {
@@ -219,17 +270,36 @@ async function main() {
           }
           return snapshot;
         },
+        async createFileDurable(path, text) {
+          const kind = resolve(path) === resolve(journalTemporaryPath)
+            ? "journal" : resolve(path) === resolve(leaseTemporaryPath) ? "lease" : undefined;
+          return lease.createProductionProtocolFileForTesting(path, text, undefined, async (point) => {
+            if (kind === undefined) return;
+            const suffix = point === "after-create" ? "create"
+              : point === "after-write" ? "write"
+                : point === "after-sync" ? "sync" : "parent-flush";
+            await maybePause(`after-${kind}-${suffix}`);
+          });
+        },
         async replaceFileFromTemporary(temporaryPath, targetPath, temporaryIdentity, expectedTargetIdentity) {
-          const snapshot = await productionIo.replaceFileFromTemporary(
-            temporaryPath, targetPath, temporaryIdentity, expectedTargetIdentity
+          const kind = resolve(targetPath) === resolve(lock.journalPath)
+            ? "journal" : resolve(targetPath) === resolve(leasePath) ? "lease" : undefined;
+          const snapshot = await lease.replaceProductionProtocolFileForTesting(
+            temporaryPath, targetPath, temporaryIdentity, expectedTargetIdentity, undefined, async (point) => {
+              if (kind === undefined) return;
+              await maybePause(point === "after-rename"
+                ? `after-${kind}-rename` : `after-${kind}-rename-parent-flush`);
+            }
           );
-          if (!paused && resolve(targetPath) === resolve(lock.journalPath) &&
-              (request.pauseAt === "after-journal-barrier-created" || request.pauseAt === "after-journal-lease-created")) {
+          if (!paused && resolve(targetPath) === resolve(lock.journalPath) && request.pauseAt === "after-journal-state") {
             const journal = JSON.parse(await readFile(targetPath, "utf8"));
-            const expectedPhase = request.pauseAt === "after-journal-barrier-created" ? "barrier-created" : "lease-created";
-            if (journal.phase === expectedPhase && journal.pendingLeaseWrite === undefined) await pauseForever();
+            if (journalState(journal) === request.pauseState) await pauseForever();
           }
           return snapshot;
+        },
+        async removeDirectory(path, expectedIdentity) {
+          await productionIo.removeDirectory(path, expectedIdentity);
+          if (resolve(path) === resolve(lock.compatibilityPath)) await maybePause("after-barrier-remove");
         }
       });
       const runtime = Object.freeze({

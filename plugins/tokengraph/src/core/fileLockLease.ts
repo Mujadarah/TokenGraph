@@ -1643,7 +1643,8 @@ async function productionCreateDirectory(path: string): Promise<DirectorySnapsho
 async function productionCreateFileDurable(
   path: string,
   text: string,
-  crashPoint?: "after-create" | "after-write" | "after-sync"
+  crashPoint?: "after-create" | "after-write" | "after-sync",
+  durableCut?: (point: "after-create" | "after-write" | "after-sync" | "after-parent-flush") => Promise<void>
 ): Promise<FileSnapshot> {
   const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
   const simulateCrash = (point: "after-create" | "after-write" | "after-sync"): void => {
@@ -1655,15 +1656,19 @@ async function productionCreateFileDurable(
   const handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600);
   try {
     simulateCrash("after-create");
+    await durableCut?.("after-create");
     await handle.writeFile(text, "utf8");
     simulateCrash("after-write");
+    await durableCut?.("after-write");
     await handle.sync();
     simulateCrash("after-sync");
+    await durableCut?.("after-sync");
   } finally {
     await handle.close();
   }
   if (process.platform !== "win32") await chmod(path, 0o600);
   await flushDirectory(dirname(path));
+  await durableCut?.("after-parent-flush");
   const snapshot = await productionReadFile(path, LEASE_MAX_BYTES);
   if (snapshot === undefined) fail("LOCK_LEASE_OCCUPIED");
   return snapshot;
@@ -1674,7 +1679,8 @@ async function productionReplaceFileFromTemporary(
   targetPath: string,
   temporaryIdentity: string,
   expectedTargetIdentity?: string,
-  crashPoint?: "after-rename" | "after-directory-flush"
+  crashPoint?: "after-rename" | "after-directory-flush",
+  durableCut?: (point: "after-rename" | "after-directory-flush") => Promise<void>
 ): Promise<FileSnapshot> {
   const temporary = await productionReadFile(temporaryPath, JOURNAL_MAX_BYTES);
   const target = await productionReadFile(targetPath, JOURNAL_MAX_BYTES);
@@ -1686,11 +1692,13 @@ async function productionReplaceFileFromTemporary(
   if (crashPoint === "after-rename") {
     throw Object.assign(new Error("Simulated durable-write crash."), { code: "SIMULATED_DURABLE_WRITE_CRASH" as const });
   }
+  await durableCut?.("after-rename");
   if (process.platform !== "win32") await chmod(targetPath, 0o600);
   await flushDirectory(dirname(targetPath));
   if (crashPoint === "after-directory-flush") {
     throw Object.assign(new Error("Simulated durable-write crash."), { code: "SIMULATED_DURABLE_WRITE_CRASH" as const });
   }
+  await durableCut?.("after-directory-flush");
   const replaced = await productionReadFile(targetPath, JOURNAL_MAX_BYTES);
   if (replaced?.identity !== temporaryIdentity) fail("LOCK_JOURNAL_UNSAFE");
   return replaced;
@@ -1699,9 +1707,10 @@ async function productionReplaceFileFromTemporary(
 export function createProductionProtocolFileForTesting(
   path: string,
   text: string,
-  crashPoint?: "after-create" | "after-write" | "after-sync"
+  crashPoint?: "after-create" | "after-write" | "after-sync",
+  durableCut?: (point: "after-create" | "after-write" | "after-sync" | "after-parent-flush") => Promise<void>
 ): Promise<FileSnapshot> {
-  return productionCreateFileDurable(path, text, crashPoint);
+  return productionCreateFileDurable(path, text, crashPoint, durableCut);
 }
 
 export function replaceProductionProtocolFileForTesting(
@@ -1709,10 +1718,11 @@ export function replaceProductionProtocolFileForTesting(
   targetPath: string,
   temporaryIdentity: string,
   expectedTargetIdentity?: string,
-  crashPoint?: "after-rename" | "after-directory-flush"
+  crashPoint?: "after-rename" | "after-directory-flush",
+  durableCut?: (point: "after-rename" | "after-directory-flush") => Promise<void>
 ): Promise<FileSnapshot> {
   return productionReplaceFileFromTemporary(
-    temporaryPath, targetPath, temporaryIdentity, expectedTargetIdentity, crashPoint
+    temporaryPath, targetPath, temporaryIdentity, expectedTargetIdentity, crashPoint, durableCut
   );
 }
 

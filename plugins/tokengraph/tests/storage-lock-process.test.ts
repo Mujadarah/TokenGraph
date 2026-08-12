@@ -1,5 +1,5 @@
 import { execFile as execFileCallback, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { access, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -27,7 +27,25 @@ interface ProbeRequest {
   clockOffsetMs?: number;
   cancelMs?: number;
   failOperation?: boolean;
-  pauseAt?: "after-barrier-create" | "after-journal-barrier-created" | "after-journal-lease-created";
+  exerciseKeyCount?: 1_000;
+  pauseAt?:
+    | "after-barrier-create"
+    | "after-barrier-remove"
+    | "after-journal-create"
+    | "after-journal-write"
+    | "after-journal-sync"
+    | "after-journal-parent-flush"
+    | "after-journal-rename"
+    | "after-journal-rename-parent-flush"
+    | "after-lease-create"
+    | "after-lease-write"
+    | "after-lease-sync"
+    | "after-lease-parent-flush"
+    | "after-lease-rename"
+    | "after-lease-rename-parent-flush"
+    | "after-journal-state";
+  pauseOccurrence?: number;
+  pauseState?: "intent" | "barrier-created" | "lease-created" | "cleanup-with-lease" | "cleanup-barrier-only" | "idle";
   activate: boolean;
 }
 
@@ -92,6 +110,19 @@ function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): 
   });
 }
 
+function childHasExited(child: ChildProcessWithoutNullStreams): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+async function terminateAndWait(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (childHasExited(child)) return;
+  const exited = waitForExit(child, 5_000);
+  if (!child.kill("SIGKILL") && !childHasExited(child)) {
+    throw new Error("Native lock test child termination could not be requested.");
+  }
+  await exited;
+}
+
 async function runProbe(request: ProbeRequest): Promise<{ records: ProbeRecord[]; code: number | null; stderr: string }> {
   const child = spawn(process.execPath, [probePath], {
     cwd: process.cwd(),
@@ -119,6 +150,7 @@ async function runProbe(request: ProbeRequest): Promise<{ records: ProbeRecord[]
     const records = stdout.trim().split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as ProbeRecord);
     return { records, code, stderr };
   } finally {
+    if (!childHasExited(child)) await terminateAndWait(child);
     children.delete(child);
   }
 }
@@ -154,12 +186,16 @@ function startKillableProbe(request: ProbeRequest): {
     if (Buffer.byteLength(stderr) > 8_192) child.kill("SIGKILL");
   });
   child.stdin.end(`${JSON.stringify(request)}\n`);
-  const completion = waitForExit(child, request.timeoutMs + 5_000).then((code) => {
+  const completion = (async () => {
+    try {
+      return { code: await waitForExit(child, request.timeoutMs + 5_000), stderr };
+    } finally {
+      if (!childHasExited(child)) await terminateAndWait(child);
+      children.delete(child);
+    }
+  })();
+  completion.catch(() => {
     children.delete(child);
-    return { code, stderr };
-  }, (error) => {
-    children.delete(child);
-    throw error;
   });
   return {
     child,
@@ -192,41 +228,50 @@ async function runLegacyWorker(request: { lockPath: string; markerPath: string; 
   child.stderr.setEncoding("utf8");
   let stdout = "";
   let stderr = "";
-  child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-  child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+  child.stdout.on("data", (chunk: string) => {
+    stdout += chunk;
+    if (Buffer.byteLength(stdout) > 8_192) child.kill("SIGKILL");
+  });
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+    if (Buffer.byteLength(stderr) > 8_192) child.kill("SIGKILL");
+  });
   child.stdin.end(`${JSON.stringify(request)}\n`);
   try {
-    return { code: await waitForExit(child, 5_000), stdout, stderr };
+    return { code: await waitForExit(child, request.holdMs + 5_000), stdout, stderr };
   } finally {
+    if (!childHasExited(child)) await terminateAndWait(child);
     children.delete(child);
   }
 }
 
 afterEach(async () => {
-  for (const child of children) child.kill("SIGKILL");
+  await Promise.all([...children].map((child) => terminateAndWait(child)));
   children.clear();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("native lock process integration", () => {
-  it("allows exactly one native owner across six processes", async () => {
-    const workspaceRoot = await temporaryRoot("tg-lock-process-");
-    const coordinationRoot = await temporaryRoot("tg-lock-counter-");
-    const runs = await Promise.all(Array.from({ length: 6 }, () => runProbe({
-      operation: "try",
-      workspaceRoot,
-      domain: "workspace-state",
-      key: "config.json",
-      coordinationRoot,
-      timeoutMs: 10_000,
-      holdMs: 100,
-      activate: true
-    })));
-    const records = runs.flatMap((run) => run.records);
-    expect(runs.every((run) => run.code === 0), JSON.stringify(runs)).toBe(true);
-    expect(Math.max(...records.map((record) => record.maxOwners))).toBe(1);
-    expect(records.filter((record) => record.status === "acquired")).toHaveLength(6);
-  }, 30_000);
+  it("allows exactly one native owner across six processes for 20 repetitions", async () => {
+    for (let repetition = 0; repetition < 20; repetition += 1) {
+      const workspaceRoot = await temporaryRoot("tg-lock-process-");
+      const coordinationRoot = await temporaryRoot("tg-lock-counter-");
+      const runs = await Promise.all(Array.from({ length: 6 }, () => runProbe({
+        operation: "try",
+        workspaceRoot,
+        domain: "workspace-state",
+        key: "config.json",
+        coordinationRoot,
+        timeoutMs: 10_000,
+        holdMs: 25,
+        activate: true
+      })));
+      const records = runs.flatMap((run) => run.records);
+      expect(runs.every((run) => run.code === 0), `repetition ${repetition}: ${JSON.stringify(runs)}`).toBe(true);
+      expect(Math.max(...records.map((record) => record.maxOwners))).toBe(1);
+      expect(records.filter((record) => record.status === "acquired")).toHaveLength(6);
+    }
+  }, 120_000);
 
   it("reacquires within two seconds after the owning process aborts", async () => {
     const workspaceRoot = await temporaryRoot("tg-lock-crash-");
@@ -258,20 +303,110 @@ describe("native lock process integration", () => {
     expect(recovered.records).toContainEqual(expect.objectContaining({ status: "acquired" }));
   }, 30_000);
 
-  it("keeps an upgraded nonempty compatibility directory intact against the frozen v0.23.1 worker", async () => {
+  it("keeps an aged upgraded barrier intact when v0.23.1 enters its stale-removal branch", async () => {
     const workspaceRoot = await temporaryRoot("tg-lock-upgrade-");
     const markerPath = join(workspaceRoot, "legacy-entered.txt");
     const lock = await canonicalPersistenceLock(workspaceRoot, "workspace-state", "config.json");
     await withFileLock(lock, async () => {
+      const stale = new Date(Date.now() - 31_000);
+      await utimes(lock.compatibilityPath, stale, stale);
+      const startedAt = Date.now();
       const legacy = await runLegacyWorker({ lockPath: lock.compatibilityPath, markerPath, holdMs: 0 });
-      expect(legacy.code, legacy.stderr).toBe(1);
-      expect(JSON.parse(legacy.stdout)).toEqual({ status: "timeout" });
+      expect(Date.now() - startedAt).toBeLessThan(1_500);
+      expect(legacy.code).not.toBe(0);
+      expect(legacy.stdout).toBe("");
       await expect(access(join(lock.compatibilityPath, "lease.json"))).resolves.toBeUndefined();
       await expect(access(markerPath)).rejects.toThrow();
+      await expect(access(lock.anchorPath)).resolves.toBeUndefined();
     });
     await expect(access(lock.compatibilityPath)).rejects.toThrow();
     expect(await readFile(lock.journalPath, "utf8")).toMatch(/"phase":\s*"idle"/u);
   }, 30_000);
+
+  it("keeps an aged live Git exclude barrier intact against the frozen v0.23.1 worker", async () => {
+    const workspaceRoot = await temporaryRoot("tg-lock-git-upgrade-");
+    await execFile("git", ["init", "-q", workspaceRoot]);
+    const lock = await canonicalPersistenceLock(workspaceRoot, "git-info", "exclude");
+    const markerPath = join(workspaceRoot, "legacy-git-entered.txt");
+    const holder = startKillableProbe({
+      operation: "hold", workspaceRoot, domain: "git-info", key: "exclude",
+      coordinationRoot: await temporaryRoot("tg-lock-git-holder-"), timeoutMs: 10_000,
+      holdMs: 5_000, activate: true
+    });
+    await holder.waitForStatus("acquired");
+    const stale = new Date(Date.now() - 31_000);
+    await utimes(lock.compatibilityPath, stale, stale);
+    const legacy = await runLegacyWorker({ lockPath: lock.compatibilityPath, markerPath, holdMs: 0 });
+    expect(legacy.code).not.toBe(0);
+    expect(legacy.stdout).toBe("");
+    await expect(access(join(lock.compatibilityPath, "lease.json"))).resolves.toBeUndefined();
+    await expect(access(markerPath)).rejects.toThrow();
+    await expect(access(lock.anchorPath)).resolves.toBeUndefined();
+    expect(holder.child.kill("SIGKILL")).toBe(true);
+    await holder.completion;
+  }, 30_000);
+
+  it("recovers killed real children at every journal phase and durable file cut", async () => {
+    const journalCuts = [
+      ["after-journal-create", 1],
+      ["after-journal-write", 2],
+      ["after-journal-sync", 3],
+      ["after-journal-parent-flush", 4],
+      ["after-journal-rename", 5],
+      ["after-journal-rename-parent-flush", 6]
+    ] as const;
+    const leaseCuts = [
+      "after-lease-create", "after-lease-write", "after-lease-sync",
+      "after-lease-parent-flush", "after-lease-rename", "after-lease-rename-parent-flush"
+    ] as const;
+    const states = ["intent", "barrier-created", "lease-created", "cleanup-with-lease", "cleanup-barrier-only", "idle"] as const;
+    const cases = [
+      ...journalCuts.map(([pauseAt, pauseOccurrence]) => ({ pauseAt, pauseOccurrence })),
+      ...leaseCuts.map((pauseAt) => ({ pauseAt, pauseOccurrence: 1 })),
+      ...states.map((pauseState) => ({ pauseAt: "after-journal-state" as const, pauseState }))
+    ];
+    for (const [index, pause] of cases.entries()) {
+      const workspaceRoot = await temporaryRoot("tg-lock-cut-");
+      const lock = await canonicalPersistenceLock(workspaceRoot, "workspace-state", "config.json");
+      const killed = startKillableProbe({
+        operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
+        coordinationRoot: await temporaryRoot("tg-lock-cut-counter-"), timeoutMs: 15_000,
+        clockOffsetMs: -31_000, ...pause, activate: true
+      });
+      await killed.waitForStatus("paused", 5_000);
+      expect(killed.child.kill("SIGKILL"), `cut ${index}: ${JSON.stringify(pause)}`).toBe(true);
+      await killed.completion;
+      const recovered = await runProbe({
+        operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
+        coordinationRoot: await temporaryRoot("tg-lock-cut-recovery-"), timeoutMs: 5_000, activate: true
+      });
+      expect(recovered.code, `cut ${index}: ${JSON.stringify(pause)} ${recovered.stderr}`).toBe(0);
+      expect(recovered.records).toContainEqual(expect.objectContaining({ status: "acquired" }));
+      await expect(access(lock.compatibilityPath)).rejects.toThrow();
+      const entries = await readdir(lock.domainRoot);
+      expect(entries.filter((entry) => entry.endsWith(".lock"))).toEqual(expect.arrayContaining([
+        ".tokengraph-native-anchor-v2.lock", ".tokengraph-native-journal-v2.lock"
+      ]));
+      expect(entries.filter((entry) => entry.endsWith(".lock"))).toHaveLength(2);
+    }
+  }, 180_000);
+
+  it("keeps real addon infrastructure constant across 1,000 unique run task and artifact keys", async () => {
+    const workspaceRoot = await temporaryRoot("tg-lock-cardinality-");
+    const exercised = await runProbe({
+      operation: "try", workspaceRoot, domain: "runs", key: "key-0.json",
+      coordinationRoot: await temporaryRoot("tg-lock-cardinality-counter-"), timeoutMs: 180_000,
+      exerciseKeyCount: 1_000, activate: true
+    });
+    expect(exercised.code, exercised.stderr).toBe(0);
+    expect(exercised.records.map((record) => record.status)).toEqual(["acquired", "released"]);
+    for (const domain of ["runs", "tasks", "artifacts"] as const) {
+      const example = await canonicalPersistenceLock(workspaceRoot, domain, "example.json");
+      expect((await readdir(example.domainRoot)).sort()).toEqual([
+        ".tokengraph-native-anchor-v2.lock", ".tokengraph-native-journal-v2.lock"
+      ]);
+    }
+  }, 210_000);
 
   it("cancels a real child promptly while it waits for a native anchor", async () => {
     const workspaceRoot = await temporaryRoot("tg-lock-cancel-");
@@ -435,16 +570,31 @@ describe("native lock process integration", () => {
     expect(await readFile(`${exclude}.lock`, "utf8")).toBe("legacy-owner\n");
   }, 30_000);
 
-  it("preserves a legacy creator that enters after upgraded cleanup and blocks the next upgraded owner", async () => {
+  it("preserves a legacy creator entering after barrier removal while v2 still finalizes cleanup", async () => {
     const workspaceRoot = await temporaryRoot("tg-lock-cleanup-race-");
     const lock = await canonicalPersistenceLock(workspaceRoot, "workspace-state", "config.json");
-    await withFileLock(lock, async () => undefined);
     const markerPath = join(workspaceRoot, "legacy-entered.txt");
-    const legacy = runLegacyWorker({ lockPath: lock.compatibilityPath, markerPath, holdMs: 1_000 });
-    await waitForExists(lock.compatibilityPath);
-    await expect(withFileLock(lock, async () => undefined)).rejects.toMatchObject({ code: "LEGACY_LOCK_BLOCKED" });
+    const upgraded = startKillableProbe({
+      operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
+      coordinationRoot: await temporaryRoot("tg-lock-cleanup-counter-"), timeoutMs: 15_000,
+      pauseAt: "after-barrier-remove", activate: true
+    });
+    await upgraded.waitForStatus("paused");
+    expect(upgraded.records).toContainEqual(expect.objectContaining({ status: "operation-complete" }));
+    const legacy = runLegacyWorker({ lockPath: lock.compatibilityPath, markerPath, holdMs: 5_000 });
+    await waitForExists(markerPath);
+    const before = await lstat(lock.compatibilityPath, { bigint: true });
+    expect(upgraded.child.kill("SIGKILL")).toBe(true);
+    await upgraded.completion;
+    const next = await runProbe({
+      operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
+      coordinationRoot: await temporaryRoot("tg-lock-cleanup-next-"), timeoutMs: 2_000, activate: true
+    });
+    expect(next.code).toBe(1);
+    expect(next.records).toContainEqual(expect.objectContaining({ status: "LOCK_JOURNAL_UNSAFE" }));
     await expect(access(markerPath)).resolves.toBeUndefined();
-    expect((await lstat(lock.compatibilityPath)).isFile()).toBe(true);
+    const after = await lstat(lock.compatibilityPath, { bigint: true });
+    expect(`${after.dev}:${after.ino}:${after.birthtimeNs}`).toBe(`${before.dev}:${before.ino}:${before.birthtimeNs}`);
     const legacyResult = await legacy;
     expect(legacyResult.code, legacyResult.stderr).toBe(0);
     expect(JSON.parse(legacyResult.stdout)).toEqual({ status: "acquired" });
@@ -501,7 +651,7 @@ describe("native lock process integration", () => {
     const recovery = startKillableProbe({
       operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
       coordinationRoot: await temporaryRoot("tg-lock-adoption-recovery-"), timeoutMs: 15_000,
-      pauseAt: "after-journal-barrier-created", activate: true
+      pauseAt: "after-journal-state", pauseState: "barrier-created", activate: true
     });
     await recovery.waitForStatus("paused");
     await expect(access(join(lock.compatibilityPath, "lease.json"))).rejects.toThrow();
@@ -521,7 +671,7 @@ describe("native lock process integration", () => {
     const killed = startKillableProbe({
       operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
       coordinationRoot: await temporaryRoot("tg-lock-lease-killed-"), timeoutMs: 15_000,
-      clockOffsetMs: -31_000, pauseAt: "after-journal-lease-created", activate: true
+      clockOffsetMs: -31_000, pauseAt: "after-journal-state", pauseState: "lease-created", activate: true
     });
     await killed.waitForStatus("paused");
     expect(killed.records.some((record) => record.status === "acquired")).toBe(false);

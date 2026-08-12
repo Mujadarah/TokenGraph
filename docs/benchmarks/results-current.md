@@ -9,7 +9,7 @@ pnpm benchmark -- --json
 The current deterministic `evidence-v1` corpus produces:
 
 - Tasks: 30 across seven categories; every category has four or five observations.
-- Exact core discovery plus setup: 2,354 estimated tokens total, or 78.5 amortized per task.
+- Exact core discovery plus setup: 2,414 estimated tokens total, or 80.5 amortized per task.
 - Critical-constraint preservation: 100% under polarity-safe exact normalized predicates.
 - Critical false negatives: 0.
 - Required-file recall: 100% against the checked-in 0.85 baseline.
@@ -18,20 +18,20 @@ The current deterministic `evidence-v1` corpus produces:
 - Routing: 27 tasks activate TokenGraph and three bounded tasks bypass at Stage 0, including the exact file-and-line debugging task. Against independent fixture truth labels, false-bypass and false-activation rates are both 0/27 and 0/3 respectively. All 30 shadow observations and per-category coverage remain published in `results-current.json`. Bypasses are not booked as savings.
 - Delta delivery: the default no-handshake assumption resends 6,288 estimated tokens and books zero delta savings. When the host explicitly confirms every prior `id@hash`, the same fixture delivers 846 tokens and measures 5,442 estimated tokens saved. The handshake scenario is reported separately and is not part of the release-gate savings.
 - Exact implementation evidence: four edit/debug tasks perform one hash-validated source slice each, charging four targeted-read calls and 711 estimated tokens in total.
-- Primary execution-inclusive median: +172.3 tokens; nearest-rank 25th percentile: +38.3; 22 of 27 activated tasks are non-negative (81.5%).
+- Primary execution-inclusive median: +172.5 tokens; nearest-rank 25th percentile: +38.5; 22 of 27 activated tasks are non-negative (81.5%).
 - Frozen execution-inclusive release gate: pass.
 
 Execution-inclusive category results (bypassed tasks remain visible at zero but are excluded from activated-task gates):
 
 | Category | Median | Non-positive |
 |---|---:|---:|
-| Code routing | 0.3 | 2/5 (both bypassed) |
-| SQL/security | 234.3 | 0/5 |
-| Debugging | 785.3 | 0/4 |
-| Change risk | 6.8 | 2/4 |
-| Compression | 1033.3 | 0/4 |
-| Memory/wiki | -212.2 | 3/4 |
-| Release packaging | 176.3 | 0/4 |
+| Code routing | 0.5 | 2/5 (both bypassed) |
+| SQL/security | 234.5 | 0/5 |
+| Debugging | 785.5 | 0/4 |
+| Change risk | 7.0 | 2/4 |
+| Compression | 1033.5 | 0/4 |
+| Memory/wiki | -212.0 | 3/4 |
+| Release packaging | 176.5 | 0/4 |
 
 The release gate treats execution-inclusive savings as the primary eligibility metric. Exact source slices are charged only for the four checked-in tasks whose natural implementation outcome requires a hash-bound source span; other tasks do not fabricate reads after compact evidence is sufficient. Negative tails remain visible, especially in memory/wiki and change-risk tasks.
 
@@ -119,5 +119,14 @@ table above were recomputed from the corrected model at the same time; the
 previous table also carried values that predated the current corpus. The
 frozen release gate still passes. The 2026-07-19 note above remains accurate
 as history and is unchanged.
+
+2026-08-12 rollout-warning accounting note: the setup schema now advertises
+the required mixed-runtime boundary in the actual MCP tool definition. The
+compact warning raises exact discovery-plus-setup accounting from 2,354 to
+2,414 estimated tokens, or from 78.5 to 80.5 amortized per task. Recomputing
+the unchanged corpus moves the execution-inclusive median from +172.3 to
++172.5, net-savings median from +180.3 to +180.5, and p25 from +38.3 to +38.5;
+22 of 27 activated tasks remain non-negative and the frozen gate still passes.
+The preceding correction note is retained unchanged as historical evidence.
 
 The checked-in JSON-versus-tabular format experiment is negative: the tabular candidate did not improve token usage and quality simultaneously, so JSON remains the public default. See `docs/benchmarks/format-experiment.json`.
