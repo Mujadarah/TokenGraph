@@ -245,8 +245,18 @@ async function loadAt(locationValue: AttestationLocation, now: Date): Promise<Ho
     const nowNs = BigInt(now.getTime()) * NANOSECONDS_PER_MILLISECOND;
     if (updatedAtNs < nowNs - HOST_WORKSPACE_MAX_AGE_NS || updatedAtNs > nowNs + HOST_WORKSPACE_FUTURE_TOLERANCE_NS) return { status: "expired", entry: read.entry };
     let canonicalRoot: string;
-    // A same-binding attestation whose stored root no longer exists is detached, not a binding mismatch.
-    try { canonicalRoot = await realpath(decoded.value.root); } catch { return { status: "detached", entry: read.entry }; }
+    // A same-binding attestation whose stored root is genuinely absent is
+    // detached, not a binding mismatch. Any other resolution failure is
+    // ambiguity, which stays unstable and never authorizes replacement or
+    // removal.
+    try {
+      canonicalRoot = await realpath(decoded.value.root);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return code === "ENOENT" || code === "ENOTDIR"
+        ? { status: "detached", entry: read.entry }
+        : { status: "unstable" };
+    }
     if (canonicalRoot !== decoded.value.root) return { status: "mismatched" };
     return { status: "valid", root: canonicalRoot, entry: read.entry };
   } catch (error) {

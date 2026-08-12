@@ -332,6 +332,35 @@ describe.skipIf(process.platform === "win32")("posix domain root mode boundary",
     expect(Number((await lstat(info)).mode) & 0o777).toBe(0o755);
   });
 
+  it("refuses a writable git-info root and never creates one restrictively", async () => {
+    for (const mode of [0o775, 0o777]) {
+      const root = await mkdtemp(join(tmpdir(), "tokengraph-git-info-writable-"));
+      roots.push(root);
+      await execFileAsync("git", ["init", "--quiet", root]);
+      const info = join(root, ".git", "info");
+      await mkdir(info, { recursive: true });
+      await chmod(info, mode);
+
+      const lock = await canonicalPersistenceLock(root, "git-info", "exclude");
+      await expect(runWithFileLock(lock, async () => "owned"), mode.toString(8)).rejects.toMatchObject({
+        code: "UNSAFE_LOCK_DIRECTORY"
+      });
+      expect(Number((await lstat(info)).mode) & 0o777, mode.toString(8)).toBe(mode);
+    }
+  });
+
+  it("creates an absent git-info root without imposing a restrictive mode", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-git-info-absent-"));
+    roots.push(root);
+    await execFileAsync("git", ["init", "--quiet", root]);
+    const info = join(root, ".git", "info");
+    await rm(info, { recursive: true, force: true });
+
+    const lock = await canonicalPersistenceLock(root, "git-info", "exclude");
+    await expect(runWithFileLock(lock, async () => "owned")).resolves.toBe("owned");
+    expect(Number((await lstat(info)).mode) & 0o077).not.toBe(0);
+  });
+
   it("still refuses a linked domain root instead of tightening it", async () => {
     const root = await mkdtemp(join(tmpdir(), "tokengraph-domain-link-"));
     roots.push(root);

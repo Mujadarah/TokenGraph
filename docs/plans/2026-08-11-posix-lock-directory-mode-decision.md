@@ -1,7 +1,7 @@
 # POSIX persistence-lock directory mode: architecture decision required
 
 Date: 2026-08-11
-Status: BLOCKED, decision required before Task 7 can be called complete
+Status: DECIDED 2026-08-12. Implemented in "fix(locks): adopt permissive domain roots that TokenGraph owns" and refined after independent review.
 Raised by: independent audit of the Phase 3 native-lock Task 7 slice
 
 ## Summary
@@ -172,3 +172,61 @@ caused by the two commits made in this session. They are not evidence that the
 Task 7 non-hook slice is otherwise correct; the remaining audit findings for
 mutation-capable reads, exact infrastructure accounting, and locked retention
 deletion are still open and independent of this decision.
+
+## Decision (2026-08-12)
+
+The maintainer asked for the vendor documentation to be checked before choosing.
+That research settled it:
+
+- Anthropic's Claude Code documentation is SILENT on file modes for
+  plugin-authored paths. It defines `CLAUDE_PLUGIN_DATA` as the place for
+  plugin state, but says nothing prohibiting or requiring a mode.
+- OpenAI's Codex sandbox applies a hardcoded read-only carveout to `.git` and
+  the resolved gitdir, applied after `writable_roots`, so even
+  `sandbox_mode = "workspace-write"` cannot write there. An OpenAI maintainer
+  confirms this is intentional, not a bug
+  (https://github.com/openai/codex/issues/15505). Writing to `.git` requires
+  `danger-full-access` or an explicit per-path permission profile.
+
+Chmodding `.git/info` is therefore both unsanctioned and, under Codex,
+impossible. Option A everywhere is rejected. Option C is correct-by-construction
+but re-opens Tasks 6 to 8, so it is recorded as the long-term direction rather
+than the fix for this defect.
+
+Adopted: Option A for the seven domain roots under `.tokengraph`, which
+TokenGraph owns, and Option B narrowed for `git-info`, which it does not.
+
+### Plan amendment
+
+`docs/plans/2026-08-09-native-lock-addon.md` says "Validate/create the domain
+root with restrictive permissions" with no domain exception, and the design spec
+requires a "restrictive mode" for every protocol candidate. Both are amended by
+this decision for exactly one case: the `git-info` domain root. Every other
+directory, including every anchor, journal, compatibility barrier and lease
+under any domain, keeps the unmodified restrictive requirement.
+
+### What "not restrictive" means for git-info
+
+An independent review found that dropping the mode check entirely also dropped
+group and other WRITE protection, which would let a different local account
+replace or unlink the anchor and journal and defeat cross-process exclusion.
+That is a real weakening beyond what this decision authorizes, and it is not
+what Option B's analysis described.
+
+The narrowed rule is therefore:
+
+- `git-info` may be group or world READABLE, because Git creates `.git/info`
+  mode 0755.
+- `git-info` may NEVER be group or world WRITABLE. A root with any of 0o022 set
+  is refused with `UNSAFE_LOCK_DIRECTORY`.
+- Symlink, reparse, type, ownership and identity checks are unchanged for all
+  eight domains.
+- TokenGraph never chmods the `git-info` root, including when it has to create
+  an absent `.git/info`, which is created with ordinary permissions.
+
+### Residual risk accepted
+
+A `git-info` root that is group or world readable exposes lock metadata (pid,
+nonce, timestamps) to other local accounts. It exposes no project content. The
+trust documentation still needs a sentence stating this; that is tracked as
+outstanding work, not as part of this decision.

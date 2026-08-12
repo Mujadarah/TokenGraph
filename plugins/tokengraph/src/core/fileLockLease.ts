@@ -1556,7 +1556,12 @@ function restrictive(stats: BigIntStats, directory: boolean, requireRestrictiveM
   if (stats.isSymbolicLink() || (directory ? !stats.isDirectory() : !stats.isFile())) return false;
   if (!directory && stats.nlink !== 1n) return false;
   if (process.platform !== "win32") {
-    if (requireRestrictiveMode && (Number(stats.mode) & 0o077) !== 0) return false;
+    // A domain root TokenGraph does not own may be group or world readable,
+    // because Git creates `.git/info` mode 0755. It may never be group or world
+    // writable: another local account could then replace or unlink the anchor
+    // and journal and defeat cross-process exclusion.
+    const forbidden = requireRestrictiveMode ? 0o077 : 0o022;
+    if ((Number(stats.mode) & forbidden) !== 0) return false;
     const uid = process.getuid?.();
     if (uid === undefined || stats.uid !== BigInt(uid)) return false;
   }
@@ -1723,8 +1728,12 @@ const productionIo: FileLockIo = Object.freeze({
         if (component.isSymbolicLink() || !component.isDirectory()) fail("UNSAFE_LOCK_DIRECTORY");
       } catch (error) {
         if (errno(error) !== "ENOENT") throw error;
-        await mkdir(current, { recursive: false, mode: 0o700 });
-        if (process.platform !== "win32") await chmod(current, 0o700);
+        // A domain root TokenGraph does not own is created with ordinary
+        // permissions and is never chmodded, so an absent `.git/info` does not
+        // become 0700 state inside the user's Git directory.
+        const ownedHere = requireRestrictiveMode || current !== resolve(path);
+        await mkdir(current, { recursive: false, mode: ownedHere ? 0o700 : 0o755 });
+        if (ownedHere && process.platform !== "win32") await chmod(current, 0o700);
       }
     }
     let stats = await lstat(path, { bigint: true });
