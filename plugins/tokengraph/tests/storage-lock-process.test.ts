@@ -52,6 +52,7 @@ interface ProbeRequest {
 const probePath = resolve("scripts", "native-lock-probe.mjs");
 const legacyWorkerPath = resolve("tests", "fixtures", "legacy-file-lock-worker.mjs");
 const execFile = promisify(execFileCallback);
+const CHILD_OUTPUT_LIMIT = 8 * 1024;
 const roots: string[] = [];
 const children = new Set<ChildProcessWithoutNullStreams>();
 
@@ -123,6 +124,28 @@ async function terminateAndWait(child: ChildProcessWithoutNullStreams): Promise<
   await exited;
 }
 
+function appendBoundedOutput(
+  current: string,
+  chunk: string,
+  child: ChildProcessWithoutNullStreams
+): string {
+  let remaining = CHILD_OUTPUT_LIMIT - Buffer.byteLength(current);
+  if (remaining <= 0) {
+    child.kill("SIGKILL");
+    return current;
+  }
+  if (Buffer.byteLength(chunk) <= remaining) return current + chunk;
+  child.kill("SIGKILL");
+  let bounded = "";
+  for (const character of chunk) {
+    const bytes = Buffer.byteLength(character);
+    if (bytes > remaining) break;
+    bounded += character;
+    remaining -= bytes;
+  }
+  return current + bounded;
+}
+
 async function runProbe(request: ProbeRequest): Promise<{ records: ProbeRecord[]; code: number | null; stderr: string }> {
   const child = spawn(process.execPath, [probePath], {
     cwd: process.cwd(),
@@ -137,12 +160,10 @@ async function runProbe(request: ProbeRequest): Promise<{ records: ProbeRecord[]
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk: string) => {
-    stdout += chunk;
-    if (Buffer.byteLength(stdout) > 8_192) child.kill("SIGKILL");
+    stdout = appendBoundedOutput(stdout, chunk, child);
   });
   child.stderr.on("data", (chunk: string) => {
-    stderr += chunk;
-    if (Buffer.byteLength(stderr) > 8_192) child.kill("SIGKILL");
+    stderr = appendBoundedOutput(stderr, chunk, child);
   });
   child.stdin.end(`${JSON.stringify(request)}\n`);
   try {
@@ -175,15 +196,13 @@ function startKillableProbe(request: ProbeRequest): {
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk: string) => {
-    stdout += chunk;
-    if (Buffer.byteLength(stdout) > 8_192) child.kill("SIGKILL");
+    stdout = appendBoundedOutput(stdout, chunk, child);
     const lines = stdout.split(/\r?\n/u);
     stdout = lines.pop() ?? "";
     for (const line of lines.filter(Boolean)) records.push(JSON.parse(line) as ProbeRecord);
   });
   child.stderr.on("data", (chunk: string) => {
-    stderr += chunk;
-    if (Buffer.byteLength(stderr) > 8_192) child.kill("SIGKILL");
+    stderr = appendBoundedOutput(stderr, chunk, child);
   });
   child.stdin.end(`${JSON.stringify(request)}\n`);
   const completion = (async () => {
@@ -194,9 +213,7 @@ function startKillableProbe(request: ProbeRequest): {
       children.delete(child);
     }
   })();
-  completion.catch(() => {
-    children.delete(child);
-  });
+  void completion.catch(() => undefined);
   return {
     child,
     records,
@@ -229,12 +246,10 @@ async function runLegacyWorker(request: { lockPath: string; markerPath: string; 
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk: string) => {
-    stdout += chunk;
-    if (Buffer.byteLength(stdout) > 8_192) child.kill("SIGKILL");
+    stdout = appendBoundedOutput(stdout, chunk, child);
   });
   child.stderr.on("data", (chunk: string) => {
-    stderr += chunk;
-    if (Buffer.byteLength(stderr) > 8_192) child.kill("SIGKILL");
+    stderr = appendBoundedOutput(stderr, chunk, child);
   });
   child.stdin.end(`${JSON.stringify(request)}\n`);
   try {
@@ -634,6 +649,33 @@ describe("native lock process integration", () => {
     expect(recovered.code, recovered.stderr).toBe(0);
     expect(recovered.records).toContainEqual(expect.objectContaining({ status: "acquired" }));
     await expect(access(lock.compatibilityPath)).rejects.toThrow();
+  }, 30_000);
+
+  it("keeps an ambiguously terminated child tracked and preserves its evidence", async () => {
+    const workspaceRoot = await temporaryRoot("tg-lock-ambiguous-child-");
+    const lock = await canonicalPersistenceLock(workspaceRoot, "workspace-state", "config.json");
+    const probe = startKillableProbe({
+      operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
+      coordinationRoot: await temporaryRoot("tg-lock-ambiguous-counter-"), timeoutMs: 15_000,
+      pauseAt: "after-journal-state", pauseState: "lease-created", activate: true
+    });
+    await probe.waitForStatus("paused");
+    const realKill = probe.child.kill;
+    try {
+      probe.child.kill = (() => false) as typeof probe.child.kill;
+      const bounded = appendBoundedOutput("x".repeat(CHILD_OUTPUT_LIMIT - 1), "€payload", probe.child);
+      expect(Buffer.byteLength(bounded)).toBeLessThanOrEqual(CHILD_OUTPUT_LIMIT);
+      probe.child.emit("error", new Error("Forced ambiguous child wait failure."));
+      await expect(probe.completion).rejects.toThrow(/termination could not be requested/iu);
+      expect(children.has(probe.child)).toBe(true);
+      await expect(access(workspaceRoot)).resolves.toBeUndefined();
+      await expect(access(lock.compatibilityPath)).resolves.toBeUndefined();
+      expect(probe.records.some((record) => record.status === "released")).toBe(false);
+    } finally {
+      probe.child.kill = realKill;
+      await terminateAndWait(probe.child);
+      children.delete(probe.child);
+    }
   }, 30_000);
 
   it("kills recovery after stale intent adoption without creating the dead callback lease", async () => {
