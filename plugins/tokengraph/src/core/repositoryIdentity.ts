@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 
 import type { RepositoryIdentity, RetrievalSignals } from "./types.js";
 import { canonicalPersistenceLock } from "./lockDomain.js";
+import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
 import { withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
 
 const execFileAsync = promisify(execFile);
@@ -217,6 +218,10 @@ export async function isGitWorkspace(root: string): Promise<boolean> {
 export async function resolveRepositoryStateDirectory(root: string): Promise<string> {
   const normalizedRoot = resolve(root);
   const target = repositoryStateDirectory(normalizedRoot);
+  // Legacy migration mutates repository state under the repository-state lock,
+  // so an unactivated process resolves the target purely and defers migration
+  // to the first activated caller instead of throwing from a nominal read.
+  if (!getLegacyRuntimeActivationStatus().activated) return target;
   const commonDirectory = await gitCommonDirectory(normalizedRoot);
   if (commonDirectory) await migrateLegacyRepositoryState(normalizedRoot, join(commonDirectory, "tokengraph"), target);
   return target;

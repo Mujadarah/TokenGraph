@@ -11,6 +11,7 @@ import { loadTokenGraphConfig } from "../src/core/config.js";
 import { listAppliedKnowledge } from "../src/core/knowledgeReviewQueue.js";
 import { MemoryStore } from "../src/core/memoryStore.js";
 import { loadTaskLedger, listCompletedTaskOutcomes } from "../src/core/taskLedger.js";
+import { loadRoutingControl } from "../src/core/routingControl.js";
 
 const roots: string[] = [];
 
@@ -135,6 +136,26 @@ describe("native lock preactivation boundary", () => {
     await expect(store.list()).resolves.toEqual([]);
 
     expectSameTree(before, await snapshotTree(stateDirectory));
+  });
+
+  it("reads through the repository directory without migrating legacy git-common state before activation", async () => {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-preactivation-legacy-"));
+    roots.push(root);
+    await execFileAsync("git", ["init", "--quiet", root]);
+    // A legacy git-common tokengraph source that an activated read would migrate.
+    const legacy = join(root, ".git", "tokengraph");
+    await mkdir(legacy, { recursive: true });
+    await writeFile(join(legacy, "routing-control.json"), `${JSON.stringify({ legacy: true })}\n`);
+    const before = await snapshotTree(join(root, ".git"));
+
+    const control = await loadRoutingControl(root);
+    expect(control).toBeDefined();
+
+    expectSameTree(before, await snapshotTree(join(root, ".git")));
+    await expect(access(join(root, ".tokengraph", "repository", "migration.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("does not quarantine or migrate a task ledger on a pure read before activation", async () => {

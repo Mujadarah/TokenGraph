@@ -342,7 +342,8 @@ export class MemoryStore {
   }
 
   // `repairInsideLock` is set only by write operations, which already own the
-  // vault domain lock; quarantining a corrupt file is a mutation and must never
+  // store's canonical domain lock (repository-state in production, see the
+  // server wiring); quarantining a corrupt file is a mutation and must never
   // happen from an unlocked pure read (`list`/`search`/`recall`/`findConflicts`).
   private async readAll(repairInsideLock: boolean): Promise<MemoryEntry[]> {
     try {

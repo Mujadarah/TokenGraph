@@ -568,7 +568,13 @@ async function stop(input: Record<string, unknown>, storage: HookStorage): Promi
     if (input.stop_hook_active === true) return warning("TokenGraph task is still open without a pause-or-complete report; allowing stop to prevent a hook retry loop.");
     const pauseCall = `tokengraph_task_report(${JSON.stringify({ taskId: loaded.pointer.taskId, root: attestation.root, disposition: "pause" })})`;
     const completeCall = `tokengraph_task_report(${JSON.stringify({ taskId: loaded.pointer.taskId, root: attestation.root, disposition: "complete" })})`;
-    return { decision: "block", reason: `Call exactly one of these exact calls, choosing pause if work is unfinished or complete if it is finished: ${pauseCall} OR ${completeCall}. Then report the returned status. Do not claim completion for an interrupt or API failure.` };
+    const reason = `Call exactly one of these exact calls, choosing pause if work is unfinished or complete if it is finished: ${pauseCall} OR ${completeCall}. Then report the returned status. Do not claim completion for an interrupt or API failure.`;
+    // Same rule as the completion footer: an exact instruction that exceeds
+    // the output bound would be truncated into one no response can satisfy.
+    if (reason.length > DECISION_MAX_CHARACTERS) {
+      return warning("TokenGraph pause-or-complete instruction exceeds the hook output bound and cannot be enforced exactly.");
+    }
+    return { decision: "block", reason };
   }
   if (ledger.status === "completed" && ledger.completedReport) {
     const footer = formatTaskReportFooter(ledger.completedReport);
