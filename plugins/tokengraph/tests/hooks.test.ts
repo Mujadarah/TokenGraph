@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -90,7 +91,7 @@ async function runHook(
       try {
         output = JSON.parse(stdout) as Record<string, unknown>;
       } catch (error) {
-        rejectPromise(new Error(`Hook emitted invalid JSON: ${stdout || "<empty>"}; ${String(error)}`));
+        rejectPromise(new Error(`Hook emitted invalid JSON: ${stdout || "<empty>"}; code=${code ?? "null"}; stderr=${stderr || "<empty>"}; ${String(error)}`));
         return;
       }
       resolvePromise({ code, stdout, stderr, output });
@@ -1169,7 +1170,7 @@ describe("audited lifecycle hook boundaries", () => {
     const directory = await makeRoot("tokengraph-hook-inject-");
     const path = join(directory, "inject.mjs");
     await writeFile(path, script);
-    return `--import ${path}`;
+    return `--import ${pathToFileURL(path).href}`;
   }
 
   const unlinkAtLstat = `

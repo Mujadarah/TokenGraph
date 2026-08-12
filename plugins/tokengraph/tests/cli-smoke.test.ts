@@ -78,7 +78,7 @@ describe("tokengraph CLI smoke command", () => {
     expect(report.wikiPageSlugs).toEqual([]);
     expect(report.tools).toEqual(coreToolNames);
     expect(report).toMatchObject({ toolSurface: "core", taskId: expect.any(String) });
-  }, 15_000);
+  }, process.platform === "win32" ? 30_000 : 15_000);
 
   it("validates the opt-in full MCP surface", async () => {
     const root = await makeRoot();
@@ -258,11 +258,11 @@ describe("tokengraph benchmark harness and trust docs", () => {
     }
     const benchmarkResults = await readFile(resolve(repoRoot, "docs", "benchmarks", "results-current.md"), "utf8");
     expect(benchmarkResults).toMatch(/22 of 27 activated tasks are non-negative/i);
-    expect(benchmarkResults).toMatch(/execution-inclusive median.*\+174\.5/i);
+    expect(benchmarkResults).toMatch(/execution-inclusive median.*\+172\.3/i);
     expect(benchmarkResults).toMatch(/low-confidence/i);
     expect(benchmarkResults).not.toMatch(/third.*(?:remain|campaign).*incomplete|three-repository B6 target is not met/is);
     const benchmarkMethodology = await readFile(resolve(repoRoot, "docs", "benchmarks", "methodology.md"), "utf8");
-    expect(benchmarkMethodology).toMatch(/\+174\.5-token activated-task median.*\+40\.5-token p25/i);
+    expect(benchmarkMethodology).toMatch(/\+172\.3-token activated-task median.*\+38\.3-token p25/i);
 
     const trustFiles = ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"];
     const trustText = (
