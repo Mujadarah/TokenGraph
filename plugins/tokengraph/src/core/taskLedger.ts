@@ -234,6 +234,20 @@ async function readStableTaskLedger(path: string): Promise<string> {
   const before = await snapshotLedgerPath(path);
   const entryBefore = before.at(-1)!.identity;
   if (entryBefore.size < 0n || entryBefore.size > BigInt(MAX_READ_ONLY_LEDGER_BYTES)) throw new Error("invalid-ledger-size");
+  try {
+    return await readOpenedTaskLedger(path, before, entryBefore);
+  } catch (error) {
+    // Only a genuine initial absence is missing; a disappearance seen after the read began is unstable.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("unstable-ledger-read");
+    throw error;
+  }
+}
+
+async function readOpenedTaskLedger(
+  path: string,
+  before: readonly StablePathSnapshotEntry[],
+  entryBefore: StablePathIdentity
+): Promise<string> {
   const noFollow = "O_NOFOLLOW" in fsConstants ? fsConstants.O_NOFOLLOW : 0;
   const handle = await open(path, fsConstants.O_RDONLY | noFollow);
   try {
@@ -475,6 +489,10 @@ function decodeCurrentTaskLedger(value: unknown, expectedTaskId: string): TaskLe
   if (value.status === "open" && (value.pausedAt !== undefined || value.completedAt !== undefined || completedReport !== undefined || value.lastDisposition !== undefined)) return undefined;
   if (value.status === "paused" && (value.pausedAt === undefined || value.completedAt !== undefined || completedReport !== undefined || value.lastDisposition !== "pause")) return undefined;
   if (value.status === "completed" && (value.completedAt === undefined || completedReport === undefined || value.lastDisposition !== "complete")) return undefined;
+  if (value.status === "quarantined" && (
+    (value.lastDisposition === undefined && (value.pausedAt !== undefined || value.completedAt !== undefined || completedReport !== undefined)) ||
+    (value.lastDisposition === "pause" && (value.pausedAt === undefined || value.completedAt !== undefined || completedReport !== undefined)) ||
+    (value.lastDisposition === "complete" && (value.completedAt === undefined || completedReport === undefined)))) return undefined;
   return {
     schemaId: TASK_LEDGER_SCHEMA_ID,
     schemaVersion: TASK_LEDGER_SCHEMA_VERSION,

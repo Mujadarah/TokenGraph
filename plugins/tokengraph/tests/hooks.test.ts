@@ -651,11 +651,13 @@ describe("built lifecycle hook process", () => {
     expect(retried.output).toMatchObject({ systemMessage: expect.stringContaining(footer) });
   });
 
-  it("allows silently without a pointer, but fails open honestly for unavailable or corrupt state", async () => {
+  it("allows without a pointer, but fails open honestly for unavailable or corrupt state", async () => {
     const root = await makeRoot("tokengraph-hook-empty-root-");
     const emptyData = await makeRoot("tokengraph-hook-empty-data-");
     expect((await attestWorkspace(root, emptyData)).output).toEqual({});
-    expect((await runHook("stop", stopInput(), pluginEnvironment(emptyData))).output).toEqual({});
+    const withoutPointer = await runHook("stop", stopInput(), pluginEnvironment(emptyData));
+    expect(withoutPointer.output).not.toHaveProperty("decision");
+    expect(withoutPointer.output).toMatchObject({ systemMessage: expect.stringMatching(/pointer is missing/i) });
 
     const noData = await runHook("stop", stopInput(), { PLUGIN_ROOT: hookPluginRoot });
     expect(noData.output).toMatchObject({ systemMessage: expect.stringMatching(/safely processed|skipped/i) });
@@ -1156,9 +1158,214 @@ describe("built lifecycle hook process", () => {
       measuredStop: {}, noEventsStop: {}, pausedStop: {},
       missingFooterIncludesCanonicalBytes: true,
       repeatedStopIncludesCanonicalBytes: true,
-      noState: {},
+      noState: { systemMessage: expect.stringMatching(/pointer is missing/i) },
       corruptState: { systemMessage: expect.stringMatching(/invalid/i) }
     });
+  });
+});
+
+describe("audited lifecycle hook boundaries", () => {
+  async function injector(script: string): Promise<string> {
+    const directory = await makeRoot("tokengraph-hook-inject-");
+    const path = join(directory, "inject.mjs");
+    await writeFile(path, script);
+    return `--import ${path}`;
+  }
+
+  const unlinkAtLstat = `
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const promises = require("node:fs/promises");
+const target = process.env.TG_TEST_TARGET;
+const at = Number(process.env.TG_TEST_UNLINK_AT);
+const originalLstat = promises.lstat;
+let seen = 0;
+promises.lstat = async (path, options) => {
+  if (String(path) === target) {
+    seen += 1;
+    if (seen === at) { try { await promises.unlink(target); } catch { /* already gone */ } }
+  }
+  return originalLstat(path, options);
+};
+`;
+
+  const failTemporarySync = `
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const promises = require("node:fs/promises");
+const marker = process.env.TG_TEST_FAIL_SYNC;
+const originalOpen = promises.open;
+promises.open = async (path, ...rest) => {
+  const handle = await originalOpen(path, ...rest);
+  if (!String(path).includes(marker)) return handle;
+  return new Proxy(handle, {
+    get(target, property, receiver) {
+      if (property === "sync") return async () => { throw new Error("injected-sync-failure"); };
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    }
+  });
+};
+`;
+
+  it("reports a pointer unlinked after the bounded read began as unstable, not missing", async () => {
+    const root = await makeRoot("tokengraph-hook-midread-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-midread-data-");
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    expect((await attachPointer(root, dataRoot, ledger.taskId)).output).toEqual({});
+    const path = pointerPath(dataRoot, "session-private-value");
+    await expect(readFile(path, "utf8")).resolves.toContain(ledger.taskId);
+
+    const stopped = await runHook("stop", stopInput(), {
+      ...pluginEnvironment(dataRoot),
+      NODE_OPTIONS: await injector(unlinkAtLstat),
+      TG_TEST_TARGET: path,
+      TG_TEST_UNLINK_AT: "2"
+    });
+    expect(stopped.output).not.toHaveProperty("decision");
+    expect(stopped.output).toMatchObject({ systemMessage: expect.stringMatching(/pointer is unstable/i) });
+  });
+
+  it("warns and allows Stop without a pointer or a sessions directory", async () => {
+    const root = await makeRoot("tokengraph-hook-nopointer-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-nopointer-data-");
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
+
+    const withoutSessions = await runHook("stop", stopInput(), pluginEnvironment(dataRoot));
+    expect(withoutSessions.output).not.toHaveProperty("decision");
+    expect(withoutSessions.output).toMatchObject({ systemMessage: expect.stringMatching(/pointer is missing/i) });
+
+    await mkdir(join(dataRoot, "sessions"), { recursive: true });
+    const withoutPointer = await runHook("stop", stopInput(), pluginEnvironment(dataRoot));
+    expect(withoutPointer.output).not.toHaveProperty("decision");
+    expect(withoutPointer.output).toMatchObject({ systemMessage: expect.stringMatching(/pointer is missing/i) });
+  });
+
+  it("skips Stop and SessionEnd when an explicit lifecycle root disagrees with the attestation", async () => {
+    const root = await makeRoot("tokengraph-hook-rootcheck-root-");
+    const other = await makeRoot("tokengraph-hook-rootcheck-other-");
+    const dataRoot = await makeRoot("tokengraph-hook-rootcheck-data-");
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    await recordTaskEvent(root, ledger.taskId, taskEvent());
+    await setTaskDisposition(root, ledger.taskId, "complete");
+    expect((await attachPointer(root, dataRoot, ledger.taskId)).output).toEqual({});
+    const hostPath = await attestationPath("session-private-value");
+    const sessionPath = pointerPath(dataRoot, "session-private-value");
+    const [hostBefore, pointerBefore] = await Promise.all([readFile(hostPath, "utf8"), readFile(sessionPath, "utf8")]);
+
+    const stopped = await runHook("stop", stopInput({ cwd: other }), pluginEnvironment(dataRoot));
+    expect(stopped.output).not.toHaveProperty("decision");
+    expect(stopped.output).toMatchObject({ systemMessage: expect.stringMatching(/root did not match/i) });
+    expect(String(stopped.output.systemMessage)).not.toContain(other);
+
+    const ended = await runHook("session-end", {
+      hook_event_name: "SessionEnd",
+      session_id: "session-private-value",
+      cwd: other
+    }, pluginEnvironment(dataRoot));
+    expect(ended.output).toMatchObject({ systemMessage: expect.stringMatching(/root did not match/i) });
+    expect(await readFile(hostPath, "utf8")).toBe(hostBefore);
+    expect(await readFile(sessionPath, "utf8")).toBe(pointerBefore);
+  });
+
+  it("compares an explicit root supplied by an unstructured tool response", async () => {
+    const root = await makeRoot("tokengraph-hook-rawroot-root-");
+    const other = await makeRoot("tokengraph-hook-rawroot-other-");
+    const dataRoot = await makeRoot("tokengraph-hook-rawroot-data-");
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
+
+    const run = await runHook("post-tool-use", postInput({
+      tool_input: { root },
+      tool_response: { root: other, structuredContent: { taskId: ledger.taskId, root } }
+    }), pluginEnvironment(dataRoot));
+    expect(run.output).toMatchObject({ systemMessage: expect.stringMatching(/root did not match/i) });
+    await expect(readdir(dataRoot)).resolves.toEqual([]);
+  });
+
+  it("removes the session pointer with an expired attestation and reports SessionEnd success honestly", async () => {
+    const root = await makeRoot("tokengraph-hook-expired-end-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-expired-end-data-");
+    const sessionId = "expired-end-session";
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    expect((await attachPointer(root, dataRoot, ledger.taskId, { sessionId })).output).toEqual({});
+    const hostPath = await attestationPath(sessionId);
+    const sessionPath = pointerPath(dataRoot, sessionId);
+    const stored = JSON.parse(await readFile(hostPath, "utf8")) as Record<string, unknown>;
+    await writeFile(hostPath, `${JSON.stringify({ ...stored, updatedAt: "2000-01-01T00:00:00.000Z" }, null, 2)}\n`);
+
+    const ended = await runHook("session-end", {
+      hook_event_name: "SessionEnd",
+      session_id: sessionId,
+      cwd: root
+    }, pluginEnvironment(dataRoot));
+    expect(ended.output).toEqual({});
+    await expect(readFile(hostPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(sessionPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("removes an exclusively created pointer temporary when the durability flush fails", async () => {
+    const root = await makeRoot("tokengraph-hook-tempfail-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-tempfail-data-");
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
+
+    const run = await runHook("post-tool-use", postInput({
+      tool_input: { root },
+      tool_response: { structuredContent: { taskId: ledger.taskId, root } }
+    }), {
+      ...pluginEnvironment(dataRoot),
+      NODE_OPTIONS: await injector(failTemporarySync),
+      TG_TEST_FAIL_SYNC: ".tg-pointer-"
+    });
+    expect(run.output).toHaveProperty("systemMessage");
+    const sessions = join(dataRoot, "sessions");
+    expect((await readdir(sessions)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+
+    expect((await attachPointer(root, dataRoot, ledger.taskId, { attest: false })).output).toEqual({});
+    await expect(readFile(pointerPath(dataRoot, "session-private-value"), "utf8")).resolves.toContain(ledger.taskId);
+  });
+
+  it("never prunes a future-dated pointer temporary", async () => {
+    const root = await makeRoot("tokengraph-hook-future-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-future-data-");
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
+    const sessions = join(dataRoot, "sessions");
+    await mkdir(sessions);
+    const sessionHash = createHash("sha256").update("session-private-value").digest("hex");
+    const futurePath = join(sessions, `.tg-pointer-${sessionHash}-${process.pid}-${randomUUID()}.tmp`);
+    const stalePath = join(sessions, `.tg-pointer-${sessionHash}-${process.pid}-${randomUUID()}.tmp`);
+    await writeFile(futurePath, "future temporary bytes\n");
+    await writeFile(stalePath, "stale temporary bytes\n");
+    const future = new Date(Date.now() + 365 * 24 * 60 * 60 * 1_000);
+    const stale = new Date(Date.now() - 31 * 24 * 60 * 60 * 1_000);
+    await utimes(futurePath, future, future);
+    await utimes(stalePath, stale, stale);
+
+    expect((await attachPointer(root, dataRoot, ledger.taskId, { attest: false })).output).toEqual({});
+    await expect(readFile(futurePath, "utf8")).resolves.toBe("future temporary bytes\n");
+    await expect(readFile(stalePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("bounds the blocking decision reason for an oversized stored completion report", async () => {
+    const root = await makeRoot("tokengraph-hook-bound-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-bound-data-");
+    const ledger = await createTaskLedger(root, { host: "unknown" });
+    await recordTaskEvent(root, ledger.taskId, taskEvent());
+    await setTaskDisposition(root, ledger.taskId, "complete");
+    expect((await attachPointer(root, dataRoot, ledger.taskId)).output).toEqual({});
+
+    const ledgerFile = join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`);
+    const stored = JSON.parse(await readFile(ledgerFile, "utf8")) as Record<string, unknown>;
+    const report = stored.completedReport as { categories: Array<{ basis: string[] }> };
+    report.categories[0]!.basis = ["b".repeat(200_000)];
+    await writeFile(ledgerFile, `${JSON.stringify(stored, null, 2)}\n`);
+
+    const blocked = await runHook("stop", stopInput(), pluginEnvironment(dataRoot));
+    expect(blocked.output).toMatchObject({ decision: "block", reason: expect.any(String) });
+    expect(String(blocked.output.reason).length).toBeLessThanOrEqual(4096);
+    expect(blocked.stdout.length).toBeLessThanOrEqual(8192);
   });
 });
 

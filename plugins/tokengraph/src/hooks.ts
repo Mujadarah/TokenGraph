@@ -21,6 +21,7 @@ const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
 const POINTER_RETENTION_NS = 30n * 24n * 60n * 60n * 1_000_000_000n;
 const FUTURE_TOLERANCE_NS = 5n * 60n * 1_000_000_000n;
 const INPUT_MAX_BYTES = 1024 * 1024;
+const DECISION_MAX_CHARACTERS = 4 * 1024;
 const POINTER_REPLACE_ATTEMPTS = 16;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -210,10 +211,12 @@ function decodePointer(
 }
 
 async function readPointer(storage: SessionStorage, expectedHash: string, now = new Date()): Promise<PointerInspection> {
+  let started = false;
   try {
     await validateParents(storage);
     const path = pointerPath(storage, expectedHash);
     const entryStats = await lstat(path, { bigint: true });
+    started = true;
     if (!entryStats.isFile() || entryStats.isSymbolicLink() || entryStats.nlink !== 1n) return { status: "unstable" };
     const entryBefore = fileIdentity(entryStats);
     if (entryBefore.size < 0n || entryBefore.size > BigInt(POINTER_MAX_BYTES)) return { status: "invalid", entry: entryBefore };
@@ -244,13 +247,15 @@ async function readPointer(storage: SessionStorage, expectedHash: string, now = 
     try { parsed = JSON.parse(text) as unknown; } catch { return { status: "invalid", entry: entryBefore }; }
     return { ...decodePointer(parsed, expectedHash, now), entry: entryBefore } as PointerInspection;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing" };
+    // Only a genuine initial absence is missing; a disappearance seen after the read began is unstable.
+    if (!started && (error as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing" };
     return { status: "unstable" };
   }
 }
 
 async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, fsConstants.O_RDONLY);
+  const noFollow = "O_NOFOLLOW" in fsConstants ? fsConstants.O_NOFOLLOW : 0;
+  const handle = await open(path, fsConstants.O_RDONLY | noFollow);
   try { await handle.sync(); } catch (error) {
     if (!(["EINVAL", "ENOTSUP", "EBADF", "EPERM"] as string[]).includes(String((error as NodeJS.ErrnoException).code))) throw error;
   } finally { await handle.close(); }
@@ -260,6 +265,18 @@ async function unlinkExactEntry(storage: SessionStorage, path: string, expected:
   await validateParents(storage);
   const current = await lstat(path, { bigint: true });
   if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1n || !sameFile(expected, fileIdentity(current))) {
+    throw new Error("unstable-pointer-removal");
+  }
+  await validateParents(storage);
+  await unlink(path);
+  await validateParents(storage);
+}
+
+// Removes only the entry this process exclusively created, proven by its creation object identity.
+async function unlinkCreatedTemporary(storage: SessionStorage, path: string, created: FileIdentity): Promise<void> {
+  await validateParents(storage);
+  const current = await lstat(path, { bigint: true });
+  if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1n || !sameObject(created, fileIdentity(current))) {
     throw new Error("unstable-pointer-removal");
   }
   await validateParents(storage);
@@ -289,11 +306,14 @@ async function replacePointer(storage: SessionStorage, pointer: SessionPointerV2
     const temp = join(storage.sessions, `.tg-pointer-${pointer.sessionHash}-${process.pid}-${randomUUID()}.tmp`);
     const bytes = Buffer.from(`${JSON.stringify(pointer, null, 2)}\n`, "utf8");
     if (bytes.length > POINTER_MAX_BYTES) throw new Error("invalid-pointer-size");
+    let createdIdentity: FileIdentity | undefined;
     let temporaryIdentity: FileIdentity | undefined;
     let published = false;
     try {
       const handle = await open(temp, "wx", 0o600);
       try {
+        // The exclusively created entry is owned from this point, so a later failure can still clean it up.
+        createdIdentity = fileIdentity(await handle.stat({ bigint: true }));
         await handle.writeFile(bytes);
         await handle.sync();
         const stats = await handle.stat({ bigint: true });
@@ -357,8 +377,8 @@ async function replacePointer(storage: SessionStorage, pointer: SessionPointerV2
       await validateParents(storage);
       return;
     } catch (error) {
-      if (!published && temporaryIdentity) {
-        try { await unlinkExactEntry(storage, temp, temporaryIdentity); } catch { /* Preserve ambiguous temporary evidence. */ }
+      if (!published && createdIdentity) {
+        try { await unlinkCreatedTemporary(storage, temp, createdIdentity); } catch { /* Preserve ambiguous temporary evidence. */ }
       }
       if ((["EACCES", "EBUSY", "EEXIST", "EPERM"] as string[]).includes(String((error as NodeJS.ErrnoException).code)) &&
           attempt + 1 < POINTER_REPLACE_ATTEMPTS) {
@@ -399,8 +419,9 @@ async function prunePointers(storage: SessionStorage, now = new Date()): Promise
       await validateParents(storage);
       const stats = await lstat(path, { bigint: true });
       const nowNs = BigInt(now.getTime()) * NANOSECONDS_PER_MILLISECOND;
-      if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n ||
-          stats.mtimeNs > nowNs - POINTER_RETENTION_NS || stats.mtimeNs > nowNs + FUTURE_TOLERANCE_NS) continue;
+      if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n) continue;
+      // A future-dated temporary is never removed, and only entries older than the retention window are.
+      if (stats.mtimeNs > nowNs + FUTURE_TOLERANCE_NS || stats.mtimeNs > nowNs - POINTER_RETENTION_NS) continue;
       await unlinkExactEntry(storage, path, fileIdentity(stats));
     } catch { /* Advisory pruning preserves ambiguous state. */ }
   }
@@ -457,7 +478,8 @@ function successfulResponse(response: unknown): { successful: boolean; payload?:
 
 async function explicitRootsMatch(input: Record<string, unknown>, payload: Record<string, unknown> | undefined, root: string): Promise<boolean> {
   const toolInput = isRecord(input.tool_input) ? input.tool_input : undefined;
-  for (const candidate of [input.cwd, toolInput?.root, payload?.root]) {
+  const toolResponse = isRecord(input.tool_response) ? input.tool_response : undefined;
+  for (const candidate of [input.cwd, toolInput?.root, toolResponse?.root, payload?.root]) {
     if (candidate === undefined) continue;
     if (typeof candidate !== "string" || !isAbsolute(candidate)) return false;
     try { if (await realpath(candidate) !== root) return false; } catch { return false; }
@@ -528,11 +550,11 @@ async function stop(input: Record<string, unknown>, storage: HookStorage): Promi
   const attestation = await loadHostWorkspaceAttestation(storage.pluginRoot, input.session_id as string);
   if (attestation.status !== "valid") return warning(`TokenGraph host workspace attestation is ${attestation.status}; lifecycle enforcement was skipped.`);
   try { await validateNonOverlap(storage, attestation.root); } catch { return warning("TokenGraph host storage overlaps the workspace; lifecycle enforcement was skipped."); }
+  if (!await explicitRootsMatch(input, undefined, attestation.root)) return warning("TokenGraph lifecycle root did not match the host attestation; lifecycle enforcement was skipped.");
   let sessions: SessionStorage | undefined;
   try { sessions = await bindSessions(storage, false); } catch { return warning("TokenGraph session storage is unstable; lifecycle enforcement was skipped."); }
-  if (!sessions) return {};
+  if (!sessions) return warning("TokenGraph session pointer is missing; lifecycle enforcement was skipped.");
   const loaded = await readPointer(sessions, hash(input.session_id as string));
-  if (loaded.status === "missing") return {};
   if (loaded.status !== "valid") return warning(`TokenGraph session pointer is ${loaded.status}; lifecycle enforcement was skipped.`);
   const inspected = await inspectTaskLedgerReadOnly(attestation.root, loaded.pointer.taskId);
   if (inspected.status !== "valid") return warning(`TokenGraph task ledger is ${inspected.status}; lifecycle enforcement was skipped.`);
@@ -557,14 +579,14 @@ async function stop(input: Record<string, unknown>, storage: HookStorage): Promi
 async function endSession(input: Record<string, unknown>, storage: HookStorage): Promise<HookOutput> {
   try { await validateHookStorage(storage); } catch { return warning("TokenGraph host storage is unstable; lifecycle cleanup was skipped."); }
   const attestation = await loadHostWorkspaceAttestation(storage.pluginRoot, input.session_id as string);
-  if (attestation.status === "expired") {
-    try { await removeHostWorkspaceAttestation(storage.pluginRoot, input.session_id as string); } catch {
-      return warning("TokenGraph host workspace attestation is unstable; lifecycle cleanup was skipped.");
-    }
-    return warning("TokenGraph could not safely remove all expired lifecycle state.");
-  }
+  if (attestation.status === "expired") return removeSessionState(input, storage);
   if (attestation.status !== "valid") return warning(`TokenGraph host workspace attestation is ${attestation.status}; lifecycle cleanup was skipped.`);
   try { await validateNonOverlap(storage, attestation.root); } catch { return warning("TokenGraph host storage overlaps the workspace; lifecycle cleanup was skipped."); }
+  if (!await explicitRootsMatch(input, undefined, attestation.root)) return warning("TokenGraph lifecycle root did not match the host attestation; lifecycle cleanup was skipped.");
+  return removeSessionState(input, storage);
+}
+
+async function removeSessionState(input: Record<string, unknown>, storage: HookStorage): Promise<HookOutput> {
   let warningNeeded = false;
   try {
     const sessions = await bindSessions(storage, false);
@@ -601,7 +623,8 @@ async function main(): Promise<void> {
       : event === "post-tool-use" ? await postToolUse(input, storage)
       : await stop(input, storage);
   } catch { output = warning("TokenGraph hook state could not be safely processed; lifecycle enforcement was skipped."); }
-  process.stdout.write(`${JSON.stringify(output)}\n`);
+  const bounded = typeof output.reason === "string" ? { ...output, reason: output.reason.slice(0, DECISION_MAX_CHARACTERS) } : output;
+  process.stdout.write(`${JSON.stringify(bounded)}\n`);
 }
 
 await main();

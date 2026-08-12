@@ -2351,9 +2351,7 @@ describe("TokenGraph MCP stdio server", () => {
       blockingReason: "missing-trusted-workspace"
     });
 
-    await runWorkspaceHook("session-end", sessionId, root, "turn-host-workspace", {
-      systemMessage: "TokenGraph could not safely remove all expired lifecycle state."
-    });
+    await runWorkspaceHook("session-end", sessionId, root, "turn-host-workspace", {});
     await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 

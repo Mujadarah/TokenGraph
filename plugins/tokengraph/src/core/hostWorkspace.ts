@@ -23,7 +23,7 @@ interface HostWorkspaceAttestation {
 
 export type HostWorkspaceAttestationLoad =
   | { status: "valid"; root: string }
-  | { status: "missing" | "invalid" | "unsupported" | "expired" | "mismatched" | "unstable" };
+  | { status: "missing" | "invalid" | "unsupported" | "expired" | "mismatched" | "detached" | "unstable" };
 
 export interface HostWorkspaceStatSnapshot {
   readonly dev: bigint;
@@ -185,6 +185,16 @@ async function readBounded(path: string, parentBefore: Identity): Promise<{ text
   if (!entryStats.isFile() || entryStats.isSymbolicLink() || entryStats.nlink !== 1n) throw new Error("unstable-host-entry");
   const entryBefore = identity(entryStats);
   if (entryBefore.size < 0n || entryBefore.size > BigInt(HOST_WORKSPACE_MAX_BYTES)) throw new Error("invalid-host-size");
+  try {
+    return await readOpenedBounded(path, parentBefore, entryBefore);
+  } catch (error) {
+    // Only a genuine initial absence is missing; a disappearance seen after the read began is unstable.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("unstable-host-entry");
+    throw error;
+  }
+}
+
+async function readOpenedBounded(path: string, parentBefore: Identity, entryBefore: Identity): Promise<{ text: string; entry: Identity }> {
   const noFollow = "O_NOFOLLOW" in fsConstants ? fsConstants.O_NOFOLLOW : 0;
   const handle = await open(path, fsConstants.O_RDONLY | noFollow);
   try {
@@ -216,11 +226,13 @@ async function readBounded(path: string, parentBefore: Identity): Promise<{ text
 }
 
 async function loadAt(locationValue: AttestationLocation, now: Date): Promise<HostWorkspaceAttestationLoad & { entry?: Identity }> {
+  let started = false;
   try {
     const [tempBefore, baseBefore, pluginBefore] = await Promise.all([
       ordinaryDirectory(locationValue.tempRoot), ordinaryDirectory(locationValue.base), ordinaryDirectory(locationValue.pluginDirectory)
     ]);
     const read = await readBounded(locationValue.path, pluginBefore);
+    started = true;
     const [tempAfter, baseAfter, pluginAfter] = await Promise.all([
       ordinaryDirectory(locationValue.tempRoot), ordinaryDirectory(locationValue.base), ordinaryDirectory(locationValue.pluginDirectory)
     ]);
@@ -233,11 +245,12 @@ async function loadAt(locationValue: AttestationLocation, now: Date): Promise<Ho
     const nowNs = BigInt(now.getTime()) * NANOSECONDS_PER_MILLISECOND;
     if (updatedAtNs < nowNs - HOST_WORKSPACE_MAX_AGE_NS || updatedAtNs > nowNs + HOST_WORKSPACE_FUTURE_TOLERANCE_NS) return { status: "expired", entry: read.entry };
     let canonicalRoot: string;
-    try { canonicalRoot = await realpath(decoded.value.root); } catch { return { status: "mismatched" }; }
+    // A same-binding attestation whose stored root no longer exists is detached, not a binding mismatch.
+    try { canonicalRoot = await realpath(decoded.value.root); } catch { return { status: "detached", entry: read.entry }; }
     if (canonicalRoot !== decoded.value.root) return { status: "mismatched" };
     return { status: "valid", root: canonicalRoot, entry: read.entry };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing" };
+    if (!started && (error as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing" };
     if (error instanceof Error && error.message === "invalid-host-size") return { status: "invalid" };
     return { status: "unstable" };
   }
@@ -246,16 +259,19 @@ async function loadAt(locationValue: AttestationLocation, now: Date): Promise<Ho
 async function writeExclusiveAtomic(locationValue: AttestationLocation, value: HostWorkspaceAttestation): Promise<void> {
   const parents = await bindParents(locationValue);
   const existing = await loadAt(locationValue, new Date());
-  if (!["missing", "valid", "expired"].includes(existing.status)) throw new Error("unsafe-host-attestation");
+  if (!["missing", "valid", "expired", "detached"].includes(existing.status)) throw new Error("unsafe-host-attestation");
   await validateParents(locationValue, parents);
   const temporary = join(locationValue.pluginDirectory, `.tg-host-${locationValue.sessionHash}-${process.pid}-${randomUUID()}.tmp`);
   const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
   if (bytes.length > HOST_WORKSPACE_MAX_BYTES) throw new Error("invalid-host-size");
+  let createdIdentity: Identity | undefined;
   let temporaryIdentity: Identity | undefined;
   let published = false;
   try {
     const handle = await open(temporary, "wx", 0o600);
     try {
+      // The exclusively created entry is owned from this point, so a later failure can still clean it up.
+      createdIdentity = identity(await handle.stat({ bigint: true }));
       await handle.writeFile(bytes);
       await handle.sync();
       const stats = await handle.stat({ bigint: true });
@@ -271,7 +287,7 @@ async function writeExclusiveAtomic(locationValue: AttestationLocation, value: H
     const current = await loadAt(locationValue, new Date());
     if (existing.status === "missing") {
       if (current.status !== "missing") throw new Error("unstable-host-replacement");
-    } else if ((current.status !== "valid" && current.status !== "expired") || !existing.entry || !current.entry ||
+    } else if (!["valid", "expired", "detached"].includes(current.status) || !existing.entry || !current.entry ||
         !sameIdentity(existing.entry, current.entry)) {
       throw new Error("unstable-host-replacement");
     }
@@ -305,11 +321,11 @@ async function writeExclusiveAtomic(locationValue: AttestationLocation, value: H
       if (!(["EINVAL", "ENOTSUP", "EBADF", "EPERM"] as string[]).includes(String((error as NodeJS.ErrnoException).code))) throw error;
     } finally { await directory.close(); }
   } catch (error) {
-    if (!published && temporaryIdentity) {
+    if (!published && createdIdentity) {
       try {
         await validateParents(locationValue, parents);
         const current = await lstat(temporary, { bigint: true });
-        if (current.isFile() && !current.isSymbolicLink() && current.nlink === 1n && sameIdentity(temporaryIdentity, identity(current))) {
+        if (current.isFile() && !current.isSymbolicLink() && current.nlink === 1n && sameObject(createdIdentity, identity(current))) {
           await unlink(temporary);
         }
       } catch { /* Preserve ambiguous temporary evidence. */ }
@@ -341,7 +357,7 @@ export async function removeHostWorkspaceAttestation(pluginRoot: string, session
   const parents = await bindParents(locationValue);
   const loaded = await loadAt(locationValue, new Date());
   if (loaded.status === "missing") return false;
-  if ((loaded.status !== "valid" && loaded.status !== "expired") || !loaded.entry) throw new Error("unsafe-host-attestation");
+  if (!["valid", "expired", "detached"].includes(loaded.status) || !loaded.entry) throw new Error("unsafe-host-attestation");
   const current = await lstat(locationValue.path, { bigint: true });
   if (!sameIdentity(loaded.entry, identity(current)) || current.isSymbolicLink() || !current.isFile() || current.nlink !== 1n) throw new Error("unstable-host-removal");
   await validateParents(locationValue, parents);
