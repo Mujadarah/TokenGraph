@@ -1258,14 +1258,19 @@ promises.open = async (path, ...rest) => {
     expect(stopped.output).toMatchObject({ systemMessage: expect.stringMatching(/root did not match/i) });
     expect(String(stopped.output.systemMessage)).not.toContain(other);
 
+    // SessionEnd removes only binding-keyed host state and never uses the
+    // project root, so a disagreeing cwd does not orphan the attestation and
+    // pointer; the authority check protects decision paths, not cleanup.
+    expect(hostBefore.length).toBeGreaterThan(0);
+    expect(pointerBefore.length).toBeGreaterThan(0);
     const ended = await runHook("session-end", {
       hook_event_name: "SessionEnd",
       session_id: "session-private-value",
       cwd: other
     }, pluginEnvironment(dataRoot));
-    expect(ended.output).toMatchObject({ systemMessage: expect.stringMatching(/root did not match/i) });
-    expect(await readFile(hostPath, "utf8")).toBe(hostBefore);
-    expect(await readFile(sessionPath, "utf8")).toBe(pointerBefore);
+    expect(ended.output).toEqual({});
+    await expect(readFile(hostPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(sessionPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("compares an explicit root supplied by an unstructured tool response", async () => {
@@ -1362,9 +1367,12 @@ promises.open = async (path, ...rest) => {
     report.categories[0]!.basis = ["b".repeat(200_000)];
     await writeFile(ledgerFile, `${JSON.stringify(stored, null, 2)}\n`);
 
+    // An exact-footer instruction that cannot fit the output bound would be
+    // truncated into an instruction no response can ever satisfy, so an
+    // oversized footer degrades to a bounded warning that allows Stop.
     const blocked = await runHook("stop", stopInput(), pluginEnvironment(dataRoot));
-    expect(blocked.output).toMatchObject({ decision: "block", reason: expect.any(String) });
-    expect(String(blocked.output.reason).length).toBeLessThanOrEqual(4096);
+    expect(blocked.output).not.toHaveProperty("decision");
+    expect(blocked.output).toMatchObject({ systemMessage: expect.stringMatching(/footer/i) });
     expect(blocked.stdout.length).toBeLessThanOrEqual(8192);
   });
 });

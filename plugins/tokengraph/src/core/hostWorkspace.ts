@@ -93,15 +93,26 @@ function sameRenamedFile(left: Identity, right: Identity): boolean {
     left.size === right.size && left.mtimeNs === right.mtimeNs;
 }
 
+// The "created" kind compares the immutable object fields of a regular file
+// this process exclusively created. It deliberately shares the field set of
+// the directory-object binding, because size and times may change while a
+// partially written temporary is still the same filesystem object, but it is
+// a distinct kind so a future change to directory binding cannot silently
+// change created-file ownership proofs.
+function sameCreatedFile(left: Identity, right: Identity): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode && left.birthtimeNs === right.birthtimeNs;
+}
+
 export function compareHostWorkspaceStatSnapshots(
   left: HostWorkspaceStatSnapshot,
   right: HostWorkspaceStatSnapshot,
-  comparison: "file" | "directory" | "rename"
+  comparison: "file" | "directory" | "rename" | "created"
 ): boolean {
   const leftIdentity = identity(left);
   const rightIdentity = identity(right);
   return comparison === "file" ? sameIdentity(leftIdentity, rightIdentity)
     : comparison === "directory" ? sameObject(leftIdentity, rightIdentity)
+    : comparison === "created" ? sameCreatedFile(leftIdentity, rightIdentity)
     : sameRenamedFile(leftIdentity, rightIdentity);
 }
 
@@ -335,7 +346,7 @@ async function writeExclusiveAtomic(locationValue: AttestationLocation, value: H
       try {
         await validateParents(locationValue, parents);
         const current = await lstat(temporary, { bigint: true });
-        if (current.isFile() && !current.isSymbolicLink() && current.nlink === 1n && sameObject(createdIdentity, identity(current))) {
+        if (current.isFile() && !current.isSymbolicLink() && current.nlink === 1n && sameCreatedFile(createdIdentity, identity(current))) {
           await unlink(temporary);
         }
       } catch { /* Preserve ambiguous temporary evidence. */ }

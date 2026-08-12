@@ -78,6 +78,7 @@ function fileIdentity(stats: BigIntStats): FileIdentity {
 }
 
 function sameObject(left: FileIdentity, right: FileIdentity): boolean { return compareHostWorkspaceStatSnapshots(left, right, "directory"); }
+function sameCreated(left: FileIdentity, right: FileIdentity): boolean { return compareHostWorkspaceStatSnapshots(left, right, "created"); }
 function sameFile(left: FileIdentity, right: FileIdentity): boolean {
   return compareHostWorkspaceStatSnapshots(left, right, "file");
 }
@@ -276,7 +277,7 @@ async function unlinkExactEntry(storage: SessionStorage, path: string, expected:
 async function unlinkCreatedTemporary(storage: SessionStorage, path: string, created: FileIdentity): Promise<void> {
   await validateParents(storage);
   const current = await lstat(path, { bigint: true });
-  if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1n || !sameObject(created, fileIdentity(current))) {
+  if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1n || !sameCreated(created, fileIdentity(current))) {
     throw new Error("unstable-pointer-removal");
   }
   await validateParents(storage);
@@ -420,8 +421,11 @@ async function prunePointers(storage: SessionStorage, now = new Date()): Promise
       const stats = await lstat(path, { bigint: true });
       const nowNs = BigInt(now.getTime()) * NANOSECONDS_PER_MILLISECOND;
       if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n) continue;
-      // A future-dated temporary is never removed, and only entries older than the retention window are.
-      if (stats.mtimeNs > nowNs + FUTURE_TOLERANCE_NS || stats.mtimeNs > nowNs - POINTER_RETENTION_NS) continue;
+      // Only entries older than the retention window are removed. This single
+      // comparison already preserves future-dated entries: any timestamp past
+      // now is necessarily inside the window, so no separate future check can
+      // ever fire and none is written.
+      if (stats.mtimeNs > nowNs - POINTER_RETENTION_NS) continue;
       await unlinkExactEntry(storage, path, fileIdentity(stats));
     } catch { /* Advisory pruning preserves ambiguous state. */ }
   }
@@ -570,8 +574,15 @@ async function stop(input: Record<string, unknown>, storage: HookStorage): Promi
     const footer = formatTaskReportFooter(ledger.completedReport);
     const message = typeof input.last_assistant_message === "string" ? input.last_assistant_message : "";
     if (message.includes(footer)) return {};
+    const reason = `Append this exact canonical TokenGraph footer to the final response: ${footer}`;
+    // An exact-footer instruction that exceeds the output bound would be
+    // truncated into an instruction no response can satisfy, so an oversized
+    // footer degrades to a bounded warning that allows Stop instead.
+    if (reason.length > DECISION_MAX_CHARACTERS) {
+      return warning("TokenGraph completion footer exceeds the hook output bound and cannot be enforced exactly.");
+    }
     if (input.stop_hook_active === true) return warning(`TokenGraph completion footer is still missing. Append exactly: ${footer}`);
-    return { decision: "block", reason: `Append this exact canonical TokenGraph footer to the final response: ${footer}` };
+    return { decision: "block", reason };
   }
   return {};
 }
@@ -582,7 +593,9 @@ async function endSession(input: Record<string, unknown>, storage: HookStorage):
   if (attestation.status === "expired") return removeSessionState(input, storage);
   if (attestation.status !== "valid") return warning(`TokenGraph host workspace attestation is ${attestation.status}; lifecycle cleanup was skipped.`);
   try { await validateNonOverlap(storage, attestation.root); } catch { return warning("TokenGraph host storage overlaps the workspace; lifecycle cleanup was skipped."); }
-  if (!await explicitRootsMatch(input, undefined, attestation.root)) return warning("TokenGraph lifecycle root did not match the host attestation; lifecycle cleanup was skipped.");
+  // Cleanup removes only binding-keyed host state and never uses the project
+  // root, so a disagreeing explicit cwd does not skip it; skipping would
+  // orphan the attestation and pointer until their retention windows.
   return removeSessionState(input, storage);
 }
 
@@ -623,7 +636,10 @@ async function main(): Promise<void> {
       : event === "post-tool-use" ? await postToolUse(input, storage)
       : await stop(input, storage);
   } catch { output = warning("TokenGraph hook state could not be safely processed; lifecycle enforcement was skipped."); }
-  const bounded = typeof output.reason === "string" ? { ...output, reason: output.reason.slice(0, DECISION_MAX_CHARACTERS) } : output;
+  // Every string value in hook output is bounded at the boundary, so no
+  // current or future output key can carry unbounded ledger-sourced content.
+  const bounded = Object.fromEntries(Object.entries(output).map(([key, value]) =>
+    [key, typeof value === "string" ? value.slice(0, DECISION_MAX_CHARACTERS) : value]));
   process.stdout.write(`${JSON.stringify(bounded)}\n`);
 }
 

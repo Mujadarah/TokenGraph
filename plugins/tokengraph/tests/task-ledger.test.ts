@@ -501,6 +501,30 @@ describe("task ledger persistence", () => {
     }
   });
 
+  it("quarantines coerced enum values instead of recovering them", async () => {
+    const mutations: Array<(value: Record<string, unknown>) => void> = [
+      (value) => { value.status = ["open"]; },
+      (value) => { value.host = ["codex"]; },
+      (value) => { value.routingObservation = {
+        decision: "activate", stage: 1, reason: "coerced", expectedOverheadTokens: 1,
+        mode: ["shadow"], enforced: false
+      }; },
+      (value) => { value.readPolicy = { level: ["L2"], allowRawReads: false, reason: "coerced" }; }
+    ];
+
+    for (const mutate of mutations) {
+      const root = await makeRoot();
+      const ledger = await createTaskLedger(root, { host: "codex", sessionId: "session-1", turnId: "turn-1" });
+      const persisted = structuredClone(ledger) as unknown as Record<string, unknown>;
+      mutate(persisted);
+      await writeFile(ledgerPath(root, ledger.taskId), JSON.stringify(persisted));
+
+      expect(await loadTaskLedger(root, ledger.taskId)).toBeUndefined();
+      const files = await readdir(join(root, ".tokengraph", "tasks"));
+      expect(files.some((name) => name.startsWith(`${ledger.taskId}.json.quarantine-`))).toBe(true);
+    }
+  });
+
   it("quarantines invalid host identifiers and impossible lifecycle timestamps", async () => {
     const mutations: Array<(value: Record<string, unknown>) => void> = [
       (value) => { value.host = "vscode"; },

@@ -616,7 +616,7 @@ function reconstructOutcome(value: unknown): TaskOutcome | undefined {
     !isIdentifier(value.id) ||
     !isIdentifier(value.taskId) ||
     typeof value.summary !== "string" || value.summary.trim().length === 0 ||
-    !["verified", "proposed", "failed"].includes(String(value.status)) ||
+    !isLiteral(value.status, ["verified", "proposed", "failed"] as const) ||
     !value.evidence.every((entry) => isIdentifier(entry)) ||
     !isTimestamp(value.createdAt) ||
     (value.staleAt !== undefined && !isTimestamp(value.staleAt)) ||
@@ -660,8 +660,8 @@ function reconstructTaskLedger(value: unknown, expectedTaskId: string): TaskLedg
     value.schemaId !== TASK_LEDGER_SCHEMA_ID ||
     (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION) ||
     value.taskId !== expectedTaskId ||
-    !["codex", "claude", "unknown"].includes(String(value.host)) ||
-    !["open", "paused", "completed", "quarantined"].includes(String(value.status)) ||
+    !isLiteral(value.host, ["codex", "claude", "unknown"] as const) ||
+    !isLiteral(value.status, ["open", "paused", "completed", "quarantined"] as const) ||
     !isOptionalIdentifier(value.sessionId) ||
     !isOptionalIdentifier(value.turnId) ||
     !isTimestamp(value.createdAt) ||
@@ -751,7 +751,7 @@ function reconstructRoutingObservation(value: unknown): TaskRoutingObservation |
     !Number.isInteger(value.stage) || (value.stage as number) < 0 ||
     typeof value.reason !== "string" ||
     typeof value.expectedOverheadTokens !== "number" || !Number.isFinite(value.expectedOverheadTokens) || value.expectedOverheadTokens < 0 ||
-    !["shadow", "enforced", "always-activate", "always-advisory"].includes(String(value.mode)) ||
+    !isLiteral(value.mode, ["shadow", "enforced", "always-activate", "always-advisory"] as const) ||
     typeof value.enforced !== "boolean"
   ) return undefined;
   return {
@@ -767,7 +767,7 @@ function reconstructRoutingObservation(value: unknown): TaskRoutingObservation |
 function reconstructReadPolicy(value: unknown): ReadPolicyState | undefined {
   if (!isRecord(value)) return undefined;
   if (
-    !["L0", "L1", "L2", "L3", "L4"].includes(String(value.level)) ||
+    !isLiteral(value.level, ["L0", "L1", "L2", "L3", "L4"] as const) ||
     typeof value.allowRawReads !== "boolean" ||
     typeof value.reason !== "string" ||
     (value.targetedReads !== undefined && (!Number.isInteger(value.targetedReads) || (value.targetedReads as number) < 0)) ||
