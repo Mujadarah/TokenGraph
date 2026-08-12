@@ -139,12 +139,13 @@ describe("native lock preactivation boundary", () => {
   });
 
   it("reads through the repository directory without migrating legacy git-common state before activation", async () => {
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
     const root = await mkdtemp(join(tmpdir(), "tokengraph-preactivation-legacy-"));
     roots.push(root);
-    await execFileAsync("git", ["init", "--quiet", root]);
+    // A minimal on-disk Git layout; the unactivated resolver must return the
+    // pure target before consulting Git at all, so no git process is spawned
+    // and the preactivation suite stays free of child processes.
+    await mkdir(join(root, ".git", "refs"), { recursive: true });
+    await writeFile(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
     // A legacy git-common tokengraph source that an activated read would migrate.
     const legacy = join(root, ".git", "tokengraph");
     await mkdir(legacy, { recursive: true });

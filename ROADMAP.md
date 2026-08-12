@@ -224,7 +224,7 @@ Status: complete
 - R4.4 is complete as an evidence milestone, not a promotion: the first reviewed real-host run records five successful ON/OFF pairs, but enforcement remains disabled because every frozen gate did not pass. One repository does not satisfy multi-repository B6 validation.
 - The standalone release packages `web-tree-sitter@0.26.11` with pinned Python, Go, Rust, and Java grammar WASM assets and asserts zero workspace execution.
 - v0.21.0 benchmark claims use the checked-in artifact: routing median net savings 5.7 tokens and execution-inclusive median net savings -94.3 tokens, with 19/30 execution-inclusive tasks non-positive. The frozen execution-inclusive release gate failed; no corrective tag or publication was made, and these are measured fixture results rather than universal savings guarantees.
-- The current v0.21.1 fixture artifact passes the deterministic release gate: 27 activated tasks, three unbooked Stage-0 bypasses, a +174.5-token execution-inclusive median, +40.5-token p25, 81.5% non-negative activated tasks, 100% constraint preservation and recall, and zero critical false negatives. The separate reviewed real-host report is non-promoting, so enforced routing and B7 activation remain disabled.
+- The current v0.21.1 fixture artifact passes the deterministic release gate: 27 activated tasks, three unbooked Stage-0 bypasses, a +172.3-token execution-inclusive median, +38.3-token p25, 81.5% non-negative activated tasks, 100% constraint preservation and recall, and zero critical false negatives. The separate reviewed real-host report is non-promoting, so enforced routing and B7 activation remain disabled.
 
 ## v0.22 - Evidence And Release Closeout
 
