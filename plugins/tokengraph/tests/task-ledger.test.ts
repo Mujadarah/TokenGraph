@@ -100,6 +100,22 @@ describe("strict read-only task ledger inspection", () => {
     expect(Object.isFrozen(inspected.ledger.repositoryIdentity)).toBe(true);
   });
 
+  it("rejects stringifiable enum coercion instead of returning the parsed value", async () => {
+    const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    const path = join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`);
+
+    for (const coerced of [
+      { ...ledger, status: ["open"] },
+      { ...ledger, host: ["codex"] }
+    ]) {
+      await writeFile(path, `${JSON.stringify(coerced)}\n`);
+      const inspected = await inspectTaskLedgerReadOnly(root, ledger.taskId);
+      expect(inspected).toEqual({ status: "invalid" });
+      expect(await readFile(path, "utf8")).toBe(`${JSON.stringify(coerced)}\n`);
+    }
+  });
+
   it("rejects a linked project-state ancestor without following it", async () => {
     const root = await makeRoot();
     const ledger = await createTaskLedger(root, { host: "codex" });

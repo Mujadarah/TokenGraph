@@ -290,6 +290,13 @@ function stringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+// The strict current-schema decoder must reject coercion: a stringifiable value
+// such as ["completed"] is not an accepted literal, so membership is tested on
+// the parsed value itself instead of on String(value).
+function isLiteral<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value);
+}
+
 function decodeCurrentRepositoryIdentity(value: unknown): RepositoryIdentity | undefined {
   const required = ["repositoryId", "repositoryFingerprint", "workspaceId", "worktreeId", "branch", "headCommit"] as const;
   if (!hasExactKeys(value, required, ["remoteIdentity"]) || !required.every((key) => isIdentifier(value[key])) ||
@@ -309,7 +316,7 @@ function decodeCurrentRoutingObservation(value: unknown): TaskRoutingObservation
   if (!hasExactKeys(value, ["decision", "stage", "reason", "expectedOverheadTokens", "mode", "enforced"]) ||
       (value.decision !== "activate" && value.decision !== "bypass") || !Number.isInteger(value.stage) || (value.stage as number) < 0 ||
       typeof value.reason !== "string" || !finiteNonnegative(value.expectedOverheadTokens) ||
-      !["shadow", "enforced", "always-activate", "always-advisory"].includes(String(value.mode)) || typeof value.enforced !== "boolean") return undefined;
+      !isLiteral(value.mode, ["shadow", "enforced", "always-activate", "always-advisory"] as const) || typeof value.enforced !== "boolean") return undefined;
   return {
     decision: value.decision,
     stage: value.stage as number,
@@ -323,7 +330,7 @@ function decodeCurrentRoutingObservation(value: unknown): TaskRoutingObservation
 function decodeCurrentReadPolicy(value: unknown): ReadPolicyState | undefined {
   if (!hasExactKeys(value, ["level", "allowRawReads", "reason"], [
     "targetedReads", "recommendedReadsThisResponse", "requiresReassessment", "hasReassessed", "evidenceGap"
-  ]) || !["L0", "L1", "L2", "L3", "L4"].includes(String(value.level)) || typeof value.allowRawReads !== "boolean" ||
+  ]) || !isLiteral(value.level, ["L0", "L1", "L2", "L3", "L4"] as const) || typeof value.allowRawReads !== "boolean" ||
       typeof value.reason !== "string" || (value.targetedReads !== undefined && (!Number.isInteger(value.targetedReads) || (value.targetedReads as number) < 0)) ||
       (value.recommendedReadsThisResponse !== undefined && (!Number.isInteger(value.recommendedReadsThisResponse) || (value.recommendedReadsThisResponse as number) < 0)) ||
       (value.requiresReassessment !== undefined && typeof value.requiresReassessment !== "boolean") ||
@@ -351,7 +358,7 @@ function decodeCurrentEvent(value: unknown): TaskEvent | undefined {
     "id", "fingerprint", "category", "toolName", "originalTokens", "compactTokens", "overheadTokens", "confidence", "timestamp", "qualityChecks"
   ]) || typeof value.id !== "string" || typeof value.fingerprint !== "string" || typeof value.category !== "string" ||
       typeof value.toolName !== "string" || !finiteNonnegative(value.originalTokens) || !finiteNonnegative(value.compactTokens) ||
-      !finiteNonnegative(value.overheadTokens) || !["low", "medium", "high"].includes(String(value.confidence)) ||
+      !finiteNonnegative(value.overheadTokens) || !isLiteral(value.confidence, ["low", "medium", "high"] as const) ||
       !isTimestamp(value.timestamp) || !Array.isArray(value.qualityChecks)) return undefined;
   const qualityChecks = value.qualityChecks.map(decodeCurrentQualityCheck);
   if (qualityChecks.some((entry) => entry === undefined)) return undefined;
@@ -373,7 +380,7 @@ function decodeCurrentOutcome(value: unknown, expectedTaskId: string): TaskOutco
   if (!hasExactKeys(value, [
     "id", "taskId", "summary", "status", "evidence", "createdAt", "branch", "worktreeId", "headCommit"
   ], ["staleAt", "sourceFingerprint"]) || !isIdentifier(value.id) || value.taskId !== expectedTaskId ||
-      typeof value.summary !== "string" || value.summary.trim().length === 0 || !["verified", "proposed", "failed"].includes(String(value.status)) ||
+      typeof value.summary !== "string" || value.summary.trim().length === 0 || !isLiteral(value.status, ["verified", "proposed", "failed"] as const) ||
       !Array.isArray(value.evidence) || !value.evidence.every(isIdentifier) || !isTimestamp(value.createdAt) ||
       (value.staleAt !== undefined && !isTimestamp(value.staleAt)) ||
       (value.sourceFingerprint !== undefined && !isIdentifier(value.sourceFingerprint)) || !isIdentifier(value.branch) ||
@@ -406,13 +413,13 @@ function decodeCurrentTaskReport(value: unknown, expectedTaskId: string, expecte
       !hasExactKeys(value.estimate, ["range", "confidence", "basis", "overhead", "estimatorVersion"]) ||
       !hasExactKeys(value.quality, ["status", "checks"])) return undefined;
   const estimateRange = decodeCurrentRange(value.estimate.range);
-  if (!estimateRange || !["low", "medium", "high"].includes(String(value.estimate.confidence)) || !stringArray(value.estimate.basis) ||
+  if (!estimateRange || !isLiteral(value.estimate.confidence, ["low", "medium", "high"] as const) || !stringArray(value.estimate.basis) ||
       !finiteNonnegative(value.estimate.overhead) || value.estimate.estimatorVersion !== TASK_ESTIMATOR_VERSION ||
-      !["passed", "warning", "not_evaluated"].includes(String(value.quality.status)) || !stringArray(value.quality.checks)) return undefined;
+      !isLiteral(value.quality.status, ["passed", "warning", "not_evaluated"] as const) || !stringArray(value.quality.checks)) return undefined;
   const categories = value.categories.map((category): TaskReport["categories"][number] | undefined => {
     if (!hasExactKeys(category, ["category", "eventCount", "range", "confidence", "basis", "overhead"]) ||
         !isIdentifier(category.category) || !Number.isInteger(category.eventCount) || (category.eventCount as number) < 1 ||
-        !["low", "medium", "high"].includes(String(category.confidence)) || !stringArray(category.basis) || !finiteNonnegative(category.overhead)) return undefined;
+        !isLiteral(category.confidence, ["low", "medium", "high"] as const) || !stringArray(category.basis) || !finiteNonnegative(category.overhead)) return undefined;
     const range = decodeCurrentRange(category.range);
     if (!range) return undefined;
     return {
@@ -446,7 +453,7 @@ function decodeCurrentTaskReport(value: unknown, expectedTaskId: string, expecte
 function decodeCurrentTaskLedger(value: unknown, expectedTaskId: string): TaskLedger | undefined {
   if (!hasExactKeys(value, REQUIRED_CURRENT_LEDGER_KEYS, [...CURRENT_LEDGER_KEYS].filter((key) => !REQUIRED_CURRENT_LEDGER_KEYS.includes(key as typeof REQUIRED_CURRENT_LEDGER_KEYS[number]))) ||
       value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId ||
-      !["codex", "claude", "unknown"].includes(String(value.host)) || !["open", "paused", "completed", "quarantined"].includes(String(value.status)) ||
+      !isLiteral(value.host, ["codex", "claude", "unknown"] as const) || !isLiteral(value.status, ["open", "paused", "completed", "quarantined"] as const) ||
       !isOptionalIdentifier(value.sessionId) || !isOptionalIdentifier(value.turnId) || !isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt) ||
       (value.pausedAt !== undefined && !isTimestamp(value.pausedAt)) || (value.completedAt !== undefined && !isTimestamp(value.completedAt)) ||
       value.estimatorVersion !== TASK_ESTIMATOR_VERSION || !Array.isArray(value.deliveredArtifacts) ||
