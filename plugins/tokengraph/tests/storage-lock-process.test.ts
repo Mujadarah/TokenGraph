@@ -118,10 +118,21 @@ function childHasExited(child: ChildProcessWithoutNullStreams): boolean {
 async function terminateAndWait(child: ChildProcessWithoutNullStreams): Promise<void> {
   if (childHasExited(child)) return;
   const exited = waitForExit(child, 5_000);
-  if (!child.kill("SIGKILL") && !childHasExited(child)) {
-    throw new Error("Native lock test child termination could not be requested.");
+  let terminationError: unknown;
+  try {
+    child.kill("SIGKILL");
+  } catch (error) {
+    terminationError = error;
   }
-  await exited;
+  try {
+    await exited;
+  } catch (exitError) {
+    if (terminationError !== undefined) {
+      throw new AggregateError([terminationError, exitError], "Native lock test child termination was not proven.");
+    }
+    throw exitError;
+  }
+  if (terminationError !== undefined) throw terminationError;
 }
 
 function appendBoundedOutput(
@@ -661,17 +672,25 @@ describe("native lock process integration", () => {
     });
     await probe.waitForStatus("paused");
     const realKill = probe.child.kill;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
     try {
       probe.child.kill = (() => false) as typeof probe.child.kill;
       const bounded = appendBoundedOutput("x".repeat(CHILD_OUTPUT_LIMIT - 1), "€payload", probe.child);
       expect(Buffer.byteLength(bounded)).toBeLessThanOrEqual(CHILD_OUTPUT_LIMIT);
+      const startedAt = Date.now();
       probe.child.emit("error", new Error("Forced ambiguous child wait failure."));
-      await expect(probe.completion).rejects.toThrow(/termination could not be requested/iu);
+      await expect(probe.completion).rejects.toThrow(/did not exit before its deadline/iu);
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(4_900);
+      await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+      expect(unhandled).toEqual([]);
       expect(children.has(probe.child)).toBe(true);
       await expect(access(workspaceRoot)).resolves.toBeUndefined();
       await expect(access(lock.compatibilityPath)).resolves.toBeUndefined();
       expect(probe.records.some((record) => record.status === "released")).toBe(false);
     } finally {
+      process.off("unhandledRejection", onUnhandled);
       probe.child.kill = realKill;
       await terminateAndWait(probe.child);
       children.delete(probe.child);
