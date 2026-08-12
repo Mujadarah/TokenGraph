@@ -4,7 +4,7 @@ import { chmod, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { build } from "esbuild";
+import { build, stop } from "esbuild";
 import ts from "typescript";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -127,6 +127,11 @@ await build({
   target: "node22",
   logLevel: "silent"
 });
+
+// Terminate the esbuild service child before exit so the build leaves no
+// descendant process; the contained test harness requires a drained process
+// group at the instant the build process exits.
+await stop();
 
 await Promise.all([
   normalizeBundle(resolve(pluginRoot, "dist", "index.js")),
