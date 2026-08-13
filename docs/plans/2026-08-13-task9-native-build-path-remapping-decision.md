@@ -21,10 +21,10 @@ insufficient.
 
 ## Decision
 
-1. The native validator rejects an addon containing a Windows user-profile,
-   POSIX or macOS user directory, temporary Cargo home, or workflow workspace
-   path even when its declared byte length and SHA-256 are correct. The error
-   remains path-free.
+1. The native validator rejects an addon containing any Windows drive-rooted or
+   UNC path, or a POSIX/macOS user, temporary, Cargo-home, or workflow-workspace
+   path in either UTF-8 or UTF-16LE form, even when its declared byte
+   length and SHA-256 are correct. The error remains path-free.
 2. Every native build adds deterministic Rust path-prefix remaps from the build
    user's home and Cargo home to `/tokengraph-build-user` and
    `/tokengraph-cargo`, in addition to the existing checkout remap and

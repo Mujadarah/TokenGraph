@@ -90,8 +90,18 @@ function assertBinaryMagic(target, bytes) {
 }
 
 function assertNoMachineLocalPath(bytes) {
-  const searchable = bytes.toString("latin1");
-  if (/(?:[A-Za-z]:[\\/]Users[\\/]|\/Users\/|\/home\/|\/root\/|\/tmp\/|\/workspace\/)[^\0\r\n\t ]+/iu.test(searchable)) {
+  const windowsDrivePath = /[A-Za-z]:[\\/][^\0\r\n\t ]+/u;
+  const windowsUncPath = /\\\\(?![?.]\\)[\p{L}\p{N}._$ -]+\\[\p{L}\p{N}._$ -]+/u;
+  const windowsExtendedUncPath = /\\\\\?\\UNC\\[\p{L}\p{N}._$ -]+\\[\p{L}\p{N}._$ -]+/iu;
+  const posixBuildPath = /\/(?:Users|home|root|tmp|workspace|__w)\/[^\0\r\n\t ]+/u;
+  const searchableRepresentations = [
+    bytes.toString("utf8"),
+    bytes.toString("utf16le"),
+    bytes.subarray(1).toString("utf16le")
+  ];
+  if (searchableRepresentations.some((searchable) =>
+    [windowsDrivePath, windowsUncPath, windowsExtendedUncPath, posixBuildPath]
+      .some((pattern) => pattern.test(searchable)))) {
     throw new Error("Native artifact contains a machine-local build path.");
   }
 }
