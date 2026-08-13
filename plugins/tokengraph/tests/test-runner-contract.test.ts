@@ -45,7 +45,7 @@ describe("real native test runner contract", () => {
     expect(runner).not.toMatch(/pnpm|\.cmd/iu);
   });
 
-  it.runIf(process.platform === "win32")("creates the contained harness beneath the physical temporary directory", async () => {
+  it.runIf(process.platform === "win32")("creates contained harness and control roots beneath the physical temporary directory", async () => {
     const originalTemp = process.env.TEMP;
     const originalTmp = process.env.TMP;
     const outer = await mkdtemp(join(tmpdir(), "tokengraph-runner-physical-temp-"));
@@ -59,10 +59,14 @@ describe("real native test runner contract", () => {
     try {
       const runner = await import(pathToFileURL(resolve("scripts/run-tests.mjs")).href) as {
         createHarnessRoot?: () => Promise<string>;
+        createControlRoot?: () => Promise<string>;
       };
       expect(runner.createHarnessRoot).toBeTypeOf("function");
+      expect(runner.createControlRoot).toBeTypeOf("function");
       const harnessRoot = await runner.createHarnessRoot!();
+      const controlRoot = await runner.createControlRoot!();
       expect(harnessRoot).toBe(await realpath(harnessRoot));
+      expect(controlRoot).toBe(await realpath(controlRoot));
     } finally {
       if (originalTemp === undefined) delete process.env.TEMP;
       else process.env.TEMP = originalTemp;

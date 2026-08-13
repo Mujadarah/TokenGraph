@@ -111,7 +111,7 @@ async function runContainedWindows(label, args, environment, evidenceRoot) {
     if (name.includes("\0") || (value !== undefined && String(value).includes("\0"))) throw new Error("Child environment contains NUL.");
   }
   for (const value of args) if (String(value).includes("\0")) throw new Error("Child argument contains NUL.");
-  const controlRoot = await mkdtemp(join(tmpdir(), controlPrefix));
+  const controlRoot = await createControlRoot();
   const controlStats = await lstat(controlRoot, { bigint: true });
   const controlIdentity = identityOf(controlStats);
   const specPath = join(controlRoot, "spec.json");
@@ -435,8 +435,16 @@ async function removeOwnedHarness(path, identity) {
   await requireAbsentNoFollow(path, "Harness root");
 }
 
+async function createPhysicalTemporaryRoot(prefix) {
+  return await mkdtemp(join(await realpath(tmpdir()), prefix));
+}
+
+export async function createControlRoot() {
+  return await createPhysicalTemporaryRoot(controlPrefix);
+}
+
 export async function createHarnessRoot() {
-  return await mkdtemp(join(await realpath(tmpdir()), harnessPrefix));
+  return await createPhysicalTemporaryRoot(harnessPrefix);
 }
 
 export async function runWithContainmentFailurePolicy(operation, cleanupOnOrdinaryFailure) {
