@@ -14,7 +14,7 @@
       "osFloor": "macos-11.0",
       "path": "darwin-arm64/tokengraph-lock.darwin-arm64.node",
       "bytes": 404416,
-      "sha256": "08d0fd3b064b0f6e26b72e806e3f117ce10a7e54e7e825833687f24ec2f3dd41"
+      "sha256": "734be61726d6f56cf3fdabc3a187a2062d74b587537c1c8f019756f0e4c0982a"
     },
     {
       "id": "darwin-x64",
@@ -26,7 +26,7 @@
       "osFloor": "macos-11.0",
       "path": "darwin-x64/tokengraph-lock.darwin-x64.node",
       "bytes": 393024,
-      "sha256": "f3bc36f9ba59e9052e21e71dd63aa114671f156df7341c9da2e82ccba82f7a6f"
+      "sha256": "784a6a0b53a414b500b21bd750ca2ee4a5e3756bbfe47d2a910e7e5ce61aa5e7"
     },
     {
       "id": "linux-arm64-gnu",
@@ -38,7 +38,7 @@
       "osFloor": "kernel-4.18-glibc-2.28",
       "path": "linux-arm64-gnu/tokengraph-lock.linux-arm64.node",
       "bytes": 464984,
-      "sha256": "c0656672ec1bc219f4ef048a0a3b7b43c85b08405906015ea56d6dcfedb11d86"
+      "sha256": "0daf0bd0631ba847970431994792549aac9d8026456e728c7d3ff1982ea7c748"
     },
     {
       "id": "linux-x64-gnu",
@@ -49,8 +49,8 @@
       "file": "tokengraph-lock.linux-x64.node",
       "osFloor": "kernel-4.18-glibc-2.28",
       "path": "linux-x64-gnu/tokengraph-lock.linux-x64.node",
-      "bytes": 445064,
-      "sha256": "fd83fc093cbee6282aeaf00fc580253b11a840183069df00d17c5a9d0db799fb"
+      "bytes": 445048,
+      "sha256": "baf1e40f3df862a5366752c741c8a989a8f9e900238c2e5a5a8a4161f6ef5dea"
     },
     {
       "id": "win32-arm64",
@@ -62,7 +62,7 @@
       "osFloor": "windows-10",
       "path": "win32-arm64/tokengraph-lock.win32-arm64.node",
       "bytes": 403456,
-      "sha256": "b10f690b6daa8423692e7c5f901b75fee76dd3147467b79aea62107ff37ce8e6"
+      "sha256": "1cb2a48487f13a811d353e8707bfb6e8abb970e2ea76a1473395c836e38a3b27"
     },
     {
       "id": "win32-x64",
@@ -74,7 +74,7 @@
       "osFloor": "windows-10-server-2016",
       "path": "win32-x64/tokengraph-lock.win32-x64.node",
       "bytes": 430080,
-      "sha256": "a2a91f4c06e82274653932abd7598552348edb8712ccfe1d8c4920db0a3b5c85"
+      "sha256": "8cfa18b742666e4db7053a07fe7314aedd1c4a5eea074942e140b6ecbe426035"
     }
   ]
 }
