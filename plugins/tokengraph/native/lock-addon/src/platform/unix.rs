@@ -22,12 +22,12 @@ use crate::LockError;
 const DIRECTORY_FLAGS: OFlags = OFlags::DIRECTORY
     .union(OFlags::NOFOLLOW)
     .union(OFlags::CLOEXEC);
-const ANCHOR_FLAGS: OFlags = OFlags::CREATE
-    .union(OFlags::NOFOLLOW)
+const ANCHOR_FLAGS: OFlags = OFlags::NOFOLLOW
     .union(OFlags::CLOEXEC)
     .union(OFlags::NONBLOCK)
     .union(OFlags::NOCTTY)
     .union(OFlags::RDWR);
+const ANCHOR_CREATE_FLAGS: OFlags = ANCHOR_FLAGS.union(OFlags::CREATE).union(OFlags::EXCL);
 
 unsafe extern "C" {
     fn close(fd: i32) -> i32;
@@ -41,9 +41,12 @@ pub struct UnixLock {
 
 impl UnixLock {
     pub fn try_acquire(path: &Path) -> Result<Self, LockError> {
-        Self::try_acquire_with_opener(path, open_anchor_descriptor)
+        let (parent, name) = open_parent(path, LockError::unsafe_anchor)?;
+        let (anchor, entry_before) = open_or_create_anchor(&parent, name)?;
+        Self::finish_acquire(anchor, entry_before, &parent, name)
     }
 
+    #[cfg(test)]
     fn try_acquire_with_opener<F>(path: &Path, opener: F) -> Result<Self, LockError>
     where
         F: FnOnce(&OwnedFd, &OsStr) -> Result<OwnedFd, LockError>,
@@ -63,9 +66,17 @@ impl UnixLock {
         };
 
         let anchor = opener(&parent, name)?;
+        Self::finish_acquire(anchor, entry_before, &parent, name)
+    }
 
+    fn finish_acquire(
+        anchor: OwnedFd,
+        entry_before: Option<Stat>,
+        parent: &OwnedFd,
+        name: &OsStr,
+    ) -> Result<Self, LockError> {
         let descriptor = fs::fstat(&anchor).map_err(|_| LockError::unsafe_anchor())?;
-        let entry_after = fs::statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW)
+        let entry_after = fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
             .map_err(|_| LockError::unsafe_anchor())?;
         if !anchor_metadata_is_safe_for_uid(&descriptor, process::geteuid().as_raw())
             || entry_before
@@ -199,6 +210,35 @@ fn open_directory_component(
 fn open_anchor_descriptor(parent: &OwnedFd, name: &OsStr) -> Result<OwnedFd, LockError> {
     fs::openat(parent, name, ANCHOR_FLAGS, Mode::RUSR | Mode::WUSR)
         .map_err(|error| map_open_error(error, LockError::unsafe_anchor))
+}
+
+fn open_or_create_anchor(
+    parent: &OwnedFd,
+    name: &OsStr,
+) -> Result<(OwnedFd, Option<Stat>), LockError> {
+    match fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(entry) => {
+            if !anchor_metadata_is_safe_for_uid(&entry, process::geteuid().as_raw()) {
+                return Err(LockError::unsafe_anchor());
+            }
+            Ok((open_anchor_descriptor(parent, name)?, Some(entry)))
+        }
+        Err(Errno::NOENT) => {
+            match fs::openat(parent, name, ANCHOR_CREATE_FLAGS, Mode::RUSR | Mode::WUSR) {
+                Ok(anchor) => Ok((anchor, None)),
+                Err(Errno::EXIST) => {
+                    let entry = fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
+                        .map_err(|error| map_open_error(error, LockError::unsafe_anchor))?;
+                    if !anchor_metadata_is_safe_for_uid(&entry, process::geteuid().as_raw()) {
+                        return Err(LockError::unsafe_anchor());
+                    }
+                    Ok((open_anchor_descriptor(parent, name)?, Some(entry)))
+                }
+                Err(error) => Err(map_open_error(error, LockError::unsafe_anchor)),
+            }
+        }
+        Err(error) => Err(map_open_error(error, LockError::unsafe_anchor)),
+    }
 }
 
 fn open_directory_descriptor(
