@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, truncate, unlink, utimes, writeFile } from "node:fs/promises";
+import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, truncate, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -33,7 +33,8 @@ afterEach(async () => {
 });
 
 async function temporaryDirectory(label: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), `tokengraph-native-loader-${label}-`));
+  const physicalTemporaryDirectory = await realpath(tmpdir());
+  const root = await mkdtemp(join(physicalTemporaryDirectory, `tokengraph-native-loader-${label}-`));
   roots.push(root);
   return root;
 }
@@ -119,6 +120,28 @@ function deferred<T = void>() {
   });
   return { promise, resolve: resolvePromise, reject: rejectPromise };
 }
+
+it.runIf(process.platform === "win32")("creates real-addon fixtures beneath the physical temporary directory", async () => {
+  const originalTemp = process.env.TEMP;
+  const originalTmp = process.env.TMP;
+  const outer = await temporaryDirectory("junction-temp");
+  const physical = resolve(outer, "physical");
+  const alias = resolve(outer, "alias");
+  await mkdir(physical);
+  await symlink(physical, alias, "junction");
+  process.env.TEMP = alias;
+  process.env.TMP = alias;
+  try {
+    const fixture = await makeFixture({ label: "physical-temp" });
+    roots.splice(roots.indexOf(fixture.root), 1);
+    expect(fixture.root).toBe(await realpath(fixture.root));
+  } finally {
+    if (originalTemp === undefined) delete process.env.TEMP;
+    else process.env.TEMP = originalTemp;
+    if (originalTmp === undefined) delete process.env.TMP;
+    else process.env.TMP = originalTmp;
+  }
+});
 
 async function replaceSelectedSource(fixture: Fixture, bytes: Buffer): Promise<void> {
   const replacement = resolve(fixture.root, `replacement-${createHash("sha256").update(bytes).digest("hex")}.node`);
