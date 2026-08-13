@@ -50,7 +50,7 @@ async function makePackageRepositoryCopy(): Promise<{ copiedPlugin: string; repo
   await mkdir(join(repoCopy, "plugins"), { recursive: true });
   await cp(process.cwd(), copiedPlugin, {
     recursive: true,
-    filter: (source) => !["node_modules", ".superpowers", ".tokengraph"].includes(source.split(/[\\/]/).at(-1) ?? "")
+    filter: (source) => !["node_modules", ".superpowers", ".tokengraph", "target"].includes(source.split(/[\\/]/).at(-1) ?? "")
   });
   await cp(resolve("node_modules", "fflate"), join(copiedPlugin, "node_modules", "fflate"), { recursive: true });
   await cp(resolve("..", "..", "LICENSE"), join(repoCopy, "LICENSE"));
@@ -574,6 +574,7 @@ describe("tokengraph release package command", () => {
       artifacts: Array<{ path: string; sha256: string }>;
     };
     expect(archiveListing.filter((path) => path.endsWith(".node"))).toHaveLength(6);
+    expect(archiveListing.filter((path) => /\.(?:exe|dll|so|dylib|node)$/iu.test(path))).toHaveLength(6);
     expect(archiveListing.join("\n")).not.toMatch(/tokengraph\/(?:src|tests|native|scripts)\//);
     for (const artifact of nativeManifest.artifacts) {
       const releaseBytes = await readFile(resolve(report.packageDir, "assets", "native-lock", artifact.path));
@@ -638,13 +639,27 @@ describe("tokengraph release package command", () => {
     )).rejects.toMatchObject({ stderr: expect.stringMatching(/native|manifest|target|artifact/i) });
   });
 
+  it.each([".exe", ".dll", ".so", ".dylib", ".node"])(
+    "refuses to package an unlisted %s executable outside the native asset root",
+    async (extension) => {
+      const { copiedPlugin, repoCopy } = await makePackageRepositoryCopy();
+      await writeFile(join(copiedPlugin, "assets", `unlisted-helper${extension}`), "unlisted executable");
+
+      await expect(execFileAsync(
+        process.execPath,
+        [join(copiedPlugin, "scripts", "package-plugin.mjs"), "--release", "--out-release", join(repoCopy, "release", "tokengraph")],
+        { cwd: copiedPlugin, env: process.env }
+      )).rejects.toMatchObject({ stderr: expect.stringMatching(/executable|allowlist|unlisted/i) });
+    }
+  );
+
   it("validates a freshly generated release with core skill contracts", async () => {
     const sandbox = await makeRoot();
     const repoRoot = resolve("..", "..");
     const repoCopy = join(sandbox, "repo");
     await cp(repoRoot, repoCopy, {
       recursive: true,
-      filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph"].includes(source.split(/[\\/]/).at(-1) ?? "")
+      filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "target"].includes(source.split(/[\\/]/).at(-1) ?? "")
     });
     const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
     const generatedRelease = join(repoCopy, "release", "tokengraph");
@@ -663,7 +678,7 @@ describe("tokengraph release package command", () => {
     const repoCopy = join(sandbox, "repo");
     await cp(repoRoot, repoCopy, {
       recursive: true,
-      filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts"].includes(source.split(/[\\/]/).at(-1) ?? "")
+      filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts", "target"].includes(source.split(/[\\/]/).at(-1) ?? "")
     });
     const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
     await execFileAsync(process.execPath, [resolve("scripts", "package-plugin.mjs"), "--release", "--out-release", join(repoCopy, "release", "tokengraph"), "--json"], {
@@ -683,7 +698,7 @@ describe("tokengraph release package command", () => {
     const repoCopy = join(sandbox, "repo");
     await cp(repoRoot, repoCopy, {
       recursive: true,
-      filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts", ".superpowers"].includes(source.split(/[\\/]/).at(-1) ?? "")
+      filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts", ".superpowers", "target"].includes(source.split(/[\\/]/).at(-1) ?? "")
     });
     const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
     const generatedRelease = join(repoCopy, "release", "tokengraph");
@@ -701,6 +716,78 @@ describe("tokengraph release package command", () => {
       cwd: copiedPlugin,
       env: process.env
     })).rejects.toMatchObject({ stderr: expect.stringMatching(/native.*(?:match|byte|hash|integrity)/i) });
+  });
+
+  it("rejects a release whose packaged lifecycle hook differs from the built source hook", async () => {
+    const sandbox = await makeRoot();
+    const repoRoot = resolve("..", "..");
+    const repoCopy = join(sandbox, "repo");
+    await cp(repoRoot, repoCopy, {
+      recursive: true,
+      filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts", ".superpowers", "target"].includes(source.split(/[\\/]/).at(-1) ?? "")
+    });
+    const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+    const generatedRelease = join(repoCopy, "release", "tokengraph");
+    await execFileAsync(process.execPath, [resolve("scripts", "package-plugin.mjs"), "--release", "--out-release", generatedRelease, "--json"], {
+      cwd: process.cwd(),
+      env: process.env
+    });
+    await cp(join(copiedPlugin, "dist", "index.js"), join(generatedRelease, "dist", "hooks.js"));
+
+    await expect(execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "validate-plugin.mjs")], {
+      cwd: copiedPlugin,
+      env: process.env
+    })).rejects.toMatchObject({ stderr: expect.stringMatching(/lifecycle hook|hooks\.js|byte/i) });
+  });
+
+  it.each([".exe", ".dll", ".so", ".dylib", ".node"])(
+    "rejects an unlisted release %s executable outside the native asset root",
+    async (extension) => {
+      const sandbox = await makeRoot();
+      const repoRoot = resolve("..", "..");
+      const repoCopy = join(sandbox, "repo");
+      await cp(repoRoot, repoCopy, {
+        recursive: true,
+        filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts", ".superpowers", "target"].includes(source.split(/[\\/]/).at(-1) ?? "")
+      });
+      const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+      const generatedRelease = join(repoCopy, "release", "tokengraph");
+      await execFileAsync(process.execPath, [resolve("scripts", "package-plugin.mjs"), "--release", "--out-release", generatedRelease, "--json"], {
+        cwd: process.cwd(),
+        env: process.env
+      });
+      await writeFile(join(generatedRelease, "assets", `unlisted-helper${extension}`), "unlisted executable");
+
+      await expect(execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "validate-plugin.mjs")], {
+        cwd: copiedPlugin,
+        env: process.env
+      })).rejects.toMatchObject({ stderr: expect.stringMatching(/executable|allowlist|unlisted/i) });
+    }
+  );
+
+  it("ignores non-public Cargo target output during source text scanning", async () => {
+    const sandbox = await makeRoot();
+    const repositoryRoot = resolve("..", "..");
+    const repoCopy = join(sandbox, "repo");
+    await cp(repositoryRoot, repoCopy, {
+      recursive: true,
+      filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts", ".superpowers", "target"].includes(source.split(/[\\/]/).at(-1) ?? "")
+    });
+    const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+    await cp(resolve("node_modules", "fflate"), join(copiedPlugin, "node_modules", "fflate"), { recursive: true });
+    const targetFixture = join(copiedPlugin, "native", "lock-addon", "target", "debug", ".fingerprint", "fixture");
+    await mkdir(dirname(targetFixture), { recursive: true });
+    await writeFile(targetFixture, "C:\\Users\\local-build-user\\source.rs");
+    const generatedRelease = join(repoCopy, "release", "tokengraph");
+    await execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "package-plugin.mjs"), "--release", "--out-release", generatedRelease], {
+      cwd: copiedPlugin,
+      env: process.env
+    });
+
+    await expect(execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "validate-plugin.mjs")], {
+      cwd: copiedPlugin,
+      env: process.env
+    })).resolves.toMatchObject({ stdout: expect.stringMatching(/validation passed/i) });
   });
 
   it("documents the native runtime and mixed-version rollout contract", async () => {

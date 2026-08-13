@@ -710,16 +710,25 @@ describe("built lifecycle hook process", () => {
     const env = pluginEnvironment(dataRoot);
     const sessionId = "exact-input-session";
     const path = await attestationPath(sessionId);
+    const guardRoot = await makeRoot("tokengraph-hook-native-guard-");
+    const nativeLoadMarker = join(guardRoot, "native-load-attempted");
+    const nativeLoadGuard = join(guardRoot, "guard.mjs");
+    await writeFile(nativeLoadGuard, [
+      'import { writeFileSync } from "node:fs";',
+      `const marker = ${JSON.stringify(nativeLoadMarker)};`,
+      'process.dlopen = () => { writeFileSync(marker, "attempted"); throw new Error("native load forbidden in managed hook"); };'
+    ].join("\n"));
+    const guardedEnv = { ...env, NODE_OPTIONS: `--import=${pathToFileURL(nativeLoadGuard).href}` };
     const invalidRuns = [
-      runHook("session-start", { hook_event_name: "UserPromptSubmit", session_id: sessionId, cwd: root }, env),
-      runHook("session-start", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root }, env, { extraArgs: ["unexpected"] }),
-      runHook("unknown-event", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root }, env),
-      runHook("session-start", { hook_event_name: "SessionStart", session_id: " ", cwd: root }, env),
-      runHook("session-start", { hook_event_name: "SessionStart", session_id: "x".repeat(1_025), cwd: root }, env),
-      runHook("session-start", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root, confirmNoLegacyProcesses: true }, env),
-      runHook("session-start", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root, confirmedNoLegacyTokenGraphProcesses: true }, env),
-      runHook("session-start", {}, env, { rawInput: "{broken\n" }),
-      runHook("session-start", {}, env, { rawInput: JSON.stringify({ padding: "x".repeat(1024 * 1024) }) })
+      runHook("session-start", { hook_event_name: "UserPromptSubmit", session_id: sessionId, cwd: root }, guardedEnv),
+      runHook("session-start", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root }, guardedEnv, { extraArgs: ["unexpected"] }),
+      runHook("unknown-event", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root }, guardedEnv),
+      runHook("session-start", { hook_event_name: "SessionStart", session_id: " ", cwd: root }, guardedEnv),
+      runHook("session-start", { hook_event_name: "SessionStart", session_id: "x".repeat(1_025), cwd: root }, guardedEnv),
+      runHook("session-start", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root, confirmNoLegacyProcesses: true }, guardedEnv),
+      runHook("session-start", { hook_event_name: "SessionStart", session_id: sessionId, cwd: root, confirmedNoLegacyTokenGraphProcesses: true }, guardedEnv),
+      runHook("session-start", {}, guardedEnv, { rawInput: "{broken\n" }),
+      runHook("session-start", {}, guardedEnv, { rawInput: JSON.stringify({ padding: "x".repeat(1024 * 1024) }) })
     ];
     for (const run of await Promise.all(invalidRuns)) {
       expect(run.code).toBe(0);
@@ -727,6 +736,7 @@ describe("built lifecycle hook process", () => {
       expect(run.stdout).not.toContain(root);
     }
     await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(nativeLoadMarker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readdir(dataRoot)).resolves.toEqual([]);
   });
 

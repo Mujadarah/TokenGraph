@@ -186,6 +186,7 @@ const mcp = await readJson(mcpPath);
 const claudeManifest = await readJson(claudeManifestPath);
 const claudeMcp = await readJson(claudeMcpPath);
 const distServer = await readFile(distServerPath, "utf8").catch((error) => fail(`cannot read bundled MCP entry: ${error.message}`));
+const distHooksBytes = await readFile(distHooksPath).catch((error) => fail(`cannot read bundled lifecycle hook entry: ${error.message}`));
 const distHooks = await readFile(distHooksPath, "utf8").catch((error) => fail(`cannot read bundled lifecycle hook entry: ${error.message}`));
 const hooksManifest = await readJson(hooksManifestPath);
 const distReview = await readFile(distReviewPath, "utf8").catch((error) => fail(`cannot read built review helpers: ${error.message}`));
@@ -399,12 +400,14 @@ const releaseClaudeManifest = await readJson(resolve(releaseRoot, ".claude-plugi
 const releaseClaudeMcp = await readJson(resolve(releaseRoot, ".mcp.claude.json"));
 const releasePackageJson = await readJson(releasePackageJsonPath);
 const releaseReadme = await readFile(releaseReadmePath, "utf8").catch((error) => fail(`cannot read release README: ${error.message}`));
+const releaseDistHooks = await readFile(releaseDistHooksPath).catch((error) => fail(`cannot read release lifecycle hook entry: ${error.message}`));
 const license = await readFile(licensePath).catch((error) => fail(`cannot read repository license: ${error.message}`));
 const notice = await readFile(noticePath).catch((error) => fail(`cannot read repository notice: ${error.message}`));
 const releaseLicense = await readFile(releaseLicensePath).catch((error) => fail(`cannot read release license: ${error.message}`));
 const releaseNotice = await readFile(releaseNoticePath).catch((error) => fail(`cannot read release notice: ${error.message}`));
 const rootReadme = await readFile(rootReadmePath, "utf8").catch((error) => fail(`cannot read root README: ${error.message}`));
 const sourceReadme = await readFile(sourceReadmePath, "utf8").catch((error) => fail(`cannot read source plugin README: ${error.message}`));
+assert(distHooksBytes.equals(releaseDistHooks), "release lifecycle hook dist/hooks.js must match the built source hook byte-for-byte");
 const codexHostGuide = await readFile(resolve(hostDocsPath, "codex.md"), "utf8").catch((error) => fail(`cannot read Codex host guide: ${error.message}`));
 const claudeHostGuide = await readFile(resolve(hostDocsPath, "claude-code.md"), "utf8").catch((error) => fail(`cannot read Claude Code host guide: ${error.message}`));
 const securityGuide = await readFile(resolve(trustDocsPath, "security.md"), "utf8").catch((error) => fail(`cannot read security guide: ${error.message}`));
@@ -462,9 +465,18 @@ async function collectFiles(root) {
   }
   return files;
 }
+const nativeExecutablePaths = new Set(TARGETS.map((target) => `assets/native-lock/${target.id}/${target.file}`));
+for (const [label, root] of [["source assets", resolve(pluginRoot, "assets")], ["release plugin", releaseRoot]]) {
+  const executableFiles = (await collectFiles(root)).filter((file) => /\.(?:exe|dll|so|dylib|node)$/iu.test(file));
+  for (const executableFile of executableFiles) {
+    const relativePath = relative(label === "source assets" ? pluginRoot : releaseRoot, executableFile).split(sep).join("/");
+    assert(nativeExecutablePaths.has(relativePath), `${label} contains an unlisted executable: ${relativePath}`);
+  }
+  assert(executableFiles.length === nativeExecutablePaths.size, `${label} must contain exactly the six native lock addons`);
+}
 const personalWindowsProfilePathPattern = /C:\\Users\\(?!example(?:\\|$))[^\\\s]+/i;
 const packagedFiles = [
-  ...await collectFiles(pluginRoot),
+  ...(await collectFiles(pluginRoot)).filter((path) => !path.includes(`${sep}native${sep}lock-addon${sep}target${sep}`)),
   ...await collectFiles(releaseRoot)
 ].filter((path) => !path.includes(`${sep}node_modules${sep}`));
 for (const filePath of packagedFiles) {

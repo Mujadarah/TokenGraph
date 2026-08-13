@@ -78,6 +78,24 @@ async function copyRequiredPath(source, destination) {
   await cp(source, destination, { recursive: true, force: true });
 }
 
+const EXECUTABLE_EXTENSION = /\.(?:exe|dll|so|dylib|node)$/iu;
+
+async function assertExactInstallableExecutables(root, label, nativePrefix = "assets/native-lock") {
+  const expectedNativePaths = new Set(TARGETS.map((target) =>
+    `${nativePrefix}/${target.id}/${target.file}`
+  ));
+  const files = await listFiles(root);
+  for (const file of files) {
+    if (EXECUTABLE_EXTENSION.test(file) && !expectedNativePaths.has(file)) {
+      throw new Error(`${label} contains an unlisted executable: ${file}.`);
+    }
+  }
+  const actualNativePaths = files.filter((file) => file.endsWith(".node"));
+  if (actualNativePaths.length !== expectedNativePaths.size || actualNativePaths.some((file) => !expectedNativePaths.has(file))) {
+    throw new Error(`${label} must contain exactly the six native lock addons.`);
+  }
+}
+
 function buildReleaseReadme(version) {
   return `# TokenGraph Release Plugin
 
@@ -293,6 +311,7 @@ async function runPackage() {
 
   const sourceNativeAssets = resolve(pluginRoot, "assets", "native-lock");
   await validateNativeLockAssets({ assetsDir: sourceNativeAssets, loadCurrent: true });
+  await assertExactInstallableExecutables(resolve(pluginRoot, "assets"), "Source assets", "native-lock");
 
   await assertReadable(resolve(pluginRoot, "dist", "index.js"), "built MCP entry");
   await assertReadable(resolve(pluginRoot, "dist", "hooks.js"), "built lifecycle hook entry");
@@ -304,6 +323,7 @@ async function runPackage() {
   if (args.release) {
     await copyInstallablePlugin(args.releaseDir, packageJson, version);
     await validateNativeLockAssets({ assetsDir: resolve(args.releaseDir, "assets", "native-lock"), loadCurrent: true });
+    await assertExactInstallableExecutables(args.releaseDir, "Generated release");
     return {
       status: "ok",
       mode: "release",
@@ -318,6 +338,7 @@ async function runPackage() {
   await mkdir(args.outRoot, { recursive: true });
   await copyInstallablePlugin(packageDir, packageJson, version);
   await validateNativeLockAssets({ assetsDir: resolve(packageDir, "assets", "native-lock"), loadCurrent: true });
+  await assertExactInstallableExecutables(packageDir, "Generated package");
   await writeMarketplace(codexMarketplacePath, buildCodexMarketplace("./tokengraph"));
   await writeMarketplace(claudeMarketplacePath, buildClaudeMarketplace(version, "./tokengraph"));
   await writeDeterministicArchive(bundleDir, archivePath);
