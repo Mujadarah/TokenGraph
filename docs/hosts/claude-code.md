@@ -49,7 +49,7 @@ After installation:
 3. Reuse the exact task id. After ready setup, omit `root` when host resolution is stable or pass only setup's trusted root.
 4. End completed and verified work with compact `tokengraph_task_report({ taskId })`. Use verbose mode only for diagnostics and `pause` for unfinished work.
 
-Before the first native lock activation, stop every TokenGraph v0.23.1 MCP and CLI process and call `tokengraph_setup({ confirmNoLegacyProcesses: true })` in the newly started MCP server. If an old runtime starts later, stop it and restart or reactivate v2. Mixed-runtime operation is unsupported. Doctor/status reporting is read-only and never grants activation.
+Before the first native lock activation, ensure every TokenGraph v0.23.1 MCP and CLI process is stopped. Those processes must not be restarted while v2 runs. Then call `tokengraph_setup({ confirmNoLegacyProcesses: true })` in the newly started MCP server. If an old runtime starts later, stop it and restart or reactivate v2. Mixed-runtime operation is unsupported. Doctor/status reporting is read-only and never grants activation.
 
 A paused task id is terminal. Start a new task with `tokengraph_prepare_context` or a direct intent that omits `taskId`; Stop remains allowed for the paused task.
 

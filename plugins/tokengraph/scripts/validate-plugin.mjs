@@ -442,7 +442,8 @@ assert(/local filesystem/i.test(securityGuide) && /integrity/i.test(securityGuid
 assert(/private[^\n]*(?:OS|operating-system)[^\n]*temp/i.test(privacyGuide), "privacy guide must document private OS-temp addon staging");
 assert(/dead PID|dead process/i.test(limitationsGuide) && /bounded/i.test(limitationsGuide), "limitations must document bounded dead-process staging cleanup");
 assert(/Windows[^\n]*(?:one|single)[^\n]*(?:root|residue)|(?:one|single)[^\n]*Windows[^\n]*(?:root|residue)/i.test(limitationsGuide), "limitations must document possible single-root Windows crash residue");
-assert(/stop every v0\.23\.1|stop all v0\.23\.1/i.test(releaseInstallGuide), "release install guide must require stopping every v0.23.1 process");
+assert(/v0\.23\.1[^\n]*(?:must be|is) stopped/i.test(releaseInstallGuide), "release install guide must require every v0.23.1 process to be stopped");
+assert(/v0\.23\.1[^\n]*stopped[^\n]*must not be restarted/i.test(releaseInstallGuide), "release install guide must prohibit restarting v0.23.1 while v2 runs");
 assert(/tokengraph_setup\(\{\s*confirmNoLegacyProcesses:\s*true\s*\}\)/.test(releaseInstallGuide), "release install guide must document confirmed MCP activation");
 assert(/--confirm-no-legacy-processes/.test(releaseInstallGuide), "release install guide must document per-invocation CLI activation");
 assert(/restart|reactivate/i.test(releaseInstallGuide) && /mixed[- ]runtime|mixed[- ]version/i.test(releaseInstallGuide), "release install guide must document old-runtime restart/reactivation and the mixed-runtime boundary");

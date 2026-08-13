@@ -21,7 +21,7 @@ pnpm package:plugin -- --release --json
 
 The installable plugin contains exactly six prebuilt native lock addons: Windows x64/arm64, glibc Linux x64/arm64, and macOS x64/arm64. Loading them requires no native compiler, runtime download, package installation, network lookup, sidecar, or JavaScript lock fallback. Package validation checks the selected addon's target, ABI, byte length, SHA-256, and locked dependency notices before it is staged in a private operating-system temporary directory.
 
-Before native locking is activated, stop every v0.23.1 TokenGraph MCP and CLI process. Activate one MCP server with `tokengraph_setup({ confirmNoLegacyProcesses: true })`; each lock-taking CLI invocation separately requires `--confirm-no-legacy-processes`. If an old runtime is started later, stop it and restart or reactivate v2. Mixed-runtime operation is unsupported. Doctor may report the read-only activation state but never grants activation.
+Before native locking is activated, ensure every v0.23.1 TokenGraph MCP and CLI process is stopped. Those processes must not be restarted while v2 runs. Activate one MCP server with `tokengraph_setup({ confirmNoLegacyProcesses: true })`; each lock-taking CLI invocation separately requires `--confirm-no-legacy-processes`. If an old runtime is started later, stop it and restart or reactivate v2. Mixed-runtime operation is unsupported. Doctor may report the read-only activation state but never grants activation.
 
 Managed lifecycle hooks remain permanently unactivated and project-read-only. Host attestation and plugin-data hook state authorize only strict lifecycle reads for the matching workspace; neither grants native-lock activation.
 

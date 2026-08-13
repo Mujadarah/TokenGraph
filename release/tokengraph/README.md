@@ -45,7 +45,7 @@ The server is local-first. It indexes the selected workspace locally and stores 
 
 TokenGraph stores project state under `.tokengraph/` inside the trusted workspace. Token savings are estimates.
 
-Native locking supports Windows x64/arm64, glibc Linux x64/arm64 with kernel 4.18 and glibc 2.28 or newer, and macOS x64/arm64 11 or newer. Linux musl and unlisted targets fail closed. Before activation, stop every v0.23.1 TokenGraph MCP and CLI process. Activate an MCP server only with `tokengraph_setup({ confirmNoLegacyProcesses: true })`, or a CLI invocation with `--confirm-no-legacy-processes`. If any old runtime starts later, stop it and restart/reactivate v2. Mixed-runtime operation is unsupported. Doctor reports activation and native integrity status but never grants activation.
+Native locking supports Windows x64/arm64, glibc Linux x64/arm64 with kernel 4.18 and glibc 2.28 or newer, and macOS x64/arm64 11 or newer. Linux musl and unlisted targets fail closed. Before activation, ensure every v0.23.1 TokenGraph MCP and CLI process is stopped. Those processes must not be restarted while v2 runs. Activate an MCP server only with `tokengraph_setup({ confirmNoLegacyProcesses: true })`, or a CLI invocation with `--confirm-no-legacy-processes`. If any old runtime starts later, stop it and restart/reactivate v2. Mixed-runtime operation is unsupported. Doctor reports activation and native integrity status but never grants activation.
 
 The default surface exposes eight compact tools; the opt-in full surface exposes 42. JSON-only successes return one serialized JSON text item, with project-map resource links as the documented exception. Wiki and memory changes use source-linked review-before-apply proposals.
 

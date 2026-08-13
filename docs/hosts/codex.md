@@ -38,7 +38,7 @@ The session attestation is scoped to the installed plugin root and the exact tas
 
 Call `tokengraph_setup` first. A `blocked` result includes the missing or unsafe trust reason and recovery commands without reading project files. A `ready` result identifies the trusted source and root.
 
-For the native lock rollout, first stop every TokenGraph v0.23.1 MCP and CLI process, then call `tokengraph_setup({ confirmNoLegacyProcesses: true })` in the new MCP server. If any old runtime is started later, stop it and restart or reactivate v2 before another lock-taking operation. Mixed-runtime operation is unsupported. Doctor/status reporting is read-only and never grants activation.
+For the native lock rollout, first ensure every TokenGraph v0.23.1 MCP and CLI process is stopped. Those processes must not be restarted while v2 runs. Then call `tokengraph_setup({ confirmNoLegacyProcesses: true })` in the new MCP server. If any old runtime is started later, stop it and restart or reactivate v2 before another lock-taking operation. Mixed-runtime operation is unsupported. Doctor/status reporting is read-only and never grants activation.
 
 ## Lifecycle hook trust and control
 
