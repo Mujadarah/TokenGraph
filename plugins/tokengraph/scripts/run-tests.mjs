@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, cp, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rmdir, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { TARGETS } from "./generate-native-lock-manifest.mjs";
@@ -300,6 +300,45 @@ function currentTarget() {
   return match;
 }
 
+async function readCurrentAssetOverride(target) {
+  const configured = process.env.TOKENGRAPH_NATIVE_CURRENT_ASSET;
+  if (configured === undefined) return undefined;
+  if (typeof configured !== "string" || configured.length === 0 || configured.includes("\0") || !isAbsolute(configured)) {
+    throw new Error("The current-target native asset override must be an absolute path.");
+  }
+  const path = resolve(configured);
+  const allowed = new Set([
+    resolve(root, "native-output", target.id, target.file),
+    resolve(root, "assets/native-lock", target.id, target.file)
+  ]);
+  if (!allowed.has(path)) throw new Error("The current-target native asset override is outside the exact build or source-asset path.");
+  for (const directory of [dirname(path), dirname(dirname(path))]) {
+    const stats = await lstat(directory, { bigint: true });
+    if (!stats.isDirectory() || stats.isSymbolicLink() || resolve(await realpath(directory)) !== resolve(directory)) {
+      throw new Error("The current-target native asset override has an unsafe directory.");
+    }
+  }
+  const before = await lstat(path, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.size <= 0n || before.size > 64n * 1024n * 1024n ||
+      resolve(await realpath(path)) !== path) {
+    throw new Error("The current-target native asset override is not a safe regular file.");
+  }
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  let bytes;
+  try {
+    if (identityOf(await handle.stat({ bigint: true })) !== identityOf(before)) {
+      throw new Error("The current-target native asset override identity changed before read.");
+    }
+    bytes = await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+  if (identityOf(await lstat(path, { bigint: true })) !== identityOf(before)) {
+    throw new Error("The current-target native asset override identity changed after read.");
+  }
+  return bytes;
+}
+
 async function assembleHarness(harnessRoot, target) {
   const buildRoot = join(harnessRoot, "build");
   const runtimeRoot = join(harnessRoot, "runtime");
@@ -320,9 +359,17 @@ async function assembleHarness(harnessRoot, target) {
   }
   if (await runContained("build", [resolve(root, "scripts/build.mjs")], childEnv, harnessRoot) !== 0) throw new Error("Fresh production build failed.");
   await scanBundles(join(root, "dist"));
-  if (await runContained("native build", [resolve(root, "scripts/build-native-lock-addon.mjs"), "--target", target.rustTarget, "--out", buildRoot], childEnv, harnessRoot) !== 0) throw new Error("Current-target native build failed.");
   const nativePath = join(buildRoot, target.id, target.file);
-  const nativeBytes = await readFile(nativePath);
+  const currentAssetOverride = await readCurrentAssetOverride(target);
+  let nativeBytes;
+  if (currentAssetOverride === undefined) {
+    if (await runContained("native build", [resolve(root, "scripts/build-native-lock-addon.mjs"), "--target", target.rustTarget, "--out", buildRoot], childEnv, harnessRoot) !== 0) throw new Error("Current-target native build failed.");
+    nativeBytes = await readFile(nativePath);
+  } else {
+    await mkdir(dirname(nativePath), { mode: 0o700 });
+    await writeFile(nativePath, currentAssetOverride, { flag: "wx", mode: 0o600 });
+    nativeBytes = currentAssetOverride;
+  }
   const manifest = {
     schemaVersion: 1, addonAbiVersion: 1, nodeApiVersion: 9, rustToolchain: "1.97.1",
     artifacts: TARGETS.map((entry) => ({ ...entry, path: `${entry.id}/${entry.file}`, bytes: entry.id === target.id ? nativeBytes.length : 1, sha256: entry.id === target.id ? createHash("sha256").update(nativeBytes).digest("hex") : "0".repeat(64) }))

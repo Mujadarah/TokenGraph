@@ -1016,14 +1016,23 @@ describe("native lock addon ABI and lifecycle", () => {
 
 it.runIf(process.env.TOKENGRAPH_NATIVE_CURRENT_ASSET)("loads the real addon and proves acquire, busy, release, and reacquire", async () => {
   const realAsset = resolve(process.env.TOKENGRAPH_NATIVE_CURRENT_ASSET!);
+  const currentTarget = TARGETS.find((target) => target.platform === process.platform && target.arch === process.arch);
+  expect(currentTarget).toBeDefined();
+  if (currentTarget === undefined) throw new Error("The current native target is unsupported.");
+  const glibcVersionRuntime = currentTarget.platform === "linux"
+    ? (process.report.getReport() as { header?: { glibcVersionRuntime?: unknown } }).header?.glibcVersionRuntime
+    : undefined;
+  if (currentTarget.platform === "linux" && typeof glibcVersionRuntime !== "string") {
+    throw new Error("The current Linux glibc runtime version is unavailable.");
+  }
   const fixture = await makeFixture({
     label: "real-addon",
-    selectedId: "win32-x64",
+    selectedId: currentTarget.id,
     selectedBytes: await readFile(realAsset)
   });
   // Windows retains a loaded DLL until this Vitest process exits. The
   // controller removes this exact task fixture after the process completes.
-  roots.splice(roots.indexOf(fixture.root), 1);
+  if (process.platform === "win32") roots.splice(roots.indexOf(fixture.root), 1);
   const injectedLoader = vi.fn(() => validRawAddon());
   await loadNativeLockAddon(fakeRuntime(fixture, { loadModule: injectedLoader }));
   expect(injectedLoader).toHaveBeenCalledTimes(1);
@@ -1041,21 +1050,28 @@ it.runIf(process.env.TOKENGRAPH_NATIVE_CURRENT_ASSET)("loads the real addon and 
     addon = await loadNativeLockAddon({
       assetsRoot: fixture.assetsRoot,
       tempDirectory: fixture.stagingBase,
-      platform: "win32",
-      arch: "x64"
+      platform: currentTarget.platform,
+      arch: currentTarget.arch,
+      ...(currentTarget.platform === "linux" ? {
+        glibcVersionRuntime: glibcVersionRuntime as string
+      } : {})
     });
   } finally {
     delete require.cache[fixture.selectedPath];
   }
   const retainedRoots = await readdir(fixture.stagingBase);
-  expect(retainedRoots).toHaveLength(1);
-  const retainedRoot = resolve(fixture.stagingBase, retainedRoots[0]!);
-  const retainedEntries = (await readdir(retainedRoot)).sort();
-  expect(retainedEntries).toHaveLength(2);
-  expect(retainedEntries).toContain("owner.json");
-  const stagedName = retainedEntries.find((entry) => entry.endsWith(".node"));
-  expect(stagedName).toMatch(/^win32-x64-[0-9a-f]{64}\.node$/u);
-  expect(await readFile(resolve(retainedRoot, stagedName!))).toEqual(await readFile(realAsset));
+  if (process.platform === "win32") {
+    expect(retainedRoots).toHaveLength(1);
+    const retainedRoot = resolve(fixture.stagingBase, retainedRoots[0]!);
+    const retainedEntries = (await readdir(retainedRoot)).sort();
+    expect(retainedEntries).toHaveLength(2);
+    expect(retainedEntries).toContain("owner.json");
+    const stagedName = retainedEntries.find((entry) => entry.endsWith(".node"));
+    expect(stagedName).toMatch(new RegExp(`^${currentTarget.id}-[0-9a-f]{64}\\.node$`, "u"));
+    expect(await readFile(resolve(retainedRoot, stagedName!))).toEqual(await readFile(realAsset));
+  } else {
+    expect(retainedRoots).toEqual([]);
+  }
   const anchorDirectory = resolve(fixture.root, "anchor-domain");
   const anchorPath = resolve(anchorDirectory, "anchor.lock");
   await mkdir(anchorDirectory);

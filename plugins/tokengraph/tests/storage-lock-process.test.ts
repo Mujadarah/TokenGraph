@@ -45,7 +45,22 @@ interface ProbeRequest {
     | "after-lease-rename-parent-flush"
     | "after-journal-state";
   pauseOccurrence?: number;
-  pauseState?: "intent" | "barrier-created" | "lease-created" | "cleanup-with-lease" | "cleanup-barrier-only" | "idle";
+  pauseState?:
+    | "intent"
+    | "pending-barrier"
+    | "barrier-created"
+    | "barrier-identity"
+    | "pending-lease-create"
+    | "temporary-lease-create"
+    | "pending-lease-replace"
+    | "temporary-lease-replace"
+    | "temporary-identity"
+    | "lease-created"
+    | "lease-finalized"
+    | "heartbeat"
+    | "cleanup-with-lease"
+    | "cleanup-barrier-only"
+    | "idle";
   activate: boolean;
 }
 
@@ -53,6 +68,11 @@ const probePath = resolve("scripts", "native-lock-probe.mjs");
 const legacyWorkerPath = resolve("tests", "fixtures", "legacy-file-lock-worker.mjs");
 const execFile = promisify(execFileCallback);
 const CHILD_OUTPUT_LIMIT = 8 * 1024;
+const exhaustiveRecoveryValue = process.env.TOKENGRAPH_NATIVE_EXHAUSTIVE_RECOVERY;
+if (exhaustiveRecoveryValue !== undefined && !["0", "1"].includes(exhaustiveRecoveryValue)) {
+  throw new Error("TOKENGRAPH_NATIVE_EXHAUSTIVE_RECOVERY must be 0 or 1.");
+}
+const exhaustiveRecovery = exhaustiveRecoveryValue === "1";
 const roots: string[] = [];
 const children = new Set<ChildProcessWithoutNullStreams>();
 
@@ -373,7 +393,7 @@ describe("native lock process integration", () => {
   }, 30_000);
 
   it("recovers killed real children at every journal phase and durable file cut", async () => {
-    const journalCuts = [
+    const ordinaryJournalCuts = [
       ["after-journal-create", 1],
       ["after-journal-write", 2],
       ["after-journal-sync", 3],
@@ -381,25 +401,62 @@ describe("native lock process integration", () => {
       ["after-journal-rename", 5],
       ["after-journal-rename-parent-flush", 6]
     ] as const;
-    const leaseCuts = [
+    const journalCutPoints = [
+      "after-journal-create", "after-journal-write", "after-journal-sync",
+      "after-journal-parent-flush", "after-journal-rename", "after-journal-rename-parent-flush"
+    ] as const;
+    const leaseCutPoints = [
       "after-lease-create", "after-lease-write", "after-lease-sync",
       "after-lease-parent-flush", "after-lease-rename", "after-lease-rename-parent-flush"
     ] as const;
-    const states = ["intent", "barrier-created", "lease-created", "cleanup-with-lease", "cleanup-barrier-only", "idle"] as const;
-    const cases = [
-      ...journalCuts.map(([pauseAt, pauseOccurrence]) => ({ pauseAt, pauseOccurrence })),
-      ...leaseCuts.map((pauseAt) => ({ pauseAt, pauseOccurrence: 1 })),
-      ...states.map((pauseState) => ({ pauseAt: "after-journal-state" as const, pauseState }))
+    const ordinaryStates = ["intent", "barrier-created", "lease-created", "cleanup-with-lease", "cleanup-barrier-only", "idle"] as const;
+    const exhaustiveStates: Array<Pick<ProbeRequest, "pauseState" | "pauseOccurrence" | "holdMs">> = [
+      { pauseState: "idle", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "intent", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "pending-barrier", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "barrier-created", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "barrier-identity", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "pending-lease-create", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "temporary-lease-create", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "temporary-identity", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "lease-created", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "lease-finalized", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "pending-lease-replace", pauseOccurrence: 1, holdMs: 10_000 },
+      { pauseState: "temporary-lease-replace", pauseOccurrence: 1, holdMs: 10_000 },
+      { pauseState: "temporary-identity", pauseOccurrence: 2, holdMs: 10_000 },
+      { pauseState: "heartbeat", pauseOccurrence: 1, holdMs: 10_000 },
+      { pauseState: "cleanup-with-lease", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "cleanup-barrier-only", pauseOccurrence: 1, holdMs: 0 },
+      { pauseState: "idle", pauseOccurrence: 2, holdMs: 0 }
     ];
+    const leaseCreateCutPoints = leaseCutPoints.slice(0, 4);
+    const leaseRenameCutPoints = leaseCutPoints.slice(4);
+    const cases: Array<Pick<ProbeRequest, "pauseAt" | "pauseOccurrence" | "pauseState" | "holdMs">> = exhaustiveRecovery ? [
+      ...journalCutPoints.flatMap((pauseAt) => exhaustiveStates.map((state) => ({ pauseAt, ...state }))),
+      ...leaseCreateCutPoints.flatMap((pauseAt) => [
+        { pauseAt, pauseState: "pending-lease-create" as const, pauseOccurrence: 1, holdMs: 0 },
+        { pauseAt, pauseState: "pending-lease-replace" as const, pauseOccurrence: 1, holdMs: 10_000 }
+      ]),
+      ...leaseRenameCutPoints.flatMap((pauseAt) => [
+        { pauseAt, pauseState: "temporary-lease-create" as const, pauseOccurrence: 1, holdMs: 0 },
+        { pauseAt, pauseState: "temporary-lease-replace" as const, pauseOccurrence: 1, holdMs: 10_000 }
+      ]),
+      ...exhaustiveStates.map((state) => ({ pauseAt: "after-journal-state" as const, ...state }))
+    ] : [
+      ...ordinaryJournalCuts.map(([pauseAt, pauseOccurrence]) => ({ pauseAt, pauseOccurrence })),
+      ...leaseCutPoints.map((pauseAt) => ({ pauseAt, pauseOccurrence: 1 })),
+      ...ordinaryStates.map((pauseState) => ({ pauseAt: "after-journal-state" as const, pauseState }))
+    ];
+    expect(cases).toHaveLength(exhaustiveRecovery ? 131 : 18);
     for (const [index, pause] of cases.entries()) {
       const workspaceRoot = await temporaryRoot("tg-lock-cut-");
       const lock = await canonicalPersistenceLock(workspaceRoot, "workspace-state", "config.json");
       const killed = startKillableProbe({
         operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
-        coordinationRoot: await temporaryRoot("tg-lock-cut-counter-"), timeoutMs: 15_000,
+        coordinationRoot: await temporaryRoot("tg-lock-cut-counter-"), timeoutMs: exhaustiveRecovery ? 30_000 : 15_000,
         clockOffsetMs: -31_000, ...pause, activate: true
       });
-      await killed.waitForStatus("paused", 5_000);
+      await killed.waitForStatus("paused", exhaustiveRecovery ? 20_000 : 5_000);
       expect(killed.child.kill("SIGKILL"), `cut ${index}: ${JSON.stringify(pause)}`).toBe(true);
       await killed.completion;
       const recovered = await runProbe({
@@ -415,7 +472,7 @@ describe("native lock process integration", () => {
       ]));
       expect(entries.filter((entry) => entry.endsWith(".lock"))).toHaveLength(2);
     }
-  }, 180_000);
+  }, exhaustiveRecovery ? 15 * 60_000 : 180_000);
 
   it("keeps real addon infrastructure constant across 1,000 unique run task and artifact keys", async () => {
     const workspaceRoot = await temporaryRoot("tg-lock-cardinality-");

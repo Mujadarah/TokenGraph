@@ -48,7 +48,18 @@ function validateRequest(request) {
     "after-lease-create", "after-lease-write", "after-lease-sync", "after-lease-parent-flush",
     "after-lease-rename", "after-lease-rename-parent-flush"
   ]);
-  const pauseStates = new Set(["intent", "barrier-created", "lease-created", "cleanup-with-lease", "cleanup-barrier-only", "idle"]);
+  const pauseStates = new Set([
+    "intent", "pending-barrier", "barrier-created", "barrier-identity",
+    "pending-lease-create", "temporary-lease-create", "pending-lease-replace", "temporary-lease-replace",
+    "temporary-identity", "lease-created", "lease-finalized", "heartbeat",
+    "cleanup-with-lease", "cleanup-barrier-only", "idle"
+  ]);
+  const stateAwarePausePoints = new Set([
+    "after-journal-state", "after-journal-create", "after-journal-write", "after-journal-sync",
+    "after-journal-parent-flush", "after-journal-rename", "after-journal-rename-parent-flush",
+    "after-lease-create", "after-lease-write", "after-lease-sync", "after-lease-parent-flush",
+    "after-lease-rename", "after-lease-rename-parent-flush"
+  ]);
   if (!new Set(["hold", "try", "crash", "release"]).has(request.operation) ||
       typeof request.workspaceRoot !== "string" || !isAbsolute(request.workspaceRoot) || request.workspaceRoot.includes("\0") ||
       !DOMAINS.has(request.domain) || typeof request.key !== "string" || !SAFE_KEY.test(request.key) ||
@@ -78,7 +89,8 @@ function validateRequest(request) {
   };
   if ((validated.operation === "hold" && validated.holdMs === 0) ||
       (["crash", "release"].includes(validated.operation) && validated.holdMs !== 0) ||
-      (validated.pauseAt === "after-journal-state") !== (validated.pauseState !== undefined) ||
+      (validated.pauseAt === "after-journal-state" && validated.pauseState === undefined) ||
+      (validated.pauseState !== undefined && !stateAwarePausePoints.has(validated.pauseAt)) ||
       (validated.exerciseKeyCount !== undefined &&
         (validated.operation !== "try" || validated.holdMs !== 0 || validated.pauseAt !== undefined || validated.failOperation))) {
     fail("PROBE_INPUT_INVALID");
@@ -248,15 +260,35 @@ async function main() {
         await emit({ status: "paused", owner: process.pid, maxOwners: 0 });
         await new Promise(() => undefined);
       };
-      const maybePause = async (point) => {
-        const occurrence = (pauseCounts.get(point) ?? 0) + 1;
-        pauseCounts.set(point, occurrence);
+      const maybePause = async (point, states = undefined) => {
+        if (request.pauseAt !== point || (request.pauseState !== undefined && !states?.includes(request.pauseState))) return;
+        const key = request.pauseState === undefined ? point : `${point}:${request.pauseState}`;
+        const occurrence = (pauseCounts.get(key) ?? 0) + 1;
+        pauseCounts.set(key, occurrence);
         if (request.pauseAt === point && request.pauseOccurrence === occurrence) await pauseForever();
       };
-      const journalState = (journal) => {
-        if (journal.phase === "cleanup") return journal.leaseIdentity === undefined ? "cleanup-barrier-only" : "cleanup-with-lease";
-        if ((journal.phase === "barrier-created" || journal.phase === "lease-created") && journal.pendingLeaseWrite !== undefined) return undefined;
-        return journal.phase;
+      const journalStates = (journal) => {
+        if (journal.phase === "intent") return ["intent", "pending-barrier"];
+        if (journal.phase === "barrier-created") {
+          if (journal.pendingLeaseWrite?.operation === "create") {
+            return journal.pendingLeaseWrite.temporaryIdentity === undefined
+              ? ["pending-lease-create"] : ["temporary-lease-create", "temporary-identity"];
+          }
+          return ["barrier-created", "barrier-identity"];
+        }
+        if (journal.phase === "lease-created") {
+          if (journal.pendingLeaseWrite?.operation === "replace") {
+            return journal.pendingLeaseWrite.temporaryIdentity === undefined
+              ? ["pending-lease-replace"] : ["temporary-lease-replace", "temporary-identity"];
+          }
+          const states = ["lease-created", "lease-finalized"];
+          if (journal.heartbeatAt !== journal.startedAt) states.push("heartbeat");
+          return states;
+        }
+        if (journal.phase === "cleanup") {
+          return [journal.leaseIdentity === undefined ? "cleanup-barrier-only" : "cleanup-with-lease"];
+        }
+        return [journal.phase];
       };
       const journalTemporaryPath = `${lock.journalPath}.tokengraph-write-v2.tmp`;
       const leasePath = join(lock.compatibilityPath, "lease.json");
@@ -273,27 +305,32 @@ async function main() {
         async createFileDurable(path, text) {
           const kind = resolve(path) === resolve(journalTemporaryPath)
             ? "journal" : resolve(path) === resolve(leaseTemporaryPath) ? "lease" : undefined;
+          const states = kind === "journal"
+            ? journalStates(JSON.parse(text))
+            : kind === "lease" ? journalStates(JSON.parse(await readFile(lock.journalPath, "utf8"))) : undefined;
           return lease.createProductionProtocolFileForTesting(path, text, undefined, async (point) => {
             if (kind === undefined) return;
             const suffix = point === "after-create" ? "create"
               : point === "after-write" ? "write"
                 : point === "after-sync" ? "sync" : "parent-flush";
-            await maybePause(`after-${kind}-${suffix}`);
+            await maybePause(`after-${kind}-${suffix}`, states);
           });
         },
         async replaceFileFromTemporary(temporaryPath, targetPath, temporaryIdentity, expectedTargetIdentity) {
           const kind = resolve(targetPath) === resolve(lock.journalPath)
             ? "journal" : resolve(targetPath) === resolve(leasePath) ? "lease" : undefined;
+          const states = kind === "journal"
+            ? journalStates(JSON.parse(await readFile(temporaryPath, "utf8")))
+            : kind === "lease" ? journalStates(JSON.parse(await readFile(lock.journalPath, "utf8"))) : undefined;
           const snapshot = await lease.replaceProductionProtocolFileForTesting(
             temporaryPath, targetPath, temporaryIdentity, expectedTargetIdentity, undefined, async (point) => {
               if (kind === undefined) return;
               await maybePause(point === "after-rename"
-                ? `after-${kind}-rename` : `after-${kind}-rename-parent-flush`);
+                ? `after-${kind}-rename` : `after-${kind}-rename-parent-flush`, states);
             }
           );
-          if (!paused && resolve(targetPath) === resolve(lock.journalPath) && request.pauseAt === "after-journal-state") {
-            const journal = JSON.parse(await readFile(targetPath, "utf8"));
-            if (journalState(journal) === request.pauseState) await pauseForever();
+          if (!paused && resolve(targetPath) === resolve(lock.journalPath)) {
+            await maybePause("after-journal-state", states);
           }
           return snapshot;
         },

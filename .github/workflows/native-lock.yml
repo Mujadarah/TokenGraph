@@ -1,0 +1,280 @@
+name: Native lock targets
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      assemble:
+        description: Upload the trusted six-target bootstrap asset set
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  native-target:
+    name: ${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            id: win32-x64
+            file: tokengraph-lock.win32-x64.node
+            platform: windows
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            id: win32-arm64
+            file: tokengraph-lock.win32-arm64.node
+            platform: windows
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            id: linux-x64-gnu
+            file: tokengraph-lock.linux-x64.node
+            platform: linux
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            id: linux-arm64-gnu
+            file: tokengraph-lock.linux-arm64.node
+            platform: linux
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            id: darwin-x64
+            file: tokengraph-lock.darwin-x64.node
+            platform: macos
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            id: darwin-arm64
+            file: tokengraph-lock.darwin-arm64.node
+            platform: macos
+    defaults:
+      run:
+        working-directory: plugins/tokengraph
+        shell: bash
+    env:
+      RUST_TOOLCHAIN: 1.97.1
+      UBI8_IMAGE: registry.access.redhat.com/ubi8/ubi@sha256:a94c5e31450d30190afe6f7a09628dd1dd7a3dc98784ba5ed1d19fd77098fcb2
+      TOKENGRAPH_NATIVE_CURRENT_ASSET: ${{ github.workspace }}/plugins/tokengraph/native-output/${{ matrix.id }}/${{ matrix.file }}
+      TOKENGRAPH_NATIVE_EXHAUSTIVE_RECOVERY: "1"
+      MATRIX_RUNNER: ${{ matrix.runner }}
+      MATRIX_TARGET: ${{ matrix.target }}
+      MATRIX_ID: ${{ matrix.id }}
+      MATRIX_FILE: ${{ matrix.file }}
+
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Activate pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.14.0 --activate
+          test "$(pnpm --version)" = "10.14.0"
+
+      - name: Install exact dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install exact Rust toolchain and native target
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup target add "$MATRIX_TARGET" --toolchain "$RUST_TOOLCHAIN"
+          rustup default "$RUST_TOOLCHAIN"
+          test "$(rustc +"$RUST_TOOLCHAIN" --version | cut -d' ' -f2)" = "$RUST_TOOLCHAIN"
+
+      - name: Build Linux release bytes at the RHEL 8 glibc 2.28 floor
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          repository_root="$(git rev-parse --show-toplevel)"
+          node_bin="$(dirname "$(command -v node)")"
+          docker run --rm \
+            --env CARGO_HOME=/root/.cargo \
+            --env RUSTUP_HOME=/root/.rustup \
+            --env MATRIX_TARGET="$MATRIX_TARGET" \
+            --env HOST_UID="$(id -u)" \
+            --env HOST_GID="$(id -g)" \
+            --volume "$repository_root:/workspace" \
+            --volume "$HOME/.cargo:/root/.cargo" \
+            --volume "$HOME/.rustup:/root/.rustup:ro" \
+            --volume "$node_bin:/opt/node:ro" \
+            --workdir /workspace/plugins/tokengraph \
+            "$UBI8_IMAGE" \
+            bash -euo pipefail -c '
+              dnf install -y gcc gcc-c++ git make openssl-devel pkgconf-pkg-config
+              git config --global --add safe.directory /workspace
+              export PATH=/opt/node:/root/.cargo/bin:$PATH
+              test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.28"
+              test "$(rustc +1.97.1 --version | cut -d" " -f2)" = "1.97.1"
+              node scripts/build-native-lock-addon.mjs --target "$MATRIX_TARGET" --out native-output
+              chown -R "$HOST_UID:$HOST_GID" native-output
+            '
+
+      - name: Build Windows and macOS release bytes
+        if: matrix.platform != 'linux'
+        run: pnpm native:build -- --target "$MATRIX_TARGET" --out native-output
+
+      - name: Run native Rust tests on the real target architecture
+        run: cargo test --locked --manifest-path native/lock-addon/Cargo.toml --target "$MATRIX_TARGET"
+
+      - name: Load and validate the exact built target through private staging
+        run: |
+          node --input-type=module -e 'import { lstatSync } from "node:fs"; const s = lstatSync(process.env.TOKENGRAPH_NATIVE_CURRENT_ASSET, { bigint: true }); if (!s.isFile() || s.isSymbolicLink() || s.nlink !== 1n || s.size <= 0n) process.exit(1);'
+          pnpm vitest run tests/native-lock-addon.test.ts tests/native-lock-packaging.test.ts --reporter=verbose
+
+      - name: Run acquire busy release crash and exhaustive durable-cut recovery
+        run: pnpm test:activated -- tests/storage-lock-process.test.ts --reporter=verbose
+
+      - name: Write exact build receipt after all native tests pass
+        env:
+          RECEIPT_COMMIT: ${{ github.sha }}
+          RECEIPT_RUN_ID: ${{ github.run_id }}
+          RECEIPT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { lstat, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+          import { dirname, resolve } from "node:path";
+
+          const required = ["MATRIX_RUNNER", "MATRIX_TARGET", "MATRIX_ID", "MATRIX_FILE", "RECEIPT_COMMIT", "RECEIPT_RUN_ID", "RECEIPT_RUN_ATTEMPT", "RUNNER_ARCH"];
+          for (const name of required) if (!process.env[name] || process.env[name].includes("\0")) throw new Error(`Missing or invalid ${name}.`);
+          const directory = resolve("native-output", process.env.MATRIX_ID);
+          const path = resolve(directory, process.env.MATRIX_FILE);
+          if (resolve(await realpath(directory)) !== directory || resolve(await realpath(path)) !== path) throw new Error("Native output is linked or noncanonical.");
+          const entries = await readdir(directory);
+          if (entries.length !== 1 || entries[0] !== process.env.MATRIX_FILE) throw new Error("Native output contains an unexpected entry.");
+          const stats = await lstat(path, { bigint: true });
+          if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n || stats.size <= 0n) throw new Error("Native output is not a safe regular file.");
+          const bytes = await readFile(path);
+          const receipt = {
+            schemaVersion: 1,
+            commit: process.env.RECEIPT_COMMIT,
+            workflowRunId: process.env.RECEIPT_RUN_ID,
+            workflowRunAttempt: process.env.RECEIPT_RUN_ATTEMPT,
+            runner: process.env.MATRIX_RUNNER,
+            runnerArch: process.env.RUNNER_ARCH,
+            target: process.env.MATRIX_TARGET,
+            id: process.env.MATRIX_ID,
+            file: process.env.MATRIX_FILE,
+            bytes: bytes.length,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+            rustToolchain: process.env.RUST_TOOLCHAIN,
+            nodeVersion: process.version
+          };
+          await writeFile(resolve(directory, "build-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+          const finalEntries = (await readdir(directory)).sort();
+          if (finalEntries.join("\0") !== ["build-receipt.json", process.env.MATRIX_FILE].sort().join("\0")) throw new Error("Native receipt layout is not exact.");
+          NODE
+
+      - name: Upload trusted target and receipt
+        if: github.event_name == 'workflow_dispatch' && inputs.assemble == true && github.repository == 'Mujadarah/TokenGraph' && startsWith(github.ref, 'refs/heads/') && github.run_attempt == 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-lock-${{ matrix.id }}
+          path: |
+            plugins/tokengraph/native-output/${{ matrix.id }}/${{ matrix.file }}
+            plugins/tokengraph/native-output/${{ matrix.id }}/build-receipt.json
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 1
+
+  assemble-native-assets:
+    name: Assemble verified native assets
+    needs: native-target
+    if: github.event_name == 'workflow_dispatch' && inputs.assemble == true && github.repository == 'Mujadarah/TokenGraph' && startsWith(github.ref, 'refs/heads/') && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Download all six same-run target artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: native-lock-*
+          path: plugins/tokengraph/assembled-download
+          merge-multiple: false
+
+      - name: Verify receipts and assemble an exact six-target tree
+        working-directory: plugins/tokengraph
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { cp, lstat, mkdir, readFile, readdir, realpath } from "node:fs/promises";
+          import { resolve } from "node:path";
+
+          const expectedTargets = new Map([
+            ["win32-x64", { runner: "windows-2025", runnerArch: "X64", target: "x86_64-pc-windows-msvc", file: "tokengraph-lock.win32-x64.node" }],
+            ["win32-arm64", { runner: "windows-11-arm", runnerArch: "ARM64", target: "aarch64-pc-windows-msvc", file: "tokengraph-lock.win32-arm64.node" }],
+            ["linux-x64-gnu", { runner: "ubuntu-24.04", runnerArch: "X64", target: "x86_64-unknown-linux-gnu", file: "tokengraph-lock.linux-x64.node" }],
+            ["linux-arm64-gnu", { runner: "ubuntu-24.04-arm", runnerArch: "ARM64", target: "aarch64-unknown-linux-gnu", file: "tokengraph-lock.linux-arm64.node" }],
+            ["darwin-x64", { runner: "macos-15-intel", runnerArch: "X64", target: "x86_64-apple-darwin", file: "tokengraph-lock.darwin-x64.node" }],
+            ["darwin-arm64", { runner: "macos-15", runnerArch: "ARM64", target: "aarch64-apple-darwin", file: "tokengraph-lock.darwin-arm64.node" }]
+          ]);
+          if (expectedTargets.size !== 6) throw new Error("Expected target table is incomplete.");
+          const downloadRoot = resolve("assembled-download");
+          const downloaded = (await readdir(downloadRoot)).sort();
+          const expectedArtifacts = [...expectedTargets.keys()].map((id) => `native-lock-${id}`).sort();
+          if (downloaded.join("\0") !== expectedArtifacts.join("\0")) throw new Error("Downloaded artifact set is not exact.");
+          const assembled = resolve("assembled-native-lock");
+          await mkdir(assembled, { mode: 0o700 });
+          for (const [id, expected] of expectedTargets) {
+            const source = resolve(downloadRoot, `native-lock-${id}`);
+            if (resolve(await realpath(source)) !== source) throw new Error(`Artifact ${id} is linked or noncanonical.`);
+            const entries = (await readdir(source)).sort();
+            if (entries.join("\0") !== ["build-receipt.json", expected.file].sort().join("\0")) throw new Error(`Artifact ${id} layout is not exact.`);
+            const receiptPath = resolve(source, "build-receipt.json");
+            const receiptStats = await lstat(receiptPath, { bigint: true });
+            if (!receiptStats.isFile() || receiptStats.isSymbolicLink() || receiptStats.nlink !== 1n || receiptStats.size <= 0n || receiptStats.size > 8192n ||
+                resolve(await realpath(receiptPath)) !== receiptPath) throw new Error(`Artifact ${id} receipt is unsafe.`);
+            const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+            const receiptKeys = Object.keys(receipt).sort();
+            const expectedReceiptKeys = ["bytes", "commit", "file", "id", "nodeVersion", "runner", "runnerArch", "rustToolchain", "schemaVersion", "sha256", "target", "workflowRunAttempt", "workflowRunId"].sort();
+            if (receiptKeys.join("\0") !== expectedReceiptKeys.join("\0")) throw new Error(`Artifact ${id} receipt schema is not exact.`);
+            const binaryPath = resolve(source, expected.file);
+            const stats = await lstat(binaryPath, { bigint: true });
+            if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n || stats.size <= 0n || stats.size > 67108864n ||
+                resolve(await realpath(binaryPath)) !== binaryPath) throw new Error(`Artifact ${id} is unsafe.`);
+            const bytes = await readFile(binaryPath);
+            if (receipt.schemaVersion !== 1 || receipt.commit !== process.env.EXPECTED_COMMIT || receipt.id !== id ||
+                receipt.workflowRunId !== process.env.EXPECTED_RUN_ID || receipt.workflowRunAttempt !== process.env.EXPECTED_RUN_ATTEMPT ||
+                receipt.runner !== expected.runner || receipt.runnerArch !== expected.runnerArch || receipt.target !== expected.target || receipt.file !== expected.file ||
+                receipt.bytes !== bytes.length || receipt.sha256 !== createHash("sha256").update(bytes).digest("hex") ||
+                receipt.rustToolchain !== "1.97.1" || typeof receipt.nodeVersion !== "string" || !/^v22\./u.test(receipt.nodeVersion)) {
+              throw new Error(`Artifact ${id} receipt does not match its exact bytes and provenance.`);
+            }
+            const destination = resolve(assembled, id);
+            await mkdir(destination, { mode: 0o700 });
+            await cp(binaryPath, resolve(destination, expected.file), { force: false, errorOnExist: true });
+            await cp(resolve(source, "build-receipt.json"), resolve(destination, "build-receipt.json"), { force: false, errorOnExist: true });
+          }
+          NODE
+
+      - name: Upload one verified same-run asset set
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: assembled-native-lock
+          path: |
+            plugins/tokengraph/assembled-native-lock
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 1
