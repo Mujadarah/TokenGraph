@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -41,8 +41,34 @@ describe("real native test runner contract", () => {
     expect(runner).toMatch(/preactivation/iu);
     expect(runner).toMatch(/activated/iu);
     const main = runner.slice(runner.indexOf("async function main"));
-    expect(main.indexOf('runContained("preactivation"')).toBeLessThan(main.indexOf("mkdtemp("));
+    expect(main.indexOf('runContained("preactivation"')).toBeLessThan(main.indexOf("createHarnessRoot("));
     expect(runner).not.toMatch(/pnpm|\.cmd/iu);
+  });
+
+  it.runIf(process.platform === "win32")("creates the contained harness beneath the physical temporary directory", async () => {
+    const originalTemp = process.env.TEMP;
+    const originalTmp = process.env.TMP;
+    const outer = await mkdtemp(join(tmpdir(), "tokengraph-runner-physical-temp-"));
+    roots.push(outer);
+    const physical = resolve(outer, "physical");
+    const alias = resolve(outer, "alias");
+    await mkdir(physical);
+    await symlink(physical, alias, "junction");
+    process.env.TEMP = alias;
+    process.env.TMP = alias;
+    try {
+      const runner = await import(pathToFileURL(resolve("scripts/run-tests.mjs")).href) as {
+        createHarnessRoot?: () => Promise<string>;
+      };
+      expect(runner.createHarnessRoot).toBeTypeOf("function");
+      const harnessRoot = await runner.createHarnessRoot!();
+      expect(harnessRoot).toBe(await realpath(harnessRoot));
+    } finally {
+      if (originalTemp === undefined) delete process.env.TEMP;
+      else process.env.TEMP = originalTemp;
+      if (originalTmp === undefined) delete process.env.TMP;
+      else process.env.TMP = originalTmp;
+    }
   });
 
   it("specifies bounded whole-tree termination and no-follow control cleanup", async () => {

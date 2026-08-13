@@ -426,12 +426,17 @@ async function removeTreeNoFollow(path) {
 async function removeOwnedHarness(path, identity) {
   const stats = await lstat(path, { bigint: true });
   const canonical = await realpath(path);
-  const fromTemp = relative(resolve(tmpdir()), path);
+  const physicalTemporaryDirectory = await realpath(tmpdir());
+  const fromTemp = relative(physicalTemporaryDirectory, path);
   if (canonical !== path || !stats.isDirectory() || stats.isSymbolicLink() || `${stats.dev}:${stats.ino}:${stats.birthtimeNs}` !== identity || fromTemp.includes(sep) || !basename(path).startsWith(harnessPrefix)) throw new Error(`Harness cleanup identity failed; evidence preserved at ${path}.`);
   const entries = (await readdir(path)).sort();
   if (entries.join("\0") !== ["assets", "build", "runtime", "staging"].join("\0")) throw new Error(`Harness cleanup layout failed; evidence preserved at ${path}.`);
   await removeTreeNoFollow(path);
   await requireAbsentNoFollow(path, "Harness root");
+}
+
+export async function createHarnessRoot() {
+  return await mkdtemp(join(await realpath(tmpdir()), harnessPrefix));
 }
 
 export async function runWithContainmentFailurePolicy(operation, cleanupOnOrdinaryFailure) {
@@ -451,7 +456,7 @@ async function main() {
     if (code !== 0) process.exit(code);
     if (mode === "preactivation") return;
   }
-  const harnessRoot = await mkdtemp(join(tmpdir(), harnessPrefix));
+  const harnessRoot = await createHarnessRoot();
   const initial = await lstat(harnessRoot, { bigint: true });
   const identity = identityOf(initial);
   await runWithContainmentFailurePolicy(async () => {
