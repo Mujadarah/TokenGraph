@@ -135,6 +135,43 @@ jobs:
       - name: Run acquire busy release crash and exhaustive durable-cut recovery
         run: pnpm test:activated tests/storage-lock-process.test.ts --reporter=verbose
 
+      - name: Build the exact installable archive
+        run: |
+          pnpm build
+          node scripts/package-plugin.mjs --json
+
+      - name: Extract and load this runner's packaged archive
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile, mkdir, writeFile } from "node:fs/promises";
+          import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+          import { unzipSync } from "fflate";
+          import { assertExactInstallablePlugin } from "./scripts/installable-plugin-contract.mjs";
+
+          const archive = unzipSync(await readFile(resolve("../../artifacts/tokengraph-0.23.1.zip")));
+          const extractionRoot = resolve("native-archive-validation");
+          await mkdir(extractionRoot, { mode: 0o700 });
+          for (const [archivePath, bytes] of Object.entries(archive)) {
+            if (archivePath.startsWith("/") || /^[A-Za-z]:/u.test(archivePath) || archivePath.includes("\\")) {
+              throw new Error(`Archive entry is absolute or uses a non-portable separator: ${archivePath}`);
+            }
+            const parts = archivePath.split("/");
+            if (parts.includes("..") || parts.includes(".") || parts.includes("")) {
+              throw new Error(`Archive entry is not normalized: ${archivePath}`);
+            }
+            const outputPath = resolve(extractionRoot, ...parts);
+            const relativePath = relative(extractionRoot, outputPath);
+            if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+              throw new Error(`Archive entry escapes the extraction root: ${archivePath}`);
+            }
+            await mkdir(dirname(outputPath), { recursive: true, mode: 0o700 });
+            await writeFile(outputPath, bytes, { flag: "wx", mode: 0o600 });
+          }
+          await assertExactInstallablePlugin(resolve(extractionRoot, "tokengraph"), "Extracted archive plugin");
+          NODE
+          test ! -e native-archive-validation/tokengraph/node_modules
+          pnpm native:validate -- --assets native-archive-validation/tokengraph/assets/native-lock --load-current
+
       - name: Write exact build receipt after all native tests pass
         env:
           RECEIPT_COMMIT: ${{ github.sha }}

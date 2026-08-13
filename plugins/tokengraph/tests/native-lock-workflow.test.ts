@@ -98,6 +98,27 @@ describe("native lock six-target workflow", () => {
     expect(workflow).not.toMatch(/path:\s+(?:\.\.\/|\/|[A-Za-z]:\\)/u);
   });
 
+  it("packages, confines, extracts, and loads the current runner addon before recording success", () => {
+    const workflow = workflowText();
+    const packageArchive = workflow.indexOf("node scripts/package-plugin.mjs --json");
+    const extractArchive = workflow.indexOf("Extract and load this runner's packaged archive");
+    const validateExtracted = workflow.indexOf("--assets native-archive-validation/tokengraph/assets/native-lock --load-current");
+    const receipt = workflow.indexOf("Write exact build receipt after all native tests pass");
+    const upload = workflow.indexOf("Upload trusted target and receipt");
+
+    expect(packageArchive).toBeGreaterThan(-1);
+    expect(extractArchive).toBeGreaterThan(packageArchive);
+    expect(validateExtracted).toBeGreaterThan(extractArchive);
+    expect(receipt).toBeGreaterThan(validateExtracted);
+    expect(upload).toBeGreaterThan(receipt);
+    expect(workflow).toContain('if (archivePath.startsWith("/") || /^[A-Za-z]:/u.test(archivePath) || archivePath.includes("\\\\"))');
+    expect(workflow).toContain('parts.includes("..")');
+    expect(workflow).toContain('relative(extractionRoot, outputPath)');
+    expect(workflow).toContain('if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath))');
+    expect(workflow).toContain('writeFile(outputPath, bytes, { flag: "wx", mode: 0o600 })');
+    expect(workflow).toContain('test ! -e native-archive-validation/tokengraph/node_modules');
+  });
+
   it("binds the process suite to the exact built asset without a production loader seam", () => {
     const runner = readFileSync(runnerPath, "utf8");
     const override = runner.slice(
