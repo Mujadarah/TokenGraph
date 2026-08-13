@@ -1,10 +1,14 @@
 #!/usr/bin/env node
-import { access, chmod, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, relative, resolve, sep } from "node:path";
+import { access, chmod, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
 import { TARGETS } from "./generate-native-lock-manifest.mjs";
-import { INSTALLABLE_ASSET_PATHS } from "./installable-asset-contract.mjs";
+import {
+  assertExactInstallablePlugin,
+  assertExactInstallableSourceInputs,
+  listRegularTree
+} from "./installable-plugin-contract.mjs";
 import { validateNativeLockAssets } from "./validate-native-lock-addon.mjs";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -77,18 +81,6 @@ async function assertReadable(path, label) {
 async function copyRequiredPath(source, destination) {
   await assertReadable(source, relative(pluginRoot, source) || source);
   await cp(source, destination, { recursive: true, force: true });
-}
-
-async function assertExactInstallableAssets(root, label) {
-  const expected = new Set(INSTALLABLE_ASSET_PATHS);
-  const files = await listFiles(root);
-  const unexpected = files.find((file) => !expected.has(file));
-  if (unexpected) throw new Error(`${label} contains an unlisted asset: ${unexpected}.`);
-  const missing = INSTALLABLE_ASSET_PATHS.find((file) => !files.includes(file));
-  if (missing) throw new Error(`${label} is missing required asset: ${missing}.`);
-  if (files.length !== INSTALLABLE_ASSET_PATHS.length) {
-    throw new Error(`${label} must match the exact installable asset allowlist.`);
-  }
 }
 
 function buildReleaseReadme(version) {
@@ -226,17 +218,7 @@ async function copyInstallablePlugin(packageDir, packageJson, version) {
 }
 
 async function listFiles(root, base = root) {
-  const entries = await readdir(root, { withFileTypes: true });
-  const files = [];
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    const path = resolve(root, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...await listFiles(path, base));
-    } else if (entry.isFile()) {
-      files.push(relative(base, path).split(sep).join("/"));
-    }
-  }
-  return files;
+  return listRegularTree(root, "Generated package tree", base);
 }
 
 function buildCodexMarketplace(pluginPath) {
@@ -306,7 +288,7 @@ async function runPackage() {
 
   const sourceNativeAssets = resolve(pluginRoot, "assets", "native-lock");
   await validateNativeLockAssets({ assetsDir: sourceNativeAssets, loadCurrent: true });
-  await assertExactInstallableAssets(resolve(pluginRoot, "assets"), "Source assets");
+  await assertExactInstallableSourceInputs(pluginRoot, repoRoot);
 
   await assertReadable(resolve(pluginRoot, "dist", "index.js"), "built MCP entry");
   await assertReadable(resolve(pluginRoot, "dist", "hooks.js"), "built lifecycle hook entry");
@@ -318,7 +300,7 @@ async function runPackage() {
   if (args.release) {
     await copyInstallablePlugin(args.releaseDir, packageJson, version);
     await validateNativeLockAssets({ assetsDir: resolve(args.releaseDir, "assets", "native-lock"), loadCurrent: true });
-    await assertExactInstallableAssets(resolve(args.releaseDir, "assets"), "Generated release assets");
+    await assertExactInstallablePlugin(args.releaseDir, "Generated release plugin");
     return {
       status: "ok",
       mode: "release",
@@ -333,7 +315,7 @@ async function runPackage() {
   await mkdir(args.outRoot, { recursive: true });
   await copyInstallablePlugin(packageDir, packageJson, version);
   await validateNativeLockAssets({ assetsDir: resolve(packageDir, "assets", "native-lock"), loadCurrent: true });
-  await assertExactInstallableAssets(resolve(packageDir, "assets"), "Generated package assets");
+  await assertExactInstallablePlugin(packageDir, "Generated package plugin");
   await writeMarketplace(codexMarketplacePath, buildCodexMarketplace("./tokengraph"));
   await writeMarketplace(claudeMarketplacePath, buildClaudeMarketplace(version, "./tokengraph"));
   await writeDeterministicArchive(bundleDir, archivePath);

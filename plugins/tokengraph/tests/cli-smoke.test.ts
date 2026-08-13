@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -53,6 +53,24 @@ const exactPackagedAssets = [
   "native-lock/linux-arm64-gnu/tokengraph-lock.linux-arm64.node",
   "native-lock/manifest.json",
   "native-lock/win32-arm64/tokengraph-lock.win32-arm64.node"
+].sort();
+const exactPackagedPluginPaths = [
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+  ".mcp.claude.json",
+  ".mcp.json",
+  ...exactPackagedAssets.map((path) => `assets/${path}`),
+  "dist/cli.js",
+  "dist/hooks.js",
+  "dist/index.js",
+  "dist/polyglot-worker.js",
+  "dist/typescript-worker.cjs",
+  "hooks/hooks.json",
+  "LICENSE",
+  "NOTICE",
+  "package.json",
+  "README.md",
+  ...[...requiredFocusedSkillDirs, "tokengraph"].map((skill) => `skills/${skill}/SKILL.md`)
 ].sort();
 
 async function makeRoot(): Promise<string> {
@@ -576,6 +594,10 @@ describe("tokengraph release package command", () => {
 
     const archive = unzipSync(await readFile(report.archivePath));
     const archiveListing = Object.keys(archive);
+    expect(archiveListing
+      .filter((path) => path.startsWith("tokengraph/") && !path.endsWith("/"))
+      .map((path) => path.slice("tokengraph/".length))
+      .sort()).toEqual(exactPackagedPluginPaths);
     expect(archiveListing).toEqual(expect.arrayContaining([
       ".agents/plugins/marketplace.json",
       ".claude-plugin/marketplace.json",
@@ -698,6 +720,67 @@ describe("tokengraph release package command", () => {
       [join(copiedPlugin, "scripts", "package-plugin.mjs"), "--release", "--out-release", join(repoCopy, "release", "tokengraph")],
       { cwd: copiedPlugin, env: process.env }
     )).rejects.toMatchObject({ stderr: expect.stringMatching(/asset|allowlist|unlisted/i) });
+  });
+
+  it.each([
+    { mode: "release", args: ["--release"] },
+    { mode: "bundle", args: ["--json"] }
+  ])("refuses a source asset symlink before $mode output is produced", async ({ args }) => {
+    const { copiedPlugin, repoCopy } = await makePackageRepositoryCopy();
+    const source = join(copiedPlugin, "assets", "native-lock", "win32-x64", "tokengraph-lock.win32-x64.node");
+    await symlink(source, join(copiedPlugin, "assets", "unlisted-helper"), "file");
+    const commandArgs = [join(copiedPlugin, "scripts", "package-plugin.mjs"), ...args];
+    if (args.includes("--release")) commandArgs.push("--out-release", join(repoCopy, "release", "tokengraph"));
+    else commandArgs.push("--out", join(repoCopy, "artifacts"));
+
+    await expect(execFileAsync(process.execPath, commandArgs, {
+      cwd: copiedPlugin,
+      env: process.env
+    })).rejects.toMatchObject({ stderr: expect.stringMatching(/asset|link|regular|allowlist/i) });
+    await expect(access(args.includes("--release")
+      ? join(repoCopy, "release", "tokengraph")
+      : join(repoCopy, "artifacts", "tokengraph-0.23.1"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses a linked source asset directory", async () => {
+    const { copiedPlugin, repoCopy } = await makePackageRepositoryCopy();
+    await symlink(
+      join(copiedPlugin, "assets", "native-lock", "win32-x64"),
+      join(copiedPlugin, "assets", "unlisted-directory"),
+      "junction"
+    );
+
+    await expect(execFileAsync(process.execPath, [
+      join(copiedPlugin, "scripts", "package-plugin.mjs"), "--out", join(repoCopy, "artifacts"), "--json"
+    ], { cwd: copiedPlugin, env: process.env })).rejects.toMatchObject({
+      stderr: expect.stringMatching(/asset|directory|link|regular|allowlist/i)
+    });
+  });
+
+  it("refuses an executable in a copied source skill directory", async () => {
+    const { copiedPlugin, repoCopy } = await makePackageRepositoryCopy();
+    await cp(
+      join(copiedPlugin, "assets", "native-lock", "win32-x64", "tokengraph-lock.win32-x64.node"),
+      join(copiedPlugin, "skills", "tokengraph", "unlisted-helper.exe")
+    );
+
+    await expect(execFileAsync(process.execPath, [
+      join(copiedPlugin, "scripts", "package-plugin.mjs"), "--out", join(repoCopy, "artifacts"), "--json"
+    ], { cwd: copiedPlugin, env: process.env })).rejects.toMatchObject({
+      stderr: expect.stringMatching(/installable|skill|allowlist|unlisted/i)
+    });
+  });
+
+  it("refuses a symlink in a copied source skill directory", async () => {
+    const { copiedPlugin, repoCopy } = await makePackageRepositoryCopy();
+    const source = join(copiedPlugin, "assets", "native-lock", "win32-x64", "tokengraph-lock.win32-x64.node");
+    await symlink(source, join(copiedPlugin, "skills", "tokengraph", "unlisted-helper"), "file");
+
+    await expect(execFileAsync(process.execPath, [
+      join(copiedPlugin, "scripts", "package-plugin.mjs"), "--out", join(repoCopy, "artifacts"), "--json"
+    ], { cwd: copiedPlugin, env: process.env })).rejects.toMatchObject({
+      stderr: expect.stringMatching(/installable|skill|link|regular|allowlist/i)
+    });
   });
 
   it("validates a freshly generated release with core skill contracts", async () => {
@@ -857,6 +940,57 @@ describe("tokengraph release package command", () => {
       cwd: copiedPlugin,
       env: process.env
     })).rejects.toMatchObject({ stderr: expect.stringMatching(/asset|allowlist|unlisted/i) });
+  });
+
+  it("rejects a non-regular symlink entry in release assets", async () => {
+    const sandbox = await makeRoot();
+    const repoRoot = resolve("..", "..");
+    const repoCopy = join(sandbox, "repo");
+    await cp(repoRoot, repoCopy, {
+      recursive: true,
+      filter: (path) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts", ".superpowers", "target"].includes(path.split(/[\\/]/).at(-1) ?? "")
+    });
+    const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+    const generatedRelease = join(repoCopy, "release", "tokengraph");
+    await execFileAsync(process.execPath, [resolve("scripts", "package-plugin.mjs"), "--release", "--out-release", generatedRelease, "--json"], {
+      cwd: process.cwd(),
+      env: process.env
+    });
+    const source = join(generatedRelease, "assets", "native-lock", "win32-x64", "tokengraph-lock.win32-x64.node");
+    await symlink(source, join(generatedRelease, "assets", "unlisted-helper"), "file");
+
+    await expect(execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "validate-plugin.mjs")], {
+      cwd: copiedPlugin,
+      env: process.env
+    })).rejects.toMatchObject({ stderr: expect.stringMatching(/asset|link|regular|allowlist/i) });
+  });
+
+  it.each([
+    { kind: "executable", linked: false },
+    { kind: "symlink", linked: true }
+  ])("rejects an unlisted $kind in a packaged release skill directory", async ({ linked }) => {
+    const sandbox = await makeRoot();
+    const repoRoot = resolve("..", "..");
+    const repoCopy = join(sandbox, "repo");
+    await cp(repoRoot, repoCopy, {
+      recursive: true,
+      filter: (path) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts", ".superpowers", "target"].includes(path.split(/[\\/]/).at(-1) ?? "")
+    });
+    const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+    const generatedRelease = join(repoCopy, "release", "tokengraph");
+    await execFileAsync(process.execPath, [resolve("scripts", "package-plugin.mjs"), "--release", "--out-release", generatedRelease, "--json"], {
+      cwd: process.cwd(),
+      env: process.env
+    });
+    const source = join(generatedRelease, "assets", "native-lock", "win32-x64", "tokengraph-lock.win32-x64.node");
+    const destination = join(generatedRelease, "skills", "tokengraph", linked ? "unlisted-helper" : "unlisted-helper.exe");
+    if (linked) await symlink(source, destination, "file");
+    else await cp(source, destination);
+
+    await expect(execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "validate-plugin.mjs")], {
+      cwd: copiedPlugin,
+      env: process.env
+    })).rejects.toMatchObject({ stderr: expect.stringMatching(/installable|skill|link|regular|allowlist|unlisted/i) });
   });
 
   it("ignores non-public Cargo target output during source text scanning", async () => {
