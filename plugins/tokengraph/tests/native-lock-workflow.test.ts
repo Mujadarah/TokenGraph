@@ -59,6 +59,9 @@ describe("native lock six-target workflow", () => {
     expect(workflow).toContain("pnpm@10.14.0");
     expect(workflow).toMatch(/registry\.access\.redhat\.com\/ubi8\/ubi@sha256:[0-9a-f]{64}/u);
     expect(workflow).not.toMatch(/registry\.access\.redhat\.com\/ubi8\/ubi:[^\s]+/u);
+    expect(workflow).toContain("--env CARGO_HOME=/tmp/tokengraph-cargo");
+    expect(workflow).toContain('--volume "$HOME/.cargo/bin:/opt/cargo:ro"');
+    expect(workflow).not.toContain('--volume "$HOME/.cargo:/root/.cargo"');
   });
 
   it("tests each built target before uploading an exact confined artifact", () => {

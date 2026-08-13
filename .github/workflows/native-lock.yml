@@ -99,13 +99,13 @@ jobs:
           repository_root="$(git rev-parse --show-toplevel)"
           node_bin="$(dirname "$(command -v node)")"
           docker run --rm \
-            --env CARGO_HOME=/root/.cargo \
+            --env CARGO_HOME=/tmp/tokengraph-cargo \
             --env RUSTUP_HOME=/root/.rustup \
             --env MATRIX_TARGET="$MATRIX_TARGET" \
             --env HOST_UID="$(id -u)" \
             --env HOST_GID="$(id -g)" \
             --volume "$repository_root:/workspace" \
-            --volume "$HOME/.cargo:/root/.cargo" \
+            --volume "$HOME/.cargo/bin:/opt/cargo:ro" \
             --volume "$HOME/.rustup:/root/.rustup:ro" \
             --volume "$node_bin:/opt/node:ro" \
             --workdir /workspace/plugins/tokengraph \
@@ -113,7 +113,7 @@ jobs:
             bash -euo pipefail -c '
               dnf install -y gcc gcc-c++ git make openssl-devel pkgconf-pkg-config
               git config --global --add safe.directory /workspace
-              export PATH=/opt/node:/root/.cargo/bin:$PATH
+              export PATH=/opt/node:/opt/cargo:$PATH
               test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.28"
               test "$(rustc +1.97.1 --version | cut -d" " -f2)" = "1.97.1"
               node scripts/build-native-lock-addon.mjs --target "$MATRIX_TARGET" --out native-output

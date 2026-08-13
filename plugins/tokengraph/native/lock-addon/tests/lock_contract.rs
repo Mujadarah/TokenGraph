@@ -8,10 +8,16 @@ use std::{
 
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
-#[cfg(windows)]
-use std::os::windows::fs::OpenOptionsExt;
 #[cfg(any(windows, unix))]
 use std::process::Child;
+#[cfg(windows)]
+use std::{
+    ffi::OsString,
+    os::windows::{
+        ffi::{OsStrExt, OsStringExt},
+        fs::OpenOptionsExt,
+    },
+};
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
 
@@ -69,7 +75,7 @@ fn addon_exports_abi_version_as_a_numeric_non_callable_property() {
                  if (addon.abiVersion !== 1) throw new Error(`abiVersion must equal 1, received ${addon.abiVersion}`);",
             )
             .arg("--")
-            .arg(&node_addon),
+            .arg(node_loadable_path(&node_addon)),
         "node native ABI shape test",
     );
     assert!(
@@ -717,7 +723,7 @@ struct TestTempDir {
 
 impl TestTempDir {
     fn new(label: &str) -> Self {
-        let parent = std::env::temp_dir();
+        let parent = fs::canonicalize(std::env::temp_dir()).unwrap();
         for attempt in 0..8 {
             let nonce = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -746,7 +752,8 @@ impl TestTempDir {
 
 impl Drop for TestTempDir {
     fn drop(&mut self) {
-        if self.path.starts_with(std::env::temp_dir()) {
+        let physical_temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+        if self.path.starts_with(physical_temp) {
             let _ = fs::remove_dir_all(&self.path);
         }
     }
@@ -781,4 +788,27 @@ fn cargo_cdylib_name(target_os: &str) -> &'static str {
         "macos" => "libtokengraph_lock.dylib",
         unsupported => panic!("unsupported cdylib target OS: {unsupported}"),
     }
+}
+
+#[cfg(windows)]
+fn node_loadable_path(path: &Path) -> PathBuf {
+    let wide = path.as_os_str().encode_wide().collect::<Vec<_>>();
+    let verbatim_unc = r"\\?\UNC\".encode_utf16().collect::<Vec<_>>();
+    let verbatim = r"\\?\".encode_utf16().collect::<Vec<_>>();
+    let ordinary = if wide.starts_with(&verbatim_unc) {
+        r"\\"
+            .encode_utf16()
+            .chain(wide.into_iter().skip(verbatim_unc.len()))
+            .collect()
+    } else if wide.starts_with(&verbatim) {
+        wide.into_iter().skip(verbatim.len()).collect()
+    } else {
+        wide
+    };
+    PathBuf::from(OsString::from_wide(&ordinary))
+}
+
+#[cfg(not(windows))]
+fn node_loadable_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }

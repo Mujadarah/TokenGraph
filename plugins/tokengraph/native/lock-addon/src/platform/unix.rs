@@ -407,7 +407,8 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let path = std::env::temp_dir().join(format!(
+            let physical_temp = std_fs::canonicalize(std::env::temp_dir()).unwrap();
+            let path = physical_temp.join(format!(
                 "tokengraph-lock-unix-{label}-{}-{nonce}",
                 std::process::id()
             ));

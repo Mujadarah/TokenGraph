@@ -1033,7 +1033,7 @@ it.runIf(process.env.TOKENGRAPH_NATIVE_CURRENT_ASSET)("loads the real addon and 
   // Windows retains a loaded DLL until this Vitest process exits. The
   // controller removes this exact task fixture after the process completes.
   if (process.platform === "win32") roots.splice(roots.indexOf(fixture.root), 1);
-  const injectedLoader = vi.fn(() => validRawAddon());
+  const injectedLoader = vi.fn(() => validRawAddon(expectedImplementation(currentTarget)));
   await loadNativeLockAddon(fakeRuntime(fixture, { loadModule: injectedLoader }));
   expect(injectedLoader).toHaveBeenCalledTimes(1);
   const require = createRequire(import.meta.url);
