@@ -78,12 +78,13 @@ export function parseBuildArguments(argv) {
   return { target, out };
 }
 
-function targetFlags(target, checkoutRoot, userProfile) {
-  const flags = [];
-  if (target.platform === "win32") {
-    flags.push(`--remap-path-prefix=${userProfile}=/tokengraph-build-user`);
-  }
-  flags.push(`--remap-path-prefix=${checkoutRoot}=/tokengraph`, "-Cstrip=symbols");
+function targetFlags(target, checkoutRoot, userProfile, cargoHome) {
+  const flags = [
+    `--remap-path-prefix=${userProfile}=/tokengraph-build-user`,
+    `--remap-path-prefix=${cargoHome}=/tokengraph-cargo`,
+    `--remap-path-prefix=${checkoutRoot}=/tokengraph`,
+    "-Cstrip=symbols"
+  ];
   if (target.platform === "win32") {
     flags.push("-Clink-arg=/Brepro", "-Ctarget-feature=+crt-static");
   } else if (target.platform === "darwin") {
@@ -96,7 +97,8 @@ export function buildEnvironmentForTarget(target, checkoutRoot, sourceDateEpoch,
   target = canonicalTargetRecord(target);
   if (!/^\d+$/u.test(sourceDateEpoch)) throw new Error("SOURCE_DATE_EPOCH must be an integer timestamp.");
   const userProfile = resolve(options.userProfile ?? homedir());
-  const flags = targetFlags(target, resolve(checkoutRoot), userProfile);
+  const cargoHome = resolve(options.cargoHome ?? process.env.CARGO_HOME ?? resolve(userProfile, ".cargo"));
+  const flags = targetFlags(target, resolve(checkoutRoot), userProfile, cargoHome);
   const environment = {
     SOURCE_DATE_EPOCH: sourceDateEpoch,
     CARGO_INCREMENTAL: "0",

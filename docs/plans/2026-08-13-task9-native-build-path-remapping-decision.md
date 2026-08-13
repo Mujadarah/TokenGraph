@@ -8,23 +8,27 @@ Status: decided
 
 Task 9 produced and independently verified all six native addons. Task 10 then
 applied the existing public-release machine-path scan to the committed source
-assets. Both Windows PE files contain the hosted runner's user-profile prefix.
+assets. The Windows PE and macOS Mach-O files contain hosted-runner user-profile
+prefixes, while the Linux ELF files contain the container Cargo-home prefix.
 Their manifests and receipts are otherwise valid, but packaging those bytes
-would violate the repository rule that machine-local state must not enter public
-release files.
+would violate the repository rule that machine-local state must not enter
+public release files.
 
 The existing build flags remap the repository checkout only. Rust dependencies
-and toolchain inputs can still contribute paths rooted at the Windows user
-profile, so checkout-only remapping is insufficient.
+and toolchain inputs can still contribute paths rooted at the build user's home
+or a separately configured Cargo home, so checkout-only remapping is
+insufficient.
 
 ## Decision
 
 1. The native validator rejects an addon containing a Windows user-profile,
-   POSIX home-directory, or macOS user-directory path even when its declared
-   byte length and SHA-256 are correct. The error remains path-free.
-2. Windows native builds add a deterministic Rust path-prefix remap from the
-   build user's profile directory to `/tokengraph-build-user`, in addition to
-   the existing checkout remap and reproducible/static-CRT flags.
+   POSIX or macOS user directory, temporary Cargo home, or workflow workspace
+   path even when its declared byte length and SHA-256 are correct. The error
+   remains path-free.
+2. Every native build adds deterministic Rust path-prefix remaps from the build
+   user's home and Cargo home to `/tokengraph-build-user` and
+   `/tokengraph-cargo`, in addition to the existing checkout remap and
+   target-specific reproducibility flags.
 3. Task 9 is reopened. The temporary bootstrap branch, exact-SHA six-target
    workflow dispatch, receipt verification, source asset regeneration, cleanup,
    and independent adversarial review must be repeated from the corrected build

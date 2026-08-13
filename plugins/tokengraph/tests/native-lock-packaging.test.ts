@@ -209,22 +209,37 @@ describe("native lock package commands", () => {
     const epoch = "1786233600";
     const checkout = resolve("safe-checkout");
     const userProfile = resolve("private-build-user");
+    const cargoHome = resolve("private-cargo-home");
     const windows = buildEnvironmentForTarget(
       TARGETS.find((entry: NativeTarget) => entry.id === "win32-x64")!,
       checkout,
       epoch,
       resolve(tmpdir(), "cargo-target"),
-      { userProfile }
+      { userProfile, cargoHome }
     );
     expect(windows.SOURCE_DATE_EPOCH).toBe(epoch);
     expect(windows.CARGO_INCREMENTAL).toBe("0");
     expect(windows.RUSTUP_TOOLCHAIN).toBe("1.97.1");
     expect(windows.RUSTFLAGS).toContain(`--remap-path-prefix=${checkout}=/tokengraph`);
     expect(windows.RUSTFLAGS).toContain(`--remap-path-prefix=${userProfile}=/tokengraph-build-user`);
+    expect(windows.RUSTFLAGS).toContain(`--remap-path-prefix=${cargoHome}=/tokengraph-cargo`);
     expect(windows.RUSTFLAGS).toContain("-Cstrip=symbols");
     expect(windows.RUSTFLAGS).toContain("-Clink-arg=/Brepro");
     expect(windows.RUSTFLAGS).toContain("-Ctarget-feature=+crt-static");
     expect(windows.CARGO_TARGET_DIR).toBe(resolve(tmpdir(), "cargo-target"));
+
+    for (const id of ["darwin-arm64", "linux-arm64-gnu"]) {
+      const environment = buildEnvironmentForTarget(
+        TARGETS.find((entry: NativeTarget) => entry.id === id)!,
+        checkout,
+        epoch,
+        resolve(tmpdir(), `${id}-cargo-target`),
+        { userProfile, cargoHome }
+      );
+      expect(environment.RUSTFLAGS).toContain(`--remap-path-prefix=${userProfile}=/tokengraph-build-user`);
+      expect(environment.RUSTFLAGS).toContain(`--remap-path-prefix=${cargoHome}=/tokengraph-cargo`);
+      expect(environment.RUSTFLAGS).toContain(`--remap-path-prefix=${checkout}=/tokengraph`);
+    }
 
     const mac = buildEnvironmentForTarget(TARGETS.find((entry: NativeTarget) => entry.id === "darwin-arm64")!, checkout, epoch, resolve(tmpdir(), "cargo-target-mac"));
     expect(mac.MACOSX_DEPLOYMENT_TARGET).toBe("11.0");
@@ -703,15 +718,19 @@ describe("native lock asset validation", () => {
     await expect(validateNativeLockAssets({ assetsDir: root, metadata })).rejects.toThrow(/wrong PE architecture/i);
   });
 
-  it("rejects a machine-local Windows profile path even when its hash and byte length are regenerated", async () => {
+  it.each([
+    ["win32-x64", "C:\\Users\\private-build-user\\.cargo\\registry\\source.rs\0"],
+    ["darwin-x64", "/Users/private-build-user/.cargo/registry/source.rs\0"],
+    ["linux-x64-gnu", "/tmp/private-cargo-home/registry/source.rs\0"]
+  ])("rejects a machine-local build path in %s even when its hash and byte length are regenerated", async (targetId, embeddedPath) => {
     const root = await temporaryDirectory("machine-path");
     const metadata = metadataForLicenses(LICENSES);
     await writeSixTargetFixture(root);
-    const windowsTarget = TARGETS.find((target: NativeTarget) => target.id === "win32-x64")!;
-    const windowsPath = resolve(root, windowsTarget.id, windowsTarget.file);
-    await writeFile(windowsPath, Buffer.concat([
-      binaryFixture(windowsTarget.platform, windowsTarget.arch),
-      Buffer.from("C:\\Users\\private-build-user\\.cargo\\registry\\source.rs\0", "utf8")
+    const target = TARGETS.find((entry: NativeTarget) => entry.id === targetId)!;
+    const artifactPath = resolve(root, target.id, target.file);
+    await writeFile(artifactPath, Buffer.concat([
+      binaryFixture(target.platform, target.arch),
+      Buffer.from(embeddedPath, "utf8")
     ]));
     await generateNativeLockManifest({ assetsDir: root, metadata });
 

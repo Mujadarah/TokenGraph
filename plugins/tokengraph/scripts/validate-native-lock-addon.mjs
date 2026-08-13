@@ -91,8 +91,8 @@ function assertBinaryMagic(target, bytes) {
 
 function assertNoMachineLocalPath(bytes) {
   const searchable = bytes.toString("latin1");
-  if (/(?:[A-Za-z]:\\Users\\|\/Users\/|\/home\/|\/root\/)[^\0\r\n\t ]+/iu.test(searchable)) {
-    throw new Error("Native artifact contains a machine-local profile path.");
+  if (/(?:[A-Za-z]:[\\/]Users[\\/]|\/Users\/|\/home\/|\/root\/|\/tmp\/|\/workspace\/)[^\0\r\n\t ]+/iu.test(searchable)) {
+    throw new Error("Native artifact contains a machine-local build path.");
   }
 }
 
