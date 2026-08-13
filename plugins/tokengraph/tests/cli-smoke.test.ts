@@ -1035,7 +1035,8 @@ describe("tokengraph release package command", () => {
     expect(combined).toMatch(/no (?:runtime )?(?:download|compiler)|without.*(?:download|compiler)/i);
     expect(combined).toMatch(/glibc 2\.28/i);
     expect(combined).toMatch(/musl.*(?:unsupported|refus|fail)/i);
-    expect(combined).toMatch(/stop every v0\.23\.1|stop all v0\.23\.1/i);
+    expect(combined).toMatch(/v0\.23\.1[^\n]*(?:must be|is) stopped/i);
+    expect(combined).toMatch(/v0\.23\.1[^\n]*stopped[^\n]*must not be restarted/i);
     expect(combined).toMatch(/confirmNoLegacyProcesses:\s*true/);
     expect(combined).toMatch(/--confirm-no-legacy-processes/);
     expect(combined).toMatch(/Doctor.*never grants|never grants.*Doctor/is);
