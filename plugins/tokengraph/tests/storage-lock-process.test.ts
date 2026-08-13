@@ -68,6 +68,8 @@ const probePath = resolve("scripts", "native-lock-probe.mjs");
 const legacyWorkerPath = resolve("tests", "fixtures", "legacy-file-lock-worker.mjs");
 const execFile = promisify(execFileCallback);
 const CHILD_OUTPUT_LIMIT = 8 * 1024;
+const CHILD_STATUS_TIMEOUT_MS = process.platform === "win32" ? 10_000 : 2_000;
+const EXHAUSTIVE_RECOVERY_PROBE_TIMEOUT_MS = 15_000;
 const exhaustiveRecoveryValue = process.env.TOKENGRAPH_NATIVE_EXHAUSTIVE_RECOVERY;
 if (exhaustiveRecoveryValue !== undefined && !["0", "1"].includes(exhaustiveRecoveryValue)) {
   throw new Error("TOKENGRAPH_NATIVE_EXHAUSTIVE_RECOVERY must be 0 or 1.");
@@ -248,7 +250,7 @@ function startKillableProbe(request: ProbeRequest): {
   return {
     child,
     records,
-    async waitForStatus(status: string, timeoutMs = 2_000): Promise<void> {
+    async waitForStatus(status: string, timeoutMs = CHILD_STATUS_TIMEOUT_MS): Promise<void> {
       const deadline = Date.now() + timeoutMs;
       while (!records.some((record) => record.status === status)) {
         if (Date.now() >= deadline) throw new Error(`Timed out waiting for probe status ${status}.`);
@@ -466,7 +468,9 @@ describe("native lock process integration", () => {
       await killed.completion;
       const recovered = await runProbe({
         operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
-        coordinationRoot: await temporaryRoot("tg-lock-cut-recovery-"), timeoutMs: 5_000, activate: true
+        coordinationRoot: await temporaryRoot("tg-lock-cut-recovery-"),
+        timeoutMs: exhaustiveRecovery ? EXHAUSTIVE_RECOVERY_PROBE_TIMEOUT_MS : 5_000,
+        activate: true
       });
       expect(recovered.code, `cut ${index}: ${JSON.stringify(pause)} ${recovered.stderr}`).toBe(0);
       expect(recovered.records).toContainEqual(expect.objectContaining({ status: "acquired" }));
