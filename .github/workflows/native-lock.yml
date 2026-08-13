@@ -125,7 +125,7 @@ jobs:
         run: pnpm native:build -- --target "$MATRIX_TARGET" --out native-output
 
       - name: Run native Rust tests on the real target architecture
-        run: cargo test --locked --manifest-path native/lock-addon/Cargo.toml --target "$MATRIX_TARGET"
+        run: cargo test --locked --features test-host --manifest-path native/lock-addon/Cargo.toml --target "$MATRIX_TARGET"
 
       - name: Load and validate the exact built target through private staging
         run: |

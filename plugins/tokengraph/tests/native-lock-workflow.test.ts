@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const workflowPath = resolve(process.cwd(), "../..", ".github/workflows/native-lock.yml");
 const runnerPath = resolve(process.cwd(), "scripts/run-tests.mjs");
+const cargoManifestPath = resolve(process.cwd(), "native/lock-addon/Cargo.toml");
 
 function workflowText() {
   return readFileSync(workflowPath, "utf8");
@@ -62,8 +63,9 @@ describe("native lock six-target workflow", () => {
 
   it("tests each built target before uploading an exact confined artifact", () => {
     const workflow = workflowText();
+    const cargoManifest = readFileSync(cargoManifestPath, "utf8");
     const build = workflow.indexOf("pnpm native:build -- --target");
-    const cargoTest = workflow.indexOf("cargo test --locked --manifest-path native/lock-addon/Cargo.toml");
+    const cargoTest = workflow.indexOf("cargo test --locked --features test-host --manifest-path native/lock-addon/Cargo.toml");
     const load = workflow.indexOf("pnpm vitest run tests/native-lock-addon.test.ts tests/native-lock-packaging.test.ts");
     const recovery = workflow.indexOf("tests/storage-lock-process.test.ts");
     const receipt = workflow.indexOf("build-receipt.json");
@@ -77,6 +79,9 @@ describe("native lock six-target workflow", () => {
     expect(upload).toBeGreaterThan(receipt);
     expect(workflow).toContain("tests/native-lock-packaging.test.ts");
     expect(workflow).toContain("tests/native-lock-addon.test.ts");
+    expect(workflow).toContain("cargo test --locked --features test-host --manifest-path native/lock-addon/Cargo.toml");
+    expect(cargoManifest).toMatch(/^test-host = \["napi\/dyn-symbols"\]$/mu);
+    expect(cargoManifest).not.toMatch(/^default\s*=/mu);
     expect(workflow).toContain("--reporter=verbose");
     expect(workflow).toContain("TOKENGRAPH_NATIVE_EXHAUSTIVE_RECOVERY: \"1\"");
     expect(workflow).toContain("retention-days: 1");
