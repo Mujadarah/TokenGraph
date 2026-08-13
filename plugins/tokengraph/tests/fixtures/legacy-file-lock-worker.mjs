@@ -86,13 +86,18 @@ async function requestFromStdin() {
   if (request === null || typeof request !== "object" ||
       typeof request.lockPath !== "string" || !isAbsolute(request.lockPath) || request.lockPath.includes("\0") ||
       typeof request.markerPath !== "string" || !isAbsolute(request.markerPath) || request.markerPath.includes("\0") ||
-      !Number.isSafeInteger(request.holdMs) || request.holdMs < 0 || request.holdMs > 60_000) {
+      !Number.isSafeInteger(request.holdMs) || request.holdMs < 0 || request.holdMs > 60_000 ||
+      !Number.isSafeInteger(request.clockOffsetMs) || request.clockOffsetMs < 0 || request.clockOffsetMs > 300_000) {
     throw new Error("Legacy fixture input is invalid.");
   }
   return request;
 }
 
 const request = await requestFromStdin();
+// Keep the frozen v0.23.1 lock code unchanged while making its stale-time
+// observation deterministic without rewriting the upgraded barrier metadata.
+const systemNow = Date.now;
+Date.now = () => systemNow() + request.clockOffsetMs;
 try {
   await withFileLock(request.lockPath, async () => {
     await writeFile(request.markerPath, "entered\n", { flag: "wx", mode: 0o600 });

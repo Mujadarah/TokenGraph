@@ -133,7 +133,7 @@ jobs:
           pnpm vitest run tests/native-lock-addon.test.ts tests/native-lock-packaging.test.ts --reporter=verbose
 
       - name: Run acquire busy release crash and exhaustive durable-cut recovery
-        run: pnpm test:activated -- tests/storage-lock-process.test.ts --reporter=verbose
+        run: pnpm test:activated tests/storage-lock-process.test.ts --reporter=verbose
 
       - name: Write exact build receipt after all native tests pass
         env:

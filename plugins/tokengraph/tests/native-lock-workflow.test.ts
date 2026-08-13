@@ -82,6 +82,8 @@ describe("native lock six-target workflow", () => {
     expect(upload).toBeGreaterThan(receipt);
     expect(workflow).toContain("tests/native-lock-packaging.test.ts");
     expect(workflow).toContain("tests/native-lock-addon.test.ts");
+    expect(workflow).toContain("pnpm test:activated tests/storage-lock-process.test.ts --reporter=verbose");
+    expect(workflow).not.toContain("pnpm test:activated -- tests/storage-lock-process.test.ts");
     expect(workflow).toContain("cargo test --locked --features test-host --manifest-path native/lock-addon/Cargo.toml");
     expect(cargoManifest).toMatch(/^test-host = \["napi\/dyn-symbols"\]$/mu);
     expect(cargoManifest).not.toMatch(/^default\s*=/mu);

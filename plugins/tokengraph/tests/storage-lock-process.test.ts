@@ -1,5 +1,5 @@
 import { execFile as execFileCallback, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { access, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -259,7 +259,12 @@ function startKillableProbe(request: ProbeRequest): {
   };
 }
 
-async function runLegacyWorker(request: { lockPath: string; markerPath: string; holdMs: number }): Promise<{
+async function runLegacyWorker(request: {
+  lockPath: string;
+  markerPath: string;
+  holdMs: number;
+  clockOffsetMs?: number;
+}): Promise<{
   code: number | null;
   stdout: string;
   stderr: string;
@@ -282,7 +287,7 @@ async function runLegacyWorker(request: { lockPath: string; markerPath: string; 
   child.stderr.on("data", (chunk: string) => {
     stderr = appendBoundedOutput(stderr, chunk, child);
   });
-  child.stdin.end(`${JSON.stringify(request)}\n`);
+  child.stdin.end(`${JSON.stringify({ ...request, clockOffsetMs: request.clockOffsetMs ?? 0 })}\n`);
   try {
     return { code: await waitForExit(child, request.holdMs + 5_000), stdout, stderr };
   } finally {
@@ -354,10 +359,10 @@ describe("native lock process integration", () => {
     const markerPath = join(workspaceRoot, "legacy-entered.txt");
     const lock = await canonicalPersistenceLock(workspaceRoot, "workspace-state", "config.json");
     await withFileLock(lock, async () => {
-      const stale = new Date(Date.now() - 31_000);
-      await utimes(lock.compatibilityPath, stale, stale);
       const startedAt = Date.now();
-      const legacy = await runLegacyWorker({ lockPath: lock.compatibilityPath, markerPath, holdMs: 0 });
+      const legacy = await runLegacyWorker({
+        lockPath: lock.compatibilityPath, markerPath, holdMs: 0, clockOffsetMs: 31_000
+      });
       expect(Date.now() - startedAt).toBeLessThan(1_500);
       expect(legacy.code).not.toBe(0);
       expect(legacy.stdout).toBe("");
@@ -380,9 +385,9 @@ describe("native lock process integration", () => {
       holdMs: 5_000, activate: true
     });
     await holder.waitForStatus("acquired");
-    const stale = new Date(Date.now() - 31_000);
-    await utimes(lock.compatibilityPath, stale, stale);
-    const legacy = await runLegacyWorker({ lockPath: lock.compatibilityPath, markerPath, holdMs: 0 });
+    const legacy = await runLegacyWorker({
+      lockPath: lock.compatibilityPath, markerPath, holdMs: 0, clockOffsetMs: 31_000
+    });
     expect(legacy.code).not.toBe(0);
     expect(legacy.stdout).toBe("");
     await expect(access(join(lock.compatibilityPath, "lease.json"))).resolves.toBeUndefined();
