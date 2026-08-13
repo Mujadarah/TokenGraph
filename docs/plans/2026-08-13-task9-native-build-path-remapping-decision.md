@@ -25,6 +25,8 @@ insufficient.
    UNC path, or a POSIX/macOS user, temporary, Cargo-home, or workflow-workspace
    path in either UTF-8 or UTF-16LE form, even when its declared byte
    length and SHA-256 are correct. The error remains path-free.
+   Windows path recognition requires a standalone string boundary so an URL,
+   URI, or an embedded double slash is not misclassified as a filesystem path.
 2. Every native build adds deterministic Rust path-prefix remaps from the build
    user's home and Cargo home to `/tokengraph-build-user` and
    `/tokengraph-cargo`, in addition to the existing checkout remap and

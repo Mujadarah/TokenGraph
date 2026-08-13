@@ -721,8 +721,10 @@ describe("native lock asset validation", () => {
   it.each([
     ["UTF-8 Windows profile", "win32-x64", Buffer.from("C:\\Users\\private-build-user\\.cargo\\registry\\source.rs\0")],
     ["UTF-8 Windows workflow", "win32-x64", Buffer.from("D:\\a\\TokenGraph\\TokenGraph\\native\\lock-addon\\src\\lib.rs\0")],
+    ["UTF-8 quoted Windows workflow", "win32-arm64", Buffer.from("\"D:\\a\\TokenGraph\\TokenGraph\\native\\lock-addon\\src\\lib.rs\"\0")],
     ["UTF-8 UNC", "win32-arm64", Buffer.from("\\\\build-server\\share\\cargo\\registry\\source.rs\0")],
     ["UTF-8 forward-slash UNC", "win32-x64", Buffer.from("//build-server/share/cargo/registry/source.rs\0")],
+    ["UTF-8 quoted forward-slash UNC", "win32-arm64", Buffer.from("\"//build-server/share/cargo/registry/source.rs\"\0")],
     ["UTF-8 punctuation UNC", "win32-arm64", Buffer.from("\\\\build-server\\#share\\cargo\\registry\\source.rs\0")],
     ["UTF-8 extended UNC", "win32-arm64", Buffer.from("\\\\?\\UNC\\build-server\\share\\cargo\\registry\\source.rs\0")],
     ["UTF-8 punctuation extended UNC", "win32-x64", Buffer.from("\\\\?\\UNC\\build-server\\#share\\cargo\\registry\\source.rs\0")],
@@ -759,6 +761,29 @@ describe("native lock asset validation", () => {
     await writeFile(artifactPath, Buffer.concat([
       binaryFixture(target.platform, target.arch),
       Buffer.from("\\\\?\\UNC\\not-a-complete-path\\")
+    ]));
+    await generateNativeLockManifest({ assetsDir: root, metadata });
+
+    await expect(validateNativeLockAssets({ assetsDir: root, metadata })).resolves.toEqual({
+      artifactCount: 6,
+      loadedCurrent: false
+    });
+  });
+
+  it.each([
+    ["HTTPS URL", Buffer.from("https://github.com/Mujadarah/TokenGraph\0")],
+    ["UTF-16LE HTTPS URL", Buffer.from("https://github.com/Mujadarah/TokenGraph\0", "utf16le")],
+    ["embedded double slash", Buffer.from("prefix//server/share/suffix\0")],
+    ["file URL", Buffer.from("file:////server/share/suffix\0")]
+  ])("does not mistake a %s for a forward-slash UNC build path", async (_kind, embeddedText) => {
+    const root = await temporaryDirectory("non-unc-marker");
+    const metadata = metadataForLicenses(LICENSES);
+    await writeSixTargetFixture(root);
+    const target = TARGETS.find((entry: NativeTarget) => entry.id === "linux-arm64-gnu")!;
+    const artifactPath = resolve(root, target.id, target.file);
+    await writeFile(artifactPath, Buffer.concat([
+      binaryFixture(target.platform, target.arch),
+      embeddedText
     ]));
     await generateNativeLockManifest({ assetsDir: root, metadata });
 

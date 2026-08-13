@@ -90,9 +90,21 @@ function assertBinaryMagic(target, bytes) {
 }
 
 function assertNoMachineLocalPath(bytes) {
-  const windowsDrivePath = /[A-Za-z]:[\\/]/u;
-  const windowsUncPath = /(?:\\\\|\/\/)(?![?.][\\/])[^\\/\u0000-\u001f\uFFFD]+[\\/][^\\/\u0000-\u001f\uFFFD]+/u;
-  const windowsExtendedUncPath = /\\\\\?\\UNC\\[^\\/\u0000-\u001f\uFFFD]+[\\/][^\\/\u0000-\u001f\uFFFD]+/iu;
+  const windowsPathBoundary = String.raw`(?:^|[\u0000-\u0020"'({=,;])`;
+  const windowsDrivePath = new RegExp(`${windowsPathBoundary}[A-Za-z]:[\\\\/]`, "u");
+  const windowsUncComponent = String.raw`[^\\/\u0000-\u001f<>:"|?*\uFFFD]+`;
+  const windowsBackslashUncPath = new RegExp(
+    `${windowsPathBoundary}\\\\\\\\(?![?.]\\\\)${windowsUncComponent}\\\\${windowsUncComponent}`,
+    "u"
+  );
+  const windowsForwardUncPath = new RegExp(
+    `${windowsPathBoundary}\\/\\/(?![?.]\\/)${windowsUncComponent}\\/${windowsUncComponent}`,
+    "u"
+  );
+  const windowsExtendedUncPath = new RegExp(
+    `${windowsPathBoundary}\\\\\\\\\\?\\\\UNC\\\\${windowsUncComponent}\\\\${windowsUncComponent}`,
+    "iu"
+  );
   const posixBuildPath = /\/(?:Users|home|root|tmp|workspace|__w)\//u;
   const searchableRepresentations = [
     bytes.toString("utf8"),
@@ -100,7 +112,8 @@ function assertNoMachineLocalPath(bytes) {
     bytes.subarray(1).toString("utf16le")
   ];
   if (searchableRepresentations.some((searchable) =>
-    [windowsDrivePath, windowsUncPath, windowsExtendedUncPath, posixBuildPath]
+    [windowsDrivePath, windowsBackslashUncPath, windowsForwardUncPath,
+      windowsExtendedUncPath, posixBuildPath]
       .some((pattern) => pattern.test(searchable)))) {
     throw new Error("Native artifact contains a machine-local build path.");
   }
