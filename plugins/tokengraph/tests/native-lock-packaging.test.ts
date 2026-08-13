@@ -221,7 +221,8 @@ describe("native lock package commands", () => {
     const mac = buildEnvironmentForTarget(TARGETS.find((entry: NativeTarget) => entry.id === "darwin-arm64")!, checkout, epoch, resolve(tmpdir(), "cargo-target-mac"));
     expect(mac.MACOSX_DEPLOYMENT_TARGET).toBe("11.0");
     expect(mac.RUSTFLAGS).toContain("-Clink-arg=-mmacosx-version-min=11.0");
-    expect(mac.RUSTFLAGS).toContain("-Clink-arg=-Wl,-no_uuid");
+    expect(mac.RUSTFLAGS).not.toContain("-no_uuid");
+    expect(mac.RUSTFLAGS).not.toContain("-random_uuid");
   });
 
   it.each(FORGED_TARGETS)("rejects a forged %s before deriving build flags", (_label, target) => {

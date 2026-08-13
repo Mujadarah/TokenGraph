@@ -86,7 +86,7 @@ function targetFlags(target, checkoutRoot) {
   if (target.platform === "win32") {
     flags.push("-Clink-arg=/Brepro", "-Ctarget-feature=+crt-static");
   } else if (target.platform === "darwin") {
-    flags.push("-Clink-arg=-mmacosx-version-min=11.0", "-Clink-arg=-Wl,-no_uuid");
+    flags.push("-Clink-arg=-mmacosx-version-min=11.0");
   }
   return flags;
 }
