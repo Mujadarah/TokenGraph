@@ -208,11 +208,19 @@ describe("native lock package commands", () => {
   it("pins deterministic target-specific Rust flags", () => {
     const epoch = "1786233600";
     const checkout = resolve("safe-checkout");
-    const windows = buildEnvironmentForTarget(TARGETS.find((entry: NativeTarget) => entry.id === "win32-x64")!, checkout, epoch, resolve(tmpdir(), "cargo-target"));
+    const userProfile = resolve("private-build-user");
+    const windows = buildEnvironmentForTarget(
+      TARGETS.find((entry: NativeTarget) => entry.id === "win32-x64")!,
+      checkout,
+      epoch,
+      resolve(tmpdir(), "cargo-target"),
+      { userProfile }
+    );
     expect(windows.SOURCE_DATE_EPOCH).toBe(epoch);
     expect(windows.CARGO_INCREMENTAL).toBe("0");
     expect(windows.RUSTUP_TOOLCHAIN).toBe("1.97.1");
     expect(windows.RUSTFLAGS).toContain(`--remap-path-prefix=${checkout}=/tokengraph`);
+    expect(windows.RUSTFLAGS).toContain(`--remap-path-prefix=${userProfile}=/tokengraph-build-user`);
     expect(windows.RUSTFLAGS).toContain("-Cstrip=symbols");
     expect(windows.RUSTFLAGS).toContain("-Clink-arg=/Brepro");
     expect(windows.RUSTFLAGS).toContain("-Ctarget-feature=+crt-static");
@@ -693,6 +701,21 @@ describe("native lock asset validation", () => {
     await writeFile(resolve(root, target.id, target.file), binaryFixture("win32", "arm64"));
     await generateNativeLockManifest({ assetsDir: root, metadata });
     await expect(validateNativeLockAssets({ assetsDir: root, metadata })).rejects.toThrow(/wrong PE architecture/i);
+  });
+
+  it("rejects a machine-local Windows profile path even when its hash and byte length are regenerated", async () => {
+    const root = await temporaryDirectory("machine-path");
+    const metadata = metadataForLicenses(LICENSES);
+    await writeSixTargetFixture(root);
+    const windowsTarget = TARGETS.find((target: NativeTarget) => target.id === "win32-x64")!;
+    const windowsPath = resolve(root, windowsTarget.id, windowsTarget.file);
+    await writeFile(windowsPath, Buffer.concat([
+      binaryFixture(windowsTarget.platform, windowsTarget.arch),
+      Buffer.from("C:\\Users\\private-build-user\\.cargo\\registry\\source.rs\0", "utf8")
+    ]));
+    await generateNativeLockManifest({ assetsDir: root, metadata });
+
+    await expect(validateNativeLockAssets({ assetsDir: root, metadata })).rejects.toThrow(/machine-local|profile path/i);
   });
 
   it("rejects replacement after the validated byte snapshot", async () => {

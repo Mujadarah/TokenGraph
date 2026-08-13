@@ -89,6 +89,13 @@ function assertBinaryMagic(target, bytes) {
   }
 }
 
+function assertNoMachineLocalPath(bytes) {
+  const searchable = bytes.toString("latin1");
+  if (/(?:[A-Za-z]:\\Users\\|\/Users\/|\/home\/|\/root\/)[^\0\r\n\t ]+/iu.test(searchable)) {
+    throw new Error("Native artifact contains a machine-local profile path.");
+  }
+}
+
 function atLeastGlibc228(version) {
   if (typeof version !== "string") return false;
   const match = /^(\d+)\.(\d+)(?:\.|$)/u.exec(version);
@@ -143,6 +150,7 @@ export async function validateNativeLockAssets({ assetsDir, metadata, loadCurren
         throw new Error(`Native artifact ${target.id} failed byte-length or SHA-256 validation.`);
       }
       assertBinaryMagic(target, bytes);
+      assertNoMachineLocalPath(bytes);
     }, {
       afterSnapshot: runtime.afterArtifactSnapshot ? () => runtime.afterArtifactSnapshot(target) : undefined
     });

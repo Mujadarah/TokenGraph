@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -78,11 +78,12 @@ export function parseBuildArguments(argv) {
   return { target, out };
 }
 
-function targetFlags(target, checkoutRoot) {
-  const flags = [
-    `--remap-path-prefix=${checkoutRoot}=/tokengraph`,
-    "-Cstrip=symbols"
-  ];
+function targetFlags(target, checkoutRoot, userProfile) {
+  const flags = [];
+  if (target.platform === "win32") {
+    flags.push(`--remap-path-prefix=${userProfile}=/tokengraph-build-user`);
+  }
+  flags.push(`--remap-path-prefix=${checkoutRoot}=/tokengraph`, "-Cstrip=symbols");
   if (target.platform === "win32") {
     flags.push("-Clink-arg=/Brepro", "-Ctarget-feature=+crt-static");
   } else if (target.platform === "darwin") {
@@ -91,10 +92,11 @@ function targetFlags(target, checkoutRoot) {
   return flags;
 }
 
-export function buildEnvironmentForTarget(target, checkoutRoot, sourceDateEpoch, cargoTargetDir) {
+export function buildEnvironmentForTarget(target, checkoutRoot, sourceDateEpoch, cargoTargetDir, options = {}) {
   target = canonicalTargetRecord(target);
   if (!/^\d+$/u.test(sourceDateEpoch)) throw new Error("SOURCE_DATE_EPOCH must be an integer timestamp.");
-  const flags = targetFlags(target, resolve(checkoutRoot));
+  const userProfile = resolve(options.userProfile ?? homedir());
+  const flags = targetFlags(target, resolve(checkoutRoot), userProfile);
   const environment = {
     SOURCE_DATE_EPOCH: sourceDateEpoch,
     CARGO_INCREMENTAL: "0",
