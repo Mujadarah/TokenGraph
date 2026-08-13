@@ -4,6 +4,7 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifySkillContract } from "./skill-contract.mjs";
 import { TARGETS, readLockedCargoMetadata } from "./generate-native-lock-manifest.mjs";
+import { INSTALLABLE_ASSET_PATHS } from "./installable-asset-contract.mjs";
 import { validateNativeLockAssets } from "./validate-native-lock-addon.mjs";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -465,14 +466,14 @@ async function collectFiles(root) {
   }
   return files;
 }
-const nativeExecutablePaths = new Set(TARGETS.map((target) => `assets/native-lock/${target.id}/${target.file}`));
-for (const [label, root] of [["source assets", resolve(pluginRoot, "assets")], ["release plugin", releaseRoot]]) {
-  const executableFiles = (await collectFiles(root)).filter((file) => /\.(?:exe|dll|so|dylib|node)$/iu.test(file));
-  for (const executableFile of executableFiles) {
-    const relativePath = relative(label === "source assets" ? pluginRoot : releaseRoot, executableFile).split(sep).join("/");
-    assert(nativeExecutablePaths.has(relativePath), `${label} contains an unlisted executable: ${relativePath}`);
-  }
-  assert(executableFiles.length === nativeExecutablePaths.size, `${label} must contain exactly the six native lock addons`);
+for (const [label, root] of [["source assets", resolve(pluginRoot, "assets")], ["release assets", resolve(releaseRoot, "assets")]]) {
+  const files = (await collectFiles(root)).map((file) => relative(root, file).split(sep).join("/")).sort();
+  const expected = new Set(INSTALLABLE_ASSET_PATHS);
+  const unexpected = files.find((file) => !expected.has(file));
+  assert(!unexpected, `${label} contains an unlisted asset: ${unexpected}`);
+  const missing = INSTALLABLE_ASSET_PATHS.find((file) => !files.includes(file));
+  assert(!missing, `${label} is missing required asset: ${missing}`);
+  assert(files.length === INSTALLABLE_ASSET_PATHS.length, `${label} must match the exact installable asset allowlist`);
 }
 const personalWindowsProfilePathPattern = /C:\\Users\\(?!example(?:\\|$))[^\\\s]+/i;
 const packagedFiles = [

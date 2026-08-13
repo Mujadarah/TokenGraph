@@ -36,6 +36,24 @@ const requiredFocusedSkillDirs = [
   "memory-curator",
   "release-packaging-auditor"
 ];
+const renamedNativeFixtures = [
+  { format: "PE", source: ["native-lock", "win32-x64", "tokengraph-lock.win32-x64.node"] },
+  { format: "ELF", source: ["native-lock", "linux-x64-gnu", "tokengraph-lock.linux-x64.node"] },
+  { format: "Mach-O", source: ["native-lock", "darwin-x64", "tokengraph-lock.darwin-x64.node"] }
+] as const;
+const exactPackagedAssets = [
+  "grammars/tree-sitter-go.wasm",
+  "grammars/tree-sitter-java.wasm",
+  "grammars/tree-sitter-python.wasm",
+  "grammars/tree-sitter-rust.wasm",
+  "grammars/web-tree-sitter.wasm",
+  "native-lock/THIRD_PARTY_NOTICES.txt",
+  ...renamedNativeFixtures.map(({ source }) => source.join("/")),
+  "native-lock/darwin-arm64/tokengraph-lock.darwin-arm64.node",
+  "native-lock/linux-arm64-gnu/tokengraph-lock.linux-arm64.node",
+  "native-lock/manifest.json",
+  "native-lock/win32-arm64/tokengraph-lock.win32-arm64.node"
+].sort();
 
 async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "tokengraph-cli-"));
@@ -575,6 +593,10 @@ describe("tokengraph release package command", () => {
     };
     expect(archiveListing.filter((path) => path.endsWith(".node"))).toHaveLength(6);
     expect(archiveListing.filter((path) => /\.(?:exe|dll|so|dylib|node)$/iu.test(path))).toHaveLength(6);
+    expect(archiveListing
+      .filter((path) => path.startsWith("tokengraph/assets/") && !path.endsWith("/"))
+      .map((path) => path.slice("tokengraph/assets/".length))
+      .sort()).toEqual(exactPackagedAssets);
     expect(archiveListing.join("\n")).not.toMatch(/tokengraph\/(?:src|tests|native|scripts)\//);
     for (const artifact of nativeManifest.artifacts) {
       const releaseBytes = await readFile(resolve(report.packageDir, "assets", "native-lock", artifact.path));
@@ -652,6 +674,31 @@ describe("tokengraph release package command", () => {
       )).rejects.toMatchObject({ stderr: expect.stringMatching(/executable|allowlist|unlisted/i) });
     }
   );
+
+  it.each(renamedNativeFixtures)(
+    "refuses to package renamed $format native bytes outside the exact asset allowlist",
+    async ({ format, source }) => {
+      const { copiedPlugin, repoCopy } = await makePackageRepositoryCopy();
+      await cp(join(copiedPlugin, "assets", ...source), join(copiedPlugin, "assets", `unlisted-${format}.bin`));
+
+      await expect(execFileAsync(
+        process.execPath,
+        [join(copiedPlugin, "scripts", "package-plugin.mjs"), "--release", "--out-release", join(repoCopy, "release", "tokengraph")],
+        { cwd: copiedPlugin, env: process.env }
+      )).rejects.toMatchObject({ stderr: expect.stringMatching(/asset|allowlist|unlisted/i) });
+    }
+  );
+
+  it("refuses to package an extensionless executable-like asset", async () => {
+    const { copiedPlugin, repoCopy } = await makePackageRepositoryCopy();
+    await writeFile(join(copiedPlugin, "assets", "unlisted-helper"), "#!/bin/sh\nexit 0\n");
+
+    await expect(execFileAsync(
+      process.execPath,
+      [join(copiedPlugin, "scripts", "package-plugin.mjs"), "--release", "--out-release", join(repoCopy, "release", "tokengraph")],
+      { cwd: copiedPlugin, env: process.env }
+    )).rejects.toMatchObject({ stderr: expect.stringMatching(/asset|allowlist|unlisted/i) });
+  });
 
   it("validates a freshly generated release with core skill contracts", async () => {
     const sandbox = await makeRoot();
@@ -764,6 +811,53 @@ describe("tokengraph release package command", () => {
       })).rejects.toMatchObject({ stderr: expect.stringMatching(/executable|allowlist|unlisted/i) });
     }
   );
+
+  it.each(renamedNativeFixtures)(
+    "rejects renamed release $format native bytes outside the exact asset allowlist",
+    async ({ format, source }) => {
+      const sandbox = await makeRoot();
+      const repoRoot = resolve("..", "..");
+      const repoCopy = join(sandbox, "repo");
+      await cp(repoRoot, repoCopy, {
+        recursive: true,
+        filter: (path) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts", ".superpowers", "target"].includes(path.split(/[\\/]/).at(-1) ?? "")
+      });
+      const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+      const generatedRelease = join(repoCopy, "release", "tokengraph");
+      await execFileAsync(process.execPath, [resolve("scripts", "package-plugin.mjs"), "--release", "--out-release", generatedRelease, "--json"], {
+        cwd: process.cwd(),
+        env: process.env
+      });
+      await cp(join(copiedPlugin, "assets", ...source), join(generatedRelease, "assets", `unlisted-${format}.bin`));
+
+      await expect(execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "validate-plugin.mjs")], {
+        cwd: copiedPlugin,
+        env: process.env
+      })).rejects.toMatchObject({ stderr: expect.stringMatching(/asset|allowlist|unlisted/i) });
+    }
+  );
+
+  it("rejects an extensionless executable-like release asset", async () => {
+    const sandbox = await makeRoot();
+    const repoRoot = resolve("..", "..");
+    const repoCopy = join(sandbox, "repo");
+    await cp(repoRoot, repoCopy, {
+      recursive: true,
+      filter: (path) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts", ".superpowers", "target"].includes(path.split(/[\\/]/).at(-1) ?? "")
+    });
+    const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+    const generatedRelease = join(repoCopy, "release", "tokengraph");
+    await execFileAsync(process.execPath, [resolve("scripts", "package-plugin.mjs"), "--release", "--out-release", generatedRelease, "--json"], {
+      cwd: process.cwd(),
+      env: process.env
+    });
+    await writeFile(join(generatedRelease, "assets", "unlisted-helper"), "#!/bin/sh\nexit 0\n");
+
+    await expect(execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "validate-plugin.mjs")], {
+      cwd: copiedPlugin,
+      env: process.env
+    })).rejects.toMatchObject({ stderr: expect.stringMatching(/asset|allowlist|unlisted/i) });
+  });
 
   it("ignores non-public Cargo target output during source text scanning", async () => {
     const sandbox = await makeRoot();
