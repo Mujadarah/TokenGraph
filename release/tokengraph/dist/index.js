@@ -5,6 +5,14 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
+};
 var __commonJS = (cb, mod) => function __require() {
   try {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
@@ -32,6 +40,3155 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+
+// src/core/legacyRuntimeActivation.ts
+function activateLegacyRuntimeShutdown(input) {
+  if (input === null || typeof input !== "object" || input.confirmedNoLegacyTokenGraphProcesses !== true) {
+    throw new LegacyRuntimeActivationError();
+  }
+  if (processCapability !== void 0) return processCapability;
+  const capability = Object.freeze({});
+  capabilityBrand.add(capability);
+  processCapability = capability;
+  return capability;
+}
+function getLegacyRuntimeActivationStatus() {
+  return Object.freeze({ activated: processCapability !== void 0 });
+}
+function isLegacyRuntimeShutdownCapability(value) {
+  return typeof value === "object" && value !== null && capabilityBrand.has(value);
+}
+function requireLegacyRuntimeShutdownCapability() {
+  if (processCapability === void 0) throw new LegacyRuntimeActivationError();
+  return processCapability;
+}
+var capabilityBrand, processCapability, LegacyRuntimeActivationError;
+var init_legacyRuntimeActivation = __esm({
+  "src/core/legacyRuntimeActivation.ts"() {
+    "use strict";
+    capabilityBrand = /* @__PURE__ */ new WeakSet();
+    LegacyRuntimeActivationError = class extends Error {
+      code = "LEGACY_RUNTIME_SHUTDOWN_UNCONFIRMED";
+      constructor() {
+        super("Legacy TokenGraph runtime shutdown has not been confirmed for this process.");
+        this.name = "LegacyRuntimeActivationError";
+      }
+    };
+  }
+});
+
+// src/core/lockDomain.ts
+var lockDomain_exports = {};
+__export(lockDomain_exports, {
+  LOCK_DOMAINS: () => LOCK_DOMAINS,
+  LockDomainError: () => LockDomainError,
+  canonicalPersistenceLock: () => canonicalPersistenceLock,
+  isCanonicalPersistenceLock: () => isCanonicalPersistenceLock,
+  relativeLegacyName: () => relativeLegacyName
+});
+import { constants } from "node:fs";
+import { lstat, open, realpath } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+function fail() {
+  throw new LockDomainError();
+}
+function isSafeSingleSegment(value) {
+  if (value.length === 0 || value === "." || value === "..") return false;
+  if (value.includes("/") || value.includes("\\") || value.includes("\0")) return false;
+  if (/[<>:"|?*\u0000-\u001f]/u.test(value) || /[. ]$/u.test(value)) return false;
+  if (WINDOWS_DEVICE_NAME.test(value)) return false;
+  if (Buffer.byteLength(value, "utf8") > MAX_SEGMENT_BYTES) return false;
+  const compatibilityName = `${value}.lock`;
+  const portableName = compatibilityName.toLowerCase();
+  return portableName !== ANCHOR_NAME && portableName !== JOURNAL_NAME;
+}
+function confinedDirectChild(root, candidate) {
+  const difference = relative(root, candidate);
+  return difference.length > 0 && !difference.startsWith(`..${sep}`) && difference !== ".." && !isAbsolute(difference) && dirname(candidate) === root && !difference.includes(sep);
+}
+async function canonicalExistingDirectory(path) {
+  const canonical = await realpath(path).catch(fail);
+  const stats = await lstat(canonical).catch(fail);
+  if (!stats.isDirectory() || stats.isSymbolicLink()) fail();
+  return canonical;
+}
+function fileIdentity(stats) {
+  return `${stats.dev}:${stats.ino}:${stats.birthtimeNs}`;
+}
+async function stableMarker(path) {
+  const before = await lstat(path, { bigint: true }).catch(fail);
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.size > 4096n) fail();
+  const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
+  const handle = await open(path, constants.O_RDONLY | noFollow).catch(fail);
+  try {
+    const opened = await handle.stat({ bigint: true }).catch(fail);
+    if (!opened.isFile() || opened.nlink !== 1n || opened.size > 4096n || fileIdentity(opened) !== fileIdentity(before)) fail();
+    const bytes = await handle.readFile().catch(fail);
+    const after = await handle.stat({ bigint: true }).catch(fail);
+    const entryAfter = await lstat(path, { bigint: true }).catch(fail);
+    if (bytes.length > 4096 || fileIdentity(after) !== fileIdentity(opened) || fileIdentity(entryAfter) !== fileIdentity(opened) || !entryAfter.isFile() || entryAfter.isSymbolicLink() || entryAfter.nlink !== 1n) fail();
+    return bytes.toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+function oneLinePath(marker) {
+  const match = /^([^\r\n]+)\r?\n?$/u.exec(marker);
+  if (match === null || match[1].length === 0 || match[1].includes("\0")) fail();
+  return match[1];
+}
+async function resolveGitCommonDirectory(workspaceRoot) {
+  const dotGit = join(workspaceRoot, ".git");
+  const dotGitStats = await lstat(dotGit).catch(fail);
+  let gitDirectory;
+  if (dotGitStats.isDirectory() && !dotGitStats.isSymbolicLink()) {
+    gitDirectory = await canonicalExistingDirectory(dotGit);
+    const unexpectedCommonMarker = await lstat(join(gitDirectory, "commondir")).then(() => true, (error2) => {
+      if (error2.code === "ENOENT") return false;
+      fail();
+    });
+    if (unexpectedCommonMarker) fail();
+    return gitDirectory;
+  } else if (dotGitStats.isFile() && !dotGitStats.isSymbolicLink() && dotGitStats.nlink === 1) {
+    const marker = await stableMarker(dotGit);
+    const match = /^gitdir: ([^\r\n]+)\r?\n?$/u.exec(marker);
+    if (match === null || match[1].includes("\0")) fail();
+    gitDirectory = await canonicalExistingDirectory(resolve(workspaceRoot, match[1]));
+  } else {
+    fail();
+  }
+  const commonPath = oneLinePath(await stableMarker(join(gitDirectory, "commondir")));
+  const commonDirectory = await canonicalExistingDirectory(resolve(gitDirectory, commonPath));
+  const worktreesDirectory = await canonicalExistingDirectory(join(commonDirectory, "worktrees"));
+  if (dirname(gitDirectory) !== worktreesDirectory) fail();
+  const backlinkPath = oneLinePath(await stableMarker(join(gitDirectory, "gitdir")));
+  const backlink = await realpath(resolve(gitDirectory, backlinkPath)).catch(fail);
+  const canonicalDotGit = await realpath(dotGit).catch(fail);
+  if (backlink !== canonicalDotGit) fail();
+  return commonDirectory;
+}
+async function domainRoot(workspaceRoot, domain) {
+  const stateRoot = join(workspaceRoot, ".tokengraph");
+  switch (domain) {
+    case "workspace-state":
+      return stateRoot;
+    case "repository-state":
+      return join(stateRoot, "repository");
+    case "runs":
+      return join(stateRoot, "runs");
+    case "tasks":
+      return join(stateRoot, "tasks");
+    case "vault":
+      return join(stateRoot, "vault");
+    case "wiki":
+      return join(stateRoot, "wiki");
+    case "artifacts":
+      return join(stateRoot, "repository", "artifacts");
+    case "git-info":
+      return join(await resolveGitCommonDirectory(workspaceRoot), "info");
+  }
+}
+async function canonicalPersistenceLock(workspaceRoot, domain, relativeDataName) {
+  if (typeof workspaceRoot !== "string" || !domainSet.has(domain) || typeof relativeDataName !== "string" || !isSafeSingleSegment(relativeDataName)) fail();
+  const canonicalWorkspace = await canonicalExistingDirectory(resolve(workspaceRoot));
+  const root = resolve(await domainRoot(canonicalWorkspace, domain));
+  const compatibilityPath = join(root, `${relativeDataName}.lock`);
+  if (!confinedDirectChild(root, compatibilityPath)) fail();
+  const lock = Object.freeze({
+    domain,
+    domainRoot: root,
+    compatibilityPath,
+    anchorPath: join(root, ANCHOR_NAME),
+    journalPath: join(root, JOURNAL_NAME)
+  });
+  lockBrand.add(lock);
+  return lock;
+}
+function isCanonicalPersistenceLock(value) {
+  return typeof value === "object" && value !== null && lockBrand.has(value);
+}
+function relativeLegacyName(lock) {
+  if (!isCanonicalPersistenceLock(lock)) fail();
+  const value = relative(lock.domainRoot, lock.compatibilityPath);
+  if (!confinedDirectChild(lock.domainRoot, lock.compatibilityPath)) fail();
+  return value;
+}
+var LOCK_DOMAINS, LockDomainError, lockBrand, domainSet, ANCHOR_NAME, JOURNAL_NAME, MAX_SEGMENT_BYTES, WINDOWS_DEVICE_NAME;
+var init_lockDomain = __esm({
+  "src/core/lockDomain.ts"() {
+    "use strict";
+    LOCK_DOMAINS = Object.freeze([
+      "workspace-state",
+      "repository-state",
+      "runs",
+      "tasks",
+      "vault",
+      "wiki",
+      "artifacts",
+      "git-info"
+    ]);
+    LockDomainError = class extends Error {
+      code = "INVALID_LOCK_DOMAIN";
+      constructor() {
+        super("Persistence lock domain or key is not authorized.");
+        this.name = "LockDomainError";
+      }
+    };
+    lockBrand = /* @__PURE__ */ new WeakSet();
+    domainSet = new Set(LOCK_DOMAINS);
+    ANCHOR_NAME = ".tokengraph-native-anchor-v2.lock";
+    JOURNAL_NAME = ".tokengraph-native-journal-v2.lock";
+    MAX_SEGMENT_BYTES = 240;
+    WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
+  }
+});
+
+// src/core/nativeLockAddon.ts
+import { createHash } from "node:crypto";
+import { constants as constants2, lstatSync, readFileSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
+import { chmod, lstat as lstat2, mkdtemp, open as open2, readdir, rmdir, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname as dirname2, join as join2, resolve as resolve2 } from "node:path";
+import { fileURLToPath } from "node:url";
+function fail2(code) {
+  throw new NativeLockError(code);
+}
+function isObject2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function dataDescriptorValue(value, property, ownOnly = false) {
+  let current = value;
+  while (current !== null) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, property);
+    if (descriptor !== void 0) {
+      return Object.prototype.hasOwnProperty.call(descriptor, "value") ? descriptor.value : void 0;
+    }
+    if (ownOnly) return void 0;
+    current = Object.getPrototypeOf(current);
+  }
+  return void 0;
+}
+function descriptorString(value, property) {
+  if (typeof value !== "object" || value === null) return void 0;
+  const candidate = dataDescriptorValue(value, property);
+  return typeof candidate === "string" ? candidate : void 0;
+}
+function errnoCode(error2) {
+  return descriptorString(error2, "code");
+}
+function createLoaderState() {
+  return {
+    cache: /* @__PURE__ */ new Map(),
+    boundIdentities: /* @__PURE__ */ new Map(),
+    inFlight: /* @__PURE__ */ new Map()
+  };
+}
+function hasExactKeys(value, expected) {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
+function sameDirectoryIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode;
+}
+function sameObjectIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.isFile() === right.isFile() && left.isDirectory() === right.isDirectory();
+}
+function sameFileIdentity(left, right) {
+  return sameDirectoryIdentity(left, right) && left.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
+}
+function snapshotIdentity(pathKey, stats) {
+  return [pathKey, stats.dev, stats.ino, stats.mode, stats.size, stats.mtimeNs, stats.ctimeNs].join(":");
+}
+async function bigIntLstat(path) {
+  return await lstat2(path, { bigint: true });
+}
+function validateDirectory(stats) {
+  if (!stats.isDirectory() || stats.isSymbolicLink()) fail2("ADDON_INTEGRITY");
+}
+function validateFile(stats, maxBytes) {
+  if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n || stats.size <= 0n || stats.size > BigInt(maxBytes)) {
+    fail2("ADDON_INTEGRITY");
+  }
+}
+async function readVerifiedFile(path, maxBytes, missingCode, afterRead) {
+  let handle;
+  try {
+    const parent = await bigIntLstat(dirname2(path));
+    validateDirectory(parent);
+    const entry = await bigIntLstat(path);
+    validateFile(entry, maxBytes);
+    const noFollow = typeof constants2.O_NOFOLLOW === "number" ? constants2.O_NOFOLLOW : 0;
+    handle = await open2(path, constants2.O_RDONLY | noFollow);
+    const opened = await handle.stat({ bigint: true });
+    validateFile(opened, maxBytes);
+    if (!sameFileIdentity(entry, opened)) fail2("ADDON_INTEGRITY");
+    const bytes = await handle.readFile();
+    if (BigInt(bytes.length) !== opened.size) fail2("ADDON_INTEGRITY");
+    if (afterRead) await afterRead();
+    const openedAfter = await handle.stat({ bigint: true });
+    const entryAfter = await bigIntLstat(path);
+    const parentAfter = await bigIntLstat(dirname2(path));
+    validateFile(openedAfter, maxBytes);
+    validateFile(entryAfter, maxBytes);
+    validateDirectory(parentAfter);
+    if (!sameFileIdentity(opened, openedAfter) || !sameFileIdentity(opened, entryAfter) || !sameDirectoryIdentity(parent, parentAfter)) {
+      fail2("ADDON_INTEGRITY");
+    }
+    return {
+      bytes,
+      entry: opened,
+      parent
+    };
+  } catch (error2) {
+    if (error2 instanceof NativeLockError) throw error2;
+    if (errnoCode(error2) === "ENOENT") throw new NativeLockError(missingCode);
+    throw new NativeLockError("ADDON_INTEGRITY");
+  } finally {
+    if (handle !== void 0) {
+      try {
+        await handle.close();
+      } catch {
+        throw new NativeLockError("ADDON_INTEGRITY");
+      }
+    }
+  }
+}
+function assertManifest(value) {
+  if (!isObject2(value) || !hasExactKeys(value, MANIFEST_KEYS) || value.schemaVersion !== 1 || value.addonAbiVersion !== 1 || value.nodeApiVersion !== 9 || value.rustToolchain !== "1.97.1" || !Array.isArray(value.artifacts) || value.artifacts.length !== TARGETS.length) {
+    fail2("ADDON_INTEGRITY");
+  }
+  for (let index = 0; index < TARGETS.length; index += 1) {
+    const expected = TARGETS[index];
+    const artifact = value.artifacts[index];
+    if (!isObject2(artifact) || !hasExactKeys(artifact, ARTIFACT_KEYS)) fail2("ADDON_INTEGRITY");
+    for (const key of ["id", "platform", "arch", "libc", "rustTarget", "file", "osFloor"]) {
+      if (artifact[key] !== expected[key]) fail2("ADDON_INTEGRITY");
+    }
+    if (artifact.path !== `${expected.id}/${expected.file}` || !Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0 || artifact.bytes > ADDON_MAX_BYTES || typeof artifact.sha256 !== "string" || !/^[0-9a-f]{64}$/u.test(artifact.sha256)) {
+      fail2("ADDON_INTEGRITY");
+    }
+  }
+  return value;
+}
+async function readManifest(assetsRoot) {
+  const snapshot = await readVerifiedFile(resolve2(assetsRoot, "manifest.json"), MANIFEST_MAX_BYTES, "ADDON_MISSING");
+  try {
+    return assertManifest(JSON.parse(snapshot.bytes.toString("utf8")));
+  } catch (error2) {
+    if (error2 instanceof NativeLockError) throw error2;
+    fail2("ADDON_INTEGRITY");
+  }
+}
+function atLeastGlibc228(version2) {
+  if (typeof version2 !== "string") return false;
+  const match = /^(\d+)\.(\d+)(?:\.\d+)?$/u.exec(version2);
+  if (match === null) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 2 || major === 2 && minor >= 28;
+}
+function reportedGlibcVersion() {
+  const report = process.report?.getReport?.();
+  const value = report?.header?.glibcVersionRuntime;
+  return typeof value === "string" ? value : void 0;
+}
+function selectTarget(runtime) {
+  const platform = runtime.platform ?? process.platform;
+  const arch = runtime.arch ?? process.arch;
+  if (platform === "linux") {
+    const glibc = Object.prototype.hasOwnProperty.call(runtime, "glibcVersionRuntime") ? runtime.glibcVersionRuntime : reportedGlibcVersion();
+    if (!atLeastGlibc228(glibc)) fail2("ADDON_UNSUPPORTED");
+  }
+  const target = TARGETS.find((entry) => entry.platform === platform && entry.arch === arch);
+  if (target === void 0) fail2("ADDON_UNSUPPORTED");
+  return target;
+}
+function resolveAssetsRoot(runtime) {
+  if (runtime.assetsRoot !== void 0) {
+    if (runtime.assetsRoot.length === 0) fail2("ADDON_INTEGRITY");
+    return resolve2(runtime.assetsRoot);
+  }
+  let modulePath;
+  try {
+    modulePath = fileURLToPath(runtime.moduleUrl ?? import.meta.url);
+  } catch {
+    fail2("ADDON_INTEGRITY");
+  }
+  const moduleDirectory = dirname2(modulePath);
+  if (basename(moduleDirectory) === "core" && basename(dirname2(moduleDirectory)) === "src") {
+    return resolve2(moduleDirectory, "..", "..", "assets", "native-lock");
+  }
+  if (basename(moduleDirectory) === "dist") {
+    return resolve2(moduleDirectory, "..", "assets", "native-lock");
+  }
+  if (basename(moduleDirectory) === "core" && basename(dirname2(moduleDirectory)) === "dist") {
+    return resolve2(moduleDirectory, "..", "..", "assets", "native-lock");
+  }
+  fail2("ADDON_INTEGRITY");
+}
+function canonicalOwner(owner) {
+  return Buffer.from(`${JSON.stringify(owner)}
+`);
+}
+function assertOwner(value, expectedPid) {
+  if (!isObject2(value) || !hasExactKeys(value, OWNER_KEYS) || value.schemaVersion !== 1 || !Number.isSafeInteger(value.pid) || value.pid <= 0 || typeof value.targetId !== "string" || !TARGETS.some((target) => target.id === value.targetId) || typeof value.sha256 !== "string" || !/^[0-9a-f]{64}$/u.test(value.sha256) || typeof value.addonFile !== "string" || value.addonFile !== `${value.targetId}-${value.sha256}.node` || expectedPid !== void 0 && value.pid !== expectedPid) {
+    fail2("ADDON_INTEGRITY");
+  }
+  return value;
+}
+function validatePrivateMode(stats, expected) {
+  if (process.platform !== "win32" && (stats.mode & 0o777n) !== expected) fail2("ADDON_INTEGRITY");
+}
+async function writeExclusiveSynced(path, bytes, platform, makeReadOnly) {
+  let handle;
+  try {
+    handle = await open2(path, "wx", 384);
+    await handle.writeFile(bytes);
+    await handle.sync();
+  } catch {
+    fail2("ADDON_INTEGRITY");
+  } finally {
+    if (handle !== void 0) {
+      try {
+        await handle.close();
+      } catch {
+        fail2("ADDON_INTEGRITY");
+      }
+    }
+  }
+  for (let attempt = 0; attempt < STAGING_CHMOD_ATTEMPTS; attempt += 1) {
+    try {
+      await makeReadOnly(path, 256);
+      return;
+    } catch (error2) {
+      const transientWindowsFailure = platform === "win32" && ["EPERM", "EACCES", "EBUSY"].includes(errnoCode(error2) ?? "");
+      if (!transientWindowsFailure || attempt + 1 >= STAGING_CHMOD_ATTEMPTS) fail2("ADDON_INTEGRITY");
+      await new Promise((resolveRetry) => setTimeout(resolveRetry, STAGING_CHMOD_RETRY_MS));
+    }
+  }
+}
+async function exactDirectoryEntries(root) {
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) fail2("ADDON_INTEGRITY");
+  }
+  return entries.map((entry) => entry.name).sort();
+}
+async function verifyStagingLifecycle(lifecycle, expectedBytes) {
+  try {
+    const rootBefore = await bigIntLstat(lifecycle.root);
+    validateDirectory(rootBefore);
+    validatePrivateMode(rootBefore, 0o700n);
+    if (!sameDirectoryIdentity(lifecycle.rootIdentity, rootBefore)) fail2("ADDON_INTEGRITY");
+    const expectedEntries = [basename(lifecycle.markerPath), basename(lifecycle.stagedPath)].sort();
+    if ((await exactDirectoryEntries(lifecycle.root)).join("\0") !== expectedEntries.join("\0")) fail2("ADDON_INTEGRITY");
+    const marker = await readVerifiedFile(lifecycle.markerPath, MARKER_MAX_BYTES, "ADDON_INTEGRITY");
+    validatePrivateMode(marker.entry, 0o400n);
+    if (!marker.bytes.equals(lifecycle.markerBytes)) fail2("ADDON_INTEGRITY");
+    let owner;
+    try {
+      owner = assertOwner(JSON.parse(marker.bytes.toString("utf8")), lifecycle.pid);
+    } catch (error2) {
+      if (error2 instanceof NativeLockError) throw error2;
+      fail2("ADDON_INTEGRITY");
+    }
+    if (owner.targetId !== lifecycle.targetId || owner.sha256 !== lifecycle.sha256 || owner.addonFile !== basename(lifecycle.stagedPath)) {
+      fail2("ADDON_INTEGRITY");
+    }
+    const staged = await readVerifiedFile(lifecycle.stagedPath, ADDON_MAX_BYTES, "ADDON_INTEGRITY");
+    validatePrivateMode(staged.entry, 0o400n);
+    if (!staged.bytes.equals(expectedBytes) || createHash("sha256").update(staged.bytes).digest("hex") !== lifecycle.sha256) {
+      fail2("ADDON_INTEGRITY");
+    }
+    const rootAfter = await bigIntLstat(lifecycle.root);
+    if (!sameDirectoryIdentity(rootBefore, rootAfter)) fail2("ADDON_INTEGRITY");
+    if (lifecycle.markerIdentity !== void 0 && !sameFileIdentity(lifecycle.markerIdentity, marker.entry)) fail2("ADDON_INTEGRITY");
+    if (lifecycle.stagedIdentity !== void 0 && !sameFileIdentity(lifecycle.stagedIdentity, staged.entry)) fail2("ADDON_INTEGRITY");
+    lifecycle.markerIdentity ??= marker.entry;
+    lifecycle.stagedIdentity ??= staged.entry;
+    return staged;
+  } catch (error2) {
+    if (error2 instanceof NativeLockError) throw error2;
+    fail2("ADDON_INTEGRITY");
+  }
+}
+async function pathIsAbsent(path) {
+  try {
+    await lstat2(path);
+    return false;
+  } catch (error2) {
+    return errnoCode(error2) === "ENOENT";
+  }
+}
+async function cleanupOwnedStaging(lifecycle, io = {}) {
+  const unlinkFile = io.unlink ?? unlink;
+  const removeDirectory = io.rmdir ?? rmdir;
+  try {
+    const root = await bigIntLstat(lifecycle.root);
+    if (!root.isDirectory() || root.isSymbolicLink() || !sameObjectIdentity(lifecycle.rootIdentity, root)) {
+      return { complete: false, phase: "validation" };
+    }
+    const allowed = /* @__PURE__ */ new Set([basename(lifecycle.stagedPath), basename(lifecycle.markerPath)]);
+    const entries = await readdir(lifecycle.root, { withFileTypes: true });
+    if (entries.some((entry) => !allowed.has(entry.name) || entry.isSymbolicLink())) {
+      return { complete: false, phase: "validation" };
+    }
+    const removeOwnedFile = async (path, identity3, phase) => {
+      let current;
+      try {
+        current = await bigIntLstat(path);
+      } catch (error2) {
+        if (errnoCode(error2) === "ENOENT") return void 0;
+        return { complete: false, phase, code: errnoCode(error2) };
+      }
+      if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1n || identity3 !== void 0 && !sameObjectIdentity(identity3, current)) {
+        return { complete: false, phase: "validation" };
+      }
+      try {
+        await unlinkFile(path);
+      } catch (error2) {
+        return { complete: false, phase, code: errnoCode(error2) };
+      }
+      if (!await pathIsAbsent(path)) return { complete: false, phase: "validation" };
+      return void 0;
+    };
+    const addonFailure = await removeOwnedFile(lifecycle.stagedPath, lifecycle.stagedIdentity, "addon");
+    if (addonFailure !== void 0) return addonFailure;
+    const markerFailure = await removeOwnedFile(lifecycle.markerPath, lifecycle.markerIdentity, "marker");
+    if (markerFailure !== void 0) return markerFailure;
+    if ((await readdir(lifecycle.root)).length !== 0) return { complete: false, phase: "validation" };
+    const rootBeforeRemoval = await bigIntLstat(lifecycle.root);
+    if (!sameObjectIdentity(lifecycle.rootIdentity, rootBeforeRemoval)) return { complete: false, phase: "validation" };
+    try {
+      await removeDirectory(lifecycle.root);
+    } catch (error2) {
+      return { complete: false, phase: "root", code: errnoCode(error2) };
+    }
+    return await pathIsAbsent(lifecycle.root) ? { complete: true } : { complete: false, phase: "validation" };
+  } catch (error2) {
+    if (errnoCode(error2) === "ENOENT") return { complete: true };
+    return { complete: false, phase: "validation", code: errnoCode(error2) };
+  }
+}
+function stagingBase(runtime) {
+  const value = runtime.tempDirectory ?? tmpdir();
+  if (value.length === 0) fail2("ADDON_INTEGRITY");
+  return resolve2(value);
+}
+function stagingProcessId(runtime) {
+  const pid = runtime.processId ?? process.pid;
+  if (!Number.isSafeInteger(pid) || pid <= 0) fail2("ADDON_INTEGRITY");
+  return pid;
+}
+function stagingKey(runtime) {
+  const base2 = stagingBase(runtime);
+  const normalized = process.platform === "win32" ? base2.toLowerCase() : base2;
+  return `${normalized}\0${stagingProcessId(runtime)}`;
+}
+function poisonStagingSlot(runtime, root) {
+  const key = stagingKey(runtime);
+  const existing = preservedStagingRoots.get(key);
+  if (existing === void 0) {
+    preservedStagingRoots.set(key, root);
+    return true;
+  }
+  return existing === root;
+}
+async function createStagingLifecycle(runtime, target, sourcePath, sourceBytes, sha256) {
+  const base2 = stagingBase(runtime);
+  const pid = stagingProcessId(runtime);
+  let lifecycle;
+  let createdRoot;
+  try {
+    const baseStats = await bigIntLstat(base2);
+    validateDirectory(baseStats);
+    const root = await mkdtemp(join2(base2, `${STAGING_PREFIX}${pid}-`));
+    createdRoot = root;
+    if (dirname2(root) !== base2 || !new RegExp(`^${STAGING_PREFIX}${pid}-[A-Za-z0-9]{6}$`, "u").test(basename(root))) {
+      fail2("ADDON_INTEGRITY");
+    }
+    await chmod(root, 448);
+    const rootIdentity = await bigIntLstat(root);
+    validateDirectory(rootIdentity);
+    validatePrivateMode(rootIdentity, 0o700n);
+    const addonFile = `${target.id}-${sha256}.node`;
+    const owner = { schemaVersion: 1, pid, targetId: target.id, sha256, addonFile };
+    const markerBytes = canonicalOwner(owner);
+    lifecycle = {
+      root,
+      sourcePath,
+      stagedPath: resolve2(root, addonFile),
+      markerPath: resolve2(root, "owner.json"),
+      targetId: target.id,
+      sha256,
+      pid,
+      rootIdentity,
+      markerBytes
+    };
+    const makeReadOnly = runtime.stagingIo?.makeReadOnly ?? chmod;
+    await writeExclusiveSynced(lifecycle.markerPath, markerBytes, target.platform, makeReadOnly);
+    await writeExclusiveSynced(lifecycle.stagedPath, sourceBytes, target.platform, makeReadOnly);
+    const staged = await verifyStagingLifecycle(lifecycle, sourceBytes);
+    return { lifecycle, staged };
+  } catch (error2) {
+    if (lifecycle !== void 0) {
+      const cleanup = await cleanupOwnedStaging(lifecycle, runtime.stagingIo);
+      if (!cleanup.complete) {
+        poisonStagingSlot(runtime, lifecycle.root);
+        fail2("ADDON_INTEGRITY");
+      }
+    } else if (createdRoot !== void 0) {
+      let removed = false;
+      try {
+        if (dirname2(createdRoot) === base2 && basename(createdRoot).startsWith(`${STAGING_PREFIX}${pid}-`)) {
+          const stats = await bigIntLstat(createdRoot);
+          if (stats.isDirectory() && !stats.isSymbolicLink() && (await readdir(createdRoot)).length === 0) {
+            await (runtime.stagingIo?.rmdir ?? rmdir)(createdRoot);
+            removed = await pathIsAbsent(createdRoot);
+          }
+        }
+      } catch {
+        removed = false;
+      }
+      if (!removed) {
+        poisonStagingSlot(runtime, createdRoot);
+        fail2("ADDON_INTEGRITY");
+      }
+    }
+    if (error2 instanceof NativeLockError) throw error2;
+    fail2("ADDON_INTEGRITY");
+  }
+}
+function parseStagingPid(name) {
+  const match = /^tokengraph-native-addon-v1-(\d+)-[A-Za-z0-9]{6}$/u.exec(name);
+  if (match === null) return void 0;
+  const pid = Number(match[1]);
+  return Number.isSafeInteger(pid) && pid > 0 && String(pid) === match[1] ? pid : void 0;
+}
+function parseStagedAddonName(name) {
+  for (const target of TARGETS) {
+    const prefix = `${target.id}-`;
+    if (!name.startsWith(prefix) || !name.endsWith(".node")) continue;
+    const sha256 = name.slice(prefix.length, -".node".length);
+    if (/^[0-9a-f]{64}$/u.test(sha256)) return { targetId: target.id, sha256 };
+  }
+  return void 0;
+}
+function isOrdinaryUnlinkedFile(stats) {
+  return stats.isFile() && !stats.isSymbolicLink() && stats.nlink === 1n;
+}
+function sameStableFileBytes(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.isFile() === right.isFile() && left.nlink === right.nlink && left.size === right.size && left.mtimeNs === right.mtimeNs;
+}
+async function snapshotStaleSafeSubset(root, pid) {
+  try {
+    const rootIdentity = await bigIntLstat(root);
+    if (!rootIdentity.isDirectory() || rootIdentity.isSymbolicLink()) return;
+    validatePrivateMode(rootIdentity, 0o700n);
+    const entries = await readdir(root, { withFileTypes: true });
+    if (entries.length > 2 || entries.some((entry) => entry.isSymbolicLink() || !entry.isFile() && !entry.isDirectory())) return;
+    const names = entries.map((entry) => entry.name).sort();
+    const markerEntry = entries.find((entry) => entry.name === "owner.json");
+    const addonEntries = entries.filter((entry) => entry.name !== "owner.json");
+    if (addonEntries.length > 1) return;
+    const parsedAddon = addonEntries.length === 1 ? parseStagedAddonName(addonEntries[0].name) : void 0;
+    if (addonEntries.length === 1 && parsedAddon === void 0) return;
+    let marker;
+    let owner;
+    if (markerEntry !== void 0) {
+      const markerPath = resolve2(root, markerEntry.name);
+      const markerSnapshot = await readVerifiedFile(markerPath, MARKER_MAX_BYTES, "ADDON_INTEGRITY");
+      try {
+        owner = assertOwner(JSON.parse(markerSnapshot.bytes.toString("utf8")), pid);
+      } catch {
+        return;
+      }
+      if (!markerSnapshot.bytes.equals(canonicalOwner(owner))) return;
+      marker = { path: markerPath, identity: markerSnapshot.entry };
+    }
+    let staged;
+    if (addonEntries.length === 1) {
+      const stagedPath = resolve2(root, addonEntries[0].name);
+      const identity3 = await bigIntLstat(stagedPath);
+      if (!isOrdinaryUnlinkedFile(identity3)) return;
+      staged = { path: stagedPath, identity: identity3 };
+    }
+    if (owner !== void 0 && staged !== void 0 && (owner.addonFile !== basename(staged.path) || owner.targetId !== parsedAddon?.targetId || owner.sha256 !== parsedAddon.sha256)) {
+      return;
+    }
+    if (names.join("\0") !== [marker?.path === void 0 ? void 0 : "owner.json", staged === void 0 ? void 0 : basename(staged.path)].filter((name) => name !== void 0).sort().join("\0")) return;
+    return { root, rootIdentity, pid, marker, staged };
+  } catch {
+    return void 0;
+  }
+}
+async function revalidateStaleSafeSubset(subset) {
+  try {
+    const root = await bigIntLstat(subset.root);
+    if (!sameDirectoryIdentity(subset.rootIdentity, root)) return false;
+    const expected = [subset.marker?.path, subset.staged?.path].filter((path) => path !== void 0).map((path) => basename(path)).sort();
+    if ((await exactDirectoryEntries(subset.root)).join("\0") !== expected.join("\0")) return false;
+    for (const entry of [subset.staged, subset.marker]) {
+      if (entry === void 0) continue;
+      const current = await bigIntLstat(entry.path);
+      if (!isOrdinaryUnlinkedFile(current) || !sameFileIdentity(entry.identity, current)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function prepareStaleEntryForRemoval(entry, runtime) {
+  try {
+    let current = await bigIntLstat(entry.path);
+    if (!isOrdinaryUnlinkedFile(current) || !sameFileIdentity(entry.identity, current)) return void 0;
+    if (process.platform === "win32" && (current.mode & 0o200n) === 0n) {
+      await (runtime.stagingIo?.chmod ?? chmod)(entry.path, 384);
+      const normalized = await bigIntLstat(entry.path);
+      if (!isOrdinaryUnlinkedFile(normalized) || !sameStableFileBytes(current, normalized)) return void 0;
+      current = normalized;
+    }
+    return current;
+  } catch {
+    return void 0;
+  }
+}
+async function cleanupStaleSafeSubset(subset, runtime) {
+  try {
+    if (!await revalidateStaleSafeSubset(subset)) return;
+    const unlinkFile = runtime.stagingIo?.unlink ?? unlink;
+    if (subset.staged !== void 0) {
+      const stagedIdentity = await prepareStaleEntryForRemoval(subset.staged, runtime);
+      if (stagedIdentity === void 0 || !sameDirectoryIdentity(subset.rootIdentity, await bigIntLstat(subset.root))) return;
+      const expectedBeforeStaged = [subset.marker?.path, subset.staged.path].filter((path) => path !== void 0).map((path) => basename(path)).sort();
+      if ((await exactDirectoryEntries(subset.root)).join("\0") !== expectedBeforeStaged.join("\0")) return;
+      const stagedBeforeRemoval = await bigIntLstat(subset.staged.path);
+      if (!isOrdinaryUnlinkedFile(stagedBeforeRemoval) || !sameFileIdentity(stagedIdentity, stagedBeforeRemoval)) return;
+      if (subset.marker !== void 0) {
+        const markerBeforeStagedRemoval = await bigIntLstat(subset.marker.path);
+        if (!isOrdinaryUnlinkedFile(markerBeforeStagedRemoval) || !sameFileIdentity(subset.marker.identity, markerBeforeStagedRemoval)) return;
+      }
+      await unlinkFile(subset.staged.path);
+      if (!await pathIsAbsent(subset.staged.path)) return;
+    }
+    if (subset.marker !== void 0) {
+      const markerIdentity = await prepareStaleEntryForRemoval(subset.marker, runtime);
+      if (markerIdentity === void 0 || !sameDirectoryIdentity(subset.rootIdentity, await bigIntLstat(subset.root)) || (await exactDirectoryEntries(subset.root)).join("\0") !== "owner.json") return;
+      const markerBeforeRemoval = await bigIntLstat(subset.marker.path);
+      if (!isOrdinaryUnlinkedFile(markerBeforeRemoval) || !sameFileIdentity(markerIdentity, markerBeforeRemoval)) return;
+      await unlinkFile(subset.marker.path);
+      if (!await pathIsAbsent(subset.marker.path)) return;
+    }
+    if ((await readdir(subset.root)).length !== 0 || !sameDirectoryIdentity(subset.rootIdentity, await bigIntLstat(subset.root))) return;
+    await (runtime.stagingIo?.rmdir ?? rmdir)(subset.root);
+  } catch {
+  }
+}
+async function inspectStaleRoot(root, pid, runtime) {
+  const subset = await snapshotStaleSafeSubset(root, pid);
+  if (subset === void 0) return;
+  const probe = runtime.probeProcess ?? ((candidatePid) => process.kill(candidatePid, 0));
+  try {
+    probe(pid);
+    return;
+  } catch (error2) {
+    if (errnoCode(error2) !== "ESRCH") return;
+  }
+  if (runtime.beforeStaleCleanup) {
+    try {
+      await runtime.beforeStaleCleanup({
+        root,
+        stagedPath: subset.staged?.path,
+        markerPath: subset.marker?.path,
+        pid
+      });
+    } catch {
+      return;
+    }
+  }
+  if (!await revalidateStaleSafeSubset(subset)) return;
+  await cleanupStaleSafeSubset(subset, runtime);
+}
+async function performStaleStagingSweep(runtime, base2) {
+  try {
+    const baseStats = await bigIntLstat(base2);
+    validateDirectory(baseStats);
+    const candidates = [];
+    for (const entry of await readdir(base2, { withFileTypes: true })) {
+      const pid = parseStagingPid(entry.name);
+      if (pid === void 0) continue;
+      const root = resolve2(base2, entry.name);
+      try {
+        const stats = await bigIntLstat(root);
+        candidates.push({ root, pid, mtimeNs: stats.mtimeNs });
+      } catch {
+      }
+    }
+    candidates.sort((left, right) => left.mtimeNs < right.mtimeNs ? -1 : left.mtimeNs > right.mtimeNs ? 1 : 0);
+    for (const candidate of candidates.slice(0, STALE_SWEEP_LIMIT)) {
+      await inspectStaleRoot(candidate.root, candidate.pid, runtime);
+    }
+  } catch (error2) {
+    if (error2 instanceof NativeLockError) throw error2;
+    fail2("ADDON_INTEGRITY");
+  }
+}
+async function sweepStaleStaging(runtime) {
+  const base2 = stagingBase(runtime);
+  const key = process.platform === "win32" ? base2.toLowerCase() : base2;
+  const existing = stagingSweeps.get(key);
+  if (existing !== void 0) return existing;
+  const shared = Promise.resolve().then(() => performStaleStagingSweep(runtime, base2));
+  stagingSweeps.set(key, shared);
+  try {
+    await shared;
+  } catch (error2) {
+    if (stagingSweeps.get(key) === shared) stagingSweeps.delete(key);
+    throw error2;
+  }
+}
+async function withStagingSlot(runtime, operation) {
+  const key = stagingKey(runtime);
+  const previous = stagingChains.get(key) ?? Promise.resolve();
+  let release;
+  const gate = new Promise((resolveGate) => {
+    release = resolveGate;
+  });
+  const chain = previous.then(() => gate);
+  stagingChains.set(key, chain);
+  await previous;
+  try {
+    if (preservedStagingRoots.has(key)) fail2("ADDON_INTEGRITY");
+    return await operation();
+  } finally {
+    release();
+    if (stagingChains.get(key) === chain) stagingChains.delete(key);
+  }
+}
+function loadWithProcessDlopen(modulePath) {
+  const holder = { exports: {} };
+  process.dlopen(holder, modulePath);
+  return { provenance: "production", holder, rawAddon: holder.exports };
+}
+function loadStagedModule(runtime, modulePath) {
+  if (runtime.loadModule !== void 0) {
+    return { provenance: "injected", rawAddon: runtime.loadModule(modulePath) };
+  }
+  return loadWithProcessDlopen(modulePath);
+}
+function cleanupOwnedStagingSync(lifecycle) {
+  try {
+    const root = lstatSync(lifecycle.root, { bigint: true });
+    if (!root.isDirectory() || root.isSymbolicLink() || !sameDirectoryIdentity(lifecycle.rootIdentity, root)) return;
+    const expected = [basename(lifecycle.stagedPath), basename(lifecycle.markerPath)].sort();
+    const entries = readdirSync(lifecycle.root, { withFileTypes: true });
+    if (entries.some((entry) => !entry.isFile() || entry.isSymbolicLink()) || entries.map((entry) => entry.name).sort().join("\0") !== expected.join("\0")) return;
+    const marker = lstatSync(lifecycle.markerPath, { bigint: true });
+    const staged = lstatSync(lifecycle.stagedPath, { bigint: true });
+    if (lifecycle.markerIdentity === void 0 || lifecycle.stagedIdentity === void 0 || !isOrdinaryUnlinkedFile(marker) || !isOrdinaryUnlinkedFile(staged) || !sameFileIdentity(lifecycle.markerIdentity, marker) || !sameFileIdentity(lifecycle.stagedIdentity, staged)) return;
+    const markerBytes = readFileSync(lifecycle.markerPath);
+    const markerAfterRead = lstatSync(lifecycle.markerPath, { bigint: true });
+    const stagedBeforeRemoval = lstatSync(lifecycle.stagedPath, { bigint: true });
+    const rootBeforeRemoval = lstatSync(lifecycle.root, { bigint: true });
+    if (!markerBytes.equals(lifecycle.markerBytes) || !sameFileIdentity(marker, markerAfterRead) || !sameFileIdentity(staged, stagedBeforeRemoval) || !sameDirectoryIdentity(root, rootBeforeRemoval) || readdirSync(lifecycle.root).sort().join("\0") !== expected.join("\0")) return;
+    unlinkSync(lifecycle.stagedPath);
+    const markerBeforeRemoval = lstatSync(lifecycle.markerPath, { bigint: true });
+    if (!sameFileIdentity(markerAfterRead, markerBeforeRemoval)) return;
+    unlinkSync(lifecycle.markerPath);
+    if (readdirSync(lifecycle.root).length === 0) rmdirSync(lifecycle.root);
+  } catch {
+  }
+}
+function rawNativeCodes(error2) {
+  const codes = [];
+  if (typeof error2 === "object" && error2 !== null) {
+    for (const key of ["code", "reason", "message"]) {
+      const value = dataDescriptorValue(error2, key);
+      if (typeof value !== "string") continue;
+      if (key === "code") codes.push(value);
+      const match = /^([A-Z][A-Z0-9_]*):/u.exec(value);
+      if (match !== null) codes.push(match[1]);
+    }
+  }
+  return codes;
+}
+function normalizeNativeError(error2) {
+  const codes = rawNativeCodes(error2);
+  if (codes.includes("UNSAFE_ANCHOR")) return new NativeLockError("UNSAFE_ANCHOR");
+  const knownSafeBusyCodes = ["LOCK_BUSY", "EAGAIN", "EWOULDBLOCK", "ERROR_LOCK_VIOLATION", "ERROR_SHARING_VIOLATION"];
+  if (codes.some((code) => knownSafeBusyCodes.includes(code))) return new NativeLockError("LOCK_BUSY");
+  return new NativeLockError("NATIVE_LOCK_ERROR");
+}
+function invokeNative(operation) {
+  try {
+    return operation();
+  } catch (error2) {
+    if (error2 instanceof NativeLockError) throw error2;
+    throw normalizeNativeError(error2);
+  }
+}
+function dataMethod(value, property, ownOnly = false) {
+  const candidate = dataDescriptorValue(value, property, ownOnly);
+  if (typeof candidate !== "function") fail2(ownOnly ? "ADDON_ABI" : "NATIVE_LOCK_ERROR");
+  return candidate;
+}
+function wrapHandle(value) {
+  if (!isObject2(value)) fail2("NATIVE_LOCK_ERROR");
+  const protect = dataMethod(value, "protectCompatibilityDirectory");
+  const releaseCompatibility = dataMethod(value, "releaseCompatibilityDirectory");
+  const release = dataMethod(value, "release");
+  return Object.freeze({
+    protectCompatibilityDirectory(lockPath) {
+      invokeNative(() => Reflect.apply(protect, value, [lockPath]));
+    },
+    releaseCompatibilityDirectory() {
+      invokeNative(() => Reflect.apply(releaseCompatibility, value, []));
+    },
+    release() {
+      invokeNative(() => Reflect.apply(release, value, []));
+    }
+  });
+}
+function verifiedAddonExports(value, target) {
+  if (!isObject2(value)) fail2("ADDON_ABI");
+  if (dataDescriptorValue(value, "abiVersion", true) !== 1) fail2("ADDON_ABI");
+  const implementationMethod = dataMethod(value, "implementation", true);
+  const acquire = dataMethod(value, "tryAcquireAnchor", true);
+  let implementation;
+  try {
+    implementation = Reflect.apply(implementationMethod, value, []);
+  } catch {
+    fail2("ADDON_ABI");
+  }
+  const expectedImplementation = target.platform === "win32" ? "lockfileex" : "flock";
+  if (implementation !== expectedImplementation) fail2("ADDON_ABI");
+  return { raw: value, implementation: expectedImplementation, acquire, implementationMethod };
+}
+function wrapAddon(value, target) {
+  const verified = verifiedAddonExports(value, target);
+  return Object.freeze({
+    targetId: target.id,
+    implementation: verified.implementation,
+    tryAcquireAnchor(anchorPath) {
+      return invokeNative(() => wrapHandle(Reflect.apply(verified.acquire, verified.raw, [anchorPath])));
+    }
+  });
+}
+function loaderStateFor(runtime) {
+  if (runtime.loadModule === void 0) return productionLoaderState;
+  const existing = injectedLoaderStates.get(runtime.loadModule);
+  if (existing !== void 0) return existing;
+  const created = createLoaderState();
+  injectedLoaderStates.set(runtime.loadModule, created);
+  return created;
+}
+function isExpectedWindowsSharingFailure(result) {
+  return result.phase === "addon" && ["EPERM", "EACCES", "EBUSY"].includes(result.code ?? "");
+}
+function inspectProductionRetention(runtime, loadedModule) {
+  if (runtime.inspectProductionRetention === void 0) return;
+  try {
+    runtime.inspectProductionRetention((candidate) => retainedFailedModules.some((record2) => record2.loadedModule.holder === candidate) || retainedLoads.some((record2) => record2.loadedModule.provenance === "production" && record2.loadedModule.holder === candidate));
+  } catch {
+    fail2("ADDON_INTEGRITY");
+  }
+}
+function preserveWindowsMappedStaging(runtime, target, lifecycle, loadedModule, retainFailure) {
+  if (loadedModule?.provenance !== "production" || process.platform !== "win32" || target.platform !== "win32") return false;
+  if (!poisonStagingSlot(runtime, lifecycle.root)) return false;
+  if (retainFailure) {
+    retainedFailedModules.push({ loadedModule, lifecycle });
+    inspectProductionRetention(runtime, loadedModule);
+  }
+  process.once("exit", () => {
+    void loadedModule.holder;
+    cleanupOwnedStagingSync(lifecycle);
+  });
+  return true;
+}
+async function performStagedLoad(runtime, target, sourcePath, source, sha256) {
+  await sweepStaleStaging(runtime);
+  return withStagingSlot(runtime, async () => {
+    const { lifecycle } = await createStagingLifecycle(runtime, target, sourcePath, source.bytes, sha256);
+    let loadedModule;
+    let staged;
+    let nativeLoadSucceeded = false;
+    try {
+      if (runtime.beforeStagedLoad) {
+        await runtime.beforeStagedLoad({
+          root: lifecycle.root,
+          sourcePath,
+          stagedPath: lifecycle.stagedPath,
+          markerPath: lifecycle.markerPath,
+          targetId: target.id,
+          sha256
+        });
+      }
+      staged = await verifyStagingLifecycle(lifecycle, source.bytes);
+      try {
+        loadedModule = loadStagedModule(runtime, lifecycle.stagedPath);
+        nativeLoadSucceeded = true;
+      } catch {
+        throw new NativeLockError("ADDON_ABI");
+      }
+      const addon = wrapAddon(loadedModule.rawAddon, target);
+      const cleanup = await cleanupOwnedStaging(lifecycle, runtime.stagingIo);
+      const production = loadedModule.provenance === "production";
+      if (!cleanup.complete) {
+        if (!(production && isExpectedWindowsSharingFailure(cleanup) && preserveWindowsMappedStaging(runtime, target, lifecycle, loadedModule, false))) {
+          fail2("ADDON_INTEGRITY");
+        }
+      } else if (production && process.platform !== "win32") {
+        const verified = verifiedAddonExports(loadedModule.rawAddon, target);
+        let implementation;
+        try {
+          implementation = Reflect.apply(verified.implementationMethod, verified.raw, []);
+        } catch {
+          fail2("ADDON_INTEGRITY");
+        }
+        if (implementation !== verified.implementation) fail2("ADDON_INTEGRITY");
+      }
+      retainedLoads.push({
+        loadedModule,
+        addon,
+        source,
+        staged,
+        lifecycle
+      });
+      if (loadedModule.provenance === "production") inspectProductionRetention(runtime, loadedModule);
+      return addon;
+    } catch (error2) {
+      const cleanup = await cleanupOwnedStaging(lifecycle, runtime.stagingIo);
+      if (!cleanup.complete) {
+        const preserved = nativeLoadSucceeded && isExpectedWindowsSharingFailure(cleanup) && preserveWindowsMappedStaging(runtime, target, lifecycle, loadedModule, true);
+        if (!preserved) {
+          poisonStagingSlot(runtime, lifecycle.root);
+          fail2("ADDON_INTEGRITY");
+        }
+      }
+      if (error2 instanceof NativeLockError) throw error2;
+      fail2(nativeLoadSucceeded ? "ADDON_ABI" : "ADDON_INTEGRITY");
+    }
+  });
+}
+async function loadNativeLockAddon(runtime = {}) {
+  const target = selectTarget(runtime);
+  const assetsRoot = resolveAssetsRoot(runtime);
+  const manifest = await readManifest(assetsRoot);
+  const artifact = manifest.artifacts.find((entry) => entry.id === target.id);
+  if (artifact === void 0) fail2("ADDON_INTEGRITY");
+  const artifactPath2 = resolve2(assetsRoot, artifact.path);
+  const pathKey = target.platform === "win32" ? artifactPath2.toLowerCase() : artifactPath2;
+  const snapshot = await readVerifiedFile(artifactPath2, ADDON_MAX_BYTES, "ADDON_MISSING", runtime.afterArtifactRead);
+  if (artifact.bytes !== snapshot.bytes.length || artifact.sha256 !== createHash("sha256").update(snapshot.bytes).digest("hex")) {
+    fail2("ADDON_INTEGRITY");
+  }
+  const sourceIdentity = [
+    snapshotIdentity(pathKey, snapshot.entry),
+    target.id,
+    artifact.bytes,
+    artifact.sha256
+  ].join("\0");
+  const state = loaderStateFor(runtime);
+  const inFlight = state.inFlight.get(pathKey);
+  if (inFlight !== void 0) {
+    if (inFlight.identity !== sourceIdentity) fail2("ADDON_INTEGRITY");
+    return inFlight.promise;
+  }
+  const boundIdentity = state.boundIdentities.get(pathKey);
+  if (boundIdentity !== void 0 && boundIdentity !== sourceIdentity) fail2("ADDON_INTEGRITY");
+  const cached2 = state.cache.get(sourceIdentity);
+  if (cached2 !== void 0) return cached2;
+  let sharedPromise;
+  sharedPromise = Promise.resolve().then(() => performStagedLoad(runtime, target, artifactPath2, snapshot, artifact.sha256)).then((addon) => {
+    state.boundIdentities.set(pathKey, sourceIdentity);
+    state.cache.set(sourceIdentity, addon);
+    return addon;
+  }).finally(() => {
+    if (state.inFlight.get(pathKey)?.promise === sharedPromise) state.inFlight.delete(pathKey);
+  });
+  state.inFlight.set(pathKey, { identity: sourceIdentity, promise: sharedPromise });
+  return sharedPromise;
+}
+var ERROR_MESSAGES, RETRIABLE_ERROR_CODES, NativeLockError, TARGET_DEFINITIONS, TARGETS, MANIFEST_MAX_BYTES, ADDON_MAX_BYTES, MARKER_MAX_BYTES, STAGING_PREFIX, STALE_SWEEP_LIMIT, STAGING_CHMOD_ATTEMPTS, STAGING_CHMOD_RETRY_MS, MANIFEST_KEYS, ARTIFACT_KEYS, OWNER_KEYS, productionLoaderState, injectedLoaderStates, stagingSweeps, stagingChains, preservedStagingRoots, retainedLoads, retainedFailedModules;
+var init_nativeLockAddon = __esm({
+  "src/core/nativeLockAddon.ts"() {
+    "use strict";
+    ERROR_MESSAGES = Object.freeze({
+      LOCK_BUSY: "The native lock is busy.",
+      UNSAFE_ANCHOR: "The native lock anchor is unsafe.",
+      NATIVE_LOCK_ERROR: "The native lock operation failed.",
+      ADDON_MISSING: "The native lock addon is unavailable.",
+      ADDON_INTEGRITY: "The native lock addon failed integrity verification.",
+      ADDON_UNSUPPORTED: "The native lock addon is unsupported on this runtime.",
+      ADDON_ABI: "The native lock addon interface is incompatible."
+    });
+    RETRIABLE_ERROR_CODES = /* @__PURE__ */ new Set(["LOCK_BUSY"]);
+    NativeLockError = class extends Error {
+      code;
+      retriable;
+      constructor(code) {
+        super(ERROR_MESSAGES[code]);
+        this.name = "NativeLockError";
+        this.code = code;
+        this.retriable = RETRIABLE_ERROR_CODES.has(code);
+      }
+    };
+    TARGET_DEFINITIONS = [
+      { id: "darwin-arm64", platform: "darwin", arch: "arm64", libc: "none", rustTarget: "aarch64-apple-darwin", file: "tokengraph-lock.darwin-arm64.node", osFloor: "macos-11.0" },
+      { id: "darwin-x64", platform: "darwin", arch: "x64", libc: "none", rustTarget: "x86_64-apple-darwin", file: "tokengraph-lock.darwin-x64.node", osFloor: "macos-11.0" },
+      { id: "linux-arm64-gnu", platform: "linux", arch: "arm64", libc: "glibc", rustTarget: "aarch64-unknown-linux-gnu", file: "tokengraph-lock.linux-arm64.node", osFloor: "kernel-4.18-glibc-2.28" },
+      { id: "linux-x64-gnu", platform: "linux", arch: "x64", libc: "glibc", rustTarget: "x86_64-unknown-linux-gnu", file: "tokengraph-lock.linux-x64.node", osFloor: "kernel-4.18-glibc-2.28" },
+      { id: "win32-arm64", platform: "win32", arch: "arm64", libc: "none", rustTarget: "aarch64-pc-windows-msvc", file: "tokengraph-lock.win32-arm64.node", osFloor: "windows-10" },
+      { id: "win32-x64", platform: "win32", arch: "x64", libc: "none", rustTarget: "x86_64-pc-windows-msvc", file: "tokengraph-lock.win32-x64.node", osFloor: "windows-10-server-2016" }
+    ];
+    TARGETS = Object.freeze(TARGET_DEFINITIONS.map((target) => Object.freeze(target)));
+    MANIFEST_MAX_BYTES = 256 * 1024;
+    ADDON_MAX_BYTES = 64 * 1024 * 1024;
+    MARKER_MAX_BYTES = 4 * 1024;
+    STAGING_PREFIX = "tokengraph-native-addon-v1-";
+    STALE_SWEEP_LIMIT = 32;
+    STAGING_CHMOD_ATTEMPTS = 3;
+    STAGING_CHMOD_RETRY_MS = 25;
+    MANIFEST_KEYS = ["schemaVersion", "addonAbiVersion", "nodeApiVersion", "rustToolchain", "artifacts"];
+    ARTIFACT_KEYS = ["id", "platform", "arch", "libc", "rustTarget", "file", "osFloor", "path", "bytes", "sha256"];
+    OWNER_KEYS = ["schemaVersion", "pid", "targetId", "sha256", "addonFile"];
+    productionLoaderState = createLoaderState();
+    injectedLoaderStates = /* @__PURE__ */ new WeakMap();
+    stagingSweeps = /* @__PURE__ */ new Map();
+    stagingChains = /* @__PURE__ */ new Map();
+    preservedStagingRoots = /* @__PURE__ */ new Map();
+    retainedLoads = [];
+    retainedFailedModules = [];
+  }
+});
+
+// src/core/nativeLockProvider.ts
+function getNativeLockAddon() {
+  return loadNativeLockAddon();
+}
+var init_nativeLockProvider = __esm({
+  "src/core/nativeLockProvider.ts"() {
+    "use strict";
+    init_nativeLockAddon();
+  }
+});
+
+// src/core/fileLockLease.ts
+import { createHash as createHash2, randomUUID } from "node:crypto";
+import { constants as constants3 } from "node:fs";
+import {
+  chmod as chmod2,
+  lstat as lstat3,
+  mkdir,
+  open as open3,
+  readdir as readdir2,
+  rename,
+  rmdir as rmdir2,
+  unlink as unlink2
+} from "node:fs/promises";
+import { dirname as dirname3, join as join3, parse as parse3, relative as relative2, resolve as resolve3 } from "node:path";
+function fail3(code) {
+  throw new FileLockError(code);
+}
+function errno(error2) {
+  return typeof error2 === "object" && error2 !== null && typeof error2.code === "string" ? String(error2.code) : "";
+}
+function isTransientWindowsDiagnostic(error2, runtime) {
+  return runtime.platform === "win32" && ["EPERM", "EACCES", "EBUSY"].includes(errno(error2));
+}
+function validatePolicy(policy) {
+  if (!Number.isSafeInteger(policy.attempts) || policy.attempts < 1 || policy.attempts > 1e4 || !Number.isSafeInteger(policy.waitMs) || policy.waitMs < 0 || policy.waitMs > 6e4 || !Number.isSafeInteger(policy.staleMs) || policy.staleMs < 3 || policy.staleMs > 864e5 || !Number.isSafeInteger(policy.heartbeatMs) || policy.heartbeatMs < 1 || policy.heartbeatMs * 3 >= policy.staleMs) {
+    throw new TypeError("Invalid file lock policy.");
+  }
+}
+function abortIfRequested(signal) {
+  if (signal?.aborted) fail3("LOCK_ABORTED");
+}
+function iso(milliseconds) {
+  const value = new Date(milliseconds).toISOString();
+  if (!Number.isFinite(Date.parse(value))) throw new RangeError("Invalid lock clock.");
+  return value;
+}
+function validIso(value) {
+  if (typeof value !== "string") return false;
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
+}
+function isPlainRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+}
+function exactKeys(record2, required2, optional2 = []) {
+  const actual = Object.keys(record2).sort();
+  const allowed = [...required2, ...optional2];
+  if (!required2.every((key) => actual.includes(key)) || actual.some((key) => !allowed.includes(key))) return false;
+  return true;
+}
+function parseLease(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return void 0;
+  }
+  if (`${JSON.stringify(parsed)}
+` !== text) return void 0;
+  if (!isPlainRecord(parsed) || !exactKeys(
+    parsed,
+    ["schemaVersion", "pid", "nonce", "startedAt", "heartbeatAt"]
+  )) return void 0;
+  if (parsed.schemaVersion !== 1 || !Number.isSafeInteger(parsed.pid) || Number(parsed.pid) <= 0 || typeof parsed.nonce !== "string" || !UUID_PATTERN.test(parsed.nonce) || !validIso(parsed.startedAt) || !validIso(parsed.heartbeatAt) || Date.parse(parsed.heartbeatAt) < Date.parse(parsed.startedAt)) return void 0;
+  return parsed;
+}
+function validIdentity(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 512;
+}
+function parsePredecessor(value) {
+  if (!isPlainRecord(value) || !exactKeys(value, ["generation", "identity"]) || !Number.isSafeInteger(value.generation) || Number(value.generation) < 0 || !validIdentity(value.identity)) {
+    return void 0;
+  }
+  return value;
+}
+function parsePendingLeaseWrite(value) {
+  if (!isPlainRecord(value) || !exactKeys(
+    value,
+    ["operation", "payloadSha256"],
+    ["fromIdentity", "temporaryIdentity"]
+  ) || !["create", "replace"].includes(String(value.operation)) || typeof value.payloadSha256 !== "string" || !/^[0-9a-f]{64}$/u.test(value.payloadSha256) || value.temporaryIdentity !== void 0 && !validIdentity(value.temporaryIdentity)) return void 0;
+  if (value.operation === "create" && value.fromIdentity !== void 0) return void 0;
+  if (value.operation === "replace" && !validIdentity(value.fromIdentity)) return void 0;
+  return value;
+}
+function parseLockRecoveryJournal(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return void 0;
+  }
+  if (`${JSON.stringify(parsed)}
+` !== text || !isPlainRecord(parsed) || parsed.schemaVersion !== 2 || !Number.isSafeInteger(parsed.generation) || Number(parsed.generation) < 0) return void 0;
+  if (parsed.phase === "idle") {
+    if (!exactKeys(parsed, ["schemaVersion", "generation", "phase"], ["predecessor"])) return void 0;
+    if (parsed.generation === 0) {
+      if (parsed.predecessor !== void 0) return void 0;
+    } else {
+      const predecessor2 = parsePredecessor(parsed.predecessor);
+      if (predecessor2 === void 0 || predecessor2.generation !== Number(parsed.generation) - 1) return void 0;
+    }
+    return parsed;
+  }
+  if (!["intent", "barrier-created", "lease-created", "cleanup"].includes(String(parsed.phase)) || !exactKeys(
+    parsed,
+    [
+      "schemaVersion",
+      "generation",
+      "predecessor",
+      "relativeLegacyName",
+      "keyHash",
+      "pid",
+      "nonce",
+      "phase",
+      "startedAt",
+      "heartbeatAt"
+    ],
+    ["barrierIdentity", "leaseIdentity", "pendingBarrier", "pendingLeaseWrite"]
+  )) return void 0;
+  const predecessor = parsePredecessor(parsed.predecessor);
+  if (Number(parsed.generation) === 0 || predecessor === void 0 || predecessor.generation !== Number(parsed.generation) - 1 || typeof parsed.relativeLegacyName !== "string" || typeof parsed.keyHash !== "string" || !/^[0-9a-f]{64}$/u.test(parsed.keyHash) || !Number.isSafeInteger(parsed.pid) || Number(parsed.pid) <= 0 || typeof parsed.nonce !== "string" || !UUID_PATTERN.test(parsed.nonce) || !validIso(parsed.startedAt) || !validIso(parsed.heartbeatAt) || Date.parse(parsed.heartbeatAt) < Date.parse(parsed.startedAt) || parsed.barrierIdentity !== void 0 && !validIdentity(parsed.barrierIdentity) || parsed.leaseIdentity !== void 0 && !validIdentity(parsed.leaseIdentity)) return void 0;
+  const pendingBarrier = parsed.pendingBarrier;
+  if (pendingBarrier !== void 0 && (!isPlainRecord(pendingBarrier) || !exactKeys(pendingBarrier, ["operation"]) || pendingBarrier.operation !== "create")) return void 0;
+  const pendingLeaseWrite = parsed.pendingLeaseWrite === void 0 ? void 0 : parsePendingLeaseWrite(parsed.pendingLeaseWrite);
+  if (parsed.pendingLeaseWrite !== void 0 && pendingLeaseWrite === void 0) return void 0;
+  if (pendingBarrier !== void 0 && pendingLeaseWrite !== void 0) return void 0;
+  if (parsed.phase === "intent") {
+    if (parsed.barrierIdentity !== void 0 || parsed.leaseIdentity !== void 0 || pendingBarrier === void 0 || pendingLeaseWrite !== void 0) return void 0;
+  } else if (parsed.phase === "barrier-created") {
+    if (!validIdentity(parsed.barrierIdentity) || parsed.leaseIdentity !== void 0 || pendingBarrier !== void 0 || pendingLeaseWrite !== void 0 && pendingLeaseWrite.operation !== "create") return void 0;
+  } else if (parsed.phase === "lease-created") {
+    if (!validIdentity(parsed.barrierIdentity) || !validIdentity(parsed.leaseIdentity) || pendingBarrier !== void 0 || pendingLeaseWrite !== void 0 && (pendingLeaseWrite.operation !== "replace" || pendingLeaseWrite.fromIdentity !== parsed.leaseIdentity)) return void 0;
+  } else if (!validIdentity(parsed.barrierIdentity) || pendingBarrier !== void 0 || pendingLeaseWrite !== void 0) {
+    return void 0;
+  }
+  return parsed;
+}
+function activeJournal(record2) {
+  return record2.phase !== "idle";
+}
+function sameActiveOwner(before, after) {
+  return before.relativeLegacyName === after.relativeLegacyName && before.keyHash === after.keyHash && before.pid === after.pid && before.nonce === after.nonce && before.startedAt === after.startedAt && Date.parse(after.heartbeatAt) >= Date.parse(before.heartbeatAt);
+}
+function withoutGeneration(record2) {
+  const copy = { ...record2 };
+  delete copy.generation;
+  delete copy.predecessor;
+  return copy;
+}
+function sameRecordState(before, after) {
+  return JSON.stringify(withoutGeneration(before)) === JSON.stringify(withoutGeneration(after));
+}
+function validLockRecoveryTransition(before, after, beforeIdentity) {
+  if (after.generation !== before.generation + 1 || after.predecessor?.generation !== before.generation || after.predecessor.identity !== beforeIdentity) return false;
+  if (before.phase === "idle") {
+    return after.phase === "intent" && after.startedAt === after.heartbeatAt;
+  }
+  if (activeJournal(after) && !sameActiveOwner(before, after)) return false;
+  if (before.barrierIdentity !== void 0 && activeJournal(after) && after.barrierIdentity !== before.barrierIdentity) return false;
+  if (before.phase === "intent") {
+    return after.phase === "idle" || after.phase === "barrier-created" && after.pendingLeaseWrite === void 0;
+  }
+  if (before.phase === "barrier-created") {
+    const pending = before.pendingLeaseWrite;
+    if (pending === void 0) {
+      return after.phase === "barrier-created" && after.pendingLeaseWrite?.operation === "create" && after.pendingLeaseWrite.temporaryIdentity === void 0 || after.phase === "cleanup" && after.barrierIdentity === before.barrierIdentity && after.leaseIdentity === void 0;
+    }
+    if (after.phase === "barrier-created" && after.pendingLeaseWrite === void 0) return true;
+    if (pending.temporaryIdentity === void 0) {
+      return after.phase === "barrier-created" && after.pendingLeaseWrite?.operation === "create" && after.pendingLeaseWrite.payloadSha256 === pending.payloadSha256 && after.pendingLeaseWrite.temporaryIdentity !== void 0;
+    }
+    return after.phase === "lease-created" && after.pendingLeaseWrite === void 0 && after.leaseIdentity === pending.temporaryIdentity;
+  }
+  if (before.phase === "lease-created") {
+    const pending = before.pendingLeaseWrite;
+    if (pending === void 0) {
+      return after.phase === "lease-created" && after.pendingLeaseWrite?.operation === "replace" && after.pendingLeaseWrite.fromIdentity === before.leaseIdentity && after.pendingLeaseWrite.temporaryIdentity === void 0 || after.phase === "cleanup" && after.barrierIdentity === before.barrierIdentity && after.leaseIdentity === before.leaseIdentity;
+    }
+    if (after.phase === "lease-created" && after.pendingLeaseWrite === void 0) {
+      const rollback = sameRecordState(before, {
+        ...after,
+        pendingLeaseWrite: before.pendingLeaseWrite
+      });
+      return rollback || pending.temporaryIdentity !== void 0 && after.leaseIdentity === pending.temporaryIdentity;
+    }
+    return pending.temporaryIdentity === void 0 && after.phase === "lease-created" && after.pendingLeaseWrite?.operation === "replace" && after.pendingLeaseWrite.fromIdentity === pending.fromIdentity && after.pendingLeaseWrite.payloadSha256 === pending.payloadSha256 && after.pendingLeaseWrite.temporaryIdentity !== void 0;
+  }
+  if (before.leaseIdentity !== void 0) {
+    return after.phase === "cleanup" && after.barrierIdentity === before.barrierIdentity && after.leaseIdentity === void 0;
+  }
+  return after.phase === "idle";
+}
+function keyHash(relativeName) {
+  return createHash2("sha256").update(relativeName, "utf8").digest("hex");
+}
+function stableSnapshot(first, second) {
+  return first.identity === second.identity && first.nlink === second.nlink && first.text === second.text;
+}
+function stale(heartbeatAt, runtime, policy) {
+  const heartbeat = Date.parse(heartbeatAt);
+  return heartbeat <= runtime.now() && runtime.now() - heartbeat > policy.staleMs;
+}
+async function retryDiagnostic(runtime, policy, signal, operation) {
+  for (let attempt = 0; ; attempt += 1) {
+    abortIfRequested(signal);
+    try {
+      return await operation();
+    } catch (error2) {
+      if (!isTransientWindowsDiagnostic(error2, runtime) || attempt >= 19) throw error2;
+      await runtime.wait(policy.waitMs, signal);
+    }
+  }
+}
+async function readStableFile(path, maximumBytes, runtime, policy, signal, unstableCode = "LOCK_LEASE_OCCUPIED") {
+  const first = await retryDiagnostic(runtime, policy, signal, () => runtime.io.readFile(path, maximumBytes));
+  if (first === void 0) return void 0;
+  await runtime.wait(policy.waitMs, signal);
+  const second = await retryDiagnostic(runtime, policy, signal, () => runtime.io.readFile(path, maximumBytes));
+  if (second === void 0 || !stableSnapshot(first, second)) fail3(unstableCode);
+  return [first, second];
+}
+async function confirmedDead(pid, heartbeatAt, runtime, policy) {
+  if (!stale(heartbeatAt, runtime, policy)) return false;
+  return await runtime.processLiveness(pid) === "dead";
+}
+function pathForJournal(lock, journal) {
+  const candidate = resolve3(lock.domainRoot, journal.relativeLegacyName);
+  const dataName = journal.relativeLegacyName.endsWith(".lock") ? journal.relativeLegacyName.slice(0, -".lock".length) : "";
+  if (relative2(lock.domainRoot, candidate) !== journal.relativeLegacyName || dirname3(candidate) !== lock.domainRoot || journal.relativeLegacyName.includes("/") || journal.relativeLegacyName.includes("\\") || journal.relativeLegacyName === NATIVE_ANCHOR || journal.relativeLegacyName === NATIVE_JOURNAL || dataName.length === 0 || dataName === "." || dataName === ".." || /[<>:"|?*\u0000-\u001f]/u.test(dataName) || /[. ]$/u.test(dataName) || Buffer.byteLength(dataName, "utf8") > 240 || keyHash(journal.relativeLegacyName) !== journal.keyHash) {
+    fail3("LOCK_JOURNAL_UNSAFE");
+  }
+  return candidate;
+}
+function validateDirectory2(snapshot, runtime, expectedIdentity, requireRestrictiveMode = true) {
+  if (expectedIdentity !== void 0 && snapshot.identity !== expectedIdentity) fail3("UNSAFE_LOCK_DIRECTORY");
+  if (snapshot.identity.length === 0 || requireRestrictiveMode && runtime.platform !== "win32" && (snapshot.mode & 63) !== 0) {
+    fail3("UNSAFE_LOCK_DIRECTORY");
+  }
+}
+async function validateRecoverableLease(leasePath, expectedNonce, expectedOwner, expectedIdentity, runtime, policy, signal) {
+  const pair = await readStableFile(leasePath, LEASE_MAX_BYTES, runtime, policy, signal);
+  if (pair === void 0 || pair[1].nlink !== 1 || expectedIdentity !== void 0 && pair[1].identity !== expectedIdentity) {
+    fail3("LOCK_LEASE_OCCUPIED");
+  }
+  const lease = parseLease(pair[1].text);
+  if (lease === void 0 || lease.nonce !== expectedNonce || lease.pid !== expectedOwner.pid || lease.startedAt !== expectedOwner.startedAt || !await confirmedDead(lease.pid, lease.heartbeatAt, runtime, policy)) {
+    fail3("LOCK_LEASE_OCCUPIED");
+  }
+  return { lease, snapshot: pair[1] };
+}
+function journalText(record2) {
+  return `${JSON.stringify(record2)}
+`;
+}
+function journalTemporaryPath(path) {
+  return `${path}${WRITE_TEMPORARY_SUFFIX}`;
+}
+function leasePayloadHash(text) {
+  return createHash2("sha256").update(text, "utf8").digest("hex");
+}
+function nextJournalRecord(state, value) {
+  return {
+    ...value,
+    generation: state.record.generation + 1,
+    predecessor: { generation: state.record.generation, identity: state.snapshot.identity }
+  };
+}
+function ownsDomainRoot(lock) {
+  return lock.domain !== "git-info";
+}
+async function classifyDomainRoot(lock, record2, runtime, policy) {
+  const requireRestrictiveMode = ownsDomainRoot(lock);
+  const root = await retryDiagnostic(
+    runtime,
+    policy,
+    void 0,
+    () => runtime.io.inspectDirectory(lock.domainRoot, requireRestrictiveMode)
+  );
+  if (root === void 0) fail3("UNSAFE_LOCK_DIRECTORY");
+  validateDirectory2(root, runtime, void 0, requireRestrictiveMode);
+  const allowedBarrier = record2 !== void 0 && activeJournal(record2) ? record2.relativeLegacyName : void 0;
+  for (const entry of root.entries) {
+    if (entry === NATIVE_ANCHOR || entry === NATIVE_JOURNAL || entry === `${NATIVE_JOURNAL}${WRITE_TEMPORARY_SUFFIX}` || entry === allowedBarrier) continue;
+    if (entry.startsWith(".tokengraph-native-") || entry.endsWith(WRITE_TEMPORARY_SUFFIX)) {
+      fail3("LOCK_JOURNAL_UNSAFE");
+    }
+    if (entry.endsWith(".lock")) {
+      fail3(entry === lock.compatibilityPath.slice(lock.domainRoot.length + 1) ? "LEGACY_LOCK_BLOCKED" : "LOCK_JOURNAL_UNSAFE");
+    }
+  }
+}
+async function stableProtocolFile(path, maximumBytes, runtime, policy, code = "LOCK_JOURNAL_UNSAFE") {
+  const pair = await readStableFile(path, maximumBytes, runtime, policy, void 0, code);
+  if (pair === void 0) return void 0;
+  if (pair[1].nlink !== 1 || pair[1].identity.length === 0 || runtime.platform !== "win32" && (pair[1].mode & 63) !== 0) fail3(code);
+  return pair[1];
+}
+async function replaceAuthorizedTemporary(temporaryPath, targetPath, temporary, expectedTargetIdentity, runtime, policy) {
+  return retryDiagnostic(runtime, policy, void 0, () => runtime.io.replaceFileFromTemporary(
+    temporaryPath,
+    targetPath,
+    temporary.identity,
+    expectedTargetIdentity
+  ));
+}
+async function bootstrapJournalV2(lock, runtime, policy) {
+  await classifyDomainRoot(lock, void 0, runtime, policy);
+  const temporaryPath = journalTemporaryPath(lock.journalPath);
+  let temporary = await stableProtocolFile(temporaryPath, JOURNAL_MAX_BYTES, runtime, policy);
+  if (temporary !== void 0) {
+    const parsed = parseLockRecoveryJournal(temporary.text);
+    if (parsed === void 0) {
+      await retryDiagnostic(runtime, policy, void 0, () => runtime.io.removeFile(temporaryPath, temporary.identity));
+      temporary = void 0;
+    } else if (parsed.phase !== "idle" || parsed.generation !== 0) {
+      fail3("LOCK_JOURNAL_UNSAFE");
+    }
+  }
+  if (temporary === void 0) {
+    const generationZero = { schemaVersion: 2, generation: 0, phase: "idle" };
+    temporary = await retryDiagnostic(
+      runtime,
+      policy,
+      void 0,
+      () => runtime.io.createFileDurable(temporaryPath, journalText(generationZero))
+    );
+  }
+  const snapshot = await replaceAuthorizedTemporary(
+    temporaryPath,
+    lock.journalPath,
+    temporary,
+    void 0,
+    runtime,
+    policy
+  );
+  const record2 = parseLockRecoveryJournal(snapshot.text);
+  if (record2?.phase !== "idle" || record2.generation !== 0) fail3("LOCK_JOURNAL_UNSAFE");
+  return { record: record2, snapshot };
+}
+async function recoverJournalSuccessorV2(lock, state, runtime, policy) {
+  await classifyDomainRoot(lock, state.record, runtime, policy);
+  const temporaryPath = journalTemporaryPath(lock.journalPath);
+  const temporary = await stableProtocolFile(temporaryPath, JOURNAL_MAX_BYTES, runtime, policy);
+  if (temporary === void 0) return state;
+  const successor = parseLockRecoveryJournal(temporary.text);
+  if (successor === void 0) {
+    await retryDiagnostic(runtime, policy, void 0, () => runtime.io.removeFile(temporaryPath, temporary.identity));
+    return state;
+  }
+  if (!validLockRecoveryTransition(state.record, successor, state.snapshot.identity)) fail3("LOCK_JOURNAL_UNSAFE");
+  await validateRecoveredSuccessorPreconditions(lock, state, successor, runtime, policy);
+  const snapshot = await replaceAuthorizedTemporary(
+    temporaryPath,
+    lock.journalPath,
+    temporary,
+    state.snapshot.identity,
+    runtime,
+    policy
+  );
+  return { record: successor, snapshot };
+}
+async function readJournalStateV2(lock, runtime, policy) {
+  const pair = await readStableFile(lock.journalPath, JOURNAL_MAX_BYTES, runtime, policy, void 0, "LOCK_JOURNAL_UNSAFE");
+  if (pair === void 0) return bootstrapJournalV2(lock, runtime, policy);
+  const snapshot = pair[1];
+  if (snapshot.nlink !== 1 || runtime.platform !== "win32" && (snapshot.mode & 63) !== 0) {
+    fail3("LOCK_JOURNAL_UNSAFE");
+  }
+  const record2 = parseLockRecoveryJournal(snapshot.text);
+  if (record2 === void 0) fail3("LOCK_JOURNAL_UNSAFE");
+  if (activeJournal(record2)) pathForJournal(lock, record2);
+  return recoverJournalSuccessorV2(lock, { record: record2, snapshot }, runtime, policy);
+}
+async function commitJournalV2(lock, state, successor, runtime, policy) {
+  if (!validLockRecoveryTransition(state.record, successor, state.snapshot.identity)) fail3("LOCK_JOURNAL_UNSAFE");
+  if (activeJournal(successor)) pathForJournal(lock, successor);
+  await classifyDomainRoot(lock, state.record, runtime, policy);
+  const temporaryPath = journalTemporaryPath(lock.journalPath);
+  let temporary = await stableProtocolFile(temporaryPath, JOURNAL_MAX_BYTES, runtime, policy);
+  if (temporary !== void 0) {
+    const parsed = parseLockRecoveryJournal(temporary.text);
+    if (parsed === void 0) {
+      await retryDiagnostic(runtime, policy, void 0, () => runtime.io.removeFile(temporaryPath, temporary.identity));
+      temporary = void 0;
+    } else if (JSON.stringify(parsed) !== JSON.stringify(successor) || !validLockRecoveryTransition(state.record, parsed, state.snapshot.identity)) {
+      fail3("LOCK_JOURNAL_UNSAFE");
+    }
+  }
+  if (temporary === void 0) {
+    temporary = await retryDiagnostic(
+      runtime,
+      policy,
+      void 0,
+      () => runtime.io.createFileDurable(temporaryPath, journalText(successor))
+    );
+  }
+  const reread = await stableProtocolFile(temporaryPath, JOURNAL_MAX_BYTES, runtime, policy);
+  if (reread?.identity !== temporary.identity || reread.text !== journalText(successor)) fail3("LOCK_JOURNAL_UNSAFE");
+  let snapshot;
+  try {
+    snapshot = await replaceAuthorizedTemporary(
+      temporaryPath,
+      lock.journalPath,
+      reread,
+      state.snapshot.identity,
+      runtime,
+      policy
+    );
+  } catch (error2) {
+    const committed = await stableProtocolFile(lock.journalPath, JOURNAL_MAX_BYTES, runtime, policy);
+    if (committed?.identity !== reread.identity || committed.text !== journalText(successor)) throw error2;
+    await retryDiagnostic(
+      runtime,
+      policy,
+      void 0,
+      () => runtime.io.flushParentDirectory(lock.journalPath)
+    );
+    snapshot = committed;
+  }
+  return { record: successor, snapshot };
+}
+function activeWithoutPending(record2) {
+  const copy = { ...record2 };
+  delete copy.pendingBarrier;
+  delete copy.pendingLeaseWrite;
+  return copy;
+}
+function leasePayloadForJournal(text, record2, operation) {
+  const lease = parseLease(text);
+  if (lease === void 0 || lease.pid !== record2.pid || lease.nonce !== record2.nonce || lease.startedAt !== record2.startedAt || Date.parse(lease.heartbeatAt) < Date.parse(record2.heartbeatAt) || operation === "create" && lease.heartbeatAt !== record2.heartbeatAt) {
+    fail3("LOCK_LEASE_OCCUPIED");
+  }
+  return lease;
+}
+function currentLeaseForJournal(snapshot, record2) {
+  if (snapshot === void 0 || snapshot.identity !== record2.leaseIdentity) fail3("LOCK_LEASE_OCCUPIED");
+  const lease = parseLease(snapshot.text);
+  if (lease === void 0 || lease.pid !== record2.pid || lease.nonce !== record2.nonce || lease.startedAt !== record2.startedAt || lease.heartbeatAt !== record2.heartbeatAt) {
+    fail3("LOCK_LEASE_OCCUPIED");
+  }
+  return lease;
+}
+async function inspectBarrierClosed(lock, record2, runtime, policy) {
+  const barrier = await retryDiagnostic(
+    runtime,
+    policy,
+    void 0,
+    () => runtime.io.inspectDirectory(lock.compatibilityPath)
+  );
+  if (barrier === void 0) return void 0;
+  validateDirectory2(barrier, runtime, record2.barrierIdentity);
+  const allowed = /* @__PURE__ */ new Set();
+  if (record2.leaseIdentity !== void 0 || record2.pendingLeaseWrite !== void 0) allowed.add("lease.json");
+  if (record2.pendingLeaseWrite !== void 0) allowed.add(`lease.json${WRITE_TEMPORARY_SUFFIX}`);
+  if (barrier.entries.some((entry) => !allowed.has(entry))) fail3("LOCK_JOURNAL_UNSAFE");
+  return barrier;
+}
+async function validateRecoveredSuccessorPreconditions(lock, state, successor, runtime, policy) {
+  const before = state.record;
+  if (before.phase === "idle") {
+    if (!activeJournal(successor)) fail3("LOCK_JOURNAL_UNSAFE");
+    const barrierPath2 = pathForJournal(lock, successor);
+    const barrier2 = await retryDiagnostic(
+      runtime,
+      policy,
+      void 0,
+      () => runtime.io.inspectDirectory(barrierPath2)
+    );
+    if (barrier2 !== void 0) fail3("LOCK_JOURNAL_UNSAFE");
+    return;
+  }
+  const barrierPath = pathForJournal(lock, before);
+  const recoveryLock = barrierPath === lock.compatibilityPath ? lock : { ...lock, compatibilityPath: barrierPath };
+  if (activeJournal(successor) && pathForJournal(lock, successor) !== barrierPath) fail3("LOCK_JOURNAL_UNSAFE");
+  if (before.phase === "intent") {
+    const barrier2 = await retryDiagnostic(
+      runtime,
+      policy,
+      void 0,
+      () => runtime.io.inspectDirectory(barrierPath)
+    );
+    if (successor.phase === "idle") {
+      if (barrier2 !== void 0) fail3("LOCK_JOURNAL_UNSAFE");
+      return;
+    }
+    if (barrier2 === void 0) fail3("LOCK_JOURNAL_UNSAFE");
+    validateDirectory2(barrier2, runtime, successor.barrierIdentity);
+    if (barrier2.entries.length !== 0) fail3("LOCK_JOURNAL_UNSAFE");
+    return;
+  }
+  const barrier = await inspectBarrierClosed(recoveryLock, before, runtime, policy);
+  const leasePath = join3(barrierPath, "lease.json");
+  const temporaryPath = journalTemporaryPath(leasePath);
+  const target = await stableProtocolFile(leasePath, LEASE_MAX_BYTES, runtime, policy, "LOCK_LEASE_OCCUPIED");
+  const temporary = await stableProtocolFile(temporaryPath, LEASE_MAX_BYTES, runtime, policy);
+  if (before.phase === "barrier-created") {
+    if (barrier === void 0) fail3("LOCK_JOURNAL_UNSAFE");
+    const pending = before.pendingLeaseWrite;
+    if (pending === void 0) {
+      if (target !== void 0 || temporary !== void 0 || barrier.entries.length !== 0) fail3("LOCK_JOURNAL_UNSAFE");
+      return;
+    }
+    if (successor.phase === "barrier-created" && successor.pendingLeaseWrite?.temporaryIdentity !== void 0) {
+      if (target !== void 0 || temporary?.identity !== successor.pendingLeaseWrite.temporaryIdentity || leasePayloadHash(temporary.text) !== pending.payloadSha256) fail3("LOCK_JOURNAL_UNSAFE");
+      leasePayloadForJournal(temporary.text, before, "create");
+      return;
+    }
+    if (successor.phase === "barrier-created") {
+      if (target !== void 0 || temporary !== void 0) fail3("LOCK_JOURNAL_UNSAFE");
+      return;
+    }
+    if (successor.phase === "lease-created") {
+      if (temporary !== void 0 || target === void 0 || target.identity !== pending.temporaryIdentity || leasePayloadHash(target.text) !== pending.payloadSha256) fail3("LOCK_JOURNAL_UNSAFE");
+      const lease = leasePayloadForJournal(target.text, before, "create");
+      if (successor.heartbeatAt !== lease.heartbeatAt) fail3("LOCK_JOURNAL_UNSAFE");
+      return;
+    }
+    fail3("LOCK_JOURNAL_UNSAFE");
+  }
+  if (before.phase === "lease-created") {
+    const pending = before.pendingLeaseWrite;
+    if (pending === void 0) {
+      currentLeaseForJournal(target, before);
+      if (temporary !== void 0) fail3("LOCK_JOURNAL_UNSAFE");
+      return;
+    }
+    if (successor.phase === "lease-created" && successor.pendingLeaseWrite?.temporaryIdentity !== void 0) {
+      currentLeaseForJournal(target, before);
+      if (temporary?.identity !== successor.pendingLeaseWrite.temporaryIdentity || leasePayloadHash(temporary.text) !== pending.payloadSha256) fail3("LOCK_JOURNAL_UNSAFE");
+      leasePayloadForJournal(temporary.text, before, "replace");
+      return;
+    }
+    if (successor.phase === "lease-created" && successor.pendingLeaseWrite === void 0) {
+      if (successor.leaseIdentity === before.leaseIdentity) {
+        currentLeaseForJournal(target, before);
+        if (temporary !== void 0) fail3("LOCK_JOURNAL_UNSAFE");
+        return;
+      }
+      if (temporary !== void 0 || target === void 0 || target.identity !== pending.temporaryIdentity || leasePayloadHash(target.text) !== pending.payloadSha256) fail3("LOCK_JOURNAL_UNSAFE");
+      const lease = leasePayloadForJournal(target.text, before, "replace");
+      if (successor.heartbeatAt !== lease.heartbeatAt) fail3("LOCK_JOURNAL_UNSAFE");
+      return;
+    }
+    fail3("LOCK_JOURNAL_UNSAFE");
+  }
+  if (before.leaseIdentity !== void 0) {
+    if (target !== void 0 || temporary !== void 0 || barrier?.entries.length !== 0) {
+      fail3("LOCK_JOURNAL_UNSAFE");
+    }
+    return;
+  }
+  if (barrier !== void 0) fail3("LOCK_JOURNAL_UNSAFE");
+}
+async function resolvePendingLeaseV2(lock, state, runtime, policy) {
+  const pending = state.record.pendingLeaseWrite;
+  if (pending === void 0) return state;
+  await inspectBarrierClosed(lock, state.record, runtime, policy);
+  const leasePath = join3(lock.compatibilityPath, "lease.json");
+  const temporaryPath = journalTemporaryPath(leasePath);
+  const target = await stableProtocolFile(leasePath, LEASE_MAX_BYTES, runtime, policy, "LOCK_LEASE_OCCUPIED");
+  let temporary = await stableProtocolFile(temporaryPath, LEASE_MAX_BYTES, runtime, policy);
+  if (pending.temporaryIdentity === void 0) {
+    if (pending.operation === "create") {
+      if (target !== void 0) fail3("LOCK_JOURNAL_UNSAFE");
+    } else {
+      currentLeaseForJournal(target, state.record);
+    }
+    if (temporary !== void 0) {
+      await retryDiagnostic(runtime, policy, void 0, () => runtime.io.removeFile(temporaryPath, temporary.identity));
+      temporary = void 0;
+    }
+    const successor2 = nextJournalRecord(state, activeWithoutPending(state.record));
+    return await commitJournalV2(lock, state, successor2, runtime, policy);
+  }
+  let committedLease;
+  if (temporary !== void 0) {
+    if (temporary.identity !== pending.temporaryIdentity || leasePayloadHash(temporary.text) !== pending.payloadSha256) {
+      fail3("LOCK_JOURNAL_UNSAFE");
+    }
+    committedLease = leasePayloadForJournal(temporary.text, state.record, pending.operation);
+    const targetAllowed = pending.operation === "create" ? target === void 0 : target?.identity === pending.fromIdentity;
+    if (!targetAllowed) fail3("LOCK_JOURNAL_UNSAFE");
+    await inspectBarrierClosed(lock, state.record, runtime, policy);
+    await replaceAuthorizedTemporary(
+      temporaryPath,
+      leasePath,
+      temporary,
+      pending.operation === "create" ? void 0 : pending.fromIdentity,
+      runtime,
+      policy
+    );
+  } else {
+    const alreadyCommitted = target?.identity === pending.temporaryIdentity && leasePayloadHash(target.text) === pending.payloadSha256;
+    if (!alreadyCommitted) {
+      if (pending.operation === "create") {
+        if (target !== void 0) fail3("LOCK_JOURNAL_UNSAFE");
+      } else {
+        currentLeaseForJournal(target, state.record);
+      }
+      const rollback = nextJournalRecord(state, activeWithoutPending(state.record));
+      return await commitJournalV2(lock, state, rollback, runtime, policy);
+    }
+    committedLease = leasePayloadForJournal(target.text, state.record, pending.operation);
+  }
+  const successorBase = activeWithoutPending(state.record);
+  const successor = nextJournalRecord(state, {
+    ...successorBase,
+    phase: "lease-created",
+    leaseIdentity: pending.temporaryIdentity,
+    heartbeatAt: committedLease.heartbeatAt
+  });
+  return await commitJournalV2(lock, state, successor, runtime, policy);
+}
+async function commitBarrierOnlyCleanupV2(lock, state, runtime, policy) {
+  const { leaseIdentity: _leaseIdentity, ...barrierOnly } = activeWithoutPending(state.record);
+  const successor = nextJournalRecord(state, {
+    ...barrierOnly,
+    phase: "cleanup"
+  });
+  return await commitJournalV2(lock, state, successor, runtime, policy);
+}
+async function finishBarrierCleanupV2(lock, state, runtime, policy, handle) {
+  const barrier = await inspectBarrierClosed(lock, state.record, runtime, policy);
+  if (barrier !== void 0 && barrier.entries.length !== 0) fail3("LOCK_JOURNAL_UNSAFE");
+  handle?.releaseCompatibilityDirectory();
+  if (barrier !== void 0) {
+    await retryDiagnostic(
+      runtime,
+      policy,
+      void 0,
+      () => runtime.io.removeDirectory(lock.compatibilityPath, state.record.barrierIdentity)
+    );
+  }
+  const successor = nextJournalRecord(state, { schemaVersion: 2, phase: "idle" });
+  return commitJournalV2(lock, state, successor, runtime, policy);
+}
+async function recoverActiveJournalV2(lock, initial, runtime, policy) {
+  let state = initial;
+  if (!await confirmedDead(state.record.pid, state.record.heartbeatAt, runtime, policy)) fail3("LOCK_JOURNAL_UNSAFE");
+  const recordedBarrierPath = pathForJournal(lock, state.record);
+  const recoveryLock = recordedBarrierPath === lock.compatibilityPath ? lock : {
+    ...lock,
+    compatibilityPath: recordedBarrierPath
+  };
+  if (state.record.phase === "intent") {
+    const barrier = await retryDiagnostic(
+      runtime,
+      policy,
+      void 0,
+      () => runtime.io.inspectDirectory(recoveryLock.compatibilityPath)
+    );
+    if (barrier === void 0) {
+      const idle = nextJournalRecord(state, { schemaVersion: 2, phase: "idle" });
+      return commitJournalV2(lock, state, idle, runtime, policy);
+    }
+    validateDirectory2(barrier, runtime);
+    if (barrier.entries.length !== 0) fail3("LOCK_JOURNAL_UNSAFE");
+    const adopted = nextJournalRecord(state, {
+      ...activeWithoutPending(state.record),
+      phase: "barrier-created",
+      barrierIdentity: barrier.identity
+    });
+    state = await commitJournalV2(recoveryLock, state, adopted, runtime, policy);
+  }
+  if (state.record.pendingLeaseWrite !== void 0) {
+    state = await resolvePendingLeaseV2(recoveryLock, state, runtime, policy);
+  }
+  if (state.record.phase === "barrier-created") {
+    const barrier = await inspectBarrierClosed(recoveryLock, state.record, runtime, policy);
+    if (barrier === void 0 || barrier.entries.length !== 0) fail3("LOCK_JOURNAL_UNSAFE");
+    state = await commitBarrierOnlyCleanupV2(recoveryLock, state, runtime, policy);
+  } else if (state.record.phase === "lease-created") {
+    const leasePath = join3(recoveryLock.compatibilityPath, "lease.json");
+    const recovered = await validateRecoverableLease(
+      leasePath,
+      state.record.nonce,
+      state.record,
+      state.record.leaseIdentity,
+      runtime,
+      policy
+    );
+    const cleanup = nextJournalRecord(state, {
+      ...activeWithoutPending(state.record),
+      phase: "cleanup",
+      leaseIdentity: recovered.snapshot.identity
+    });
+    state = await commitJournalV2(recoveryLock, state, cleanup, runtime, policy);
+  }
+  if (state.record.phase === "cleanup" && state.record.leaseIdentity !== void 0) {
+    const barrier = await inspectBarrierClosed(recoveryLock, state.record, runtime, policy);
+    if (barrier === void 0) fail3("LOCK_JOURNAL_UNSAFE");
+    const leasePath = join3(recoveryLock.compatibilityPath, "lease.json");
+    const lease = await stableProtocolFile(leasePath, LEASE_MAX_BYTES, runtime, policy, "LOCK_LEASE_OCCUPIED");
+    if (lease !== void 0) {
+      const parsed = parseLease(lease.text);
+      if (lease.identity !== state.record.leaseIdentity || parsed?.nonce !== state.record.nonce) {
+        fail3("LOCK_LEASE_OCCUPIED");
+      }
+      await retryDiagnostic(runtime, policy, void 0, () => runtime.io.removeFile(leasePath, lease.identity));
+    }
+    const empty = await inspectBarrierClosed(recoveryLock, state.record, runtime, policy);
+    if (empty === void 0 || empty.entries.length !== 0) fail3("LOCK_JOURNAL_UNSAFE");
+    state = await commitBarrierOnlyCleanupV2(recoveryLock, state, runtime, policy);
+  }
+  if (state.record.phase === "cleanup") return finishBarrierCleanupV2(recoveryLock, state, runtime, policy);
+  fail3("LOCK_JOURNAL_UNSAFE");
+}
+async function reconcileJournalV2(lock, runtime, policy) {
+  let state = await readJournalStateV2(lock, runtime, policy);
+  if (state.record.phase !== "idle") state = await recoverActiveJournalV2(lock, state, runtime, policy);
+  if (state.record.phase !== "idle") fail3("LOCK_JOURNAL_UNSAFE");
+  await classifyDomainRoot(lock, state.record, runtime, policy);
+  return state;
+}
+async function acquireNative(lock, runtime, policy, signal) {
+  const addon = await runtime.loadAddon();
+  for (let attempt = 0; attempt < policy.attempts; attempt += 1) {
+    abortIfRequested(signal);
+    try {
+      return addon.tryAcquireAnchor(lock.anchorPath);
+    } catch (error2) {
+      const busy = error2 instanceof NativeLockError ? error2.code === "LOCK_BUSY" : typeof error2 === "object" && error2 !== null && error2.code === "LOCK_BUSY";
+      if (!busy) throw error2;
+      if (attempt + 1 >= policy.attempts) fail3("LOCK_TIMEOUT");
+      await runtime.wait(policy.waitMs, signal).catch((waitError) => {
+        if (signal?.aborted || errno(waitError) === "ABORT_ERR") fail3("LOCK_ABORTED");
+        throw waitError;
+      });
+    }
+  }
+  fail3("LOCK_TIMEOUT");
+}
+async function writeLeaseTransactionV2(lock, state, text, operation, runtime, policy) {
+  const lease = leasePayloadForJournal(text, state.record, operation);
+  const leasePath = join3(lock.compatibilityPath, "lease.json");
+  const temporaryPath = journalTemporaryPath(leasePath);
+  const fromIdentity = operation === "replace" ? state.record.leaseIdentity : void 0;
+  await inspectBarrierClosed(lock, state.record, runtime, policy);
+  const preflightTarget = await stableProtocolFile(
+    leasePath,
+    LEASE_MAX_BYTES,
+    runtime,
+    policy,
+    "LOCK_LEASE_OCCUPIED"
+  );
+  if (operation === "create") {
+    if (preflightTarget !== void 0) fail3("LOCK_LEASE_OCCUPIED");
+  } else {
+    currentLeaseForJournal(preflightTarget, state.record);
+  }
+  const preflightTemporary = await stableProtocolFile(temporaryPath, LEASE_MAX_BYTES, runtime, policy);
+  if (preflightTemporary !== void 0) fail3("LOCK_JOURNAL_UNSAFE");
+  const pending = {
+    operation,
+    ...fromIdentity === void 0 ? {} : { fromIdentity },
+    payloadSha256: leasePayloadHash(text)
+  };
+  const pendingRecord = nextJournalRecord(state, { ...activeWithoutPending(state.record), pendingLeaseWrite: pending });
+  let current = await commitJournalV2(lock, state, pendingRecord, runtime, policy);
+  await inspectBarrierClosed(lock, current.record, runtime, policy);
+  const existingTarget = await stableProtocolFile(leasePath, LEASE_MAX_BYTES, runtime, policy, "LOCK_LEASE_OCCUPIED");
+  if (operation === "create" ? existingTarget !== void 0 : existingTarget?.identity !== fromIdentity) {
+    fail3("LOCK_LEASE_OCCUPIED");
+  }
+  const existingTemporary = await stableProtocolFile(temporaryPath, LEASE_MAX_BYTES, runtime, policy);
+  if (existingTemporary !== void 0) fail3("LOCK_JOURNAL_UNSAFE");
+  const temporary = await retryDiagnostic(
+    runtime,
+    policy,
+    void 0,
+    () => runtime.io.createFileDurable(temporaryPath, text)
+  );
+  const stableTemporary = await stableProtocolFile(temporaryPath, LEASE_MAX_BYTES, runtime, policy);
+  if (stableTemporary?.identity !== temporary.identity || stableTemporary.text !== text) fail3("LOCK_JOURNAL_UNSAFE");
+  const recordedPending = { ...pending, temporaryIdentity: temporary.identity };
+  const recorded = nextJournalRecord(current, {
+    ...activeWithoutPending(current.record),
+    pendingLeaseWrite: recordedPending
+  });
+  current = await commitJournalV2(lock, current, recorded, runtime, policy);
+  await inspectBarrierClosed(lock, current.record, runtime, policy);
+  await replaceAuthorizedTemporary(
+    temporaryPath,
+    leasePath,
+    stableTemporary,
+    operation === "create" ? void 0 : fromIdentity,
+    runtime,
+    policy
+  );
+  const finalized = nextJournalRecord(current, {
+    ...activeWithoutPending(current.record),
+    phase: "lease-created",
+    leaseIdentity: temporary.identity,
+    heartbeatAt: lease.heartbeatAt
+  });
+  return await commitJournalV2(lock, current, finalized, runtime, policy);
+}
+async function cleanupOwnedStateV2(lock, owned, handle, runtime, policy) {
+  let state = owned.journal;
+  if (state.record.pendingLeaseWrite !== void 0) {
+    state = await resolvePendingLeaseV2(lock, state, runtime, policy);
+    owned.journal = state;
+  }
+  if (state.record.phase === "intent") {
+    const barrier2 = await retryDiagnostic(
+      runtime,
+      policy,
+      void 0,
+      () => runtime.io.inspectDirectory(lock.compatibilityPath)
+    );
+    if (barrier2 === void 0) {
+      const idle2 = nextJournalRecord(state, { schemaVersion: 2, phase: "idle" });
+      await commitJournalV2(lock, state, idle2, runtime, policy);
+      return;
+    }
+    validateDirectory2(barrier2, runtime, owned.pendingBarrierIdentity);
+    if (barrier2.entries.length !== 0 || owned.pendingBarrierIdentity === void 0) fail3("LOCK_JOURNAL_UNSAFE");
+    const adopted = nextJournalRecord(state, {
+      ...activeWithoutPending(state.record),
+      phase: "barrier-created",
+      barrierIdentity: barrier2.identity
+    });
+    state = await commitJournalV2(lock, state, adopted, runtime, policy);
+    owned.journal = state;
+  }
+  if (state.record.phase === "barrier-created") {
+    const barrier2 = await inspectBarrierClosed(lock, state.record, runtime, policy);
+    if (barrier2 === void 0 || barrier2.entries.length !== 0) fail3("LOCK_JOURNAL_UNSAFE");
+    state = await commitBarrierOnlyCleanupV2(lock, state, runtime, policy);
+    owned.journal = state;
+  } else if (state.record.phase === "lease-created") {
+    const leasePath = join3(lock.compatibilityPath, "lease.json");
+    const lease = await stableProtocolFile(leasePath, LEASE_MAX_BYTES, runtime, policy, "LOCK_LEASE_OCCUPIED");
+    const parsed = lease === void 0 ? void 0 : parseLease(lease.text);
+    if (lease === void 0 || lease.identity !== state.record.leaseIdentity || parsed?.nonce !== state.record.nonce) {
+      fail3("LOCK_LEASE_OCCUPIED");
+    }
+    const cleanup = nextJournalRecord(state, {
+      ...activeWithoutPending(state.record),
+      phase: "cleanup",
+      leaseIdentity: lease.identity
+    });
+    state = await commitJournalV2(lock, state, cleanup, runtime, policy);
+    owned.journal = state;
+    await retryDiagnostic(runtime, policy, void 0, () => runtime.io.removeFile(leasePath, lease.identity));
+    const empty = await inspectBarrierClosed(lock, state.record, runtime, policy);
+    if (empty === void 0 || empty.entries.length !== 0) fail3("LOCK_JOURNAL_UNSAFE");
+    state = await commitBarrierOnlyCleanupV2(lock, state, runtime, policy);
+    owned.journal = state;
+  }
+  if (state.record.phase !== "cleanup" || state.record.leaseIdentity !== void 0) fail3("LOCK_JOURNAL_UNSAFE");
+  const barrier = await inspectBarrierClosed(lock, state.record, runtime, policy);
+  if (barrier === void 0 || barrier.entries.length !== 0) fail3("LOCK_JOURNAL_UNSAFE");
+  if (owned.compatibilityProtected) {
+    handle.releaseCompatibilityDirectory();
+    owned.compatibilityProtected = false;
+  }
+  await retryDiagnostic(
+    runtime,
+    policy,
+    void 0,
+    () => runtime.io.removeDirectory(lock.compatibilityPath, state.record.barrierIdentity)
+  );
+  const idle = nextJournalRecord(state, { schemaVersion: 2, phase: "idle" });
+  await commitJournalV2(lock, state, idle, runtime, policy);
+}
+async function runOwnedV2(lock, operation, options, runtime, policy) {
+  abortIfRequested(options.signal);
+  await retryDiagnostic(
+    runtime,
+    policy,
+    options.signal,
+    () => runtime.io.ensureDirectory(lock.domainRoot, ownsDomainRoot(lock))
+  );
+  const handle = await acquireNative(lock, runtime, policy, options.signal);
+  let owned;
+  let heartbeat;
+  let lifecycle = Promise.resolve();
+  let result;
+  let operationError;
+  let operationFailed = false;
+  let cleanupError;
+  let cleanupFailed = false;
+  const serialized = (callback) => {
+    const current = lifecycle.then(callback, callback);
+    lifecycle = current.then(() => void 0, () => void 0);
+    return current;
+  };
+  try {
+    const idleJournal = await reconcileJournalV2(lock, runtime, policy);
+    const existing = await retryDiagnostic(
+      runtime,
+      policy,
+      void 0,
+      () => runtime.io.inspectDirectory(lock.compatibilityPath)
+    );
+    if (existing !== void 0) fail3("LEGACY_LOCK_BLOCKED");
+    const now = runtime.now();
+    const nonce = runtime.randomUUID();
+    if (!UUID_PATTERN.test(nonce)) throw new TypeError("Lock runtime returned an invalid nonce.");
+    const relativeName = relativeLegacyName(lock);
+    const intent = nextJournalRecord(idleJournal, {
+      schemaVersion: 2,
+      relativeLegacyName: relativeName,
+      keyHash: keyHash(relativeName),
+      pid: runtime.pid,
+      nonce,
+      phase: "intent",
+      startedAt: iso(now),
+      heartbeatAt: iso(now),
+      pendingBarrier: { operation: "create" }
+    });
+    let journal = await commitJournalV2(lock, idleJournal, intent, runtime, policy);
+    const currentOwned = { journal, compatibilityProtected: false };
+    owned = currentOwned;
+    const barrier = await retryDiagnostic(
+      runtime,
+      policy,
+      void 0,
+      () => runtime.io.createDirectory(lock.compatibilityPath)
+    );
+    validateDirectory2(barrier, runtime);
+    currentOwned.pendingBarrierIdentity = barrier.identity;
+    const barrierRecord = nextJournalRecord(journal, {
+      ...activeWithoutPending(journal.record),
+      phase: "barrier-created",
+      barrierIdentity: barrier.identity
+    });
+    journal = await commitJournalV2(lock, journal, barrierRecord, runtime, policy);
+    currentOwned.journal = journal;
+    currentOwned.pendingBarrierIdentity = void 0;
+    handle.protectCompatibilityDirectory(lock.compatibilityPath);
+    currentOwned.compatibilityProtected = true;
+    const lease = {
+      schemaVersion: 1,
+      pid: runtime.pid,
+      nonce,
+      startedAt: journal.record.startedAt,
+      heartbeatAt: journal.record.heartbeatAt
+    };
+    journal = await writeLeaseTransactionV2(
+      lock,
+      journal,
+      `${JSON.stringify(lease)}
+`,
+      "create",
+      runtime,
+      policy
+    );
+    currentOwned.journal = journal;
+    const leasePath = join3(lock.compatibilityPath, "lease.json");
+    heartbeat = runtime.scheduleHeartbeat(policy.heartbeatMs, async () => serialized(async () => {
+      if (owned === void 0 || owned.journal.record.phase !== "lease-created") return;
+      const current = await stableProtocolFile(leasePath, LEASE_MAX_BYTES, runtime, policy, "LOCK_LEASE_OCCUPIED");
+      const currentLease = current === void 0 ? void 0 : parseLease(current.text);
+      if (current === void 0 || current.identity !== owned.journal.record.leaseIdentity || currentLease === void 0 || currentLease.nonce !== nonce) fail3("LOCK_LEASE_OCCUPIED");
+      const heartbeatAt = iso(Math.max(
+        runtime.now(),
+        Date.parse(currentLease.startedAt),
+        Date.parse(currentLease.heartbeatAt)
+      ));
+      const replacement = { ...currentLease, heartbeatAt };
+      owned.journal = await writeLeaseTransactionV2(
+        lock,
+        owned.journal,
+        `${JSON.stringify(replacement)}
+`,
+        "replace",
+        runtime,
+        policy
+      );
+    }));
+    result = await operation();
+  } catch (error2) {
+    operationError = error2;
+    operationFailed = true;
+  }
+  try {
+    if (heartbeat !== void 0) await heartbeat.stop();
+    await lifecycle;
+    if (owned !== void 0) {
+      const refreshed = await readJournalStateV2(lock, runtime, policy);
+      if (refreshed.record.phase === "idle") {
+        owned = void 0;
+      } else {
+        owned.journal = refreshed;
+        await cleanupOwnedStateV2(lock, owned, handle, runtime, policy);
+      }
+    }
+  } catch (error2) {
+    cleanupError = error2;
+    cleanupFailed = true;
+  }
+  if (owned?.compatibilityProtected) {
+    try {
+      handle.releaseCompatibilityDirectory();
+      owned.compatibilityProtected = false;
+    } catch (error2) {
+      if (!cleanupFailed) cleanupError = error2;
+      cleanupFailed = true;
+    }
+  }
+  try {
+    handle.release();
+  } catch (error2) {
+    if (!cleanupFailed) cleanupError = error2;
+    cleanupFailed = true;
+  }
+  if (operationFailed && cleanupFailed) {
+    throw new AggregateError([operationError, cleanupError], "Persistence operation and lock cleanup both failed.");
+  }
+  if (operationFailed) throw operationError;
+  if (cleanupFailed) throw cleanupError;
+  return result;
+}
+function enqueueExactPath(path, operation, options, runtime, policy) {
+  let resolveCaller;
+  let rejectCaller;
+  const caller = new Promise((resolvePromise, rejectPromise) => {
+    resolveCaller = resolvePromise;
+    rejectCaller = rejectPromise;
+  });
+  const node = {
+    operation,
+    runtime,
+    signal: options.signal,
+    resolve: resolveCaller,
+    reject: rejectCaller,
+    controller: new AbortController(),
+    started: false,
+    canceled: false
+  };
+  const detach = () => {
+    if (node.abortListener !== void 0) node.signal?.removeEventListener("abort", node.abortListener);
+    node.controller?.abort();
+    node.operation = void 0;
+    node.runtime = void 0;
+    node.signal = void 0;
+    node.resolve = void 0;
+    node.reject = void 0;
+    node.controller = void 0;
+    node.abortListener = void 0;
+  };
+  const finish = (queue2) => {
+    while (queue2.waiting.length > 0) {
+      const next = queue2.waiting.shift();
+      if (next.canceled) continue;
+      queue2.active = next;
+      start(queue2, next);
+      return;
+    }
+    if (sameProcessQueues.get(path) === queue2) sameProcessQueues.delete(path);
+  };
+  const start = (queue2, current) => {
+    current.started = true;
+    if (current.abortListener !== void 0) current.signal?.removeEventListener("abort", current.abortListener);
+    current.controller?.abort();
+    current.abortListener = void 0;
+    current.controller = void 0;
+    current.signal = void 0;
+    const currentOperation = current.operation;
+    const resolveCurrent = current.resolve;
+    const rejectCurrent = current.reject;
+    current.operation = void 0;
+    current.runtime = void 0;
+    current.resolve = void 0;
+    current.reject = void 0;
+    void (async () => {
+      try {
+        resolveCurrent(await currentOperation());
+      } catch (error2) {
+        rejectCurrent(error2);
+      } finally {
+        finish(queue2);
+      }
+    })();
+  };
+  const existing = sameProcessQueues.get(path);
+  if (existing === void 0) {
+    const queue2 = { active: node, waiting: [] };
+    sameProcessQueues.set(path, queue2);
+    start(queue2, node);
+    return caller;
+  }
+  const cancel = (code) => {
+    if (node.canceled || node.started) return;
+    node.canceled = true;
+    const index = existing.waiting.indexOf(node);
+    if (index >= 0) existing.waiting.splice(index, 1);
+    const rejectCurrent = node.reject;
+    detach();
+    rejectCurrent?.(new FileLockError(code));
+  };
+  node.abortListener = () => cancel("LOCK_ABORTED");
+  node.signal?.addEventListener("abort", node.abortListener, { once: true });
+  existing.waiting.push(node);
+  if (node.signal?.aborted) {
+    cancel("LOCK_ABORTED");
+  } else {
+    const controller = node.controller;
+    void runtime.wait(policy.attempts * policy.waitMs, controller.signal).then(
+      () => cancel("LOCK_TIMEOUT"),
+      () => {
+        if (node.signal?.aborted) cancel("LOCK_ABORTED");
+      }
+    );
+  }
+  return caller;
+}
+function validateInvocation(lock, capability, policy) {
+  if (!isLegacyRuntimeShutdownCapability(capability)) fail3("LEGACY_RUNTIME_SHUTDOWN_UNCONFIRMED");
+  if (!isCanonicalPersistenceLock(lock)) fail3("INVALID_PERSISTENCE_LOCK");
+  validatePolicy(policy);
+}
+async function runWithFileLock(lock, operation, options = {}) {
+  const capability = requireLegacyRuntimeShutdownCapability();
+  validateInvocation(lock, capability, DEFAULT_FILE_LOCK_POLICY);
+  return enqueueExactPath(
+    lock.compatibilityPath,
+    () => runOwnedV2(lock, operation, options, productionRuntime, DEFAULT_FILE_LOCK_POLICY),
+    options,
+    productionRuntime,
+    DEFAULT_FILE_LOCK_POLICY
+  );
+}
+function identity(stats) {
+  return `${stats.dev}:${stats.ino}:${stats.birthtimeNs}`;
+}
+function restrictive(stats, directory, requireRestrictiveMode = true) {
+  if (stats.isSymbolicLink() || (directory ? !stats.isDirectory() : !stats.isFile())) return false;
+  if (!directory && stats.nlink !== 1n) return false;
+  if (process.platform !== "win32") {
+    const forbidden = requireRestrictiveMode ? 63 : 18;
+    if ((Number(stats.mode) & forbidden) !== 0) return false;
+    const uid = process.getuid?.();
+    if (uid === void 0 || stats.uid !== BigInt(uid)) return false;
+  }
+  return true;
+}
+async function flushDirectory(path) {
+  let handle;
+  try {
+    handle = await open3(path, constants3.O_RDONLY);
+    await handle.sync();
+  } catch (error2) {
+    if (process.platform !== "win32" || !["EINVAL", "EPERM", "EACCES", "EBADF", "ENOTSUP"].includes(errno(error2))) throw error2;
+  } finally {
+    await handle?.close();
+  }
+}
+async function productionReadFile(path, maximumBytes) {
+  let before;
+  try {
+    before = await lstat3(path, { bigint: true });
+  } catch (error2) {
+    if (errno(error2) === "ENOENT") return void 0;
+    throw error2;
+  }
+  if (!restrictive(before, false) || before.size > BigInt(maximumBytes)) fail3("LOCK_LEASE_OCCUPIED");
+  const noFollow = "O_NOFOLLOW" in constants3 ? constants3.O_NOFOLLOW : 0;
+  const handle = await open3(path, constants3.O_RDONLY | noFollow);
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!restrictive(opened, false) || identity(opened) !== identity(before) || opened.size > BigInt(maximumBytes)) {
+      fail3("LOCK_LEASE_OCCUPIED");
+    }
+    const bytes = await handle.readFile();
+    const after = await handle.stat({ bigint: true });
+    if (identity(after) !== identity(opened) || bytes.length > maximumBytes) fail3("LOCK_LEASE_OCCUPIED");
+    return {
+      identity: identity(after),
+      nlink: Number(after.nlink),
+      mode: Number(after.mode),
+      text: bytes.toString("utf8")
+    };
+  } finally {
+    await handle.close();
+  }
+}
+async function productionInspectDirectory(path, requireRestrictiveMode = true) {
+  let stats;
+  try {
+    stats = await lstat3(path, { bigint: true });
+  } catch (error2) {
+    if (errno(error2) === "ENOENT") return void 0;
+    throw error2;
+  }
+  if (!restrictive(stats, true, requireRestrictiveMode)) {
+    if (stats.isFile() && !stats.isSymbolicLink()) fail3("LEGACY_LOCK_BLOCKED");
+    fail3("UNSAFE_LOCK_DIRECTORY");
+  }
+  const entries = (await readdir2(path)).sort();
+  const after = await lstat3(path, { bigint: true });
+  if (!restrictive(after, true, requireRestrictiveMode) || identity(after) !== identity(stats)) fail3("UNSAFE_LOCK_DIRECTORY");
+  return { identity: identity(after), mode: Number(after.mode), entries };
+}
+async function productionCreateDirectory(path) {
+  await mkdir(path, { recursive: false, mode: 448 });
+  if (process.platform !== "win32") await chmod2(path, 448);
+  await flushDirectory(dirname3(path));
+  const snapshot = await productionInspectDirectory(path);
+  if (snapshot === void 0) fail3("UNSAFE_LOCK_DIRECTORY");
+  return snapshot;
+}
+async function productionCreateFileDurable(path, text, crashPoint, durableCut) {
+  const noFollow = "O_NOFOLLOW" in constants3 ? constants3.O_NOFOLLOW : 0;
+  const simulateCrash = (point) => {
+    if (crashPoint !== point) return;
+    throw Object.assign(new Error("Simulated durable-write crash."), {
+      code: "SIMULATED_DURABLE_WRITE_CRASH"
+    });
+  };
+  const handle = await open3(path, constants3.O_CREAT | constants3.O_EXCL | constants3.O_WRONLY | noFollow, 384);
+  try {
+    simulateCrash("after-create");
+    await durableCut?.("after-create");
+    await handle.writeFile(text, "utf8");
+    simulateCrash("after-write");
+    await durableCut?.("after-write");
+    await handle.sync();
+    simulateCrash("after-sync");
+    await durableCut?.("after-sync");
+  } finally {
+    await handle.close();
+  }
+  if (process.platform !== "win32") await chmod2(path, 384);
+  await flushDirectory(dirname3(path));
+  await durableCut?.("after-parent-flush");
+  const snapshot = await productionReadFile(path, LEASE_MAX_BYTES);
+  if (snapshot === void 0) fail3("LOCK_LEASE_OCCUPIED");
+  return snapshot;
+}
+async function productionReplaceFileFromTemporary(temporaryPath, targetPath, temporaryIdentity, expectedTargetIdentity, crashPoint, durableCut) {
+  const temporary = await productionReadFile(temporaryPath, JOURNAL_MAX_BYTES);
+  const target = await productionReadFile(targetPath, JOURNAL_MAX_BYTES);
+  if (temporary?.identity !== temporaryIdentity || temporary.nlink !== 1 || (expectedTargetIdentity === void 0 ? target !== void 0 : target?.identity !== expectedTargetIdentity)) {
+    fail3("LOCK_JOURNAL_UNSAFE");
+  }
+  await rename(temporaryPath, targetPath);
+  if (crashPoint === "after-rename") {
+    throw Object.assign(new Error("Simulated durable-write crash."), { code: "SIMULATED_DURABLE_WRITE_CRASH" });
+  }
+  await durableCut?.("after-rename");
+  if (process.platform !== "win32") await chmod2(targetPath, 384);
+  await flushDirectory(dirname3(targetPath));
+  if (crashPoint === "after-directory-flush") {
+    throw Object.assign(new Error("Simulated durable-write crash."), { code: "SIMULATED_DURABLE_WRITE_CRASH" });
+  }
+  await durableCut?.("after-directory-flush");
+  const replaced = await productionReadFile(targetPath, JOURNAL_MAX_BYTES);
+  if (replaced?.identity !== temporaryIdentity) fail3("LOCK_JOURNAL_UNSAFE");
+  return replaced;
+}
+function productionWait(milliseconds, signal) {
+  return new Promise((resolvePromise, reject) => {
+    if (signal?.aborted) {
+      reject(new FileLockError("LOCK_ABORTED"));
+      return;
+    }
+    const finish = () => {
+      signal?.removeEventListener("abort", abort);
+      resolvePromise();
+    };
+    const timer = setTimeout(finish, milliseconds);
+    timer.unref?.();
+    const abort = () => {
+      clearTimeout(timer);
+      reject(new FileLockError("LOCK_ABORTED"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+var ERROR_MESSAGES2, FileLockError, DEFAULT_FILE_LOCK_POLICY, JOURNAL_MAX_BYTES, LEASE_MAX_BYTES, UUID_PATTERN, NATIVE_ANCHOR, NATIVE_JOURNAL, WRITE_TEMPORARY_SUFFIX, sameProcessQueues, productionIo, productionRuntime;
+var init_fileLockLease = __esm({
+  "src/core/fileLockLease.ts"() {
+    "use strict";
+    init_legacyRuntimeActivation();
+    init_lockDomain();
+    init_nativeLockAddon();
+    init_nativeLockProvider();
+    ERROR_MESSAGES2 = Object.freeze({
+      LEGACY_RUNTIME_SHUTDOWN_UNCONFIRMED: "Legacy TokenGraph runtime shutdown has not been confirmed.",
+      INVALID_PERSISTENCE_LOCK: "The persistence lock was not created by the authorized registry.",
+      LEGACY_LOCK_BLOCKED: "A legacy or unexplained persistence lock blocks this operation.",
+      UNSAFE_LOCK_DIRECTORY: "The persistence lock directory is unsafe or has changed identity.",
+      LOCK_JOURNAL_UNSAFE: "The native lock recovery journal is unsafe or ambiguous.",
+      LOCK_LEASE_OCCUPIED: "The persistence lease is occupied or cannot be recovered safely.",
+      LOCK_TIMEOUT: "Timed out waiting for the native persistence lock.",
+      LOCK_ABORTED: "Waiting for the native persistence lock was aborted."
+    });
+    FileLockError = class extends Error {
+      code;
+      constructor(code) {
+        super(ERROR_MESSAGES2[code]);
+        this.name = "FileLockError";
+        this.code = code;
+      }
+    };
+    DEFAULT_FILE_LOCK_POLICY = Object.freeze({
+      attempts: 200,
+      waitMs: 10,
+      staleMs: 3e4,
+      heartbeatMs: 9e3
+    });
+    JOURNAL_MAX_BYTES = 8 * 1024;
+    LEASE_MAX_BYTES = 4 * 1024;
+    UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+    NATIVE_ANCHOR = ".tokengraph-native-anchor-v2.lock";
+    NATIVE_JOURNAL = ".tokengraph-native-journal-v2.lock";
+    WRITE_TEMPORARY_SUFFIX = ".tokengraph-write-v2.tmp";
+    sameProcessQueues = /* @__PURE__ */ new Map();
+    productionIo = Object.freeze({
+      async ensureDirectory(path, requireRestrictiveMode = true) {
+        const absolute = resolve3(path);
+        const parsed = parse3(absolute);
+        let current = parsed.root;
+        for (const segment of absolute.slice(parsed.root.length).split(/[\\/]+/u).filter(Boolean)) {
+          current = join3(current, segment);
+          try {
+            const component = await lstat3(current, { bigint: true });
+            if (component.isSymbolicLink() || !component.isDirectory()) fail3("UNSAFE_LOCK_DIRECTORY");
+          } catch (error2) {
+            if (errno(error2) !== "ENOENT") throw error2;
+            const ownedHere = requireRestrictiveMode || current !== resolve3(path);
+            let created = true;
+            try {
+              await mkdir(current, { recursive: false, mode: ownedHere ? 448 : 493 });
+            } catch (creationError) {
+              if (errno(creationError) !== "EEXIST") throw creationError;
+              created = false;
+              const raced = await lstat3(current, { bigint: true });
+              if (raced.isSymbolicLink() || !raced.isDirectory()) fail3("UNSAFE_LOCK_DIRECTORY");
+            }
+            if (created && ownedHere && process.platform !== "win32") await chmod2(current, 448);
+          }
+        }
+        let stats = await lstat3(path, { bigint: true });
+        if (requireRestrictiveMode && process.platform !== "win32" && stats.isDirectory() && !stats.isSymbolicLink() && stats.uid === BigInt(process.getuid?.() ?? -1) && (Number(stats.mode) & 63) !== 0) {
+          await chmod2(path, 448);
+          stats = await lstat3(path, { bigint: true });
+        }
+        if (!restrictive(stats, true, requireRestrictiveMode)) fail3("UNSAFE_LOCK_DIRECTORY");
+        if (requireRestrictiveMode && process.platform !== "win32") await chmod2(path, 448);
+      },
+      readFile: productionReadFile,
+      inspectDirectory: productionInspectDirectory,
+      createDirectory: productionCreateDirectory,
+      createFileDurable: productionCreateFileDurable,
+      replaceFileFromTemporary: productionReplaceFileFromTemporary,
+      async flushParentDirectory(path) {
+        await flushDirectory(dirname3(path));
+      },
+      async removeFile(path, expectedIdentity) {
+        const snapshot = await productionReadFile(path, JOURNAL_MAX_BYTES);
+        if (snapshot?.identity !== expectedIdentity) fail3("LOCK_LEASE_OCCUPIED");
+        await unlink2(path);
+        await flushDirectory(dirname3(path));
+      },
+      async removeDirectory(path, expectedIdentity) {
+        const snapshot = await productionInspectDirectory(path);
+        if (snapshot === void 0 || snapshot.identity !== expectedIdentity || snapshot.entries.length !== 0) {
+          fail3("UNSAFE_LOCK_DIRECTORY");
+        }
+        await rmdir2(path);
+        await flushDirectory(dirname3(path));
+      }
+    });
+    productionRuntime = Object.freeze({
+      pid: process.pid,
+      platform: process.platform,
+      now: () => Date.now(),
+      randomUUID,
+      wait: productionWait,
+      processLiveness(pid) {
+        try {
+          process.kill(pid, 0);
+          return "alive";
+        } catch (error2) {
+          if (errno(error2) === "ESRCH") return "dead";
+          return "unknown";
+        }
+      },
+      loadAddon: () => getNativeLockAddon(),
+      scheduleHeartbeat(milliseconds, callback) {
+        let chain = Promise.resolve();
+        let failure;
+        let failed = false;
+        const timer = setInterval(() => {
+          chain = chain.then(callback).catch((error2) => {
+            if (!failed) failure = error2;
+            failed = true;
+          });
+        }, milliseconds);
+        timer.unref?.();
+        return Object.freeze({
+          async stop() {
+            clearInterval(timer);
+            await chain;
+            if (failed) throw failure;
+          }
+        });
+      },
+      io: productionIo
+    });
+  }
+});
+
+// src/core/storage.ts
+var storage_exports = {};
+__export(storage_exports, {
+  DestructiveMaintenanceConfirmationError: () => DestructiveMaintenanceConfirmationError,
+  JsonTokenGraphStore: () => JsonTokenGraphStore,
+  SAFE_WIKI_SLUG_PATTERN: () => SAFE_WIKI_SLUG_PATTERN,
+  SqliteTokenGraphStore: () => SqliteTokenGraphStore,
+  assertNoSymbolicLinkComponents: () => assertNoSymbolicLinkComponents,
+  canonicalMaintenanceLocks: () => canonicalMaintenanceLocks,
+  canonicalPersistenceLockKey: () => canonicalPersistenceLockKey,
+  quarantineCorruptJson: () => quarantineCorruptJson,
+  resolveConfinedPath: () => resolveConfinedPath,
+  withAutomaticMaintenance: () => withAutomaticMaintenance,
+  withDestructiveMaintenance: () => withDestructiveMaintenance,
+  withFileLock: () => withFileLock,
+  writeJsonAtomic: () => writeJsonAtomic,
+  writeTextAtomic: () => writeTextAtomic,
+  writeTextAtomicConfined: () => writeTextAtomicConfined
+});
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { chmod as chmod3, lstat as lstat4, mkdir as mkdir2, readFile, readdir as readdir3, realpath as realpath2, rename as rename2, rm, rmdir as rmdir3, unlink as unlink3, writeFile } from "node:fs/promises";
+import { dirname as dirname4, isAbsolute as isAbsolute2, join as join4, parse as parse4, relative as relative3, resolve as resolve4 } from "node:path";
+async function withFileLock(lock, operation, options = {}) {
+  return runWithFileLock(lock, operation, options);
+}
+function maintenanceSortKey(path) {
+  return process.platform === "win32" ? path.toLowerCase() : path;
+}
+async function canonicalMaintenanceLocks(root, domains) {
+  const locks = await Promise.all([...new Set(domains)].map((domain) => canonicalPersistenceLock(root, domain, "maintenance")));
+  const unique6 = /* @__PURE__ */ new Map();
+  for (const lock of locks) unique6.set(maintenanceSortKey(lock.anchorPath), lock);
+  return Object.freeze([...unique6.values()].sort((left, right) => {
+    const leftKey = maintenanceSortKey(left.anchorPath);
+    const rightKey = maintenanceSortKey(right.anchorPath);
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  }));
+}
+function assertMaintenanceConfirmation(value) {
+  if (value === null || typeof value !== "object" || value.confirmedNoLegacyTokenGraphProcesses !== true) {
+    throw new DestructiveMaintenanceConfirmationError();
+  }
+}
+function pathIdentity(stats) {
+  return `${stats.dev}:${stats.ino}:${stats.birthtimeMs}`;
+}
+function safeMaintenanceRelativePath(value) {
+  if (value === void 0) return void 0;
+  if (value.length === 0 || isAbsolute2(value) || value.includes("\0")) throw new Error("Maintenance target must be a safe relative path.");
+  const segments = value.replaceAll("\\", "/").split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) throw new Error("Maintenance target must be a safe relative path.");
+  return segments.join("/");
+}
+async function planMaintenanceEntry(path, protectedPaths, plan) {
+  const key = maintenanceSortKey(path);
+  if (protectedPaths.has(key)) return;
+  let stats;
+  try {
+    stats = await lstat4(path);
+  } catch (error2) {
+    if (error2.code === "ENOENT") return;
+    throw error2;
+  }
+  if (stats.isSymbolicLink()) throw new Error("Destructive maintenance refuses a symbolic-link or junction entry.");
+  if (path.toLowerCase().endsWith(".lock")) throw new Error("Destructive maintenance refuses an unexplained legacy lock or compatibility barrier.");
+  if (stats.isFile()) {
+    if (stats.nlink !== 1) throw new Error("Destructive maintenance refuses a multiply linked file.");
+    plan.push({ path, identity: pathIdentity(stats), directory: false });
+    return;
+  }
+  if (!stats.isDirectory()) throw new Error("Destructive maintenance refuses a non-regular filesystem entry.");
+  for (const entry of (await readdir3(path)).sort()) await planMaintenanceEntry(join4(path, entry), protectedPaths, plan);
+  plan.push({ path, identity: pathIdentity(stats), directory: true });
+}
+async function removePlannedMaintenanceEntries(plan) {
+  const removed = /* @__PURE__ */ new Set();
+  for (const entry of plan) {
+    const current = await lstat4(entry.path).catch((error2) => {
+      if (error2.code === "ENOENT") throw new Error("Destructive maintenance target identity changed before deletion.");
+      throw error2;
+    });
+    if (pathIdentity(current) !== entry.identity || current.isSymbolicLink() || (entry.directory ? !current.isDirectory() : !current.isFile() || current.nlink !== 1)) {
+      throw new Error("Destructive maintenance target identity changed before deletion.");
+    }
+    if (entry.directory) await rmdir3(entry.path);
+    else await unlink3(entry.path);
+    removed.add(entry.path);
+  }
+  return removed;
+}
+function createMaintenanceContext(locks) {
+  const byDomain = /* @__PURE__ */ new Map();
+  const protectedPaths = /* @__PURE__ */ new Set();
+  for (const lock of locks) {
+    if (!isCanonicalPersistenceLock(lock)) throw new Error("Maintenance requires canonical persistence locks.");
+    byDomain.set(lock.domain, lock);
+    for (const path of [
+      lock.domainRoot,
+      lock.anchorPath,
+      lock.journalPath,
+      `${lock.journalPath}.tokengraph-write-v2.tmp`,
+      lock.compatibilityPath
+    ]) protectedPaths.add(maintenanceSortKey(path));
+  }
+  return Object.freeze({
+    locks,
+    async remove(targets) {
+      const plans = [];
+      const roots = /* @__PURE__ */ new Set();
+      for (const target of targets) {
+        const lock = byDomain.get(target.domain);
+        if (!lock) throw new Error("Maintenance target domain was not acquired.");
+        const relativePath = safeMaintenanceRelativePath(target.relativePath);
+        const targetPath = relativePath === void 0 ? lock.domainRoot : join4(lock.domainRoot, ...relativePath.split("/"));
+        const difference = relative3(lock.domainRoot, targetPath);
+        if (difference.startsWith("..") || isAbsolute2(difference)) throw new Error("Maintenance target escapes its canonical domain.");
+        if (relativePath === void 0) {
+          let entries;
+          try {
+            entries = (await readdir3(lock.domainRoot)).sort();
+          } catch (error2) {
+            if (error2.code === "ENOENT") continue;
+            throw error2;
+          }
+          for (const entry of entries) await planMaintenanceEntry(join4(lock.domainRoot, entry), protectedPaths, plans);
+        } else if (!roots.has(maintenanceSortKey(targetPath))) {
+          roots.add(maintenanceSortKey(targetPath));
+          await planMaintenanceEntry(targetPath, protectedPaths, plans);
+        }
+      }
+      return removePlannedMaintenanceEntries(plans);
+    }
+  });
+}
+async function withMaintenanceLocks(root, domains, operation) {
+  const locks = await canonicalMaintenanceLocks(root, domains);
+  const context = createMaintenanceContext(locks);
+  const acquire = async (index) => index === locks.length ? operation(context) : withFileLock(locks[index], () => acquire(index + 1));
+  return acquire(0);
+}
+async function withDestructiveMaintenance(root, domains, confirmation, operation) {
+  assertMaintenanceConfirmation(confirmation);
+  requireLegacyRuntimeShutdownCapability();
+  return withMaintenanceLocks(root, domains, operation);
+}
+async function withAutomaticMaintenance(root, domains, operation) {
+  requireLegacyRuntimeShutdownCapability();
+  return withMaintenanceLocks(root, domains, operation);
+}
+async function canonicalPersistenceLockKey(root, ...segments) {
+  const resolvedRoot = resolve4(root);
+  let canonicalRoot;
+  try {
+    canonicalRoot = await realpath2(resolvedRoot);
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+    canonicalRoot = resolvedRoot;
+  }
+  const key = join4(canonicalRoot, ...segments);
+  return process.platform === "win32" ? key.toLowerCase() : key;
+}
+async function writeJsonAtomic(path, value) {
+  await writeTextAtomic(path, `${JSON.stringify(value, null, 2)}
+`);
+}
+async function writeTextAtomic(path, content) {
+  const directory = dirname4(path);
+  await assertNoSymbolicLinkComponents(path);
+  await mkdir2(directory, { recursive: true, mode: 448 });
+  await assertNoSymbolicLinkComponents(path);
+  if (process.platform !== "win32") await chmod3(directory, 448);
+  const tempPath = join4(directory, `.${process.pid}-${Date.now()}-${randomUUID2()}.tmp`);
+  try {
+    await writeFile(tempPath, content, { mode: 384 });
+    await rename2(tempPath, path);
+    if (process.platform !== "win32") await chmod3(path, 384);
+  } finally {
+    await rm(tempPath, { force: true });
+  }
+}
+async function assertNoSymbolicLinkComponents(path) {
+  const absolute = resolve4(path);
+  const parsed = parse4(absolute);
+  let current = parsed.root;
+  const remainder = absolute.slice(parsed.root.length).split(/[\\/]+/).filter(Boolean);
+  for (const segment of remainder) {
+    current = join4(current, segment);
+    try {
+      if ((await lstat4(current)).isSymbolicLink()) {
+        throw new Error(`State write cannot traverse symbolic-link or junction component: ${current}`);
+      }
+    } catch (error2) {
+      if (error2.code === "ENOENT") continue;
+      throw error2;
+    }
+  }
+}
+async function resolveConfinedPath(root, relativeFile, createParents = false) {
+  if (!relativeFile || isAbsolute2(relativeFile) || relativeFile.replaceAll("\\", "/").split("/").includes("..")) {
+    throw new Error("Confined path must be a safe relative file path.");
+  }
+  const canonicalRoot = await realpath2(resolve4(root));
+  const segments = relativeFile.replaceAll("\\", "/").split("/").filter(Boolean);
+  const fileName = segments.pop();
+  if (!fileName) throw new Error("Confined path must name a file.");
+  let parent = canonicalRoot;
+  for (const segment of segments) {
+    const candidate = join4(parent, segment);
+    if (createParents) await mkdir2(candidate, { recursive: false, mode: 448 }).catch((error2) => {
+      if (error2.code !== "EEXIST") throw error2;
+    });
+    parent = await realpath2(candidate);
+    const confined = relative3(canonicalRoot, parent);
+    if (!confined || confined.startsWith("..") || isAbsolute2(confined)) {
+      throw new Error("Path resolves outside the trusted workspace.");
+    }
+  }
+  const filePath = join4(parent, fileName);
+  try {
+    if ((await lstat4(filePath)).isSymbolicLink()) throw new Error("Confined file path cannot be a symbolic link.");
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+  }
+  return filePath;
+}
+async function writeTextAtomicConfined(root, relativeFile, content) {
+  await writeTextAtomic(await resolveConfinedPath(root, relativeFile, true), content);
+}
+async function quarantineCorruptJson(path) {
+  const corruptPath = `${path}.corrupt-${Date.now()}-${randomUUID2().slice(0, 8)}`;
+  try {
+    await rename2(path, corruptPath);
+  } catch (error2) {
+    if (error2.code !== "ENOENT") {
+      throw error2;
+    }
+  }
+}
+var DestructiveMaintenanceConfirmationError, SAFE_WIKI_SLUG_PATTERN, JsonTokenGraphStore, SqliteTokenGraphStore;
+var init_storage = __esm({
+  "src/core/storage.ts"() {
+    "use strict";
+    init_fileLockLease();
+    init_lockDomain();
+    init_legacyRuntimeActivation();
+    DestructiveMaintenanceConfirmationError = class extends Error {
+      code = "DESTRUCTIVE_MAINTENANCE_UNCONFIRMED";
+      constructor() {
+        super("Destructive TokenGraph maintenance requires a fresh confirmation that no legacy TokenGraph process is running.");
+        this.name = "DestructiveMaintenanceConfirmationError";
+      }
+    };
+    SAFE_WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
+    JsonTokenGraphStore = class {
+      constructor(filePath, options) {
+        this.filePath = filePath;
+        this.options = options;
+      }
+      filePath;
+      options;
+      async read() {
+        try {
+          const parsed = JSON.parse(await readFile(this.filePath, "utf8"));
+          if (Array.isArray(parsed)) {
+            return parsed;
+          }
+          if (parsed && typeof parsed === "object") {
+            const schemaVersion = parsed.schemaVersion;
+            if (typeof schemaVersion === "number" && schemaVersion !== this.options.schemaVersion) {
+              throw new Error(`Unsupported TokenGraph store schema version ${schemaVersion}; expected ${this.options.schemaVersion}.`);
+            }
+            const value = parsed[this.options.dataKey];
+            return Array.isArray(value) ? value : [];
+          }
+          return [];
+        } catch (error2) {
+          if (error2.code === "ENOENT") {
+            return [];
+          }
+          if (error2 instanceof SyntaxError) {
+            if (getLegacyRuntimeActivationStatus().activated) await quarantineCorruptJson(this.filePath);
+            return [];
+          }
+          throw error2;
+        }
+      }
+      async write(data) {
+        await writeJsonAtomic(resolve4(this.filePath), {
+          schemaVersion: this.options.schemaVersion,
+          [this.options.dataKey]: data
+        });
+      }
+    };
+    SqliteTokenGraphStore = class {
+      constructor(_databasePath) {
+        throw new Error("The optional SQLite backend is not implemented; JSON storage remains the default.");
+      }
+    };
+  }
+});
+
+// src/core/repositoryIdentity.ts
+var repositoryIdentity_exports = {};
+__export(repositoryIdentity_exports, {
+  LOCAL_EXCLUDE_WARNING: () => LOCAL_EXCLUDE_WARNING,
+  getGitFileRecency: () => getGitFileRecency,
+  getRepositoryIdentity: () => getRepositoryIdentity,
+  getRepositorySetupWarnings: () => getRepositorySetupWarnings,
+  gitCommonDirectory: () => gitCommonDirectory,
+  isGitWorkspace: () => isGitWorkspace,
+  repositoryStateDirectory: () => repositoryStateDirectory,
+  resolveRepositoryStateDirectory: () => resolveRepositoryStateDirectory
+});
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { createHash as createHash4 } from "node:crypto";
+import { access, lstat as lstat5, readFile as readFile3, readdir as readdir4 } from "node:fs/promises";
+import { join as join6, resolve as resolve5 } from "node:path";
+async function git(root, ...args) {
+  try {
+    const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 });
+    const output = result.stdout.trim();
+    return output || void 0;
+  } catch {
+    return void 0;
+  }
+}
+async function getGitFileRecency(root, requestedPaths, requestedDepth = 50) {
+  const historyDepth = Math.max(1, Math.min(50, Number.isFinite(requestedDepth) ? Math.trunc(requestedDepth) : 50));
+  const neutral = { source: "unavailable", historyDepth, fileCommitDistance: {} };
+  const normalizedPaths = [...new Set(requestedPaths.map((path) => path.replaceAll("\\", "/")))].sort();
+  const requested = new Set(normalizedPaths);
+  try {
+    const result = await execFileAsync("git", [
+      "-C",
+      resolve5(root),
+      "-c",
+      "core.quotePath=false",
+      "log",
+      "-n",
+      String(historyDepth),
+      "--format=commit:%H%x00",
+      "--name-only",
+      "-z",
+      "--no-renames",
+      "HEAD",
+      "--"
+    ], { windowsHide: true, maxBuffer: 1024 * 1024 });
+    const distances = /* @__PURE__ */ new Map();
+    let commitDistance = -1;
+    for (const rawToken of result.stdout.split("\0")) {
+      if (rawToken.startsWith("commit:")) {
+        commitDistance += 1;
+        continue;
+      }
+      const path = rawToken.replace(/^\r?\n/, "").replaceAll("\\", "/");
+      if (path && requested.has(path) && !distances.has(path)) distances.set(path, commitDistance);
+    }
+    return {
+      source: "git-commit-distance",
+      historyDepth,
+      fileCommitDistance: Object.fromEntries([...distances.entries()].sort(([a], [b]) => a.localeCompare(b)))
+    };
+  } catch {
+    return neutral;
+  }
+}
+async function ensureLocalExclude(root) {
+  const exclude = await git(root, "rev-parse", "--git-path", "info/exclude");
+  if (!exclude) return;
+  const path = resolve5(root, exclude);
+  try {
+    const lock = await canonicalPersistenceLock(root, "git-info", "exclude");
+    await withFileLock(lock, async () => {
+      let existing = "";
+      try {
+        existing = await readFile3(path, "utf8");
+      } catch (error2) {
+        if (error2.code !== "ENOENT") throw error2;
+      }
+      const lines = existing.split(/\r?\n/);
+      if (lines.some((line) => line.trim() === ".tokengraph/")) return;
+      const next = `${existing.replace(/[\r\n]*$/, "")}${existing ? "\n" : ""}.tokengraph/
+`;
+      await writeTextAtomic(path, next);
+    });
+    setupWarnings.delete(resolve5(root));
+  } catch {
+    setupWarnings.set(resolve5(root), [LOCAL_EXCLUDE_WARNING]);
+  }
+}
+function getRepositorySetupWarnings(root) {
+  return [...setupWarnings.get(resolve5(root)) ?? []];
+}
+function digest(value) {
+  return createHash4("sha256").update(value).digest("hex");
+}
+async function remoteIdentity(root) {
+  const remotes = await git(root, "remote", "get-url", "--all", "origin");
+  return remotes?.split(/\r?\n/).map((value) => sanitizeRemote(value.trim())).filter(Boolean).sort().join("\n");
+}
+function sanitizeRemote(value) {
+  const scpStyle = value.match(/^[^@\/\s]+@([^:\/\s]+):(.+)$/);
+  if (scpStyle) return `ssh://${scpStyle[1]}/${scpStyle[2]}`;
+  try {
+    const parsed = new URL(value);
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return value.replace(/\/\/[^/@\s]+@/g, "//");
+  }
+}
+async function loadOrCreateRepositoryIdUnqueued(workspaceRoot, directory) {
+  const path = join6(directory, "identity.json");
+  try {
+    const parsed = JSON.parse(await readFile3(path, "utf8"));
+    if (parsed.schemaVersion === 1 && typeof parsed.repositoryId === "string" && parsed.repositoryId.length >= 16) return parsed.repositoryId;
+  } catch (error2) {
+    if (error2.code !== "ENOENT" && !(error2 instanceof SyntaxError)) throw error2;
+  }
+  const repositoryId = digest(`${directory}
+${Date.now()}
+${Math.random()}`);
+  const lock = await canonicalPersistenceLock(workspaceRoot, "repository-state", "identity.json");
+  await withFileLock(lock, async () => {
+    try {
+      const existing = JSON.parse(await readFile3(path, "utf8"));
+      if (existing.schemaVersion === 1 && typeof existing.repositoryId === "string" && existing.repositoryId.length >= 16) return;
+    } catch (error2) {
+      if (error2.code !== "ENOENT" && !(error2 instanceof SyntaxError)) throw error2;
+    }
+    await writeJsonAtomic(path, { schemaVersion: 1, repositoryId });
+  });
+  try {
+    const persisted = JSON.parse(await readFile3(path, "utf8"));
+    return typeof persisted.repositoryId === "string" ? persisted.repositoryId : repositoryId;
+  } catch {
+    return repositoryId;
+  }
+}
+async function loadOrCreateRepositoryId(workspaceRoot, directory) {
+  const key = process.platform === "win32" ? resolve5(directory).toLowerCase() : resolve5(directory);
+  const existing = repositoryIdLoads.get(key);
+  if (existing) return existing;
+  const current = loadOrCreateRepositoryIdUnqueued(workspaceRoot, directory);
+  repositoryIdLoads.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (repositoryIdLoads.get(key) === current) repositoryIdLoads.delete(key);
+  }
+}
+async function getRepositoryIdentity(root) {
+  const workspaceRoot = resolve5(root);
+  return getRepositoryIdentityUncached(workspaceRoot);
+}
+async function getRepositoryIdentityUncached(workspaceRoot) {
+  const [topLevel, commonDir, gitDir, branch, headCommit, firstCommits, remote] = await Promise.all([
+    git(workspaceRoot, "rev-parse", "--show-toplevel"),
+    git(workspaceRoot, "rev-parse", "--git-common-dir"),
+    git(workspaceRoot, "rev-parse", "--git-dir"),
+    git(workspaceRoot, "symbolic-ref", "--quiet", "--short", "HEAD"),
+    git(workspaceRoot, "rev-parse", "HEAD"),
+    git(workspaceRoot, "rev-list", "--max-parents=0", "HEAD"),
+    remoteIdentity(workspaceRoot)
+  ]);
+  const normalizedRoot = resolve5(topLevel ?? workspaceRoot);
+  const normalizedGitDir = gitDir ? resolve5(workspaceRoot, gitDir) : void 0;
+  if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
+  const repositoryState = await resolveRepositoryStateDirectory(normalizedRoot);
+  const repositoryId = await loadOrCreateRepositoryId(workspaceRoot, repositoryState);
+  const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
+  const repositoryFingerprint = digest(`${repositoryId}
+${firstCommit}`);
+  return {
+    repositoryId,
+    repositoryFingerprint,
+    workspaceId: digest(normalizedRoot),
+    worktreeId: digest(normalizedGitDir ?? normalizedRoot),
+    branch: branch ?? "detached",
+    headCommit: headCommit ?? "unborn",
+    ...remote ? { remoteIdentity: remote } : {}
+  };
+}
+async function gitCommonDirectory(root) {
+  const commonDir = await git(resolve5(root), "rev-parse", "--git-common-dir");
+  if (!commonDir) return void 0;
+  return resolve5(root, commonDir);
+}
+function repositoryStateDirectory(root, commonDirectory) {
+  void commonDirectory;
+  return join6(resolve5(root), ".tokengraph", "repository");
+}
+async function isGitWorkspace(root) {
+  try {
+    await access(join6(resolve5(root), ".git"));
+    return Boolean(await git(resolve5(root), "rev-parse", "--show-toplevel"));
+  } catch {
+    return false;
+  }
+}
+async function resolveRepositoryStateDirectory(root) {
+  const normalizedRoot = resolve5(root);
+  const target = repositoryStateDirectory(normalizedRoot);
+  if (!getLegacyRuntimeActivationStatus().activated) return target;
+  const commonDirectory = await gitCommonDirectory(normalizedRoot);
+  if (commonDirectory) await migrateLegacyRepositoryState(normalizedRoot, join6(commonDirectory, "tokengraph"), target);
+  return target;
+}
+async function migrateLegacyRepositoryState(workspaceRoot, source, target) {
+  try {
+    await lstat5(join6(target, "migration.json"));
+    return;
+  } catch (error2) {
+    if (error2.code !== "ENOENT") throw error2;
+  }
+  let sourceStats;
+  try {
+    sourceStats = await lstat5(source);
+  } catch (error2) {
+    if (error2.code === "ENOENT") return;
+    throw error2;
+  }
+  if (!sourceStats.isDirectory()) return;
+  const lock = await canonicalPersistenceLock(workspaceRoot, "repository-state", "migration.json");
+  await withFileLock(lock, async () => {
+    try {
+      await lstat5(join6(target, "migration.json"));
+      return;
+    } catch (error2) {
+      if (error2.code !== "ENOENT") throw error2;
+    }
+    const report = {
+      schemaVersion: LEGACY_REPOSITORY_STATE_SCHEMA_VERSION,
+      source,
+      migratedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      migrated: [],
+      skippedExisting: [],
+      skippedInvalid: [],
+      skippedUnsupported: [],
+      skippedSymlink: []
+    };
+    await migrateLegacyEntries(source, target, "", report);
+    await writeJsonAtomic(join6(target, "migration.json"), report);
+  });
+}
+async function migrateLegacyEntries(sourceRoot, targetRoot, relativePath, report) {
+  const sourceDirectory = join6(sourceRoot, relativePath);
+  for (const entry of await readdir4(sourceDirectory, { withFileTypes: true })) {
+    const entryRelativePath = relativePath ? join6(relativePath, entry.name) : entry.name;
+    const sourcePath = join6(sourceRoot, entryRelativePath);
+    if (entry.name.endsWith(".lock") || entry.name.endsWith(".tmp")) {
+      report.skippedUnsupported.push(entryRelativePath);
+      continue;
+    }
+    const stats = await lstat5(sourcePath);
+    if (stats.isSymbolicLink()) {
+      report.skippedSymlink.push(entryRelativePath);
+      continue;
+    }
+    if (stats.isDirectory()) {
+      await migrateLegacyEntries(sourceRoot, targetRoot, entryRelativePath, report);
+      continue;
+    }
+    if (!stats.isFile() || !entry.name.endsWith(".json")) {
+      report.skippedUnsupported.push(entryRelativePath);
+      continue;
+    }
+    const targetPath = join6(targetRoot, entryRelativePath);
+    try {
+      await lstat5(targetPath);
+      report.skippedExisting.push(entryRelativePath);
+      continue;
+    } catch (error2) {
+      if (error2.code !== "ENOENT") throw error2;
+    }
+    let contents;
+    try {
+      contents = await readFile3(sourcePath, "utf8");
+      JSON.parse(contents);
+    } catch (error2) {
+      if (error2 instanceof SyntaxError) {
+        report.skippedInvalid.push(entryRelativePath);
+        continue;
+      }
+      throw error2;
+    }
+    await writeTextAtomic(targetPath, contents);
+    report.migrated.push(entryRelativePath);
+  }
+}
+var execFileAsync, LOCAL_EXCLUDE_WARNING, setupWarnings, LEGACY_REPOSITORY_STATE_SCHEMA_VERSION, repositoryIdLoads;
+var init_repositoryIdentity = __esm({
+  "src/core/repositoryIdentity.ts"() {
+    "use strict";
+    init_lockDomain();
+    init_legacyRuntimeActivation();
+    init_storage();
+    execFileAsync = promisify(execFile);
+    LOCAL_EXCLUDE_WARNING = "TokenGraph could not update .git/info/exclude; add this exact line manually: .tokengraph/";
+    setupWarnings = /* @__PURE__ */ new Map();
+    LEGACY_REPOSITORY_STATE_SCHEMA_VERSION = 1;
+    repositoryIdLoads = /* @__PURE__ */ new Map();
+  }
+});
 
 // node_modules/.pnpm/ignore@5.3.2/node_modules/ignore/index.js
 var require_ignore = __commonJS({
@@ -2567,13 +5724,13 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     }
     return propValues;
   });
-  const isObject2 = isObject;
+  const isObject3 = isObject;
   const catchall = def.catchall;
   let value;
   inst._zod.parse = (payload, ctx) => {
     value ?? (value = _normalized.value);
     const input = payload.value;
-    if (!isObject2(input)) {
+    if (!isObject3(input)) {
       payload.issues.push({
         expected: "object",
         code: "invalid_type",
@@ -2700,7 +5857,7 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
     return (payload, ctx) => fn(shape, payload, ctx);
   };
   let fastpass;
-  const isObject2 = isObject;
+  const isObject3 = isObject;
   const jit = !globalConfig.jitless;
   const allowsEval2 = allowsEval;
   const fastEnabled = jit && allowsEval2.value;
@@ -2709,7 +5866,7 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
   inst._zod.parse = (payload, ctx) => {
     value ?? (value = _normalized.value);
     const input = payload.value;
-    if (!isObject2(input)) {
+    if (!isObject3(input)) {
       payload.issues.push({
         expected: "object",
         code: "invalid_type",
@@ -6458,9 +9615,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
       const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
       return `${varKind} ${this.name}${rhs};` + _n;
     }
-    optimizeNames(names, constants) {
+    optimizeNames(names, constants4) {
       if (!names[this.name.str]) return;
-      if (this.rhs) this.rhs = optimizeExpr(this.rhs, names, constants);
+      if (this.rhs) this.rhs = optimizeExpr(this.rhs, names, constants4);
       return this;
     }
     get names() {
@@ -6477,9 +9634,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
     render({ _n }) {
       return `${this.lhs} = ${this.rhs};` + _n;
     }
-    optimizeNames(names, constants) {
+    optimizeNames(names, constants4) {
       if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects) return;
-      this.rhs = optimizeExpr(this.rhs, names, constants);
+      this.rhs = optimizeExpr(this.rhs, names, constants4);
       return this;
     }
     get names() {
@@ -6538,8 +9695,8 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
     optimizeNodes() {
       return `${this.code}` ? this : void 0;
     }
-    optimizeNames(names, constants) {
-      this.code = optimizeExpr(this.code, names, constants);
+    optimizeNames(names, constants4) {
+      this.code = optimizeExpr(this.code, names, constants4);
       return this;
     }
     get names() {
@@ -6565,12 +9722,12 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
       }
       return nodes.length > 0 ? this : void 0;
     }
-    optimizeNames(names, constants) {
+    optimizeNames(names, constants4) {
       const { nodes } = this;
       let i = nodes.length;
       while (i--) {
         const n = nodes[i];
-        if (n.optimizeNames(names, constants)) continue;
+        if (n.optimizeNames(names, constants4)) continue;
         subtractNames(names, n.names);
         nodes.splice(i, 1);
       }
@@ -6617,11 +9774,11 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
       if (cond === false || !this.nodes.length) return void 0;
       return this;
     }
-    optimizeNames(names, constants) {
+    optimizeNames(names, constants4) {
       var _a3;
-      this.else = (_a3 = this.else) === null || _a3 === void 0 ? void 0 : _a3.optimizeNames(names, constants);
-      if (!(super.optimizeNames(names, constants) || this.else)) return;
-      this.condition = optimizeExpr(this.condition, names, constants);
+      this.else = (_a3 = this.else) === null || _a3 === void 0 ? void 0 : _a3.optimizeNames(names, constants4);
+      if (!(super.optimizeNames(names, constants4) || this.else)) return;
+      this.condition = optimizeExpr(this.condition, names, constants4);
       return this;
     }
     get names() {
@@ -6643,9 +9800,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
     render(opts) {
       return `for(${this.iteration})` + super.render(opts);
     }
-    optimizeNames(names, constants) {
-      if (!super.optimizeNames(names, constants)) return;
-      this.iteration = optimizeExpr(this.iteration, names, constants);
+    optimizeNames(names, constants4) {
+      if (!super.optimizeNames(names, constants4)) return;
+      this.iteration = optimizeExpr(this.iteration, names, constants4);
       return this;
     }
     get names() {
@@ -6680,9 +9837,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
     render(opts) {
       return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
     }
-    optimizeNames(names, constants) {
-      if (!super.optimizeNames(names, constants)) return;
-      this.iterable = optimizeExpr(this.iterable, names, constants);
+    optimizeNames(names, constants4) {
+      if (!super.optimizeNames(names, constants4)) return;
+      this.iterable = optimizeExpr(this.iterable, names, constants4);
       return this;
     }
     get names() {
@@ -6721,11 +9878,11 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
       (_b = this.finally) === null || _b === void 0 || _b.optimizeNodes();
       return this;
     }
-    optimizeNames(names, constants) {
+    optimizeNames(names, constants4) {
       var _a3, _b;
-      super.optimizeNames(names, constants);
-      (_a3 = this.catch) === null || _a3 === void 0 || _a3.optimizeNames(names, constants);
-      (_b = this.finally) === null || _b === void 0 || _b.optimizeNames(names, constants);
+      super.optimizeNames(names, constants4);
+      (_a3 = this.catch) === null || _a3 === void 0 || _a3.optimizeNames(names, constants4);
+      (_b = this.finally) === null || _b === void 0 || _b.optimizeNames(names, constants4);
       return this;
     }
     get names() {
@@ -6974,7 +10131,7 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
   function addExprNames(names, from) {
     return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
   }
-  function optimizeExpr(expr, names, constants) {
+  function optimizeExpr(expr, names, constants4) {
     if (expr instanceof code_1.Name) return replaceName(expr);
     if (!canOptimize(expr)) return expr;
     return new code_1._Code(expr._items.reduce((items, c) => {
@@ -6984,13 +10141,13 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
       return items;
     }, []));
     function replaceName(n) {
-      const c = constants[n.str];
+      const c = constants4[n.str];
       if (c === void 0 || names[n.str] !== 1) return n;
       delete names[n.str];
       return c;
     }
     function canOptimize(e) {
-      return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants[c.str] !== void 0);
+      return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants4[c.str] !== void 0);
     }
   }
   function subtractNames(names, from) {
@@ -8650,7 +11807,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
     ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref);
     const schOrFunc = root.refs[ref];
     if (schOrFunc) return schOrFunc;
-    let _sch = resolve13.call(this, root, ref);
+    let _sch = resolve15.call(this, root, ref);
     if (_sch === void 0) {
       const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
       const { schemaId } = this.opts;
@@ -8676,7 +11833,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve13(root, ref) {
+  function resolve15(root, ref) {
     let sch;
     while (typeof (sch = this.refs[ref]) == "string") ref = sch;
     return sch || this.schemas[ref] || resolveSchema.call(this, root, ref);
@@ -9122,51 +12279,51 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
   const { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizeComponentEncoding, isIPv4, nonSimpleDomain } = require_utils();
   const { SCHEMES, getSchemeHandler } = require_schemes();
   function normalize3(uri, options) {
-    if (typeof uri === "string") uri = serialize(parse5(uri, options), options);
-    else if (typeof uri === "object") uri = parse5(serialize(uri, options), options);
+    if (typeof uri === "string") uri = serialize(parse7(uri, options), options);
+    else if (typeof uri === "object") uri = parse7(serialize(uri, options), options);
     return uri;
   }
-  function resolve13(baseURI, relativeURI, options) {
+  function resolve15(baseURI, relativeURI, options) {
     const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
-    const resolved = resolveComponent(parse5(baseURI, schemelessOptions), parse5(relativeURI, schemelessOptions), schemelessOptions, true);
+    const resolved = resolveComponent(parse7(baseURI, schemelessOptions), parse7(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
     return serialize(resolved, schemelessOptions);
   }
-  function resolveComponent(base2, relative8, options, skipNormalization) {
+  function resolveComponent(base2, relative10, options, skipNormalization) {
     const target = {};
     if (!skipNormalization) {
-      base2 = parse5(serialize(base2, options), options);
-      relative8 = parse5(serialize(relative8, options), options);
+      base2 = parse7(serialize(base2, options), options);
+      relative10 = parse7(serialize(relative10, options), options);
     }
     options = options || {};
-    if (!options.tolerant && relative8.scheme) {
-      target.scheme = relative8.scheme;
-      target.userinfo = relative8.userinfo;
-      target.host = relative8.host;
-      target.port = relative8.port;
-      target.path = removeDotSegments(relative8.path || "");
-      target.query = relative8.query;
+    if (!options.tolerant && relative10.scheme) {
+      target.scheme = relative10.scheme;
+      target.userinfo = relative10.userinfo;
+      target.host = relative10.host;
+      target.port = relative10.port;
+      target.path = removeDotSegments(relative10.path || "");
+      target.query = relative10.query;
     } else {
-      if (relative8.userinfo !== void 0 || relative8.host !== void 0 || relative8.port !== void 0) {
-        target.userinfo = relative8.userinfo;
-        target.host = relative8.host;
-        target.port = relative8.port;
-        target.path = removeDotSegments(relative8.path || "");
-        target.query = relative8.query;
+      if (relative10.userinfo !== void 0 || relative10.host !== void 0 || relative10.port !== void 0) {
+        target.userinfo = relative10.userinfo;
+        target.host = relative10.host;
+        target.port = relative10.port;
+        target.path = removeDotSegments(relative10.path || "");
+        target.query = relative10.query;
       } else {
-        if (!relative8.path) {
+        if (!relative10.path) {
           target.path = base2.path;
-          if (relative8.query !== void 0) target.query = relative8.query;
+          if (relative10.query !== void 0) target.query = relative10.query;
           else target.query = base2.query;
         } else {
-          if (relative8.path[0] === "/") target.path = removeDotSegments(relative8.path);
+          if (relative10.path[0] === "/") target.path = removeDotSegments(relative10.path);
           else {
-            if ((base2.userinfo !== void 0 || base2.host !== void 0 || base2.port !== void 0) && !base2.path) target.path = "/" + relative8.path;
-            else if (!base2.path) target.path = relative8.path;
-            else target.path = base2.path.slice(0, base2.path.lastIndexOf("/") + 1) + relative8.path;
+            if ((base2.userinfo !== void 0 || base2.host !== void 0 || base2.port !== void 0) && !base2.path) target.path = "/" + relative10.path;
+            else if (!base2.path) target.path = relative10.path;
+            else target.path = base2.path.slice(0, base2.path.lastIndexOf("/") + 1) + relative10.path;
             target.path = removeDotSegments(target.path);
           }
-          target.query = relative8.query;
+          target.query = relative10.query;
         }
         target.userinfo = base2.userinfo;
         target.host = base2.host;
@@ -9174,13 +12331,13 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
       }
       target.scheme = base2.scheme;
     }
-    target.fragment = relative8.fragment;
+    target.fragment = relative10.fragment;
     return target;
   }
   function equal(uriA, uriB, options) {
     if (typeof uriA === "string") {
       uriA = unescape(uriA);
-      uriA = serialize(normalizeComponentEncoding(parse5(uriA, options), true), {
+      uriA = serialize(normalizeComponentEncoding(parse7(uriA, options), true), {
         ...options,
         skipEscape: true
       });
@@ -9190,7 +12347,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     });
     if (typeof uriB === "string") {
       uriB = unescape(uriB);
-      uriB = serialize(normalizeComponentEncoding(parse5(uriB, options), true), {
+      uriB = serialize(normalizeComponentEncoding(parse7(uriB, options), true), {
         ...options,
         skipEscape: true
       });
@@ -9243,7 +12400,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     return uriTokens.join("");
   }
   const URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
-  function parse5(uri, opts) {
+  function parse7(uri, opts) {
     const options = Object.assign({}, opts);
     const parsed = {
       scheme: void 0,
@@ -9300,11 +12457,11 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin(((exports, module) => {
   const fastUri = {
     SCHEMES,
     normalize: normalize3,
-    resolve: resolve13,
+    resolve: resolve15,
     resolveComponent,
     equal,
     serialize,
-    parse: parse5
+    parse: parse7
   };
   module.exports = fastUri;
   module.exports.default = fastUri;
@@ -16227,14 +19384,14 @@ function inputRequiredRoundsExceededMessage(method, maxRounds) {
   return `Multi-round-trip request '${method}' still required input after ${maxRounds} rounds (inputRequired.maxRounds)`;
 }
 function sleep(ms, signal) {
-  return new Promise((resolve13, reject) => {
+  return new Promise((resolve15, reject) => {
     if (signal?.aborted) {
       reject(signal.reason instanceof SdkError ? signal.reason : new SdkError(SdkErrorCode.RequestTimeout, String(signal.reason)));
       return;
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve13();
+      resolve15();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
@@ -17100,7 +20257,7 @@ var Protocol = class {
     const flowStartedAt = Date.now();
     let onAbort;
     let cleanupMessageId;
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve15, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -17168,7 +20325,7 @@ var Protocol = class {
         }
         if (decoded.kind === "invalid") return reject(decoded.error);
         if (decoded.kind === "input_required") {
-          if (options?.allowInputRequired === true) return resolve13(manualInputRequiredValue(decoded));
+          if (options?.allowInputRequired === true) return resolve15(manualInputRequiredValue(decoded));
           const flow = {
             codec,
             request,
@@ -17180,11 +20337,11 @@ var Protocol = class {
               params
             }, resultSchema, legOptions)
           };
-          return resolve13(this._resolveNonCompleteResult(decoded, flow));
+          return resolve15(this._resolveNonCompleteResult(decoded, flow));
         }
         const result = decoded.result;
         validateStandardSchema(resultSchema, result).then((parseResult) => {
-          if (parseResult.success) resolve13(parseResult.data);
+          if (parseResult.success) resolve15(parseResult.data);
           else reject(new SdkError(SdkErrorCode.InvalidResult, `Invalid result for ${request.method}: ${parseResult.error}`));
         }, reject);
       });
@@ -17782,9 +20939,9 @@ var Server = class extends Protocol {
   _clientCapabilities;
   _clientVersion;
   static {
-    writeClientIdentity = (server, identity) => {
-      if (identity.clientCapabilities !== void 0) server._clientCapabilities = identity.clientCapabilities;
-      if (identity.clientInfo !== void 0) server._clientVersion = identity.clientInfo;
+    writeClientIdentity = (server, identity3) => {
+      if (identity3.clientCapabilities !== void 0) server._clientCapabilities = identity3.clientCapabilities;
+      if (identity3.clientInfo !== void 0) server._clientVersion = identity3.clientInfo;
     };
     installDiscoverHandler = (server, servedModernVersions) => {
       const missing = servedModernVersions.filter((version2) => !server._supportedProtocolVersions.includes(version2));
@@ -19008,7 +22165,7 @@ var StdioServerTransport = class {
   }
   send(message) {
     if (this._closed) return Promise.reject(/* @__PURE__ */ new Error("StdioServerTransport is closed"));
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve15, reject) => {
       const json = serializeMessage(message);
       let settled = false;
       const onError = (error2) => {
@@ -19023,14 +22180,14 @@ var StdioServerTransport = class {
         settled = true;
         this._stdout.off("error", onError);
         this._stdout.off("drain", onDrain);
-        resolve13();
+        resolve15();
       };
       this._stdout.once("error", onError);
       if (this._stdout.write(json)) {
         if (settled) return;
         settled = true;
         this._stdout.off("error", onError);
-        resolve13();
+        resolve15();
       } else if (!settled) this._stdout.once("drain", onDrain);
     });
   }
@@ -19084,14 +22241,14 @@ var StdioConnectionChannel = class {
   */
   async whenRequestsAnswered(timeoutMs) {
     if (this._closed || this._pendingRequests.size === 0) return true;
-    return await new Promise((resolve13) => {
+    return await new Promise((resolve15) => {
       const waiter = () => {
         clearTimeout(timer);
-        resolve13(true);
+        resolve15(true);
       };
       const timer = setTimeout(() => {
         this._drainWaiters = this._drainWaiters.filter((pending) => pending !== waiter);
-        resolve13(false);
+        resolve15(false);
       }, timeoutMs);
       this._drainWaiters.push(waiter);
     });
@@ -19433,16 +22590,16 @@ function toError(value) {
 // src/server.ts
 import process4 from "node:process";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash as createHash13, randomUUID as randomUUID6 } from "node:crypto";
+import { createHash as createHash15, randomUUID as randomUUID8 } from "node:crypto";
 import { access as access5, realpath as realpath5 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname as dirname8, isAbsolute as isAbsolute7, join as join12, parse as parse4, relative as relative7, resolve as resolve12 } from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { dirname as dirname11, isAbsolute as isAbsolute9, join as join15, parse as parse6, relative as relative9, resolve as resolve14 } from "node:path";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // src/core/architectureRules.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { chmod as chmod2, mkdir as mkdir2, readFile as readFile2, rename as rename2, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname2, join as join2, resolve as resolve2 } from "node:path";
+import { randomUUID as randomUUID3 } from "node:crypto";
+import { chmod as chmod4, mkdir as mkdir3, readFile as readFile2, rename as rename3, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname5, join as join5 } from "node:path";
 
 // src/core/patternSafety.ts
 import { Worker } from "node:worker_threads";
@@ -19459,7 +22616,7 @@ var PROBE = `${"a".repeat(12e3)}!`;
 var TIMEOUT_MS = 250;
 var STARTUP_TIMEOUT_MS = 5e3;
 function assertSafePattern(pattern) {
-  return new Promise((resolve13, reject) => {
+  return new Promise((resolve15, reject) => {
     const worker = new Worker(
       `const { parentPort, workerData } = require("node:worker_threads");
 parentPort.postMessage({ ready: true });
@@ -19482,7 +22639,7 @@ parentPort.once("message", () => {
       if (evaluationTimeout) clearTimeout(evaluationTimeout);
       void worker.terminate();
       if (error2) reject(error2);
-      else resolve13();
+      else resolve15();
     };
     const startupTimeout = setTimeout(() => {
       finish(new Error("pattern worker startup exceeded the safety time limit"));
@@ -19518,149 +22675,8 @@ async function assertSafeArchitectureRulePatterns(input) {
   }
 }
 
-// src/core/storage.ts
-import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, parse as parse3, relative, resolve } from "node:path";
-var FILE_LOCK_ATTEMPTS = 200;
-var FILE_LOCK_WAIT_MS = 10;
-var FILE_LOCK_STALE_MS = 3e4;
-var SAFE_WIKI_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/;
-async function wait(milliseconds) {
-  await new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
-}
-function isTransientWindowsFsError(error2) {
-  return process.platform === "win32" && ["EPERM", "EBUSY", "EACCES"].includes(String(error2.code));
-}
-async function retryTransientWindowsFs(operation) {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await operation();
-    } catch (error2) {
-      if (!isTransientWindowsFsError(error2) || attempt >= 19) throw error2;
-      await wait(FILE_LOCK_WAIT_MS);
-    }
-  }
-}
-async function withFileLock(lockPath, operation) {
-  await assertNoSymbolicLinkComponents(lockPath);
-  await mkdir(dirname(lockPath), { recursive: true });
-  await assertNoSymbolicLinkComponents(lockPath);
-  for (let attempt = 0; attempt < FILE_LOCK_ATTEMPTS; attempt += 1) {
-    try {
-      const handle = await open(lockPath, "wx", 384);
-      try {
-        return await operation();
-      } finally {
-        await handle.close();
-        await retryTransientWindowsFs(async () => rm(lockPath, { force: true }));
-      }
-    } catch (error2) {
-      if (error2.code !== "EEXIST" && !isTransientWindowsFsError(error2)) throw error2;
-      try {
-        const lockStats = await stat(lockPath);
-        if (Date.now() - lockStats.mtimeMs > FILE_LOCK_STALE_MS) {
-          await retryTransientWindowsFs(async () => rm(lockPath, { force: true }));
-        }
-      } catch (lockError) {
-        if (lockError.code !== "ENOENT" && !isTransientWindowsFsError(lockError)) throw lockError;
-      }
-      await wait(FILE_LOCK_WAIT_MS);
-    }
-  }
-  throw new Error("Timed out waiting for a persistence file lock.");
-}
-async function canonicalPersistenceLockKey(root, ...segments) {
-  const resolvedRoot = resolve(root);
-  let canonicalRoot;
-  try {
-    canonicalRoot = await realpath(resolvedRoot);
-  } catch (error2) {
-    if (error2.code !== "ENOENT") throw error2;
-    canonicalRoot = resolvedRoot;
-  }
-  const key = join(canonicalRoot, ...segments);
-  return process.platform === "win32" ? key.toLowerCase() : key;
-}
-async function writeJsonAtomic(path, value) {
-  await writeTextAtomic(path, `${JSON.stringify(value, null, 2)}
-`);
-}
-async function writeTextAtomic(path, content) {
-  const directory = dirname(path);
-  await assertNoSymbolicLinkComponents(path);
-  await mkdir(directory, { recursive: true, mode: 448 });
-  await assertNoSymbolicLinkComponents(path);
-  if (process.platform !== "win32") await chmod(directory, 448);
-  const tempPath = join(directory, `.${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
-  try {
-    await writeFile(tempPath, content, { mode: 384 });
-    await rename(tempPath, path);
-    if (process.platform !== "win32") await chmod(path, 384);
-  } finally {
-    await rm(tempPath, { force: true });
-  }
-}
-async function assertNoSymbolicLinkComponents(path) {
-  const absolute = resolve(path);
-  const parsed = parse3(absolute);
-  let current = parsed.root;
-  const remainder = absolute.slice(parsed.root.length).split(/[\\/]+/).filter(Boolean);
-  for (const segment of remainder) {
-    current = join(current, segment);
-    try {
-      if ((await lstat(current)).isSymbolicLink()) {
-        throw new Error(`State write cannot traverse symbolic-link or junction component: ${current}`);
-      }
-    } catch (error2) {
-      if (error2.code === "ENOENT") continue;
-      throw error2;
-    }
-  }
-}
-async function resolveConfinedPath(root, relativeFile, createParents = false) {
-  if (!relativeFile || isAbsolute(relativeFile) || relativeFile.replaceAll("\\", "/").split("/").includes("..")) {
-    throw new Error("Confined path must be a safe relative file path.");
-  }
-  const canonicalRoot = await realpath(resolve(root));
-  const segments = relativeFile.replaceAll("\\", "/").split("/").filter(Boolean);
-  const fileName = segments.pop();
-  if (!fileName) throw new Error("Confined path must name a file.");
-  let parent = canonicalRoot;
-  for (const segment of segments) {
-    const candidate = join(parent, segment);
-    if (createParents) await mkdir(candidate, { recursive: false }).catch((error2) => {
-      if (error2.code !== "EEXIST") throw error2;
-    });
-    parent = await realpath(candidate);
-    const confined = relative(canonicalRoot, parent);
-    if (!confined || confined.startsWith("..") || isAbsolute(confined)) {
-      throw new Error("Path resolves outside the trusted workspace.");
-    }
-  }
-  const filePath = join(parent, fileName);
-  try {
-    if ((await lstat(filePath)).isSymbolicLink()) throw new Error("Confined file path cannot be a symbolic link.");
-  } catch (error2) {
-    if (error2.code !== "ENOENT") throw error2;
-  }
-  return filePath;
-}
-async function writeTextAtomicConfined(root, relativeFile, content) {
-  await writeTextAtomic(await resolveConfinedPath(root, relativeFile, true), content);
-}
-async function quarantineCorruptJson(path) {
-  const corruptPath = `${path}.corrupt-${Date.now()}-${randomUUID().slice(0, 8)}`;
-  try {
-    await rename(path, corruptPath);
-  } catch (error2) {
-    if (error2.code !== "ENOENT") {
-      throw error2;
-    }
-  }
-}
-
 // src/core/architectureRules.ts
+init_storage();
 var DEFAULT_SEVERITY = "warning";
 var CURRENT_RULES_SCHEMA_VERSION = 1;
 function nowIso() {
@@ -19697,12 +22713,20 @@ function importTarget(edge) {
   return edge.resolvedPath ?? edge.source;
 }
 var ArchitectureRuleStore = class _ArchitectureRuleStore {
-  constructor(filePath) {
+  constructor(filePath, lock) {
     this.filePath = filePath;
+    this.lock = lock;
   }
   filePath;
+  lock;
   static writeChains = /* @__PURE__ */ new Map();
   async list() {
+    return this.readAll(false);
+  }
+  // `repairInsideLock` is set only by write operations, which already own the
+  // repository-state domain lock; quarantining a corrupt file is a mutation and
+  // must never happen from an unlocked pure `list` read.
+  async readAll(repairInsideLock) {
     try {
       const parsed = JSON.parse(await readFile2(this.filePath, "utf8"));
       const records = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.rules) ? parsed.rules : [];
@@ -19712,7 +22736,7 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
         return [];
       }
       if (error2 instanceof SyntaxError) {
-        await this.quarantineCorruptFile();
+        if (repairInsideLock) await this.quarantineCorruptFile();
         return [];
       }
       throw error2;
@@ -19720,7 +22744,7 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
   }
   async add(input) {
     return this.enqueueWrite(async () => {
-      const rules = await this.list();
+      const rules = await this.readAll(true);
       await assertSafeArchitectureRulePatterns(input);
       const rule = normalizeRule(input);
       rules.push(rule);
@@ -19730,7 +22754,7 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
   }
   async update(id, update) {
     return this.enqueueWrite(async () => {
-      const rules = await this.list();
+      const rules = await this.readAll(true);
       const index = rules.findIndex((rule) => rule.id === id);
       if (index === -1) return void 0;
       const current = rules[index];
@@ -19751,18 +22775,18 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
   }
   async delete(id) {
     return this.enqueueWrite(async () => {
-      const rules = await this.list();
+      const rules = await this.readAll(true);
       const next = rules.filter((rule) => rule.id !== id);
       await this.writeAtomic(next);
       return next.length !== rules.length;
     });
   }
   async enqueueWrite(operation) {
-    const key = resolve2(this.filePath);
+    const key = this.lock.compatibilityPath;
     const previous = _ArchitectureRuleStore.writeChains.get(key) ?? Promise.resolve();
     const current = previous.then(
-      () => withFileLock(`${key}.lock`, operation),
-      () => withFileLock(`${key}.lock`, operation)
+      () => withFileLock(this.lock, operation),
+      () => withFileLock(this.lock, operation)
     );
     _ArchitectureRuleStore.writeChains.set(
       key,
@@ -19774,10 +22798,10 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
     return current;
   }
   async writeAtomic(rules) {
-    const directory = dirname2(this.filePath);
-    await mkdir2(directory, { recursive: true, mode: 448 });
-    if (process.platform !== "win32") await chmod2(directory, 448);
-    const tempPath = join2(directory, `.rules-${process.pid}-${Date.now()}-${randomUUID2()}.tmp`);
+    const directory = dirname5(this.filePath);
+    await mkdir3(directory, { recursive: true, mode: 448 });
+    if (process.platform !== "win32") await chmod4(directory, 448);
+    const tempPath = join5(directory, `.rules-${process.pid}-${Date.now()}-${randomUUID3()}.tmp`);
     try {
       await writeFile2(
         tempPath,
@@ -19792,16 +22816,16 @@ var ArchitectureRuleStore = class _ArchitectureRuleStore {
 `,
         { mode: 384 }
       );
-      await rename2(tempPath, this.filePath);
-      if (process.platform !== "win32") await chmod2(this.filePath, 384);
+      await rename3(tempPath, this.filePath);
+      if (process.platform !== "win32") await chmod4(this.filePath, 384);
     } finally {
       await rm2(tempPath, { force: true });
     }
   }
   async quarantineCorruptFile() {
-    const corruptPath = `${this.filePath}.corrupt-${Date.now()}-${randomUUID2().slice(0, 8)}`;
+    const corruptPath = `${this.filePath}.corrupt-${Date.now()}-${randomUUID3().slice(0, 8)}`;
     try {
-      await rename2(this.filePath, corruptPath);
+      await rename3(this.filePath, corruptPath);
     } catch (error2) {
       if (error2.code !== "ENOENT") {
         throw error2;
@@ -19988,7 +23012,7 @@ function applySqlWarnings(project, report) {
 }
 async function applyMarketplaceWarnings(root, report) {
   try {
-    const marketplace = JSON.parse(await readFile2(join2(root, ".agents", "plugins", "marketplace.json"), "utf8"));
+    const marketplace = JSON.parse(await readFile2(join5(root, ".agents", "plugins", "marketplace.json"), "utf8"));
     const plugin = marketplace.plugins?.find((candidate) => candidate.name === "tokengraph");
     const sourcePath = plugin?.source?.path;
     const markedDevelopmentOnly = plugin?.developmentOnly === true || plugin?.policy?.developmentOnly === true;
@@ -20009,10 +23033,10 @@ async function applyMarketplaceWarnings(root, report) {
 
 // src/core/artifact.ts
 import { readFile as readFile5 } from "node:fs/promises";
-import { join as join5 } from "node:path";
+import { join as join8 } from "node:path";
 
 // src/core/canonical.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 function normalizeCanonicalText(value) {
   return value.replace(/\r\n?/g, "\n");
 }
@@ -20033,286 +23057,24 @@ function canonicalJson(value) {
   return JSON.stringify(canonicalValue(value));
 }
 function canonicalHash(value) {
-  return createHash("sha256").update(canonicalJson(value), "utf8").digest("hex");
+  return createHash3("sha256").update(canonicalJson(value), "utf8").digest("hex");
 }
 
 // src/core/persistence.ts
+init_lockDomain();
+init_legacyRuntimeActivation();
+init_storage();
+init_repositoryIdentity();
 import { readFile as readFile4, rm as rm3 } from "node:fs/promises";
-import { isAbsolute as isAbsolute2, join as join4, relative as relative2, resolve as resolve4 } from "node:path";
-
-// src/core/repositoryIdentity.ts
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { createHash as createHash2 } from "node:crypto";
-import { access, lstat as lstat2, readFile as readFile3, readdir } from "node:fs/promises";
-import { join as join3, resolve as resolve3 } from "node:path";
-var execFileAsync = promisify(execFile);
-var LOCAL_EXCLUDE_WARNING = "TokenGraph could not update .git/info/exclude; add this exact line manually: .tokengraph/";
-var setupWarnings = /* @__PURE__ */ new Map();
-var LEGACY_REPOSITORY_STATE_SCHEMA_VERSION = 1;
-async function git(root, ...args) {
-  try {
-    const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 });
-    const output = result.stdout.trim();
-    return output || void 0;
-  } catch {
-    return void 0;
-  }
-}
-async function getGitFileRecency(root, requestedPaths, requestedDepth = 50) {
-  const historyDepth = Math.max(1, Math.min(50, Number.isFinite(requestedDepth) ? Math.trunc(requestedDepth) : 50));
-  const neutral = { source: "unavailable", historyDepth, fileCommitDistance: {} };
-  const normalizedPaths = [...new Set(requestedPaths.map((path) => path.replaceAll("\\", "/")))].sort();
-  const requested = new Set(normalizedPaths);
-  try {
-    const result = await execFileAsync("git", [
-      "-C",
-      resolve3(root),
-      "-c",
-      "core.quotePath=false",
-      "log",
-      "-n",
-      String(historyDepth),
-      "--format=commit:%H%x00",
-      "--name-only",
-      "-z",
-      "--no-renames",
-      "HEAD",
-      "--"
-    ], { windowsHide: true, maxBuffer: 1024 * 1024 });
-    const distances = /* @__PURE__ */ new Map();
-    let commitDistance = -1;
-    for (const rawToken of result.stdout.split("\0")) {
-      if (rawToken.startsWith("commit:")) {
-        commitDistance += 1;
-        continue;
-      }
-      const path = rawToken.replace(/^\r?\n/, "").replaceAll("\\", "/");
-      if (path && requested.has(path) && !distances.has(path)) distances.set(path, commitDistance);
-    }
-    return {
-      source: "git-commit-distance",
-      historyDepth,
-      fileCommitDistance: Object.fromEntries([...distances.entries()].sort(([a], [b]) => a.localeCompare(b)))
-    };
-  } catch {
-    return neutral;
-  }
-}
-async function ensureLocalExclude(root) {
-  const exclude = await git(root, "rev-parse", "--git-path", "info/exclude");
-  if (!exclude) return;
-  const path = resolve3(root, exclude);
-  try {
-    const lockKey = await canonicalPersistenceLockKey(path);
-    await withFileLock(`${lockKey}.lock`, async () => {
-      let existing = "";
-      try {
-        existing = await readFile3(path, "utf8");
-      } catch (error2) {
-        if (error2.code !== "ENOENT") throw error2;
-      }
-      const lines = existing.split(/\r?\n/);
-      if (lines.some((line) => line.trim() === ".tokengraph/")) return;
-      const next = `${existing.replace(/[\r\n]*$/, "")}${existing ? "\n" : ""}.tokengraph/
-`;
-      await writeTextAtomic(path, next);
-    });
-    setupWarnings.delete(resolve3(root));
-  } catch {
-    setupWarnings.set(resolve3(root), [LOCAL_EXCLUDE_WARNING]);
-  }
-}
-function getRepositorySetupWarnings(root) {
-  return [...setupWarnings.get(resolve3(root)) ?? []];
-}
-function digest(value) {
-  return createHash2("sha256").update(value).digest("hex");
-}
-async function remoteIdentity(root) {
-  const remotes = await git(root, "remote", "get-url", "--all", "origin");
-  return remotes?.split(/\r?\n/).map((value) => sanitizeRemote(value.trim())).filter(Boolean).sort().join("\n");
-}
-function sanitizeRemote(value) {
-  const scpStyle = value.match(/^[^@\/\s]+@([^:\/\s]+):(.+)$/);
-  if (scpStyle) return `ssh://${scpStyle[1]}/${scpStyle[2]}`;
-  try {
-    const parsed = new URL(value);
-    parsed.username = "";
-    parsed.password = "";
-    return parsed.toString().replace(/\/$/, "");
-  } catch {
-    return value.replace(/\/\/[^/@\s]+@/g, "//");
-  }
-}
-async function loadOrCreateRepositoryId(directory) {
-  const path = join3(directory, "identity.json");
-  try {
-    const parsed = JSON.parse(await readFile3(path, "utf8"));
-    if (parsed.schemaVersion === 1 && typeof parsed.repositoryId === "string" && parsed.repositoryId.length >= 16) return parsed.repositoryId;
-  } catch (error2) {
-    if (error2.code !== "ENOENT" && !(error2 instanceof SyntaxError)) throw error2;
-  }
-  const repositoryId = digest(`${directory}
-${Date.now()}
-${Math.random()}`);
-  const lockKey = await canonicalPersistenceLockKey(directory, "identity.json");
-  await withFileLock(`${lockKey}.lock`, async () => {
-    try {
-      const existing = JSON.parse(await readFile3(path, "utf8"));
-      if (existing.schemaVersion === 1 && typeof existing.repositoryId === "string" && existing.repositoryId.length >= 16) return;
-    } catch (error2) {
-      if (error2.code !== "ENOENT" && !(error2 instanceof SyntaxError)) throw error2;
-    }
-    await writeJsonAtomic(path, { schemaVersion: 1, repositoryId });
-  });
-  try {
-    const persisted = JSON.parse(await readFile3(path, "utf8"));
-    return typeof persisted.repositoryId === "string" ? persisted.repositoryId : repositoryId;
-  } catch {
-    return repositoryId;
-  }
-}
-async function getRepositoryIdentity(root) {
-  const workspaceRoot = resolve3(root);
-  return getRepositoryIdentityUncached(workspaceRoot);
-}
-async function getRepositoryIdentityUncached(workspaceRoot) {
-  const [topLevel, commonDir, gitDir, branch, headCommit, firstCommits, remote] = await Promise.all([
-    git(workspaceRoot, "rev-parse", "--show-toplevel"),
-    git(workspaceRoot, "rev-parse", "--git-common-dir"),
-    git(workspaceRoot, "rev-parse", "--git-dir"),
-    git(workspaceRoot, "symbolic-ref", "--quiet", "--short", "HEAD"),
-    git(workspaceRoot, "rev-parse", "HEAD"),
-    git(workspaceRoot, "rev-list", "--max-parents=0", "HEAD"),
-    remoteIdentity(workspaceRoot)
-  ]);
-  const normalizedRoot = resolve3(topLevel ?? workspaceRoot);
-  const normalizedGitDir = gitDir ? resolve3(workspaceRoot, gitDir) : void 0;
-  if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
-  const repositoryState = await resolveRepositoryStateDirectory(normalizedRoot);
-  const repositoryId = await loadOrCreateRepositoryId(repositoryState);
-  const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
-  const repositoryFingerprint = digest(`${repositoryId}
-${firstCommit}`);
-  return {
-    repositoryId,
-    repositoryFingerprint,
-    workspaceId: digest(normalizedRoot),
-    worktreeId: digest(normalizedGitDir ?? normalizedRoot),
-    branch: branch ?? "detached",
-    headCommit: headCommit ?? "unborn",
-    ...remote ? { remoteIdentity: remote } : {}
-  };
-}
-async function gitCommonDirectory(root) {
-  const commonDir = await git(resolve3(root), "rev-parse", "--git-common-dir");
-  if (!commonDir) return void 0;
-  return resolve3(root, commonDir);
-}
-function repositoryStateDirectory(root, commonDirectory) {
-  void commonDirectory;
-  return join3(resolve3(root), ".tokengraph", "repository");
-}
-async function resolveRepositoryStateDirectory(root) {
-  const normalizedRoot = resolve3(root);
-  const target = repositoryStateDirectory(normalizedRoot);
-  const commonDirectory = await gitCommonDirectory(normalizedRoot);
-  if (commonDirectory) await migrateLegacyRepositoryState(join3(commonDirectory, "tokengraph"), target);
-  return target;
-}
-async function migrateLegacyRepositoryState(source, target) {
-  try {
-    await lstat2(join3(target, "migration.json"));
-    return;
-  } catch (error2) {
-    if (error2.code !== "ENOENT") throw error2;
-  }
-  let sourceStats;
-  try {
-    sourceStats = await lstat2(source);
-  } catch (error2) {
-    if (error2.code === "ENOENT") return;
-    throw error2;
-  }
-  if (!sourceStats.isDirectory()) return;
-  const lockKey = await canonicalPersistenceLockKey(target, "migration.json");
-  await withFileLock(`${lockKey}.lock`, async () => {
-    try {
-      await lstat2(join3(target, "migration.json"));
-      return;
-    } catch (error2) {
-      if (error2.code !== "ENOENT") throw error2;
-    }
-    const report = {
-      schemaVersion: LEGACY_REPOSITORY_STATE_SCHEMA_VERSION,
-      source,
-      migratedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      migrated: [],
-      skippedExisting: [],
-      skippedInvalid: [],
-      skippedUnsupported: [],
-      skippedSymlink: []
-    };
-    await migrateLegacyEntries(source, target, "", report);
-    await writeJsonAtomic(join3(target, "migration.json"), report);
-  });
-}
-async function migrateLegacyEntries(sourceRoot, targetRoot, relativePath, report) {
-  const sourceDirectory = join3(sourceRoot, relativePath);
-  for (const entry of await readdir(sourceDirectory, { withFileTypes: true })) {
-    const entryRelativePath = relativePath ? join3(relativePath, entry.name) : entry.name;
-    const sourcePath = join3(sourceRoot, entryRelativePath);
-    if (entry.name.endsWith(".lock") || entry.name.endsWith(".tmp")) {
-      report.skippedUnsupported.push(entryRelativePath);
-      continue;
-    }
-    const stats = await lstat2(sourcePath);
-    if (stats.isSymbolicLink()) {
-      report.skippedSymlink.push(entryRelativePath);
-      continue;
-    }
-    if (stats.isDirectory()) {
-      await migrateLegacyEntries(sourceRoot, targetRoot, entryRelativePath, report);
-      continue;
-    }
-    if (!stats.isFile() || !entry.name.endsWith(".json")) {
-      report.skippedUnsupported.push(entryRelativePath);
-      continue;
-    }
-    const targetPath = join3(targetRoot, entryRelativePath);
-    try {
-      await lstat2(targetPath);
-      report.skippedExisting.push(entryRelativePath);
-      continue;
-    } catch (error2) {
-      if (error2.code !== "ENOENT") throw error2;
-    }
-    let contents;
-    try {
-      contents = await readFile3(sourcePath, "utf8");
-      JSON.parse(contents);
-    } catch (error2) {
-      if (error2 instanceof SyntaxError) {
-        report.skippedInvalid.push(entryRelativePath);
-        continue;
-      }
-      throw error2;
-    }
-    await writeTextAtomic(targetPath, contents);
-    report.migrated.push(entryRelativePath);
-  }
-}
-
-// src/core/persistence.ts
+import { isAbsolute as isAbsolute3, join as join7, relative as relative4, resolve as resolve6 } from "node:path";
 function stateDir(root) {
-  return join4(root, ".tokengraph");
+  return join7(root, ".tokengraph");
 }
 async function repositoryDir(root) {
   return resolveRepositoryStateDirectory(root);
 }
 async function repositoryIndexPath(root) {
-  return join4(await repositoryDir(root), "index.json");
+  return join7(await repositoryDir(root), "index.json");
 }
 async function repositoryMemoryPath(root) {
   return migrateRepositoryRecord(root, "memory.json");
@@ -20322,18 +23084,19 @@ async function repositoryRulesPath(root) {
 }
 async function migrateRepositoryRecord(root, fileName) {
   const directory = await repositoryDir(root);
-  const target = join4(directory, fileName);
+  const target = join7(directory, fileName);
   try {
     await readFile4(target, "utf8");
     return target;
   } catch (error2) {
     if (error2.code !== "ENOENT") throw error2;
   }
-  const legacy = join4(stateDir(root), fileName);
+  if (!getLegacyRuntimeActivationStatus().activated) return target;
+  const legacy = join7(stateDir(root), fileName);
   try {
     const contents = await readFile4(legacy, "utf8");
-    const key = await canonicalPersistenceLockKey(directory, fileName);
-    await withFileLock(`${key}.lock`, async () => {
+    const lock = await canonicalPersistenceLock(root, "repository-state", fileName);
+    await withFileLock(lock, async () => {
       try {
         await readFile4(target, "utf8");
       } catch (targetError) {
@@ -20347,28 +23110,28 @@ async function migrateRepositoryRecord(root, fileName) {
   return target;
 }
 function indexPath(root) {
-  return join4(stateDir(root), "index.json");
+  return join7(stateDir(root), "index.json");
 }
 function configPath(root) {
-  return join4(stateDir(root), "config.json");
+  return join7(stateDir(root), "config.json");
 }
 function runsDir(root) {
-  return join4(stateDir(root), "runs");
+  return join7(stateDir(root), "runs");
 }
 function runPath(root, runId) {
-  return join4(runsDir(root), `${runId}.json`);
+  return join7(runsDir(root), `${runId}.json`);
 }
 function wikiDir(root) {
-  return join4(stateDir(root), "wiki");
+  return join7(stateDir(root), "wiki");
 }
 function wikiManifestPath(root) {
-  return join4(wikiDir(root), "manifest.json");
+  return join7(wikiDir(root), "manifest.json");
 }
 function vaultDir(root) {
-  return join4(stateDir(root), "vault");
+  return join7(stateDir(root), "vault");
 }
 async function saveVaultProjectionUnlocked(root, notes) {
-  const manifestPath = join4(vaultDir(root), "manifest.json");
+  const manifestPath = join7(vaultDir(root), "manifest.json");
   let previous = [];
   try {
     const parsed = JSON.parse(await readFile4(manifestPath, "utf8"));
@@ -20377,14 +23140,14 @@ async function saveVaultProjectionUnlocked(root, notes) {
     if (error2.code !== "ENOENT" && !(error2 instanceof SyntaxError)) throw error2;
   }
   const retained = new Set(notes.map((note) => note.path));
-  await Promise.all(previous.filter((note) => !retained.has(note.path)).map(async (note) => rm3(await resolveConfinedPath(root, join4(".tokengraph", "vault", note.path)), { force: true })));
-  for (const note of notes) await writeTextAtomicConfined(root, join4(".tokengraph", "vault", note.path), note.body);
-  await writeTextAtomicConfined(root, join4(".tokengraph", "vault", "manifest.json"), `${JSON.stringify({ schemaVersion: 1, notes: notes.map(({ path, title, hash: hash2, backlinks, archived }) => ({ path, title, hash: hash2, backlinks, archived })) }, null, 2)}
+  await Promise.all(previous.filter((note) => !retained.has(note.path)).map(async (note) => rm3(await resolveConfinedPath(root, join7(".tokengraph", "vault", note.path)), { force: true })));
+  for (const note of notes) await writeTextAtomicConfined(root, join7(".tokengraph", "vault", note.path), note.body);
+  await writeTextAtomicConfined(root, join7(".tokengraph", "vault", "manifest.json"), `${JSON.stringify({ schemaVersion: 1, notes: notes.map(({ path, title, hash: hash2, backlinks, archived }) => ({ path, title, hash: hash2, backlinks, archived })) }, null, 2)}
 `);
 }
 async function saveVaultProjection(root, notes) {
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "vault", "manifest.json");
-  await withFileLock(`${key}.lock`, () => saveVaultProjectionUnlocked(root, notes));
+  const lock = await canonicalPersistenceLock(root, "vault", "manifest.json");
+  await withFileLock(lock, () => saveVaultProjectionUnlocked(root, notes));
 }
 async function saveProjectIndex(root, index) {
   if (typeof index.schemaVersion === "number" && index.schemaVersion > 4) {
@@ -20394,8 +23157,8 @@ async function saveProjectIndex(root, index) {
     throw new Error("TokenGraph index schema 4 has malformed retrieval signals; refusing to persist it.");
   }
   const worktreePath = indexPath(root);
-  const worktreeKey = await canonicalPersistenceLockKey(worktreePath);
-  await withFileLock(`${worktreeKey}.lock`, async () => {
+  const worktreeLock = await canonicalPersistenceLock(root, "workspace-state", "index.json");
+  await withFileLock(worktreeLock, async () => {
     await writeJsonAtomic(worktreePath, index);
   });
 }
@@ -20432,7 +23195,7 @@ async function loadProjectIndex(root) {
     try {
       const parsed = JSON.parse(await readFile4(path, "utf8"));
       if (isProjectIndex(parsed)) {
-        if (resolve4(parsed.root) !== resolve4(root)) continue;
+        if (resolve6(parsed.root) !== resolve6(root)) continue;
         const storedIdentity = parsed.repositoryIdentity;
         if (storedIdentity && (storedIdentity.repositoryId !== currentIdentity.repositoryId || storedIdentity.repositoryFingerprint !== currentIdentity.repositoryFingerprint || storedIdentity.worktreeId !== currentIdentity.worktreeId || storedIdentity.branch !== currentIdentity.branch || storedIdentity.headCommit !== currentIdentity.headCommit)) continue;
         return parsed;
@@ -20440,7 +23203,12 @@ async function loadProjectIndex(root) {
     } catch (error2) {
       if (error2.code === "ENOENT") continue;
       if (error2 instanceof SyntaxError) {
-        await quarantineCorruptJson(path);
+        if (getLegacyRuntimeActivationStatus().activated) {
+          const domain = path === indexPath(root) ? "workspace-state" : "repository-state";
+          const relativeName = path === indexPath(root) ? "index.json" : "repository-index.json";
+          const lock = await canonicalPersistenceLock(root, domain, relativeName);
+          await withFileLock(lock, () => quarantineCorruptJson(path));
+        }
         continue;
       }
       throw error2;
@@ -20461,13 +23229,13 @@ function isWikiManifest(value) {
   );
 }
 function isSafeWikiPageFile(root, file) {
-  if (!file || isAbsolute2(file) || file.startsWith("../") || file.startsWith("..\\")) {
+  if (!file || isAbsolute3(file) || file.startsWith("../") || file.startsWith("..\\")) {
     return false;
   }
-  const directory = resolve4(wikiDir(root));
-  const resolved = resolve4(directory, file);
-  const relativePath = relative2(directory, resolved);
-  return Boolean(relativePath) && !relativePath.startsWith("..") && !isAbsolute2(relativePath);
+  const directory = resolve6(wikiDir(root));
+  const resolved = resolve6(directory, file);
+  const relativePath = relative4(directory, resolved);
+  return Boolean(relativePath) && !relativePath.startsWith("..") && !isAbsolute3(relativePath);
 }
 async function saveProjectWikiUnlocked(root, wiki) {
   if (wiki.pages.some((page2) => !SAFE_WIKI_SLUG_PATTERN.test(page2.slug))) {
@@ -20485,7 +23253,7 @@ async function saveProjectWikiUnlocked(root, wiki) {
     ...page2.freshness === void 0 ? {} : { freshness: page2.freshness }
   }));
   for (const wikiPage of wiki.pages) {
-    const relativeFile = join4(".tokengraph", "wiki", `${wikiPage.slug}.md`);
+    const relativeFile = join7(".tokengraph", "wiki", `${wikiPage.slug}.md`);
     const path = await resolveConfinedPath(root, relativeFile, true);
     let existing;
     try {
@@ -20496,23 +23264,23 @@ async function saveProjectWikiUnlocked(root, wiki) {
     if (existing !== wikiPage.body) await writeTextAtomic(path, wikiPage.body);
   }
   const retained = new Set(pages.map((page2) => page2.file));
-  await Promise.all((previous?.pages ?? []).filter((page2) => !retained.has(`${page2.slug}.md`)).map(async (page2) => rm3(await resolveConfinedPath(root, join4(".tokengraph", "wiki", `${page2.slug}.md`)), { force: true })));
+  await Promise.all((previous?.pages ?? []).filter((page2) => !retained.has(`${page2.slug}.md`)).map(async (page2) => rm3(await resolveConfinedPath(root, join7(".tokengraph", "wiki", `${page2.slug}.md`)), { force: true })));
   const manifest = {
     schemaVersion: wiki.schemaVersion,
     fingerprint: wiki.fingerprint,
     generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
     pages
   };
-  await writeTextAtomicConfined(root, join4(".tokengraph", "wiki", "manifest.json"), `${JSON.stringify(manifest, null, 2)}
+  await writeTextAtomicConfined(root, join7(".tokengraph", "wiki", "manifest.json"), `${JSON.stringify(manifest, null, 2)}
 `);
 }
 async function saveProjectWiki(root, wiki) {
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "wiki", "manifest.json");
-  await withFileLock(`${key}.lock`, () => saveProjectWikiUnlocked(root, wiki));
+  const lock = await canonicalPersistenceLock(root, "wiki", "manifest.json");
+  await withFileLock(lock, () => saveProjectWikiUnlocked(root, wiki));
 }
 async function loadProjectWiki(root) {
   try {
-    const manifest = JSON.parse(await readFile4(await resolveConfinedPath(root, join4(".tokengraph", "wiki", "manifest.json")), "utf8"));
+    const manifest = JSON.parse(await readFile4(await resolveConfinedPath(root, join7(".tokengraph", "wiki", "manifest.json")), "utf8"));
     if (!isWikiManifest(manifest) || !manifest.pages.every((page2) => isSafeWikiPageFile(root, page2.file))) {
       return void 0;
     }
@@ -20522,7 +23290,7 @@ async function loadProjectWiki(root) {
         slug: manifestPage.slug,
         title: manifestPage.title,
         estimatedTokens: manifestPage.estimatedTokens,
-        body: await readFile4(await resolveConfinedPath(root, join4(".tokengraph", "wiki", manifestPage.file)), "utf8"),
+        body: await readFile4(await resolveConfinedPath(root, join7(".tokengraph", "wiki", manifestPage.file)), "utf8"),
         ...manifestPage.sourceFingerprints === void 0 ? {} : { sourceFingerprints: manifestPage.sourceFingerprints },
         ...manifestPage.backlinks === void 0 ? {} : { backlinks: manifestPage.backlinks },
         ...manifestPage.contradictions === void 0 ? {} : { contradictions: manifestPage.contradictions },
@@ -20539,14 +23307,14 @@ async function loadProjectWiki(root) {
       return void 0;
     }
     if (error2 instanceof SyntaxError) {
-      await quarantineCorruptJson(wikiManifestPath(root));
+      if (getLegacyRuntimeActivationStatus().activated) {
+        const lock = await canonicalPersistenceLock(root, "wiki", "manifest.json");
+        await withFileLock(lock, () => quarantineCorruptJson(wikiManifestPath(root)));
+      }
       return void 0;
     }
     throw error2;
   }
-}
-async function clearProjectWiki(root) {
-  await rm3(wikiDir(root), { recursive: true, force: true });
 }
 async function getWikiStatus(root) {
   const wiki = await loadProjectWiki(root);
@@ -20563,16 +23331,26 @@ async function getWikiStatus(root) {
     indexFingerprint
   };
 }
-async function clearProjectIndex(root) {
-  await rm3(indexPath(root), { force: true });
-  await rm3(await repositoryIndexPath(root), { force: true });
-  await clearProjectWiki(root);
+async function clearProjectIndex(root, confirmation) {
+  await withDestructiveMaintenance(root, ["workspace-state", "repository-state", "wiki"], confirmation, async (context) => {
+    await context.remove([
+      { domain: "workspace-state", relativePath: "index.json" },
+      { domain: "repository-state", relativePath: "index.json" },
+      { domain: "wiki" }
+    ]);
+  });
 }
-async function clearProjectState(root) {
-  await rm3(stateDir(root), { recursive: true, force: true });
+async function clearProjectState(root, confirmation) {
+  const domains = ["workspace-state", "repository-state", "runs", "tasks", "vault", "wiki", "artifacts"];
+  await withDestructiveMaintenance(root, domains, confirmation, async (context) => {
+    await context.remove(domains.map((domain) => ({ domain })));
+  });
 }
 
 // src/core/artifact.ts
+init_lockDomain();
+init_legacyRuntimeActivation();
+init_storage();
 var CURRENT_ARTIFACT_SCHEMA_VERSION = 5;
 function createStableArtifact(id, content, artifactSchemaVersion = CURRENT_ARTIFACT_SCHEMA_VERSION, hashContext = {}) {
   const normalized = canonicalize(content);
@@ -20592,14 +23370,14 @@ function shouldSuppressArtifact(artifact, knownArtifacts) {
   return (knownArtifacts ?? []).includes(artifactKey(artifact));
 }
 function artifactPath(directory, hash2) {
-  return join5(directory, "artifacts", `${hash2}.json`);
+  return join8(directory, "artifacts", `${hash2}.json`);
 }
 async function saveStableArtifact(root, artifact) {
   if (!/^[a-f0-9]{64}$/.test(artifact.hash)) throw new Error("Stable artifact hash is invalid.");
   const directory = await repositoryDir(root);
   const path = artifactPath(directory, artifact.hash);
-  const key = await canonicalPersistenceLockKey(directory, "artifacts", `${artifact.hash}.json`);
-  await withFileLock(`${key}.lock`, () => writeJsonAtomic(path, artifact));
+  const lock = await canonicalPersistenceLock(root, "artifacts", `${artifact.hash}.json`);
+  await withFileLock(lock, () => writeJsonAtomic(path, artifact));
 }
 async function loadStableArtifact(root, hash2) {
   if (!/^[a-f0-9]{64}$/.test(hash2)) return void 0;
@@ -20613,7 +23391,10 @@ async function loadStableArtifact(root, hash2) {
   } catch (error2) {
     if (error2.code === "ENOENT") return void 0;
     if (error2 instanceof SyntaxError) {
-      await quarantineCorruptJson(path);
+      if (getLegacyRuntimeActivationStatus().activated) {
+        const lock = await canonicalPersistenceLock(root, "artifacts", `${hash2}.json`);
+        await withFileLock(lock, () => quarantineCorruptJson(path));
+      }
       return void 0;
     }
     throw error2;
@@ -20621,45 +23402,70 @@ async function loadStableArtifact(root, hash2) {
 }
 
 // src/core/memoryCore.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 
 // src/core/storagePolicy.ts
-import { chmod as chmod3, lstat as lstat3, mkdir as mkdir3, readFile as readFile6, readdir as readdir2, realpath as realpath2, rm as rm4 } from "node:fs/promises";
-import { basename, dirname as dirname3, isAbsolute as isAbsolute3, join as join6, relative as relative3, resolve as resolve5 } from "node:path";
-async function usage(path) {
+init_repositoryIdentity();
+import { chmod as chmod5, lstat as lstat6, mkdir as mkdir4, readFile as readFile6, readdir as readdir5 } from "node:fs/promises";
+import { basename as basename2, dirname as dirname6, isAbsolute as isAbsolute4, join as join9, relative as relative5, resolve as resolve7 } from "node:path";
+init_storage();
+var NATIVE_ANCHOR_NAME = ".tokengraph-native-anchor-v2.lock";
+var NATIVE_JOURNAL_NAME = ".tokengraph-native-journal-v2.lock";
+var NATIVE_JOURNAL_TEMP_NAME = ".tokengraph-native-journal-v2.lock.tokengraph-write-v2.tmp";
+function domainRootSet(root) {
+  const state = resolve7(stateDir(root));
+  const repository = resolve7(repositoryStateDirectory(root));
+  return /* @__PURE__ */ new Set([
+    state,
+    repository,
+    resolve7(runsDir(root)),
+    join9(state, "tasks"),
+    resolve7(vaultDir(root)),
+    resolve7(wikiDir(root)),
+    join9(repository, "artifacts")
+  ]);
+}
+function isDomainRootInfrastructure(path, domainRoots) {
+  if (!domainRoots.has(resolve7(dirname6(path)))) return false;
+  const name = basename2(path);
+  return name === NATIVE_ANCHOR_NAME || name === NATIVE_JOURNAL_NAME || name === NATIVE_JOURNAL_TEMP_NAME || name.toLowerCase().endsWith(".lock");
+}
+async function usage(path, domainRoots) {
   try {
-    const info = await lstat3(path);
+    const info = await lstat6(path);
     if (info.isSymbolicLink()) throw new Error(`TokenGraph storage accounting refuses symbolic-link paths: ${path}`);
+    if (isDomainRootInfrastructure(path, domainRoots)) return { bytes: 0, files: 0 };
     if (info.isFile()) return { bytes: info.size, files: 1 };
     if (!info.isDirectory()) return { bytes: 0, files: 0 };
-    const entries = await readdir2(path);
-    const children = await Promise.all(entries.map((entry) => usage(join6(path, entry))));
+    const entries = await readdir5(path);
+    const children = await Promise.all(entries.map((entry) => usage(join9(path, entry), domainRoots)));
     return children.reduce((total, child) => ({ bytes: total.bytes + child.bytes, files: total.files + child.files }), { bytes: 0, files: 0 });
   } catch (error2) {
     if (error2.code === "ENOENT") return { bytes: 0, files: 0 };
     throw error2;
   }
 }
-function containsPath(parent, child) {
-  const nested = relative3(resolve5(parent), resolve5(child));
-  return nested === "" || !nested.startsWith("..") && !isAbsolute3(nested);
-}
-async function usageMany(paths) {
-  const unique6 = paths.map((path) => resolve5(path)).filter((path, index, all) => all.indexOf(path) === index);
-  const roots = unique6.filter((path, index, all) => !all.some((candidate, candidateIndex) => candidateIndex !== index && containsPath(candidate, path)));
-  const values = await Promise.all(roots.map((path) => usage(path)));
+async function usageMany(paths, domainRoots) {
+  const unique6 = paths.map((path) => resolve7(path)).filter((path, index, all) => all.indexOf(path) === index);
+  const roots = unique6.filter((path, index, all) => !all.some((candidate, candidateIndex) => {
+    if (candidateIndex === index) return false;
+    const nested = relative5(candidate, path);
+    return nested === "" || !nested.startsWith("..") && !isAbsolute4(nested);
+  }));
+  const values = await Promise.all(roots.map((path) => usage(path, domainRoots)));
   return values.reduce((total, current) => ({ bytes: total.bytes + current.bytes, files: total.files + current.files }), { bytes: 0, files: 0 });
 }
 async function storageUsage(root) {
-  return usageMany([stateDir(root), await resolveRepositoryStateDirectory(root)]);
+  return usageMany([stateDir(root), repositoryStateDirectory(root)], domainRootSet(root));
 }
 async function storageClassUsage(root) {
-  const repository = await resolveRepositoryStateDirectory(root);
+  const repository = repositoryStateDirectory(root);
+  const domainRoots = domainRootSet(root);
   const [total, runs, cache, vault] = await Promise.all([
     storageUsage(root),
-    usage(runsDir(root)),
-    usageMany([join6(stateDir(root), "index.json"), wikiDir(root), join6(repository, "index.json"), join6(repository, "artifacts")]),
-    usage(vaultDir(root))
+    usage(runsDir(root), domainRoots),
+    usageMany([join9(stateDir(root), "index.json"), wikiDir(root), join9(repository, "index.json"), join9(repository, "artifacts")], domainRoots),
+    usage(vaultDir(root), domainRoots)
   ]);
   return {
     total,
@@ -20686,68 +23492,56 @@ function quotaExceededError(storageClass, current, maximum) {
   if (storageClass === "durable") return new Error(`TokenGraph durable storage quota exceeded (${current}/${maximum} bytes); refusing the write. Review durable state or raise storage.durableMaxBytes; reviewed decisions and preferences are never purged implicitly.`);
   return new Error(`TokenGraph cache item exceeds its storage quota (${current}/${maximum} bytes); raise storage.cacheMaxBytes.`);
 }
-async function safeRemoveUnderBase(base2, relativeTarget, recursive) {
-  if (!relativeTarget || isAbsolute3(relativeTarget) || relativeTarget.replaceAll("\\", "/").split("/").includes("..")) throw new Error("Storage purge target must be a safe relative path.");
-  let canonicalBase;
-  try {
-    if ((await lstat3(base2)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link base paths: ${base2}`);
-    canonicalBase = await realpath2(base2);
-  } catch (error2) {
-    if (error2.code === "ENOENT") return false;
-    throw error2;
-  }
-  const target = join6(canonicalBase, relativeTarget);
-  if (!containsPath(canonicalBase, target) || target === canonicalBase) throw new Error("Storage purge target escapes its approved base directory.");
-  let current = canonicalBase;
-  for (const segment of relativeTarget.replaceAll("\\", "/").split("/").filter(Boolean)) {
-    current = join6(current, segment);
-    try {
-      if ((await lstat3(current)).isSymbolicLink()) throw new Error(`Storage purge refuses symbolic-link or junction paths: ${current}`);
-    } catch (error2) {
-      if (error2.code === "ENOENT") return false;
-      throw error2;
-    }
-  }
-  await rm4(target, { recursive, force: true });
-  return true;
-}
-async function removeWorktreeState(root, relativeTarget, recursive, label) {
-  const workspace = await realpath2(resolve5(root));
-  return await safeRemoveUnderBase(workspace, join6(".tokengraph", relativeTarget), recursive) ? [label] : [];
-}
-async function purgeCache(root) {
-  const repository = await resolveRepositoryStateDirectory(root);
-  const removed = [
-    ...await removeWorktreeState(root, "index.json", false, ".tokengraph/index.json"),
-    ...await removeWorktreeState(root, "wiki", true, ".tokengraph/wiki")
-  ];
-  if (await safeRemoveUnderBase(repository, "index.json", false)) removed.push("repository/index.json");
-  if (await safeRemoveUnderBase(repository, "artifacts", true)) removed.push("repository/artifacts");
-  return removed;
-}
-async function purgeOutcomes(root) {
-  const directory = join6(await realpath2(resolve5(root)), ".tokengraph", "tasks");
-  const entries = await readdir2(directory).catch((error2) => error2.code === "ENOENT" ? [] : Promise.reject(error2));
-  const removed = [];
+async function outcomeTargets(root) {
+  const directory = join9(resolve7(root), ".tokengraph", "tasks");
+  const entries = await readdir5(directory).catch((error2) => error2.code === "ENOENT" ? [] : Promise.reject(error2));
+  const targets = [];
   for (const entry of entries.filter((candidate) => candidate.endsWith(".json"))) {
     try {
-      const parsed = JSON.parse(await readFile6(join6(directory, entry), "utf8"));
+      const parsed = JSON.parse(await readFile6(join9(directory, entry), "utf8"));
       if (parsed.status !== "completed" && parsed.status !== "quarantined") continue;
     } catch {
       continue;
     }
-    removed.push(...await removeWorktreeState(root, join6("tasks", entry), false, `.tokengraph/tasks/${entry}`));
+    targets.push({ target: { domain: "tasks", relativePath: entry }, label: `.tokengraph/tasks/${entry}` });
   }
-  removed.push(...await removeWorktreeState(root, join6("tasks", "completed-outcomes.json"), false, ".tokengraph/tasks/completed-outcomes.json"));
-  return removed;
+  targets.push({ target: { domain: "tasks", relativePath: "completed-outcomes.json" }, label: ".tokengraph/tasks/completed-outcomes.json" });
+  return targets;
 }
-async function purgeStorageClass(root, storageClass) {
-  let removed = [];
-  if (storageClass === "runs" || storageClass === "derived") removed.push(...await removeWorktreeState(root, "runs", true, ".tokengraph/runs"));
-  if (storageClass === "cache" || storageClass === "derived") removed.push(...await purgeCache(root));
-  if (storageClass === "outcomes" || storageClass === "derived") removed.push(...await purgeOutcomes(root));
-  if (storageClass === "derived") removed.push(...await removeWorktreeState(root, "vault", true, ".tokengraph/vault"));
+function purgeDomains(storageClass) {
+  const domains = [];
+  if (storageClass === "runs" || storageClass === "derived") domains.push("runs");
+  if (storageClass === "cache" || storageClass === "derived") domains.push("workspace-state", "wiki", "repository-state", "artifacts");
+  if (storageClass === "outcomes" || storageClass === "derived") domains.push("tasks");
+  if (storageClass === "derived") domains.push("vault");
+  return domains;
+}
+async function purgeStorageClassUnlocked(root, storageClass, context) {
+  const targets = [];
+  if (storageClass === "runs" || storageClass === "derived") targets.push({ target: { domain: "runs" }, label: ".tokengraph/runs" });
+  if (storageClass === "cache" || storageClass === "derived") targets.push(
+    { target: { domain: "workspace-state", relativePath: "index.json" }, label: ".tokengraph/index.json" },
+    { target: { domain: "wiki" }, label: ".tokengraph/wiki" },
+    { target: { domain: "repository-state", relativePath: "index.json" }, label: "repository/index.json" },
+    { target: { domain: "artifacts" }, label: "repository/artifacts" }
+  );
+  if (storageClass === "outcomes" || storageClass === "derived") targets.push(...await outcomeTargets(root));
+  if (storageClass === "derived") targets.push({ target: { domain: "vault" }, label: ".tokengraph/vault" });
+  const removedPaths = await context.remove(targets.map(({ target }) => target));
+  const locks = new Map(context.locks.map((lock) => [lock.domain, lock]));
+  const removed = targets.filter(({ target }) => {
+    const lock = locks.get(target.domain);
+    const path = target.relativePath ? join9(lock.domainRoot, ...target.relativePath.split("/")) : lock.domainRoot;
+    const key = process.platform === "win32" ? path.toLowerCase() : path;
+    return [...removedPaths].some((removedPath) => {
+      const candidate = process.platform === "win32" ? removedPath.toLowerCase() : removedPath;
+      return candidate === key || candidate.startsWith(`${key}${process.platform === "win32" ? "\\" : "/"}`);
+    });
+  }).map(({ label }) => label);
   return { class: storageClass, removed: [...new Set(removed)] };
+}
+async function purgeStorageClassAutomatically(root, storageClass) {
+  return withAutomaticMaintenance(root, purgeDomains(storageClass), (context) => purgeStorageClassUnlocked(root, storageClass, context));
 }
 async function enforceStorageClassQuotas(root, quotas) {
   assertClassQuotas(quotas);
@@ -20755,7 +23549,7 @@ async function enforceStorageClassQuotas(root, quotas) {
   const cleaned = [];
   if (current.cache.bytes > quotas.cacheMaxBytes || current.total.bytes > quotas.maxBytes) {
     if (current.cache.bytes > 0) {
-      await purgeStorageClass(root, "cache");
+      await purgeStorageClassAutomatically(root, "cache");
       cleaned.push("cache");
       current = await storageClassUsage(root);
     }
@@ -20775,7 +23569,7 @@ async function assertStorageReplacementAllowed(root, storageClass, replacementBy
   if (replacementBytes > maximum) throw quotaExceededError(storageClass, replacementBytes, maximum);
   let projectedTotal = report.usage.total.bytes - report.usage[storageClass].bytes + replacementBytes;
   if (projectedTotal > quotas.maxBytes && storageClass !== "cache" && report.usage.cache.bytes > 0) {
-    await purgeStorageClass(root, "cache");
+    await purgeStorageClassAutomatically(root, "cache");
     report = { usage: await storageClassUsage(root), cleaned: [.../* @__PURE__ */ new Set([...report.cleaned, "cache"])] };
     projectedTotal = report.usage.total.bytes - report.usage[storageClass].bytes + replacementBytes;
   }
@@ -20838,7 +23632,7 @@ function isExpired(value, now) {
   return Boolean(value.expiresAt && new Date(value.expiresAt) <= now || value.staleAt && new Date(value.staleAt) <= now);
 }
 function idFor(value) {
-  return createHash3("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+  return createHash5("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 }
 function filterScopedPreferences(preferences, input, now = /* @__PURE__ */ new Date()) {
   return preferences.filter((preference) => !isExpired(preference, now) && (preference.scope === "user" || preference.scope === "repository" && preference.scopeId === input.repositoryId || preference.scope === "worktree" && preference.scopeId === input.worktreeId || preference.scope === "task" && preference.scopeId === input.taskId)).sort((a, b) => a.scope.localeCompare(b.scope) || a.key.localeCompare(b.key) || b.updatedAt.localeCompare(a.updatedAt));
@@ -20894,6 +23688,9 @@ function composeMemoryContext(input) {
 
 // src/core/config.ts
 import { copyFile, readFile as readFile7 } from "node:fs/promises";
+init_lockDomain();
+init_legacyRuntimeActivation();
+init_storage();
 var CURRENT_CONFIG_SCHEMA_VERSION = 3;
 var PROFILE_DEFAULTS = {
   conservative: {
@@ -21053,8 +23850,8 @@ function unwrapPersistedConfig(value) {
 }
 async function saveTokenGraphConfig(root, config2) {
   const persisted = normalizeConfig(config2, false);
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "config.json");
-  await withFileLock(`${key}.lock`, () => writeJsonAtomic(configPath(root), {
+  const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+  await withFileLock(lock, () => writeJsonAtomic(configPath(root), {
     schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
     config: persisted
   }));
@@ -21066,20 +23863,31 @@ async function loadTokenGraphConfig(root) {
     const unwrapped = unwrapPersistedConfig(parsed);
     const persistedNormalized = normalizeConfig(unwrapped.config, false);
     const normalized = normalizeConfig(persistedNormalized);
-    if (unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(persistedNormalized)) {
-      await copyFile(configPath(root), `${configPath(root)}.bak`).catch((error2) => {
-        if (error2.code !== "ENOENT") throw error2;
+    if ((unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(persistedNormalized)) && getLegacyRuntimeActivationStatus().activated) {
+      const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+      await withFileLock(lock, async () => {
+        await copyFile(configPath(root), `${configPath(root)}.bak`).catch((error2) => {
+          if (error2.code !== "ENOENT") throw error2;
+        });
+        await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: persistedNormalized });
       });
-      await saveTokenGraphConfig(root, persistedNormalized);
     }
     return normalized;
   } catch (error2) {
     if (error2.code === "ENOENT") {
-      return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
+      if (getLegacyRuntimeActivationStatus().activated) return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
+      return normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG);
     }
     if (error2 instanceof SyntaxError) {
-      await quarantineCorruptJson(configPath(root));
-      return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
+      if (getLegacyRuntimeActivationStatus().activated) {
+        const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+        return withFileLock(lock, async () => {
+          await quarantineCorruptJson(configPath(root));
+          await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG, false) });
+          return normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG);
+        });
+      }
+      return normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG);
     }
     throw error2;
   }
@@ -21853,11 +24661,11 @@ function compactWikiResponse(wiki, options = {}) {
     freshness: page2.freshness ?? "fresh",
     backlinks: page2.backlinks ?? []
   }));
-  const stale = wiki.pages.filter((page2) => page2.freshness === "stale");
+  const stale2 = wiki.pages.filter((page2) => page2.freshness === "stale");
   return {
     ...base(options, {
-      confidence: stale.length ? "low" : pages.length ? "medium" : "low",
-      warnings: stale.map((page2) => `Wiki page ${page2.slug} is stale.`),
+      confidence: stale2.length ? "low" : pages.length ? "medium" : "low",
+      warnings: stale2.map((page2) => `Wiki page ${page2.slug} is stale.`),
       conflicts: wiki.pages.flatMap((page2) => (page2.contradictions ?? []).map((conflict) => `${page2.slug}: ${conflict}`))
     }),
     pages
@@ -21962,7 +24770,9 @@ var analyzeInputSchema = object({
   if (input.mode === "failure" && (!input.kind || !input.text)) context.addIssue({ code: "custom", message: "failure mode requires kind and text." });
   if (input.mode === "risk" && !input.changedFiles) context.addIssue({ code: "custom", message: "risk mode requires changedFiles." });
 });
-var setupInputSchema = object({});
+var setupInputSchema = object({
+  confirmNoLegacyProcesses: literal(true).describe("Confirm every TokenGraph v0.23.1 process is stopped and must not be restarted while v2 runs.")
+});
 var proposeKnowledgeInputSchema = object({
   taskId: taskIdSchema,
   root: string2().optional(),
@@ -22050,6 +24860,9 @@ function adviseRouting(input) {
 }
 
 // src/core/routingControl.ts
+init_lockDomain();
+init_legacyRuntimeActivation();
+init_storage();
 import { readFile as readFile8 } from "node:fs/promises";
 var CURRENT_ROUTING_CONTROL_SCHEMA = 1;
 var REQUIRED_PROMOTION_GATES = [
@@ -22095,16 +24908,23 @@ async function loadRoutingControl(root) {
   } catch (error2) {
     if (error2.code === "ENOENT") return normalize(void 0);
     if (error2 instanceof SyntaxError) {
-      await quarantineCorruptJson(path);
+      if (getLegacyRuntimeActivationStatus().activated) {
+        const lock = await canonicalPersistenceLock(root, "repository-state", "routing-control.json");
+        await withFileLock(lock, () => quarantineCorruptJson(path));
+      }
       return normalize(void 0);
     }
     throw error2;
   }
 }
 
+// src/server.ts
+init_repositoryIdentity();
+
 // src/core/retrieval.ts
-import { createHash as createHash4 } from "node:crypto";
-import { open as open2 } from "node:fs/promises";
+import { createHash as createHash6 } from "node:crypto";
+import { open as open4 } from "node:fs/promises";
+init_storage();
 function buildEvidenceBackedSliceRecommendation(path, startLine, endLine, contentHash) {
   return {
     mode: "slice",
@@ -22218,7 +25038,7 @@ async function readExactSlice(root, path, startLine, endLine, maxBytes = 64 * 10
   if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine - startLine > 500) throw new Error("Exact slice line bounds are invalid.");
   if (!Number.isInteger(maxSourceBytes) || maxSourceBytes < 1) throw new Error("Exact slice source byte limit is invalid.");
   const filePath = await resolveConfinedPath(root, path);
-  const handle = await open2(filePath, "r");
+  const handle = await open4(filePath, "r");
   let text;
   try {
     const buffer = Buffer.alloc(maxSourceBytes + 1);
@@ -22229,7 +25049,7 @@ async function readExactSlice(root, path, startLine, endLine, maxBytes = 64 * 10
     await handle.close();
   }
   const normalizedText2 = text.replace(/\r\n?/g, "\n");
-  const contentHash = createHash4("sha256").update(normalizedText2).digest("hex");
+  const contentHash = createHash6("sha256").update(normalizedText2).digest("hex");
   if (expectedContentHash !== void 0 && contentHash !== expectedContentHash) {
     throw new Error("The requested exact slice does not match the current source hash after reading the file.");
   }
@@ -22286,7 +25106,9 @@ function recommendExactRead(current, options = {}) {
 }
 
 // src/core/runner.ts
-import { readFile as readFile9, readdir as readdir3, rm as rm5 } from "node:fs/promises";
+import { readFile as readFile9, readdir as readdir6, rm as rm4 } from "node:fs/promises";
+init_lockDomain();
+init_storage();
 var ANSI_PATTERN = /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g;
 var SENSITIVE_ARGUMENT_NAMES = /* @__PURE__ */ new Set([
   "api-key",
@@ -22432,14 +25254,14 @@ function sanitizeSavedRun(run) {
   if (redaction) sanitized.redaction = redaction;
   return sanitized;
 }
-async function loadRun(root, runId) {
+async function loadRun(root, runId, repairInsideLock = false) {
   try {
     const parsed = JSON.parse(await readFile9(runPath(root, runId), "utf8"));
     return parsed && parsed.runId === runId && parsed.root === root ? sanitizeSavedRun(parsed) : void 0;
   } catch (error2) {
     if (error2.code === "ENOENT") return void 0;
     if (error2 instanceof SyntaxError) {
-      await quarantineCorruptJson(runPath(root, runId));
+      if (repairInsideLock) await quarantineCorruptJson(runPath(root, runId));
       return void 0;
     }
     throw error2;
@@ -22472,15 +25294,15 @@ ${run.stdout}`);
 
 // src/core/fileScanner.ts
 var ignorePackage = __toESM(require_ignore(), 1);
-import { createHash as createHash6 } from "node:crypto";
-import { readdir as readdir4, readFile as readFile11, stat as stat2 } from "node:fs/promises";
-import { basename as basename2, dirname as dirname6, extname, join as join8, normalize as normalize2, relative as relative4, sep } from "node:path";
+import { createHash as createHash8 } from "node:crypto";
+import { readdir as readdir7, readFile as readFile11, stat } from "node:fs/promises";
+import { basename as basename3, dirname as dirname9, extname, join as join11, normalize as normalize2, relative as relative6, sep as sep2 } from "node:path";
 
 // src/core/polyglot.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 import { access as access2, readFile as readFile10 } from "node:fs/promises";
-import { dirname as dirname4, join as join7, resolve as resolve6 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname as dirname7, join as join10, resolve as resolve8 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { Worker as Worker2 } from "node:worker_threads";
 var TREE_SITTER_RUNTIME = "web-tree-sitter@0.26.11";
 var PINNED_GRAMMARS = {
@@ -22493,11 +25315,11 @@ function assertStandalonePolyglot(options = {}) {
   if (options.workspaceExecution === true) throw new Error("Polyglot parser execution must remain standalone and cannot execute workspace code.");
 }
 async function defaultAssetRoot() {
-  const here = dirname4(fileURLToPath(import.meta.url));
-  const candidates = [resolve6(here, "../../assets/grammars"), resolve6(here, "../assets/grammars")];
+  const here = dirname7(fileURLToPath2(import.meta.url));
+  const candidates = [resolve8(here, "../../assets/grammars"), resolve8(here, "../assets/grammars")];
   for (const candidate of candidates) {
     try {
-      await access2(join7(candidate, PINNED_GRAMMARS.python.asset));
+      await access2(join10(candidate, PINNED_GRAMMARS.python.asset));
       return candidate;
     } catch {
     }
@@ -22505,8 +25327,8 @@ async function defaultAssetRoot() {
   throw new Error("No bundled Tree-sitter grammar assets were found.");
 }
 async function bundledWorkerPath() {
-  const here = dirname4(fileURLToPath(import.meta.url));
-  const candidates = [resolve6(here, "polyglot-worker.js"), resolve6(here, "../../dist/polyglot-worker.js")];
+  const here = dirname7(fileURLToPath2(import.meta.url));
+  const candidates = [resolve8(here, "polyglot-worker.js"), resolve8(here, "../../dist/polyglot-worker.js")];
   for (const candidate of candidates) {
     try {
       await access2(candidate);
@@ -22556,7 +25378,7 @@ async function parsePolyglotSource(language, source, assetRoot, options = {}) {
     language,
     runtime: TREE_SITTER_RUNTIME,
     grammarVersion: grammar.version,
-    sourceHash: createHash5("sha256").update(normalized).digest("hex"),
+    sourceHash: createHash7("sha256").update(normalized).digest("hex"),
     symbols: parsed.symbols,
     workspaceExecution: false,
     parser: parsed.parser,
@@ -22568,8 +25390,8 @@ async function parsePolyglotSource(language, source, assetRoot, options = {}) {
 
 // src/core/typescriptParser.ts
 import { access as access3 } from "node:fs/promises";
-import { dirname as dirname5, resolve as resolve7 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { dirname as dirname8, resolve as resolve9 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { Worker as Worker3 } from "node:worker_threads";
 var nextId = 1;
 var sharedWorker;
@@ -22577,8 +25399,8 @@ var starting = false;
 var active;
 var queue = [];
 async function workerPath() {
-  const here = dirname5(fileURLToPath2(import.meta.url));
-  const candidates = [resolve7(here, "typescript-worker.cjs"), resolve7(here, "../../dist/typescript-worker.cjs")];
+  const here = dirname8(fileURLToPath3(import.meta.url));
+  const candidates = [resolve9(here, "typescript-worker.cjs"), resolve9(here, "../../dist/typescript-worker.cjs")];
   for (const candidate of candidates) {
     try {
       await access3(candidate);
@@ -22681,10 +25503,10 @@ var DEFAULT_SCAN_BUDGET = {
 };
 var createIgnore = "default" in ignorePackage ? ignorePackage.default : ignorePackage;
 function normalizePath(path) {
-  return path.split(sep).join("/");
+  return path.split(sep2).join("/");
 }
 function hashText(text) {
-  return createHash6("sha256").update(text.replace(/\r\n?/g, "\n")).digest("hex");
+  return createHash8("sha256").update(text.replace(/\r\n?/g, "\n")).digest("hex");
 }
 function normalizedText(text) {
   return text.replace(/\r\n?/g, "\n");
@@ -22701,7 +25523,7 @@ function exclusionForName(name) {
 async function loadIgnoreScopes(base2, inherited = []) {
   let content;
   try {
-    content = await readFile11(join8(base2, ".gitignore"), "utf8");
+    content = await readFile11(join11(base2, ".gitignore"), "utf8");
   } catch (error2) {
     const code = error2.code;
     if (code !== "ENOENT" && code !== "ENOTDIR") {
@@ -22716,7 +25538,7 @@ async function loadIgnoreScopes(base2, inherited = []) {
 function isIgnored(scopes, absolutePath, isDirectory) {
   let ignored = false;
   for (const { base: base2, matcher } of scopes) {
-    const path = normalizePath(relative4(base2, absolutePath));
+    const path = normalizePath(relative6(base2, absolutePath));
     if (!path) continue;
     const decision = matcher.test(isDirectory ? `${path}/` : path);
     if (decision.ignored) ignored = true;
@@ -22954,7 +25776,7 @@ async function extractTypeScriptSymbols(filePath, content, budget) {
   }
 }
 function candidateImportPaths(root, fromFile, source) {
-  const basePaths = source.startsWith("@/") || source.startsWith("~/") ? [source.slice(2), normalize2(join8("src", source.slice(2)))] : source.startsWith(".") ? [normalize2(join8(dirname6(fromFile), source))] : [];
+  const basePaths = source.startsWith("@/") || source.startsWith("~/") ? [source.slice(2), normalize2(join11("src", source.slice(2)))] : source.startsWith(".") ? [normalize2(join11(dirname9(fromFile), source))] : [];
   if (!basePaths.length) {
     return [];
   }
@@ -22977,7 +25799,7 @@ function candidatePathsForBase(root, basePath) {
     `${normalized}/index.js`,
     `${normalized}/index.jsx`
   ]);
-  return candidates.map((candidate) => normalizePath(relative4(root, join8(root, candidate))));
+  return candidates.map((candidate) => normalizePath(relative6(root, join11(root, candidate))));
 }
 function resolveLocalImports(root, graph) {
   const indexedPaths = new Set(graph.files.map((file) => file.path));
@@ -23016,19 +25838,19 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
   const currentScopes = current === root ? ignoreScopes : await loadIgnoreScopes(current, ignoreScopes);
   let entries;
   try {
-    entries = await readdir4(current, { withFileTypes: true });
+    entries = await readdir7(current, { withFileTypes: true });
   } catch {
-    addExclusion(graph, state, normalizePath(relative4(root, current)), "unreadable");
+    addExclusion(graph, state, normalizePath(relative6(root, current)), "unreadable");
     return;
   }
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
     if (Date.now() >= state.deadline) {
-      addExclusion(graph, state, normalizePath(relative4(root, current)), "budget");
+      addExclusion(graph, state, normalizePath(relative6(root, current)), "budget");
       break;
     }
-    const absolute = join8(current, entry.name);
-    const relativePath = normalizePath(relative4(root, absolute));
+    const absolute = join11(current, entry.name);
+    const relativePath = normalizePath(relative6(root, absolute));
     if (entry.name === ".tokengraph") {
       continue;
     }
@@ -23068,7 +25890,7 @@ async function walk(root, current, graph, ignoreScopes, state, depth) {
     }
     let fileStat;
     try {
-      fileStat = await stat2(absolute, { bigint: true });
+      fileStat = await stat(absolute, { bigint: true });
     } catch {
       addExclusion(graph, state, relativePath, "unreadable");
       continue;
@@ -23180,7 +26002,7 @@ async function configurationSignatureRows(root) {
   const configurationRows = [];
   for (const path of CONFIGURATION_FILES) {
     try {
-      configurationRows.push({ path, contentHash: hashText(await readFile11(join8(root, path), "utf8")) });
+      configurationRows.push({ path, contentHash: hashText(await readFile11(join11(root, path), "utf8")) });
     } catch (error2) {
       if (error2.code !== "ENOENT") configurationRows.push({ path, contentHash: "unreadable" });
     }
@@ -23217,9 +26039,9 @@ async function scanProjectFileMetadata(root, options) {
     const currentScopes = current === root ? inheritedScopes : await loadIgnoreScopes(current, inheritedScopes);
     let entries;
     try {
-      entries = await readdir4(current, { withFileTypes: true });
+      entries = await readdir7(current, { withFileTypes: true });
     } catch {
-      const path = normalizePath(relative4(root, current)) || ".";
+      const path = normalizePath(relative6(root, current)) || ".";
       rows.push({ path, reason: "unreadable" });
       exclusions.push({ path, reason: "unreadable" });
       return;
@@ -23227,12 +26049,12 @@ async function scanProjectFileMetadata(root, options) {
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       if (Date.now() >= deadline) {
-        rows.push({ path: normalizePath(relative4(root, current)) || ".", reason: "budget" });
-        exclusions.push({ path: normalizePath(relative4(root, current)) || ".", reason: "budget" });
+        rows.push({ path: normalizePath(relative6(root, current)) || ".", reason: "budget" });
+        exclusions.push({ path: normalizePath(relative6(root, current)) || ".", reason: "budget" });
         break;
       }
-      const absolute = join8(current, entry.name);
-      const relativePath = normalizePath(relative4(root, absolute));
+      const absolute = join11(current, entry.name);
+      const relativePath = normalizePath(relative6(root, absolute));
       if (entry.name === ".tokengraph") continue;
       if (relativePath && isIgnored(currentScopes, absolute, entry.isDirectory())) {
         rows.push({ path: relativePath, reason: "ignored" });
@@ -23274,7 +26096,7 @@ async function scanProjectFileMetadata(root, options) {
       }
       let fileStat;
       try {
-        fileStat = await stat2(absolute, { bigint: true });
+        fileStat = await stat(absolute, { bigint: true });
       } catch {
         rows.push({ path: relativePath, reason: "unreadable" });
         exclusions.push({ path: relativePath, reason: "unreadable" });
@@ -23338,7 +26160,7 @@ async function scanProjectFileMetadata(root, options) {
 async function scanProjectFile(root, metadata, options = {}) {
   let content;
   try {
-    content = await readFile11(join8(root, metadata.path), "utf8");
+    content = await readFile11(join11(root, metadata.path), "utf8");
   } catch {
     return void 0;
   }
@@ -23368,9 +26190,9 @@ async function scanProjectFile(root, metadata, options = {}) {
 }
 
 // src/core/projectIndexer.ts
-import { createHash as createHash8 } from "node:crypto";
+import { createHash as createHash10 } from "node:crypto";
 import { access as access4, readFile as readFile12 } from "node:fs/promises";
-import { dirname as dirname7, extname as extname2, isAbsolute as isAbsolute4, relative as relative5, resolve as resolve8 } from "node:path";
+import { dirname as dirname10, extname as extname2, isAbsolute as isAbsolute5, relative as relative7, resolve as resolve10 } from "node:path";
 
 // src/core/sqlParser.ts
 function normalizeSqlName(name) {
@@ -23889,9 +26711,9 @@ function mergeSqlGraphs(graphs) {
 }
 
 // src/core/symbolChunks.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash9 } from "node:crypto";
 function idFor2(symbol) {
-  return createHash7("sha256").update(JSON.stringify([
+  return createHash9("sha256").update(JSON.stringify([
     symbol.filePath,
     symbol.name,
     symbol.kind,
@@ -23953,7 +26775,7 @@ async function parseConfigurationDataBounded(text, options = {}) {
       parentPort.postMessage({ ok: false, message: error instanceof Error ? error.message : String(error) });
     }
   `;
-  return new Promise((resolve13, reject) => {
+  return new Promise((resolve15, reject) => {
     const worker = new Worker4(workerSource, { eval: true, workerData: { text, limits } });
     const timer = setTimeout(() => {
       void worker.terminate();
@@ -23962,7 +26784,7 @@ async function parseConfigurationDataBounded(text, options = {}) {
     worker.once("message", (message) => {
       clearTimeout(timer);
       void worker.terminate();
-      if (message.ok) resolve13(message.value);
+      if (message.ok) resolve15(message.value);
       else reject(new Error(message.message ?? "Configuration parsing failed."));
     });
     worker.once("error", (error2) => {
@@ -23973,6 +26795,8 @@ async function parseConfigurationDataBounded(text, options = {}) {
 }
 
 // src/core/projectIndexer.ts
+init_repositoryIdentity();
+init_storage();
 var CURRENT_INDEX_SCHEMA_VERSION = 4;
 var IndexingRaceError = class extends Error {
   code = "TOKENGRAPH_INDEXING_RACE";
@@ -23990,7 +26814,7 @@ function projectScanner(dependencies = {}) {
   };
 }
 function fingerprintPayload(value) {
-  return createHash8("sha256").update(JSON.stringify(value)).digest("hex");
+  return createHash10("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function detectFrameworks(files) {
   const frameworks = /* @__PURE__ */ new Set();
@@ -24120,12 +26944,12 @@ async function validateTsconfigChain(root, configPath2, parsed, limits, visited 
   aliases.count += configurationAliasCount(parsed);
   if (aliases.count > maxAliases) throw new Error("Configuration path-alias limit exceeded.");
   for (const extended of configurationExtends(parsed)) {
-    if (isAbsolute4(extended) || !extended.startsWith(".")) {
+    if (isAbsolute5(extended) || !extended.startsWith(".")) {
       throw new Error("Only workspace-relative configuration extends entries are supported.");
     }
-    const candidate = resolve8(dirname7(resolve8(root, configPath2)), extended);
+    const candidate = resolve10(dirname10(resolve10(root, configPath2)), extended);
     const withExtension = extname2(candidate) ? candidate : `${candidate}.json`;
-    const relativePath = relative5(resolve8(root), withExtension).replaceAll("\\", "/");
+    const relativePath = relative7(resolve10(root), withExtension).replaceAll("\\", "/");
     const absolute = await resolveConfinedPath(root, relativePath);
     const source = await readFile12(absolute, "utf8");
     const nested = await parseConfigurationDataBounded(source, limits);
@@ -24141,7 +26965,7 @@ async function configurationEvidence(root, limits) {
     try {
       await access4(absolute);
       const source = await readFile12(absolute, "utf8");
-      const contentHash = createHash8("sha256").update(source.replace(/\r\n?/g, "\n")).digest("hex");
+      const contentHash = createHash10("sha256").update(source.replace(/\r\n?/g, "\n")).digest("hex");
       try {
         const parsed = await parseConfigurationDataBounded(source, limits);
         if (path === "tsconfig.json" || path === "jsconfig.json") {
@@ -24415,68 +27239,191 @@ async function getIndexStatus(root, options = {}) {
 }
 
 // src/core/hostWorkspace.ts
-import { createHash as createHash9 } from "node:crypto";
-import { readFile as readFile13, realpath as realpath3, rm as rm6 } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { isAbsolute as isAbsolute5, join as join9 } from "node:path";
+import { createHash as createHash11, randomUUID as randomUUID4 } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
+import { link, lstat as lstat7, mkdir as mkdir5, open as open5, realpath as realpath3, rename as rename4, unlink as unlink4 } from "node:fs/promises";
+import { tmpdir as tmpdir2 } from "node:os";
+import { isAbsolute as isAbsolute6, join as join12, resolve as resolve11 } from "node:path";
 var HOST_WORKSPACE_SCHEMA_ID = "tokengraph-host-workspace";
 var HOST_WORKSPACE_SCHEMA_VERSION = 1;
-var HOST_WORKSPACE_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
-var HOST_WORKSPACE_FUTURE_TOLERANCE_MS = 5 * 60 * 1e3;
+var HOST_WORKSPACE_MAX_BYTES = 64 * 1024;
+var NANOSECONDS_PER_MILLISECOND = 1000000n;
+var HOST_WORKSPACE_MAX_AGE_NS = 24n * 60n * 60n * 1000000000n;
+var HOST_WORKSPACE_FUTURE_TOLERANCE_NS = 5n * 60n * 1000000000n;
 var HASH_PATTERN = /^[0-9a-f]{64}$/;
 function isRecord(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-function isIdentifier(value) {
+function validIdentifier(value) {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 1024;
 }
 function hash(value) {
-  return createHash9("sha256").update(value).digest("hex");
+  return createHash11("sha256").update(value).digest("hex");
 }
-async function attestationIdentity(pluginRoot, sessionId) {
-  if (!isIdentifier(sessionId)) throw new Error("Host session id must be non-empty.");
-  if (!isAbsolute5(pluginRoot)) throw new Error("Plugin root must be absolute.");
-  const pluginRootHash = hash(await realpath3(pluginRoot));
-  const sessionHash = hash(sessionId);
+function identity2(stats) {
   return {
-    path: join9(tmpdir(), "tokengraph-host-workspaces", pluginRootHash, `${sessionHash}.json`),
-    pluginRootHash,
-    sessionHash
+    dev: stats.dev,
+    ino: stats.ino,
+    mode: stats.mode,
+    nlink: stats.nlink,
+    size: stats.size,
+    birthtimeNs: stats.birthtimeNs,
+    mtimeNs: stats.mtimeNs,
+    ctimeNs: stats.ctimeNs
   };
 }
-function reconstructAttestation(value, expectedPluginRootHash, expectedSessionHash) {
-  if (!isRecord(value)) return void 0;
-  const expectedKeys = ["pluginRootHash", "root", "schemaId", "schemaVersion", "sessionHash", "updatedAt"].sort();
-  const keys = Object.keys(value).sort();
-  if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) return void 0;
-  if (value.schemaId !== HOST_WORKSPACE_SCHEMA_ID || value.schemaVersion !== HOST_WORKSPACE_SCHEMA_VERSION || value.pluginRootHash !== expectedPluginRootHash || value.sessionHash !== expectedSessionHash || !HASH_PATTERN.test(value.pluginRootHash) || !HASH_PATTERN.test(value.sessionHash) || typeof value.root !== "string" || !isAbsolute5(value.root) || typeof value.updatedAt !== "string" || !Number.isFinite(Date.parse(value.updatedAt)) || new Date(value.updatedAt).toISOString() !== value.updatedAt) {
-    return void 0;
+function sameIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode && left.nlink === right.nlink && left.size === right.size && left.birthtimeNs === right.birthtimeNs && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
+}
+function sameObject(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode && left.birthtimeNs === right.birthtimeNs;
+}
+async function ordinaryDirectory(path) {
+  const stats = await lstat7(path, { bigint: true });
+  if (!stats.isDirectory() || stats.isSymbolicLink()) throw new Error("unstable-host-parent");
+  return identity2(stats);
+}
+async function createDirectDirectory(parent, child) {
+  const parentBefore = await ordinaryDirectory(parent);
+  try {
+    await mkdir5(child, { mode: 448 });
+  } catch (error2) {
+    if (error2.code !== "EEXIST") throw error2;
   }
-  return {
+  const [parentAfter] = await Promise.all([ordinaryDirectory(parent), ordinaryDirectory(child)]);
+  if (!sameObject(parentBefore, parentAfter)) throw new Error("unstable-host-parent");
+}
+async function location(pluginRoot, sessionId, createParents) {
+  if (!validIdentifier(sessionId) || !isAbsolute6(pluginRoot)) throw new Error("invalid-host-binding");
+  const canonicalPluginRoot = await realpath3(pluginRoot);
+  const rawTemporaryRoot = resolve11(tmpdir2());
+  const tempRoot = await realpath3(rawTemporaryRoot);
+  await ordinaryDirectory(tempRoot);
+  const pluginRootHash = hash(canonicalPluginRoot);
+  const sessionHash = hash(sessionId);
+  const base2 = join12(tempRoot, "tokengraph-host-workspaces");
+  const pluginDirectory = join12(base2, pluginRootHash);
+  if (createParents) {
+    await createDirectDirectory(tempRoot, base2);
+    await createDirectDirectory(base2, pluginDirectory);
+  }
+  return { tempRoot, base: base2, pluginDirectory, path: join12(pluginDirectory, `${sessionHash}.json`), pluginRootHash, sessionHash };
+}
+function reconstruct(value, expectedPluginHash, expectedSessionHash) {
+  if (!isRecord(value)) return { status: "invalid" };
+  if (value.schemaId === HOST_WORKSPACE_SCHEMA_ID && typeof value.schemaVersion === "number" && value.schemaVersion !== HOST_WORKSPACE_SCHEMA_VERSION) {
+    return { status: "unsupported" };
+  }
+  const expected = ["pluginRootHash", "root", "schemaId", "schemaVersion", "sessionHash", "updatedAt"].sort();
+  const keys = Object.keys(value).sort();
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) return { status: "invalid" };
+  if (value.schemaId !== HOST_WORKSPACE_SCHEMA_ID || value.schemaVersion !== HOST_WORKSPACE_SCHEMA_VERSION || typeof value.pluginRootHash !== "string" || typeof value.sessionHash !== "string" || !HASH_PATTERN.test(value.pluginRootHash) || !HASH_PATTERN.test(value.sessionHash)) return { status: "invalid" };
+  if (value.pluginRootHash !== expectedPluginHash || value.sessionHash !== expectedSessionHash) return { status: "mismatched" };
+  if (typeof value.root !== "string" || !isAbsolute6(value.root) || typeof value.updatedAt !== "string") return { status: "invalid" };
+  const timestamp = Date.parse(value.updatedAt);
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== value.updatedAt) return { status: "invalid" };
+  return { status: "valid", value: {
     schemaId: HOST_WORKSPACE_SCHEMA_ID,
     schemaVersion: HOST_WORKSPACE_SCHEMA_VERSION,
-    pluginRootHash: expectedPluginRootHash,
+    pluginRootHash: expectedPluginHash,
     sessionHash: expectedSessionHash,
     root: value.root,
     updatedAt: value.updatedAt
-  };
+  } };
+}
+async function readBounded(path, parentBefore) {
+  const entryStats = await lstat7(path, { bigint: true });
+  if (!entryStats.isFile() || entryStats.isSymbolicLink() || entryStats.nlink !== 1n) throw new Error("unstable-host-entry");
+  const entryBefore = identity2(entryStats);
+  if (entryBefore.size < 0n || entryBefore.size > BigInt(HOST_WORKSPACE_MAX_BYTES)) throw new Error("invalid-host-size");
+  try {
+    return await readOpenedBounded(path, parentBefore, entryBefore);
+  } catch (error2) {
+    if (error2.code === "ENOENT") throw new Error("unstable-host-entry");
+    throw error2;
+  }
+}
+async function readOpenedBounded(path, parentBefore, entryBefore) {
+  const noFollow = "O_NOFOLLOW" in fsConstants ? fsConstants.O_NOFOLLOW : 0;
+  const handle = await open5(path, fsConstants.O_RDONLY | noFollow);
+  try {
+    const handleBeforeStats = await handle.stat({ bigint: true });
+    const handleBefore = identity2(handleBeforeStats);
+    if (!handleBeforeStats.isFile() || handleBeforeStats.nlink !== 1n || !sameIdentity(entryBefore, handleBefore)) throw new Error("unstable-host-entry");
+    const chunks = [];
+    let bytesRead = 0;
+    for (; ; ) {
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, HOST_WORKSPACE_MAX_BYTES + 1 - bytesRead));
+      const result = await handle.read(chunk, 0, chunk.length, null);
+      if (result.bytesRead === 0) break;
+      bytesRead += result.bytesRead;
+      if (bytesRead > HOST_WORKSPACE_MAX_BYTES) throw new Error("invalid-host-size");
+      chunks.push(chunk.subarray(0, result.bytesRead));
+    }
+    const [handleAfterStats, entryAfterStats, parentAfter] = await Promise.all([
+      handle.stat({ bigint: true }),
+      lstat7(path, { bigint: true }),
+      ordinaryDirectory(resolve11(path, ".."))
+    ]);
+    const handleAfter = identity2(handleAfterStats);
+    const entryAfter = identity2(entryAfterStats);
+    if (!entryAfterStats.isFile() || entryAfterStats.isSymbolicLink() || entryAfterStats.nlink !== 1n || !sameIdentity(handleBefore, handleAfter) || !sameIdentity(entryBefore, entryAfter) || !sameObject(parentBefore, parentAfter) || BigInt(bytesRead) !== handleAfter.size) throw new Error("unstable-host-entry");
+    return { text: Buffer.concat(chunks, bytesRead).toString("utf8"), entry: entryAfter };
+  } finally {
+    await handle.close();
+  }
+}
+async function loadAt(locationValue, now) {
+  let started = false;
+  try {
+    const [tempBefore, baseBefore, pluginBefore] = await Promise.all([
+      ordinaryDirectory(locationValue.tempRoot),
+      ordinaryDirectory(locationValue.base),
+      ordinaryDirectory(locationValue.pluginDirectory)
+    ]);
+    const read = await readBounded(locationValue.path, pluginBefore);
+    started = true;
+    const [tempAfter, baseAfter, pluginAfter] = await Promise.all([
+      ordinaryDirectory(locationValue.tempRoot),
+      ordinaryDirectory(locationValue.base),
+      ordinaryDirectory(locationValue.pluginDirectory)
+    ]);
+    if (!sameObject(tempBefore, tempAfter) || !sameObject(baseBefore, baseAfter) || !sameObject(pluginBefore, pluginAfter)) return { status: "unstable" };
+    let parsed;
+    try {
+      parsed = JSON.parse(read.text);
+    } catch {
+      return { status: "invalid" };
+    }
+    const decoded = reconstruct(parsed, locationValue.pluginRootHash, locationValue.sessionHash);
+    if (decoded.status !== "valid") return { status: decoded.status };
+    const updatedAtNs = BigInt(Date.parse(decoded.value.updatedAt)) * NANOSECONDS_PER_MILLISECOND;
+    const nowNs = BigInt(now.getTime()) * NANOSECONDS_PER_MILLISECOND;
+    if (updatedAtNs < nowNs - HOST_WORKSPACE_MAX_AGE_NS || updatedAtNs > nowNs + HOST_WORKSPACE_FUTURE_TOLERANCE_NS) return { status: "expired", entry: read.entry };
+    let canonicalRoot;
+    try {
+      canonicalRoot = await realpath3(decoded.value.root);
+    } catch (error2) {
+      const code = error2.code;
+      return code === "ENOENT" || code === "ENOTDIR" ? { status: "detached", entry: read.entry } : { status: "unstable" };
+    }
+    if (canonicalRoot !== decoded.value.root) return { status: "mismatched" };
+    return { status: "valid", root: canonicalRoot, entry: read.entry };
+  } catch (error2) {
+    if (!started && error2.code === "ENOENT") return { status: "missing" };
+    if (error2 instanceof Error && error2.message === "invalid-host-size") return { status: "invalid" };
+    return { status: "unstable" };
+  }
 }
 async function loadHostWorkspaceAttestation(pluginRoot, sessionId, now = /* @__PURE__ */ new Date()) {
+  let locationValue;
   try {
-    const identity = await attestationIdentity(pluginRoot, sessionId);
-    await assertNoSymbolicLinkComponents(identity.path);
-    const parsed = JSON.parse(await readFile13(identity.path, "utf8"));
-    const attestation = reconstructAttestation(parsed, identity.pluginRootHash, identity.sessionHash);
-    if (!attestation) return { status: "corrupt" };
-    const updatedAt = Date.parse(attestation.updatedAt);
-    if (updatedAt < now.getTime() - HOST_WORKSPACE_MAX_AGE_MS || updatedAt > now.getTime() + HOST_WORKSPACE_FUTURE_TOLERANCE_MS) {
-      return { status: "expired" };
-    }
-    return { status: "valid", root: attestation.root };
-  } catch (error2) {
-    if (error2.code === "ENOENT") return { status: "missing" };
-    return { status: "corrupt" };
+    locationValue = await location(pluginRoot, sessionId, false);
+  } catch {
+    return { status: "unstable" };
   }
+  const loaded = await loadAt(locationValue, now);
+  return loaded.status === "valid" ? { status: "valid", root: loaded.root } : { status: loaded.status };
 }
 
 // src/core/failureTracer.ts
@@ -24654,9 +27601,9 @@ ${input.text}`, plan.relevantSql);
 }
 
 // src/core/memoryStore.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
-import { readFile as readFile14, rename as rename3 } from "node:fs/promises";
-import { resolve as resolve9 } from "node:path";
+import { randomUUID as randomUUID5 } from "node:crypto";
+import { readFile as readFile13, rename as rename5 } from "node:fs/promises";
+init_storage();
 var DEFAULT_SOURCE = "manual";
 var CURRENT_MEMORY_SCHEMA_VERSION = 1;
 function nowIso2() {
@@ -24773,17 +27720,19 @@ function filterByStatus(memories, options) {
   });
 }
 var MemoryStore = class _MemoryStore {
-  constructor(filePath) {
+  constructor(filePath, lock) {
     this.filePath = filePath;
+    this.lock = lock;
   }
   filePath;
+  lock;
   static writeChains = /* @__PURE__ */ new Map();
   async list(options = {}) {
-    return filterByStatus(await this.readAll(), options);
+    return filterByStatus(await this.readAll(false), options);
   }
   async add(input) {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const entry = createMemory(input);
       memories.push(entry);
       await this.writeAtomic(memories);
@@ -24792,7 +27741,7 @@ var MemoryStore = class _MemoryStore {
   }
   async update(id, update) {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const index = memories.findIndex((memory) => memory.id === id);
       if (index === -1) return void 0;
       const next = mergeMemory(memories[index], update);
@@ -24813,7 +27762,7 @@ var MemoryStore = class _MemoryStore {
   }
   async delete(id, options = {}) {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const index = memories.findIndex((memory) => memory.id === id);
       if (index === -1) return false;
       if (options.hard) {
@@ -24896,7 +27845,7 @@ var MemoryStore = class _MemoryStore {
   async markUsed(ids) {
     if (!ids.length) return;
     await this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const timestamp = nowIso2();
       let changed = false;
       for (const memory of memories) {
@@ -24913,7 +27862,7 @@ var MemoryStore = class _MemoryStore {
   }
   async mutate(id, transform2) {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const index = memories.findIndex((memory) => memory.id === id);
       if (index === -1) return void 0;
       const next = transform2(memories[index]);
@@ -24922,9 +27871,13 @@ var MemoryStore = class _MemoryStore {
       return next;
     });
   }
-  async readAll() {
+  // `repairInsideLock` is set only by write operations, which already own the
+  // store's canonical domain lock (repository-state in production, see the
+  // server wiring); quarantining a corrupt file is a mutation and must never
+  // happen from an unlocked pure read (`list`/`search`/`recall`/`findConflicts`).
+  async readAll(repairInsideLock) {
     try {
-      const raw = await readFile14(this.filePath, "utf8");
+      const raw = await readFile13(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
       const records = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.memories) ? parsed.memories : [];
       return records.map(normalizeMemory).filter((memory) => Boolean(memory));
@@ -24933,18 +27886,18 @@ var MemoryStore = class _MemoryStore {
         return [];
       }
       if (error2 instanceof SyntaxError) {
-        await this.quarantineCorruptFile();
+        if (repairInsideLock) await this.quarantineCorruptFile();
         return [];
       }
       throw error2;
     }
   }
   async enqueueWrite(operation) {
-    const key = resolve9(this.filePath);
+    const key = this.lock.compatibilityPath;
     const previous = _MemoryStore.writeChains.get(key) ?? Promise.resolve();
     const current = previous.then(
-      () => withFileLock(`${key}.lock`, operation),
-      () => withFileLock(`${key}.lock`, operation)
+      () => withFileLock(this.lock, operation),
+      () => withFileLock(this.lock, operation)
     );
     _MemoryStore.writeChains.set(
       key,
@@ -24962,9 +27915,9 @@ var MemoryStore = class _MemoryStore {
     });
   }
   async quarantineCorruptFile() {
-    const corruptPath = `${this.filePath}.corrupt-${Date.now()}-${randomUUID3().slice(0, 8)}`;
+    const corruptPath = `${this.filePath}.corrupt-${Date.now()}-${randomUUID5().slice(0, 8)}`;
     try {
-      await rename3(this.filePath, corruptPath);
+      await rename5(this.filePath, corruptPath);
     } catch (error2) {
       if (error2.code !== "ENOENT") {
         throw error2;
@@ -24972,6 +27925,9 @@ var MemoryStore = class _MemoryStore {
     }
   }
 };
+
+// src/server.ts
+init_lockDomain();
 
 // src/core/regressionRisk.ts
 function unique5(items) {
@@ -25433,7 +28389,7 @@ function formatTaskReportFooter(report) {
 }
 
 // src/core/wiki.ts
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash12 } from "node:crypto";
 import { posix } from "node:path";
 var CURRENT_WIKI_SCHEMA_VERSION = 1;
 var LIST_LIMIT = 20;
@@ -25453,7 +28409,7 @@ function pageSourceFingerprints(index, draft, applications) {
   const reviewed = applications.flatMap(
     (application) => application.sources.map((source) => `${source.kind}:${source.sourceId}:${source.fingerprint}`)
   );
-  const indexedFingerprint = indexed.length ? [`index:${createHash10("sha256").update(JSON.stringify(indexed.sort())).digest("hex")}`] : [];
+  const indexedFingerprint = indexed.length ? [`index:${createHash12("sha256").update(JSON.stringify(indexed.sort())).digest("hex")}`] : [];
   return Array.from(/* @__PURE__ */ new Set([...indexedFingerprint, ...reviewed])).sort();
 }
 function sourceIsStale(index, application) {
@@ -25663,7 +28619,7 @@ function buildProjectWiki(index, memories, applications = []) {
 }
 
 // src/core/vaultProjection.ts
-import { createHash as createHash11 } from "node:crypto";
+import { createHash as createHash13 } from "node:crypto";
 function safeName(value) {
   return value.replace(/[^a-zA-Z0-9 _-]+/g, "-").trim().replace(/\s+/g, "-").toLowerCase() || "untitled";
 }
@@ -25687,7 +28643,7 @@ ${body}${links ? `
 
 ${links}` : ""}
 `;
-    notes.push({ path: `${folder}/${safeName(memory.title)}-${memory.id}.md`, title: memory.title, body: content, hash: createHash11("sha256").update(content).digest("hex"), backlinks, archived: Boolean(memory.archived || superseded.has(memory.id)) });
+    notes.push({ path: `${folder}/${safeName(memory.title)}-${memory.id}.md`, title: memory.title, body: content, hash: createHash13("sha256").update(content).digest("hex"), backlinks, archived: Boolean(memory.archived || superseded.has(memory.id)) });
   }
   return compactVaultNotes(notes, options.maxBytes ?? Number.MAX_SAFE_INTEGER);
 }
@@ -25704,30 +28660,50 @@ function compactVaultNotes(notes, maxBytes) {
 }
 
 // src/core/taskLedger.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
-import { readFile as readFile15, readdir as readdir5, rename as rename4, rm as rm7 } from "node:fs/promises";
-import { join as join10, resolve as resolve10 } from "node:path";
+import { randomUUID as randomUUID6 } from "node:crypto";
+import { lstat as lstat8, open as open6, readFile as readFile14, readdir as readdir8, rename as rename6, rm as rm5 } from "node:fs/promises";
+import { isAbsolute as isAbsolute7, join as join13, parse as parse5, resolve as resolve12 } from "node:path";
 var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
 var TASK_LEDGER_SCHEMA_VERSION = 3;
-var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_PATTERN2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var COMPLETED_OUTCOMES_INDEX_SCHEMA_ID = "tokengraph-completed-outcomes-index";
 var COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION = 1;
 var MAX_COMPLETED_OUTCOMES = 100;
 var taskLedgerWriteChains = /* @__PURE__ */ new Map();
+var MAX_READ_ONLY_LEDGER_BYTES = 8 * 1024 * 1024;
+async function canonicalTaskLock(root, relativeDataName) {
+  const { canonicalPersistenceLock: canonicalPersistenceLock2 } = await Promise.resolve().then(() => (init_lockDomain(), lockDomain_exports));
+  return canonicalPersistenceLock2(root, "tasks", relativeDataName);
+}
+async function runWithTaskLock(lock, operation) {
+  const { withFileLock: withFileLock2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+  return withFileLock2(lock, operation);
+}
+async function writeTaskJson(path, value) {
+  const { writeJsonAtomic: writeJsonAtomic2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+  await writeJsonAtomic2(path, value);
+}
+async function readRepositoryIdentity(root) {
+  const { getRepositoryIdentity: getRepositoryIdentity2 } = await Promise.resolve().then(() => (init_repositoryIdentity(), repositoryIdentity_exports));
+  return getRepositoryIdentity2(root);
+}
 function assertTaskId(taskId) {
-  if (!UUID_PATTERN.test(taskId)) {
+  if (!UUID_PATTERN2.test(taskId)) {
     throw new Error("Task id must be a UUID.");
   }
 }
 function tasksDirectory(root) {
-  return join10(resolve10(root), ".tokengraph", "tasks");
+  return join13(resolve12(root), ".tokengraph", "tasks");
 }
 function taskLedgerPath(root, taskId) {
   assertTaskId(taskId);
-  return join10(tasksDirectory(root), `${taskId}.json`);
+  return join13(tasksDirectory(root), `${taskId}.json`);
+}
+function isLiteral(value, allowed) {
+  return typeof value === "string" && allowed.includes(value);
 }
 function completedOutcomesIndexPath(root) {
-  return join10(tasksDirectory(root), "completed-outcomes.json");
+  return join13(tasksDirectory(root), "completed-outcomes.json");
 }
 function isRecord3(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -25737,11 +28713,11 @@ function isTimestamp(value) {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
 }
-function isIdentifier2(value) {
+function isIdentifier(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 function isOptionalIdentifier(value) {
-  return value === void 0 || isIdentifier2(value);
+  return value === void 0 || isIdentifier(value);
 }
 function reconstructQualityCheck(value) {
   if (!isRecord3(value) || typeof value.name !== "string" || typeof value.passed !== "boolean") return void 0;
@@ -25768,7 +28744,7 @@ function reconstructEvent(value) {
 }
 function reconstructOutcome(value) {
   if (!isRecord3(value) || !Array.isArray(value.evidence)) return void 0;
-  if (!isIdentifier2(value.id) || !isIdentifier2(value.taskId) || typeof value.summary !== "string" || value.summary.trim().length === 0 || !["verified", "proposed", "failed"].includes(String(value.status)) || !value.evidence.every((entry) => isIdentifier2(entry)) || !isTimestamp(value.createdAt) || value.staleAt !== void 0 && !isTimestamp(value.staleAt) || value.sourceFingerprint !== void 0 && !isIdentifier2(value.sourceFingerprint) || !isIdentifier2(value.branch) || !isIdentifier2(value.worktreeId) || !isIdentifier2(value.headCommit)) return void 0;
+  if (!isIdentifier(value.id) || !isIdentifier(value.taskId) || typeof value.summary !== "string" || value.summary.trim().length === 0 || !isLiteral(value.status, ["verified", "proposed", "failed"]) || !value.evidence.every((entry) => isIdentifier(entry)) || !isTimestamp(value.createdAt) || value.staleAt !== void 0 && !isTimestamp(value.staleAt) || value.sourceFingerprint !== void 0 && !isIdentifier(value.sourceFingerprint) || !isIdentifier(value.branch) || !isIdentifier(value.worktreeId) || !isIdentifier(value.headCommit)) return void 0;
   return {
     id: value.id,
     taskId: value.taskId,
@@ -25791,7 +28767,7 @@ function reconstructTaskLedger(value, expectedTaskId) {
   const routingObservation = value.routingObservation === void 0 ? void 0 : reconstructRoutingObservation(value.routingObservation);
   const readPolicy = value.readPolicy === void 0 ? void 0 : reconstructReadPolicy(value.readPolicy);
   const deliveredArtifacts = value.deliveredArtifacts === void 0 ? [] : Array.isArray(value.deliveredArtifacts) && value.deliveredArtifacts.every((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 512) ? [...new Set(value.deliveredArtifacts)] : void 0;
-  if (value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId || !["codex", "claude", "unknown"].includes(String(value.host)) || !["open", "paused", "completed", "quarantined"].includes(String(value.status)) || !isOptionalIdentifier(value.sessionId) || !isOptionalIdentifier(value.turnId) || !isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt) || value.pausedAt !== void 0 && !isTimestamp(value.pausedAt) || value.completedAt !== void 0 && !isTimestamp(value.completedAt) || !legacy && value.estimatorVersion !== TASK_ESTIMATOR_VERSION || legacy && value.estimatorVersion !== "task-estimator-v1" && value.estimatorVersion !== TASK_ESTIMATOR_VERSION || value.repositoryIdentity !== void 0 && !isRepositoryIdentity(value.repositoryIdentity) || value.routingObservation !== void 0 && routingObservation === void 0 || value.readPolicy !== void 0 && readPolicy === void 0 || deliveredArtifacts === void 0 || outcomes === void 0 || outcomes.some((outcome) => outcome === void 0) || events.some((event) => event === void 0) || value.lastDisposition !== void 0 && value.lastDisposition !== "pause" && value.lastDisposition !== "complete" || Date.parse(value.updatedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) > Date.parse(value.updatedAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) < Date.parse(value.createdAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) > Date.parse(value.updatedAt)) {
+  if (value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId || !isLiteral(value.host, ["codex", "claude", "unknown"]) || !isLiteral(value.status, ["open", "paused", "completed", "quarantined"]) || !isOptionalIdentifier(value.sessionId) || !isOptionalIdentifier(value.turnId) || !isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt) || value.pausedAt !== void 0 && !isTimestamp(value.pausedAt) || value.completedAt !== void 0 && !isTimestamp(value.completedAt) || !legacy && value.estimatorVersion !== TASK_ESTIMATOR_VERSION || legacy && value.estimatorVersion !== "task-estimator-v1" && value.estimatorVersion !== TASK_ESTIMATOR_VERSION || value.repositoryIdentity !== void 0 && !isRepositoryIdentity(value.repositoryIdentity) || value.routingObservation !== void 0 && routingObservation === void 0 || value.readPolicy !== void 0 && readPolicy === void 0 || deliveredArtifacts === void 0 || outcomes === void 0 || outcomes.some((outcome) => outcome === void 0) || events.some((event) => event === void 0) || value.lastDisposition !== void 0 && value.lastDisposition !== "pause" && value.lastDisposition !== "complete" || Date.parse(value.updatedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) < Date.parse(value.createdAt) || value.pausedAt !== void 0 && Date.parse(value.pausedAt) > Date.parse(value.updatedAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) < Date.parse(value.createdAt) || value.completedAt !== void 0 && Date.parse(value.completedAt) > Date.parse(value.updatedAt)) {
     return void 0;
   }
   const completedReport = legacy && value.status === "completed" ? void 0 : value.completedReport === void 0 ? void 0 : reconstructTaskReport(value.completedReport, expectedTaskId, events.length);
@@ -25832,11 +28808,11 @@ function reconstructTaskLedger(value, expectedTaskId) {
 }
 function isRepositoryIdentity(value) {
   if (!isRecord3(value)) return false;
-  return ["repositoryId", "repositoryFingerprint", "workspaceId", "worktreeId", "branch", "headCommit"].every((key) => isIdentifier2(value[key]));
+  return ["repositoryId", "repositoryFingerprint", "workspaceId", "worktreeId", "branch", "headCommit"].every((key) => isIdentifier(value[key]));
 }
 function reconstructRoutingObservation(value) {
   if (!isRecord3(value)) return void 0;
-  if (value.decision !== "activate" && value.decision !== "bypass" || !Number.isInteger(value.stage) || value.stage < 0 || typeof value.reason !== "string" || typeof value.expectedOverheadTokens !== "number" || !Number.isFinite(value.expectedOverheadTokens) || value.expectedOverheadTokens < 0 || !["shadow", "enforced", "always-activate", "always-advisory"].includes(String(value.mode)) || typeof value.enforced !== "boolean") return void 0;
+  if (value.decision !== "activate" && value.decision !== "bypass" || !Number.isInteger(value.stage) || value.stage < 0 || typeof value.reason !== "string" || typeof value.expectedOverheadTokens !== "number" || !Number.isFinite(value.expectedOverheadTokens) || value.expectedOverheadTokens < 0 || !isLiteral(value.mode, ["shadow", "enforced", "always-activate", "always-advisory"]) || typeof value.enforced !== "boolean") return void 0;
   return {
     decision: value.decision,
     stage: value.stage,
@@ -25848,7 +28824,7 @@ function reconstructRoutingObservation(value) {
 }
 function reconstructReadPolicy(value) {
   if (!isRecord3(value)) return void 0;
-  if (!["L0", "L1", "L2", "L3", "L4"].includes(String(value.level)) || typeof value.allowRawReads !== "boolean" || typeof value.reason !== "string" || value.targetedReads !== void 0 && (!Number.isInteger(value.targetedReads) || value.targetedReads < 0) || value.recommendedReadsThisResponse !== void 0 && (!Number.isInteger(value.recommendedReadsThisResponse) || value.recommendedReadsThisResponse < 0) || value.requiresReassessment !== void 0 && typeof value.requiresReassessment !== "boolean" || value.hasReassessed !== void 0 && typeof value.hasReassessed !== "boolean" || value.evidenceGap !== void 0 && typeof value.evidenceGap !== "string") return void 0;
+  if (!isLiteral(value.level, ["L0", "L1", "L2", "L3", "L4"]) || typeof value.allowRawReads !== "boolean" || typeof value.reason !== "string" || value.targetedReads !== void 0 && (!Number.isInteger(value.targetedReads) || value.targetedReads < 0) || value.recommendedReadsThisResponse !== void 0 && (!Number.isInteger(value.recommendedReadsThisResponse) || value.recommendedReadsThisResponse < 0) || value.requiresReassessment !== void 0 && typeof value.requiresReassessment !== "boolean" || value.hasReassessed !== void 0 && typeof value.hasReassessed !== "boolean" || value.evidenceGap !== void 0 && typeof value.evidenceGap !== "string") return void 0;
   return {
     level: value.level,
     allowRawReads: value.allowRawReads,
@@ -25863,7 +28839,7 @@ function reconstructReadPolicy(value) {
 async function quarantine(path, now = /* @__PURE__ */ new Date()) {
   const timestamp = now.toISOString().replaceAll(":", "-");
   try {
-    await rename4(path, `${path}.quarantine-${timestamp}`);
+    await rename6(path, `${path}.quarantine-${timestamp}`);
   } catch (error2) {
     if (error2.code !== "ENOENT") throw error2;
   }
@@ -25889,10 +28865,12 @@ function netEstimate(event) {
   return event.originalTokens - event.compactTokens - event.overheadTokens;
 }
 async function enqueueLedgerOperation(root, taskId, operation) {
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "tasks", `${taskId}.json`);
+  assertTaskId(taskId);
+  const lock = await canonicalTaskLock(root, `${taskId}.json`);
+  const key = process.platform === "win32" ? lock.anchorPath.toLowerCase() : lock.anchorPath;
   const previous = taskLedgerWriteChains.get(key) ?? Promise.resolve();
-  const runWithFileLock = async () => withFileLock(`${taskLedgerPath(root, taskId)}.lock`, operation);
-  const current = previous.then(runWithFileLock, runWithFileLock);
+  const runWithFileLock2 = async () => runWithTaskLock(lock, operation);
+  const current = previous.then(runWithFileLock2, runWithFileLock2);
   let settled;
   const cleanUp = () => {
     if (taskLedgerWriteChains.get(key) === settled) {
@@ -25904,11 +28882,11 @@ async function enqueueLedgerOperation(root, taskId, operation) {
   return current;
 }
 async function createTaskLedger(root, options) {
-  if (options.sessionId !== void 0 && !isIdentifier2(options.sessionId)) throw new Error("Session id must be non-empty.");
-  if (options.turnId !== void 0 && !isIdentifier2(options.turnId)) throw new Error("Turn id must be non-empty.");
-  const taskId = randomUUID4();
+  if (options.sessionId !== void 0 && !isIdentifier(options.sessionId)) throw new Error("Session id must be non-empty.");
+  if (options.turnId !== void 0 && !isIdentifier(options.turnId)) throw new Error("Turn id must be non-empty.");
+  const taskId = randomUUID6();
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  const repositoryIdentity = await getRepositoryIdentity(root);
+  const repositoryIdentity = await readRepositoryIdentity(root);
   const ledger = {
     schemaId: TASK_LEDGER_SCHEMA_ID,
     schemaVersion: TASK_LEDGER_SCHEMA_VERSION,
@@ -25926,35 +28904,35 @@ async function createTaskLedger(root, options) {
     events: []
   };
   await enqueueLedgerOperation(root, taskId, async () => {
-    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
   });
   return ledger;
 }
-async function loadTaskLedger(root, taskId) {
+async function loadTaskLedger(root, taskId, repairInsideLock = false) {
   const path = taskLedgerPath(root, taskId);
   try {
-    const parsed = JSON.parse(await readFile15(path, "utf8"));
+    const parsed = JSON.parse(await readFile14(path, "utf8"));
     if (isRecord3(parsed) && typeof parsed.schemaVersion === "number" && parsed.schemaVersion > TASK_LEDGER_SCHEMA_VERSION) {
       throw new Error(`Task ledger schema ${parsed.schemaVersion} is newer than supported schema ${TASK_LEDGER_SCHEMA_VERSION}; refusing to modify it.`);
     }
     const ledger = reconstructTaskLedger(parsed, taskId);
     if (!ledger) {
-      await quarantine(path);
+      if (repairInsideLock) await quarantine(path);
       return void 0;
     }
     if (!ledger.repositoryIdentity || isRecord3(parsed) && (parsed.schemaVersion === 1 || parsed.schemaVersion === 2)) {
-      ledger.repositoryIdentity ??= await getRepositoryIdentity(root);
+      ledger.repositoryIdentity ??= await readRepositoryIdentity(root);
       ledger.schemaVersion = TASK_LEDGER_SCHEMA_VERSION;
       ledger.estimatorVersion = TASK_ESTIMATOR_VERSION;
       ledger.outcomes ??= [];
       if (ledger.status === "completed") ledger.completedReport = buildTaskReport(ledger);
-      await writeJsonAtomic(path, ledger);
+      if (repairInsideLock) await writeTaskJson(path, ledger);
     }
     return ledger;
   } catch (error2) {
     if (error2.code === "ENOENT") return void 0;
     if (error2 instanceof SyntaxError) {
-      await quarantine(path);
+      if (repairInsideLock) await quarantine(path);
       return void 0;
     }
     throw error2;
@@ -25964,11 +28942,11 @@ async function updateTaskRoutingObservation(root, taskId, observation) {
   const sanitized = reconstructRoutingObservation(observation);
   if (!sanitized) throw new Error("Routing observation is invalid.");
   return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await requireTaskLedger(root, taskId);
+    const ledger = await requireTaskLedger(root, taskId, true);
     assertPausedTaskIsTerminal(ledger);
     ledger.routingObservation = sanitized;
     ledger.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
     return ledger;
   });
 }
@@ -25976,35 +28954,35 @@ async function updateTaskReadPolicy(root, taskId, state) {
   const sanitized = reconstructReadPolicy(state);
   if (!sanitized) throw new Error("Read policy state is invalid.");
   return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await requireTaskLedger(root, taskId);
+    const ledger = await requireTaskLedger(root, taskId, true);
     assertPausedTaskIsTerminal(ledger);
     ledger.readPolicy = sanitized;
     ledger.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
     return ledger;
   });
 }
 async function recordTaskArtifactDelivery(root, taskId, artifactKeys) {
   const sanitized = [...new Set(artifactKeys.map((entry) => entry.trim()).filter((entry) => entry.length > 0 && entry.length <= 512))];
   return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await requireTaskLedger(root, taskId);
+    const ledger = await requireTaskLedger(root, taskId, true);
     assertPausedTaskIsTerminal(ledger);
     ledger.deliveredArtifacts = [.../* @__PURE__ */ new Set([...ledger.deliveredArtifacts, ...sanitized])];
     ledger.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
     return ledger;
   });
 }
 async function discardEmptyTaskLedger(root, taskId) {
   return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await loadTaskLedger(root, taskId);
+    const ledger = await loadTaskLedger(root, taskId, true);
     if (!ledger || ledger.status !== "open" || ledger.events.length !== 0) return false;
-    await rm7(taskLedgerPath(root, taskId), { force: true });
+    await rm5(taskLedgerPath(root, taskId), { force: true });
     return true;
   });
 }
-async function requireTaskLedger(root, taskId) {
-  const ledger = await loadTaskLedger(root, taskId);
+async function requireTaskLedger(root, taskId, repairInsideLock = false) {
+  const ledger = await loadTaskLedger(root, taskId, repairInsideLock);
   if (!ledger) throw new Error(`Task ledger ${taskId} was not found or was corrupt.`);
   return ledger;
 }
@@ -26015,7 +28993,7 @@ function assertPausedTaskIsTerminal(ledger) {
 }
 async function recordTaskEvent(root, taskId, event) {
   return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await requireTaskLedger(root, taskId);
+    const ledger = await requireTaskLedger(root, taskId, true);
     assertPausedTaskIsTerminal(ledger);
     if (ledger.status === "completed") {
       throw new Error("A completed task ledger cannot accept new events.");
@@ -26028,38 +29006,38 @@ async function recordTaskEvent(root, taskId, event) {
       ledger.events[existingIndex] = candidate;
     }
     ledger.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
     return ledger;
   });
 }
 function orderOutcomes(outcomes) {
   return [...outcomes].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)).slice(0, MAX_COMPLETED_OUTCOMES);
 }
-async function readCompletedOutcomesIndex(root) {
+async function readCompletedOutcomesIndex(root, repairInsideLock) {
   const path = completedOutcomesIndexPath(root);
   try {
-    const parsed = JSON.parse(await readFile15(path, "utf8"));
+    const parsed = JSON.parse(await readFile14(path, "utf8"));
     if (!isRecord3(parsed) || parsed.schemaId !== COMPLETED_OUTCOMES_INDEX_SCHEMA_ID || parsed.schemaVersion !== COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION || !Array.isArray(parsed.outcomes)) {
-      await quarantine(path);
+      if (repairInsideLock) await quarantine(path);
       return void 0;
     }
     const outcomes = parsed.outcomes.map(reconstructOutcome);
     if (outcomes.some((outcome) => outcome === void 0)) {
-      await quarantine(path);
+      if (repairInsideLock) await quarantine(path);
       return void 0;
     }
     return orderOutcomes(outcomes);
   } catch (error2) {
     if (error2.code === "ENOENT") return void 0;
     if (error2 instanceof SyntaxError) {
-      await quarantine(path);
+      if (repairInsideLock) await quarantine(path);
       return void 0;
     }
     throw error2;
   }
 }
 async function writeCompletedOutcomesIndex(root, outcomes) {
-  await writeJsonAtomic(completedOutcomesIndexPath(root), {
+  await writeTaskJson(completedOutcomesIndexPath(root), {
     schemaId: COMPLETED_OUTCOMES_INDEX_SCHEMA_ID,
     schemaVersion: COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION,
     outcomes: orderOutcomes(outcomes)
@@ -26068,25 +29046,25 @@ async function writeCompletedOutcomesIndex(root, outcomes) {
 async function scanCompletedTaskOutcomes(root) {
   let files;
   try {
-    files = await readdir5(tasksDirectory(root));
+    files = await readdir8(tasksDirectory(root));
   } catch (error2) {
     if (error2.code === "ENOENT") return [];
     throw error2;
   }
   const outcomes = [];
-  for (const file of files.filter((name) => UUID_PATTERN.test(name.slice(0, -".json".length)) && name.endsWith(".json")).sort()) {
-    const ledger = await loadTaskLedger(root, file.slice(0, -".json".length));
+  for (const file of files.filter((name) => UUID_PATTERN2.test(name.slice(0, -".json".length)) && name.endsWith(".json")).sort()) {
+    const ledger = await loadTaskLedger(root, file.slice(0, -".json".length), true);
     if (ledger?.status === "completed") outcomes.push(...ledger.outcomes);
   }
   return orderOutcomes(outcomes);
 }
 async function withCompletedOutcomesIndexLock(root, operation) {
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "tasks", "completed-outcomes.json");
-  return withFileLock(`${key}.lock`, operation);
+  const lock = await canonicalTaskLock(root, "completed-outcomes.json");
+  return runWithTaskLock(lock, operation);
 }
 async function updateCompletedOutcomesIndex(root, added) {
   await withCompletedOutcomesIndexLock(root, async () => {
-    const cached2 = await readCompletedOutcomesIndex(root);
+    const cached2 = await readCompletedOutcomesIndex(root, true);
     if (!cached2) {
       await writeCompletedOutcomesIndex(root, await scanCompletedTaskOutcomes(root));
       return;
@@ -26097,10 +29075,10 @@ async function updateCompletedOutcomesIndex(root, added) {
   });
 }
 async function listCompletedTaskOutcomes(root) {
-  const cached2 = await readCompletedOutcomesIndex(root);
+  const cached2 = await readCompletedOutcomesIndex(root, false);
   if (cached2) return cached2;
   return withCompletedOutcomesIndexLock(root, async () => {
-    const existing = await readCompletedOutcomesIndex(root);
+    const existing = await readCompletedOutcomesIndex(root, true);
     if (existing) return existing;
     const outcomes = await scanCompletedTaskOutcomes(root);
     await writeCompletedOutcomesIndex(root, outcomes);
@@ -26108,14 +29086,14 @@ async function listCompletedTaskOutcomes(root) {
   });
 }
 async function setTaskDisposition(root, taskId, disposition, turnId, calibration, reportOverheadTokens = 0) {
-  return enqueueLedgerOperation(root, taskId, async () => {
-    const ledger = await requireTaskLedger(root, taskId);
+  const pending = await enqueueLedgerOperation(root, taskId, async () => {
+    const ledger = await requireTaskLedger(root, taskId, true);
     assertPausedTaskIsTerminal(ledger);
     if (ledger.status === "completed" && ledger.completedReport) {
       if (disposition === "pause") {
         throw new Error("A completed task ledger cannot accept a pause disposition.");
       }
-      return { ledger, report: ledger.completedReport };
+      return { result: { ledger, report: ledger.completedReport } };
     }
     const now = (/* @__PURE__ */ new Date()).toISOString();
     if (turnId !== void 0) ledger.turnId = turnId;
@@ -26124,42 +29102,50 @@ async function setTaskDisposition(root, taskId, disposition, turnId, calibration
     if (disposition === "pause") {
       ledger.status = "paused";
       ledger.pausedAt = now;
-      await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
-      return { ledger };
+      await writeTaskJson(taskLedgerPath(root, taskId), ledger);
+      return { result: { ledger } };
     }
     ledger.status = "completed";
     ledger.completedAt = now;
     ledger.completedReport = buildTaskReport(ledger, calibration, reportOverheadTokens);
-    await writeJsonAtomic(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
+    return {
+      result: { ledger, report: ledger.completedReport },
+      completedOutcomes: ledger.outcomes
+    };
+  });
+  if (pending.completedOutcomes) {
     try {
-      await updateCompletedOutcomesIndex(root, ledger.outcomes);
+      await updateCompletedOutcomesIndex(root, pending.completedOutcomes);
     } catch {
     }
-    return { ledger, report: ledger.completedReport };
-  });
+  }
+  return pending.result;
 }
 
 // src/core/knowledgeReviewQueue.ts
-import { createHash as createHash12, randomUUID as randomUUID5 } from "node:crypto";
-import { readFile as readFile16, realpath as realpath4 } from "node:fs/promises";
-import { isAbsolute as isAbsolute6, join as join11, relative as relative6, resolve as resolve11, win32 } from "node:path";
+init_lockDomain();
+init_storage();
+import { createHash as createHash14, randomUUID as randomUUID7 } from "node:crypto";
+import { readFile as readFile15, realpath as realpath4 } from "node:fs/promises";
+import { isAbsolute as isAbsolute8, join as join14, relative as relative8, resolve as resolve13, win32 } from "node:path";
 var REVIEW_QUEUE_SCHEMA_VERSION = 3;
 var APPLICATION_SCHEMA_VERSION = 2;
 var DEFAULT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1e3;
 var SUGGESTION_TYPES = /* @__PURE__ */ new Set(["wiki", "memory", "skill"]);
 var SUGGESTION_STATUSES = /* @__PURE__ */ new Set(["proposed", "approved", "rejected", "expired"]);
 var REVIEW_DECISIONS = /* @__PURE__ */ new Set(["approve", "reject"]);
-var UUID_PATTERN2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var UUID_PATTERN3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
 var MEMORY_ID_PATTERN = /^mem_[A-Za-z0-9][A-Za-z0-9_-]*$/;
 var SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 var SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 var queueWriteChains = /* @__PURE__ */ new Map();
 function queuePath(root) {
-  return join11(resolve11(root), ".tokengraph", "review-queue.json");
+  return join14(resolve13(root), ".tokengraph", "review-queue.json");
 }
 function applicationPath(root) {
-  return join11(resolve11(root), ".tokengraph", "knowledge-applications.json");
+  return join14(resolve13(root), ".tokengraph", "knowledge-applications.json");
 }
 function nonEmptyString(value, label) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a non-empty string.`);
@@ -26196,7 +29182,7 @@ function validateTimestamp(value, label) {
 }
 function normalizeSourceId(value) {
   const sourceId = nonEmptyString(value, "Source id").replaceAll("\\", "/");
-  if (isAbsolute6(sourceId) || win32.isAbsolute(sourceId) || sourceId.startsWith("../") || sourceId.includes("/../") || !SOURCE_ID_PATTERN.test(sourceId)) {
+  if (isAbsolute8(sourceId) || win32.isAbsolute(sourceId) || sourceId.startsWith("../") || sourceId.includes("/../") || !SOURCE_ID_PATTERN.test(sourceId)) {
     throw new Error("Source ids must be privacy-safe relative paths or stable logical ids.");
   }
   return sourceId;
@@ -26215,7 +29201,7 @@ function normalizeSources(value, legacyFingerprints, persisted = false) {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Source references must be objects.");
     const source = item;
     const expectedKeys = persisted || legacyOnly ? ["kind", "sourceId", "fingerprint", "provenance"] : ["kind", "sourceId", "fingerprint"];
-    if (!hasExactKeys(source, expectedKeys)) throw new Error("Source references contain unknown fields.");
+    if (!hasExactKeys2(source, expectedKeys)) throw new Error("Source references contain unknown fields.");
     if (source.kind !== "path" && source.kind !== "id") throw new Error("Source kind must be path or id.");
     const provenance = persisted || legacyOnly ? source.provenance : source.kind === "path" ? "pending-path-revalidation" : "attested-unverifiable";
     const validProvenance = source.kind === "path" ? provenance === "pending-path-revalidation" || provenance === "revalidated-current" : provenance === "attested-unverifiable" || provenance === "legacy-unverifiable";
@@ -26250,7 +29236,7 @@ function normalizeAffectedTargets(value, type, legacyIdentifiers) {
   return result;
 }
 function suggestionFingerprint(input) {
-  return createHash12("sha256").update(JSON.stringify({
+  return createHash14("sha256").update(JSON.stringify({
     type: input.type,
     title: input.title,
     rationale: input.rationale,
@@ -26279,7 +29265,7 @@ function sanitizeProposal(input) {
     ...input.expiresAt === void 0 ? {} : { expiresAt: validateTimestamp(input.expiresAt, "Expiry timestamp") }
   };
 }
-function hasExactKeys(value, expected) {
+function hasExactKeys2(value, expected) {
   const actual = Object.keys(value).sort();
   const sorted = [...expected].sort();
   return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
@@ -26295,8 +29281,8 @@ function reconstructSuggestion(value, schemaVersion) {
     ...candidate.reviewedAt === void 0 ? [] : ["reviewedAt"],
     ...candidate.reviewReason === void 0 ? [] : ["reviewReason"]
   ];
-  if (!hasExactKeys(candidate, expectedKeys)) throw new Error("Suggestion contains unknown or missing persisted fields.");
-  if (typeof candidate.id !== "string" || !UUID_PATTERN2.test(candidate.id)) throw new Error("Suggestion id must be a UUID.");
+  if (!hasExactKeys2(candidate, expectedKeys)) throw new Error("Suggestion contains unknown or missing persisted fields.");
+  if (typeof candidate.id !== "string" || !UUID_PATTERN3.test(candidate.id)) throw new Error("Suggestion id must be a UUID.");
   const type = validateType(candidate.type);
   const createdAt = validateTimestamp(candidate.createdAt, "Created timestamp");
   const persistedSources = schemaVersion >= 2 ? normalizeSources(candidate.sources, [], schemaVersion >= 3) : void 0;
@@ -26315,7 +29301,7 @@ function reconstructSuggestion(value, schemaVersion) {
     } : {}
   });
   if (persistedSources) proposal.sources = persistedSources;
-  const expectedFingerprint = schemaVersion === 1 ? createHash12("sha256").update(JSON.stringify({
+  const expectedFingerprint = schemaVersion === 1 ? createHash14("sha256").update(JSON.stringify({
     type: proposal.type,
     title: proposal.title,
     proposedContent: proposal.proposedContent,
@@ -26337,19 +29323,19 @@ function reconstructSuggestion(value, schemaVersion) {
     ...candidate.reviewReason === void 0 ? {} : { reviewReason: nonEmptyString(candidate.reviewReason, "Review reason") }
   };
 }
-async function readQueue(root) {
+async function readQueue(root, repairInsideLock) {
   const path = queuePath(root);
   try {
-    const parsed = JSON.parse(await readFile16(path, "utf8"));
+    const parsed = JSON.parse(await readFile15(path, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Queue must be an object.");
     const queue2 = parsed;
-    if (!hasExactKeys(queue2, ["schemaVersion", "suggestions"]) || ![1, 2, 3].includes(queue2.schemaVersion) || !Array.isArray(queue2.suggestions)) {
+    if (!hasExactKeys2(queue2, ["schemaVersion", "suggestions"]) || ![1, 2, 3].includes(queue2.schemaVersion) || !Array.isArray(queue2.suggestions)) {
       throw new Error("Queue schema is invalid.");
     }
     return queue2.suggestions.map((suggestion) => reconstructSuggestion(suggestion, queue2.schemaVersion));
   } catch (error2) {
     if (error2.code === "ENOENT") return [];
-    await quarantineCorruptJson(path);
+    if (repairInsideLock) await quarantineCorruptJson(path);
     return [];
   }
 }
@@ -26380,7 +29366,7 @@ function reconstructApplication(value, schemaVersion) {
     "type",
     ...schemaVersion >= 2 ? ["provenanceStatus"] : []
   ];
-  if (!hasExactKeys(candidate, keys) || typeof candidate.suggestionId !== "string" || !UUID_PATTERN2.test(candidate.suggestionId)) {
+  if (!hasExactKeys2(candidate, keys) || typeof candidate.suggestionId !== "string" || !UUID_PATTERN3.test(candidate.suggestionId)) {
     throw new Error("Applied knowledge schema is invalid.");
   }
   const sourceItemsHaveProvenance = Array.isArray(candidate.sources) && candidate.sources.every((source) => Boolean(source && typeof source === "object" && !Array.isArray(source) && "provenance" in source));
@@ -26403,13 +29389,13 @@ function reconstructApplication(value, schemaVersion) {
     appliedAt: validateTimestamp(candidate.appliedAt, "Applied timestamp")
   };
 }
-async function readApplications(root) {
+async function readApplications(root, repairInsideLock) {
   const path = applicationPath(root);
   try {
-    const parsed = JSON.parse(await readFile16(path, "utf8"));
+    const parsed = JSON.parse(await readFile15(path, "utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Application store must be an object.");
     const store = parsed;
-    if (!hasExactKeys(store, ["schemaVersion", "applications"]) || ![1, 2].includes(store.schemaVersion) || !Array.isArray(store.applications)) {
+    if (!hasExactKeys2(store, ["schemaVersion", "applications"]) || ![1, 2].includes(store.schemaVersion) || !Array.isArray(store.applications)) {
       throw new Error("Application store schema is invalid.");
     }
     const applications = store.applications.map((application) => reconstructApplication(application, store.schemaVersion));
@@ -26419,16 +29405,16 @@ async function readApplications(root) {
     return applications;
   } catch (error2) {
     if (error2.code === "ENOENT") return [];
-    await quarantineCorruptJson(path);
+    if (repairInsideLock) await quarantineCorruptJson(path);
     return [];
   }
 }
 function targetFiles(root, application) {
-  const base2 = join11(resolve11(root), ".tokengraph", "knowledge");
+  const base2 = join14(resolve13(root), ".tokengraph", "knowledge");
   return [
-    ...application.affectedTargets.wikiPages.map((slug) => join11(base2, "wiki", ...slug.split("/"), `${application.suggestionId}.md`)),
-    ...application.affectedTargets.memories.map((id) => join11(base2, "memories", id, `${application.suggestionId}.md`)),
-    ...application.affectedTargets.skills.map((name) => join11(base2, "skills", name, `${application.suggestionId}.md`))
+    ...application.affectedTargets.wikiPages.map((slug) => join14(base2, "wiki", ...slug.split("/"), `${application.suggestionId}.md`)),
+    ...application.affectedTargets.memories.map((id) => join14(base2, "memories", id, `${application.suggestionId}.md`)),
+    ...application.affectedTargets.skills.map((name) => join14(base2, "skills", name, `${application.suggestionId}.md`))
   ];
 }
 function applicationMarkdown(application) {
@@ -26449,11 +29435,11 @@ async function writeApplication(root, applications, application) {
 }
 async function ensureApplicationTargets(root, application) {
   const expected = applicationMarkdown(application);
-  const logicalBase = join11(resolve11(root), ".tokengraph", "knowledge");
+  const logicalBase = join14(resolve13(root), ".tokengraph", "knowledge");
   for (const logicalPath of targetFiles(root, application)) {
-    const path = await resolveConfinedPath(root, join11(".tokengraph", "knowledge", relative6(logicalBase, logicalPath)), true);
+    const path = await resolveConfinedPath(root, join14(".tokengraph", "knowledge", relative8(logicalBase, logicalPath)), true);
     try {
-      const existing = await readFile16(path, "utf8");
+      const existing = await readFile15(path, "utf8");
       if (existing !== expected) throw new Error("Applied knowledge target differs from its reviewed payload.");
     } catch (error2) {
       if (error2.code !== "ENOENT") throw error2;
@@ -26472,27 +29458,28 @@ async function assertFreshForApproval(root, suggestion) {
     if (source.kind !== "path") continue;
     let content;
     try {
-      const canonicalRoot = await realpath4(resolve11(root));
-      const canonicalSource = await realpath4(join11(canonicalRoot, ...source.sourceId.split("/")));
-      const confined = relative6(canonicalRoot, canonicalSource);
-      if (!confined || confined.startsWith("..") || isAbsolute6(confined)) {
+      const canonicalRoot = await realpath4(resolve13(root));
+      const canonicalSource = await realpath4(join14(canonicalRoot, ...source.sourceId.split("/")));
+      const confined = relative8(canonicalRoot, canonicalSource);
+      if (!confined || confined.startsWith("..") || isAbsolute8(confined)) {
         throw new Error(`Knowledge source ${source.sourceId} resolves outside the trusted workspace.`);
       }
-      content = await readFile16(canonicalSource);
+      content = await readFile15(canonicalSource);
     } catch (error2) {
       if (error2.code === "ENOENT") throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} is missing.`);
       throw error2;
     }
-    const current = createHash12("sha256").update(content.toString("utf8").replace(/\r\n?/g, "\n")).digest("hex");
+    const current = createHash14("sha256").update(content.toString("utf8").replace(/\r\n?/g, "\n")).digest("hex");
     if (current !== source.fingerprint) throw new Error(`Knowledge suggestion is stale because source ${source.sourceId} fingerprint changed.`);
   }
 }
 async function enqueueQueueOperation(root, operation) {
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "review-queue.json");
+  const lock = await canonicalPersistenceLock(root, "workspace-state", "review-queue.json");
+  const key = lock.compatibilityPath;
   const previous = queueWriteChains.get(key) ?? Promise.resolve();
   const current = previous.then(
-    () => withFileLock(`${key}.lock`, operation),
-    () => withFileLock(`${key}.lock`, operation)
+    () => withFileLock(lock, operation),
+    () => withFileLock(lock, operation)
   );
   let settled;
   const cleanUp = () => {
@@ -26506,12 +29493,12 @@ async function proposeKnowledgeChange(root, input) {
   const proposal = sanitizeProposal(input);
   const fingerprint = suggestionFingerprint(proposal);
   return enqueueQueueOperation(root, async () => {
-    const suggestions = await readQueue(root);
+    const suggestions = await readQueue(root, true);
     const duplicate = suggestions.find((suggestion2) => suggestion2.status === "proposed" && suggestion2.fingerprint === fingerprint);
     if (duplicate) return duplicate;
     const timestamp = (/* @__PURE__ */ new Date()).toISOString();
     const suggestion = {
-      id: randomUUID5(),
+      id: randomUUID7(),
       fingerprint,
       ...proposal,
       expiresAt: proposal.expiresAt ?? new Date(Date.parse(timestamp) + DEFAULT_EXPIRY_MS).toISOString(),
@@ -26530,7 +29517,7 @@ async function listKnowledgeSuggestions(root, options = {}) {
   types?.forEach(validateType);
   statuses?.forEach(validateStatus);
   return enqueueQueueOperation(root, async () => {
-    const suggestions = await readQueue(root);
+    const suggestions = await readQueue(root, true);
     const now = Date.now();
     let changed = false;
     const normalized = suggestions.map((suggestion) => {
@@ -26545,22 +29532,22 @@ async function listKnowledgeSuggestions(root, options = {}) {
   });
 }
 async function listAppliedKnowledge(root) {
-  const [applications, suggestions] = await Promise.all([readApplications(root), readQueue(root)]);
+  const [applications, suggestions] = await Promise.all([readApplications(root, false), readQueue(root, false)]);
   return applications.filter((application) => {
     const suggestion = suggestions.find((candidate) => candidate.id === application.suggestionId && candidate.status === "approved");
     return Boolean(suggestion && applicationMatchesSuggestion(application, suggestion));
   });
 }
 async function reviewKnowledgeSuggestion(root, id, decision, reason) {
-  if (!UUID_PATTERN2.test(id)) throw new Error("Knowledge suggestion id must be a UUID.");
+  if (!UUID_PATTERN3.test(id)) throw new Error("Knowledge suggestion id must be a UUID.");
   if (!REVIEW_DECISIONS.has(decision)) throw new Error("Unknown review decision.");
   const nextStatus = decision === "approve" ? "approved" : "rejected";
   return enqueueQueueOperation(root, async () => {
-    const suggestions = await readQueue(root);
+    const suggestions = await readQueue(root, true);
     const index = suggestions.findIndex((suggestion) => suggestion.id === id);
     if (index < 0) throw new Error(`Knowledge suggestion ${id} was not found.`);
     const current = suggestions[index];
-    const applications = await readApplications(root);
+    const applications = await readApplications(root, true);
     const existingApplication = applications.find((application2) => application2.suggestionId === id);
     if (decision === "approve" && existingApplication && !applicationMatchesSuggestion(existingApplication, current)) {
       throw new Error("Durable application does not match the reviewed proposal payload.");
@@ -26645,6 +29632,7 @@ function applicationForSuggestion(suggestion, appliedAt) {
 }
 
 // src/server.ts
+init_legacyRuntimeActivation();
 var architectureRuleTypeSchema = _enum([
   "forbidden-import",
   "required-import",
@@ -26702,12 +29690,12 @@ function taskHost(value) {
   return "unknown";
 }
 function eventFingerprint(taskId, toolName, category, operation) {
-  return createHash13("sha256").update(JSON.stringify({ taskId, toolName, category, operation })).digest("hex");
+  return createHash15("sha256").update(JSON.stringify({ taskId, toolName, category, operation })).digest("hex");
 }
 async function recordCoreEvent(input) {
   const overheadTokens = input.overheadTokens ?? coreEventOverheadTokens(input.taskId, input.toolName, input.category);
   await recordTaskEvent(input.root, input.taskId, {
-    id: randomUUID6(),
+    id: randomUUID8(),
     fingerprint: eventFingerprint(input.taskId, input.toolName, input.category, input.operation),
     category: input.category,
     toolName: input.toolName,
@@ -26724,7 +29712,7 @@ function coreEventOverheadTokens(taskId, toolName, category) {
   return estimateTokens(compactJson({ taskId, toolName, category }));
 }
 function ownPluginRoot() {
-  return resolve12(dirname8(fileURLToPath3(import.meta.url)), "..");
+  return resolve14(dirname11(fileURLToPath4(import.meta.url)), "..");
 }
 var requestWorkspaceContext = new AsyncLocalStorage();
 async function isPluginRoot(root) {
@@ -26732,12 +29720,12 @@ async function isPluginRoot(root) {
     const [realRoot, realSelf] = await Promise.all([realpath5(root), realpath5(ownPluginRoot())]);
     if (realRoot !== realSelf) return false;
     const hasManifest = await Promise.any([
-      access5(join12(root, ".codex-plugin", "plugin.json")),
-      access5(join12(root, ".claude-plugin", "plugin.json"))
+      access5(join15(root, ".codex-plugin", "plugin.json")),
+      access5(join15(root, ".claude-plugin", "plugin.json"))
     ]).then(() => true, () => false);
     const hasMcpConfig = await Promise.any([
-      access5(join12(root, ".mcp.json")),
-      access5(join12(root, ".mcp.claude.json"))
+      access5(join15(root, ".mcp.json")),
+      access5(join15(root, ".mcp.claude.json"))
     ]).then(() => true, () => false);
     return hasManifest && hasMcpConfig;
   } catch {
@@ -26762,10 +29750,10 @@ function hasCodexTurnMetadata(context) {
 function codexWorkspaceRoots(metadata) {
   const workspaces = recordValue(metadata.workspaces);
   if (!workspaces) return [];
-  return Object.keys(workspaces).filter((root) => isAbsolute7(root));
+  return Object.keys(workspaces).filter((root) => isAbsolute9(root));
 }
 function workspacePathKey(path) {
-  const normalized = resolve12(path);
+  const normalized = resolve14(path);
   return process4.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 async function resolveCodexRequestWorkspace(context) {
@@ -26796,7 +29784,7 @@ async function resolveTrustedWorkspace(server, context) {
   try {
     const roots = await server.server.listRoots({}, { timeout: 1e3 });
     const fileRoot = roots.roots.find((root) => root.uri.startsWith("file://"));
-    if (fileRoot) return { source: "mcp-roots", root: fileURLToPath3(fileRoot.uri) };
+    if (fileRoot) return { source: "mcp-roots", root: fileURLToPath4(fileRoot.uri) };
   } catch {
   }
   return void 0;
@@ -26837,7 +29825,7 @@ async function inspectWorkspaceSetup(server, provider, context) {
     return {
       status: "blocked",
       host: detectedHost(context),
-      trustedWorkspace: { ...candidate, root: resolve12(candidate.root) },
+      trustedWorkspace: { ...candidate, root: resolve14(candidate.root) },
       blockingReason: "unreadable-trusted-workspace",
       pluginRootLaunch,
       message: "The host-provided TokenGraph workspace does not exist or is not readable.",
@@ -26846,7 +29834,7 @@ async function inspectWorkspaceSetup(server, provider, context) {
   }
   const home = await realpath5(homedir());
   const trustedWorkspace = { ...candidate, root };
-  if (root === parse4(root).root || root === home) {
+  if (root === parse6(root).root || root === home) {
     return {
       status: "blocked",
       host: detectedHost(context),
@@ -26881,15 +29869,15 @@ function createWorkspaceResolver(server, provider) {
     }
     const allowedRoot = setup.trustedWorkspace?.root;
     if (!allowedRoot) throw new Error(setup.message);
-    const requested = inputRoot?.trim() ? resolve12(allowedRoot, inputRoot.trim()) : allowedRoot;
+    const requested = inputRoot?.trim() ? resolve14(allowedRoot, inputRoot.trim()) : allowedRoot;
     let resolvedRoot;
     try {
       resolvedRoot = await realpath5(requested);
     } catch {
       throw new Error(`Requested workspace root does not exist or is not readable: ${requested}`);
     }
-    const relativeToAllowed = relative7(allowedRoot, resolvedRoot);
-    if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute7(relativeToAllowed))) {
+    const relativeToAllowed = relative9(allowedRoot, resolvedRoot);
+    if (relativeToAllowed && (relativeToAllowed.startsWith("..") || isAbsolute9(relativeToAllowed))) {
       throw new Error(`Requested root is outside the trusted workspace: ${resolvedRoot}`);
     }
     return resolvedRoot;
@@ -26905,12 +29893,12 @@ function okWithResourceLinks(output) {
   return {
     content: [
       { type: "text", text: compactJson(output) },
-      ...(output.resourceLinks ?? []).map((link) => ({
+      ...(output.resourceLinks ?? []).map((link2) => ({
         type: "resource_link",
-        uri: link.uri,
-        name: link.label,
-        description: link.label,
-        mimeType: link.mimeType
+        uri: link2.uri,
+        name: link2.label,
+        description: link2.label,
+        mimeType: link2.mimeType
       }))
     ],
     structuredContent: output
@@ -26937,7 +29925,7 @@ function projectIndexOptions(config2) {
   };
 }
 async function enqueueProjectWrite(root, operation) {
-  const key = resolve12(root);
+  const key = resolve14(root);
   const previous = projectWriteChains.get(key) ?? Promise.resolve();
   const current = previous.then(operation, operation);
   projectWriteChains.set(
@@ -26982,7 +29970,7 @@ async function ensureProject(root) {
   });
 }
 function isSafeRelativePath(path) {
-  if (!path || isAbsolute7(path)) return false;
+  if (!path || isAbsolute9(path)) return false;
   const segments = path.split(/[\\/]+/);
   return segments.every((segment) => segment && segment !== "." && segment !== "..");
 }
@@ -27192,6 +30180,18 @@ function createTokenGraphServer(options = {}) {
     return nativeRegisterTool(name, config2, wrappedHandler);
   });
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
+  async function memoryStore(root) {
+    return new MemoryStore(
+      await repositoryMemoryPath(root),
+      await canonicalPersistenceLock(root, "repository-state", "memory.json")
+    );
+  }
+  async function architectureRuleStore(root) {
+    return new ArchitectureRuleStore(
+      await repositoryRulesPath(root),
+      await canonicalPersistenceLock(root, "repository-state", "rules.json")
+    );
+  }
   async function requireTaskRoot(root, taskId, allowTerminal = false) {
     const resolvedRoot = await workspaceRoot(root);
     const ledger = await loadTaskLedger(resolvedRoot, taskId);
@@ -27266,9 +30266,10 @@ function createTokenGraphServer(options = {}) {
       title: "Set Up TokenGraph",
       description: "Check workspace trust and the selected surface.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      inputSchema: object({})
+      inputSchema: setupInputSchema
     },
-    async () => {
+    async ({ confirmNoLegacyProcesses }) => {
+      activateLegacyRuntimeShutdown({ confirmedNoLegacyTokenGraphProcesses: confirmNoLegacyProcesses });
       const setup = await inspectWorkspaceSetup(server, options.trustedWorkspace, requestWorkspaceContext.getStore());
       const repositoryIdentity = setup.trustedWorkspace ? await getRepositoryIdentity(setup.trustedWorkspace.root) : null;
       return ok({
@@ -27303,7 +30304,7 @@ function createTokenGraphServer(options = {}) {
       const { status: cachedStatus, config: config2, control } = probe;
       const indexOptions = projectIndexOptions(config2);
       await enforceStorageClassQuotas(resolvedRoot, config2.storage);
-      const identity = await getRepositoryIdentity(resolvedRoot);
+      const identity3 = await getRepositoryIdentity(resolvedRoot);
       const routing = adviseRouting({
         task,
         knownArtifacts,
@@ -27352,11 +30353,11 @@ function createTokenGraphServer(options = {}) {
       }
       const appliedKnowledge = await listAppliedKnowledge(resolvedRoot);
       if (indexingMode !== "existing" && config2.wikiGenerationEnabled) {
-        const wikiMemories = config2.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list() : [];
+        const wikiMemories = config2.memoryEnabled ? await (await memoryStore(resolvedRoot)).list() : [];
         await saveProjectWiki(resolvedRoot, buildProjectWiki(project, wikiMemories, appliedKnowledge));
       }
       const memoryLimit = config2.maxMemories;
-      const memories = config2.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(task, memoryLimit) : [];
+      const memories = config2.memoryEnabled ? await (await memoryStore(resolvedRoot)).search(task, memoryLimit) : [];
       const plan = await buildContextPlan({
         root: resolvedRoot,
         task,
@@ -27369,7 +30370,7 @@ function createTokenGraphServer(options = {}) {
         }
       });
       const projectBrief = buildAdaptiveProjectBrief({
-        repositoryId: identity.repositoryId,
+        repositoryId: identity3.repositoryId,
         sourceFingerprint: project.fingerprint,
         sections: [
           { id: "frameworks", text: project.frameworks.join(", "), evidenceClass: "indexed", confidence: "high", source: "index:project-frameworks" },
@@ -27390,9 +30391,9 @@ function createTokenGraphServer(options = {}) {
       await saveStableArtifact(resolvedRoot, capsuleStableArtifact);
       const outcomes = await listCompletedTaskOutcomes(resolvedRoot);
       const memoryContext = composeMemoryContext({
-        repositoryId: identity.repositoryId,
-        worktreeId: identity.worktreeId,
-        branch: identity.branch,
+        repositoryId: identity3.repositoryId,
+        worktreeId: identity3.worktreeId,
+        branch: identity3.branch,
         sourceFingerprint: project.fingerprint,
         projectBrief,
         indexedFacts: project.files.slice(0, config2.maxFiles).map((file) => `${file.path}:${file.language}`),
@@ -27418,20 +30419,20 @@ function createTokenGraphServer(options = {}) {
       const projectedPlan = responseMode === "verbose" ? plan : compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
       const artifactContent = compactPlanResponse(plan, { constraints, allowRawReads: plan.budget.allowRawReads });
       const stableArtifact = createStableArtifact(
-        `context/${createHash13("sha256").update(task.trim().toLocaleLowerCase()).digest("hex")}`,
+        `context/${createHash15("sha256").update(task.trim().toLocaleLowerCase()).digest("hex")}`,
         artifactContent,
         1,
         {
           // The artifact remains repository-scoped through persistence and lookup
           // validation, while the hash fingerprint is derived from the canonical
           // indexed state so equivalent LF/CRLF checkouts produce the same artifact.
-          repositoryFingerprint: identity.repositoryFingerprint,
+          repositoryFingerprint: identity3.repositoryFingerprint,
           sourceFingerprint: project.fingerprint,
           parserVersion: "tokengraph-index-v4",
           normalizedIntent: task.trim().replace(/\s+/g, " ").toLocaleLowerCase(),
           retrievalConfig: { profile: plan.profile, maxEstimatedTokens: plan.budget.maxEstimatedTokens, allowRawReads: plan.budget.allowRawReads },
-          memoryFingerprint: createHash13("sha256").update(JSON.stringify(memories.map((memory) => memory.id))).digest("hex"),
-          decisionFingerprint: createHash13("sha256").update(JSON.stringify(appliedKnowledge.map((entry) => ({ id: entry.suggestionId, fingerprint: entry.fingerprint })))).digest("hex")
+          memoryFingerprint: createHash15("sha256").update(JSON.stringify(memories.map((memory) => memory.id))).digest("hex"),
+          decisionFingerprint: createHash15("sha256").update(JSON.stringify(appliedKnowledge.map((entry) => ({ id: entry.suggestionId, fingerprint: entry.fingerprint })))).digest("hex")
         }
       );
       await saveStableArtifact(resolvedRoot, stableArtifact);
@@ -27468,7 +30469,7 @@ function createTokenGraphServer(options = {}) {
         toolName: "tokengraph_prepare_context",
         category: "context-routing",
         operation: {
-          taskHash: createHash13("sha256").update(task).digest("hex"),
+          taskHash: createHash15("sha256").update(task).digest("hex"),
           profile: plan.profile,
           indexingMode,
           routingObservation: {
@@ -27574,7 +30575,7 @@ function createTokenGraphServer(options = {}) {
           taskId: task.taskId,
           toolName: "tokengraph_query_context",
           category: `query-${mode}`,
-          operation: { mode, queryHash: createHash13("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
+          operation: { mode, queryHash: createHash15("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
           originalTokens,
           compactTokens
         });
@@ -27609,7 +30610,7 @@ function createTokenGraphServer(options = {}) {
         } else {
           const { task: task2, contentKind, text, preserveRawReferences, constraints, responseMode } = input;
           const [project, config2, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
-          const memories = config2.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(`${task2}
+          const memories = config2.memoryEnabled ? await (await memoryStore(resolvedRoot)).search(`${task2}
 ${text ?? ""}`, config2.maxMemories) : [];
           const compressed = await compressContext({
             root: resolvedRoot,
@@ -27644,7 +30645,7 @@ ${text ?? ""}`, config2.maxMemories) : [];
           taskId: task.taskId,
           toolName: "tokengraph_compress",
           category,
-          operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash13("sha256").update(`${"task" in input ? input.task : ""}
+          operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash15("sha256").update(`${"task" in input ? input.task : ""}
 ${input.text ?? ""}`).digest("hex") },
           originalTokens: estimates.baselineTokens,
           compactTokens,
@@ -27670,7 +30671,7 @@ ${input.text ?? ""}`).digest("hex") },
       }
       return withTaskIntent(root, taskId, async (task) => {
         const resolvedRoot = task.root;
-        const store = new MemoryStore(await repositoryMemoryPath(resolvedRoot));
+        const store = await memoryStore(resolvedRoot);
         const project = await ensureProject(resolvedRoot);
         const memories = await store.list({ includeDeprecated: audit === true, includeDeleted: audit === true });
         const terms2 = tokenize(query ?? "");
@@ -27684,7 +30685,7 @@ ${input.text ?? ""}`).digest("hex") },
           taskId: task.taskId,
           toolName: "tokengraph_recall",
           category: `memory-${mode}`,
-          operation: { mode, queryHash: createHash13("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
+          operation: { mode, queryHash: createHash15("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
           originalTokens: estimateTokens(compactJson(memories)),
           compactTokens
         });
@@ -27710,7 +30711,7 @@ ${input.text ?? ""}`).digest("hex") },
       return withTaskIntent(root, taskId, async (task) => {
         const resolvedRoot = task.root;
         const project = await ensureProject(resolvedRoot);
-        const store = new MemoryStore(await repositoryMemoryPath(resolvedRoot));
+        const store = await memoryStore(resolvedRoot);
         let result;
         if (mode === "failure") {
           const { kind, text, task: task2 } = input;
@@ -27721,7 +30722,7 @@ ${text}`, 8);
 ${text}`) });
         } else if (mode === "risk") {
           const { changedFiles, diffSummary, task: task2 } = input;
-          const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
+          const rules = await (await architectureRuleStore(resolvedRoot)).list();
           const memories = await store.search(`${task2 ?? ""}
 ${diffSummary ?? ""}
 ${changedFiles.join("\n")}`, 8);
@@ -27729,7 +30730,7 @@ ${changedFiles.join("\n")}`, 8);
           result = input.responseMode === "verbose" ? verbose : compactRiskResponse(verbose, { constraints: input.constraints });
         } else {
           const { files } = input;
-          const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
+          const rules = await (await architectureRuleStore(resolvedRoot)).list();
           result = await checkArchitecture({ root: resolvedRoot, project, rules, files });
         }
         const response = input.responseMode === "verbose" ? { mode, result } : compactModeEnvelope(mode, result);
@@ -27739,7 +30740,7 @@ ${changedFiles.join("\n")}`, 8);
           taskId: task.taskId,
           toolName: "tokengraph_analyze",
           category: `analysis-${mode}`,
-          operation: { mode, inputHash: createHash13("sha256").update(JSON.stringify(input)).digest("hex") },
+          operation: { mode, inputHash: createHash15("sha256").update(JSON.stringify(input)).digest("hex") },
           originalTokens: Math.max(compactTokens, project.files.reduce((total, file) => total + file.estimatedTokens, 0)),
           compactTokens
         });
@@ -27782,7 +30783,7 @@ ${changedFiles.join("\n")}`, 8);
           const [project, existingWiki, memories, applications] = await Promise.all([
             loadProjectIndex(resolvedRoot),
             loadProjectWiki(resolvedRoot),
-            new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list(),
+            (await memoryStore(resolvedRoot)).list(),
             listAppliedKnowledge(resolvedRoot)
           ]);
           if (project && existingWiki) await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories, applications));
@@ -27794,7 +30795,7 @@ ${changedFiles.join("\n")}`, 8);
         taskId,
         toolName: "tokengraph_propose_knowledge",
         category: `knowledge-${action}`,
-        operation: action === "propose" ? { action, proposalHash: createHash13("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") } : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
+        operation: action === "propose" ? { action, proposalHash: createHash15("sha256").update(JSON.stringify({ type: input.type, title: input.title, rationale: input.rationale, proposedContent: input.proposedContent, sourceFingerprints: input.sourceFingerprints, affectedIdentifiers: input.affectedIdentifiers, sources: input.sources, affectedTargets: input.affectedTargets, conflictNotes: input.conflictNotes, expiresAt: input.expiresAt })).digest("hex") } : { action, id: "id" in input ? input.id : null, filters: action === "list" ? { type: input.type ?? null, status: input.status ?? null } : null },
         originalTokens: compactTokens,
         compactTokens
       });
@@ -27872,7 +30873,7 @@ ${changedFiles.join("\n")}`, 8);
         let wikiWarning;
         if (config2.wikiGenerationEnabled) {
           try {
-            const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
+            const memories = await (await memoryStore(resolvedRoot)).list();
             await saveProjectWiki(resolvedRoot, buildProjectWiki(project, memories, await listAppliedKnowledge(resolvedRoot)));
             await enforceStorageClassQuotas(resolvedRoot, config2.storage);
             wikiRefreshed = true;
@@ -27921,15 +30922,17 @@ ${changedFiles.join("\n")}`, 8);
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
         inputSchema: object({
           root: string2().optional().describe("Workspace root to reset. Defaults to the MCP server current working directory."),
-          mode: _enum(["index", "all"]).default("index").describe("index clears index.json and derived wiki pages; all clears the full .tokengraph state directory.")
+          mode: _enum(["index", "all"]).default("index").describe("index clears index.json and derived wiki pages; all clears TokenGraph data while preserving native lock infrastructure."),
+          confirmNoLegacyProcesses: literal(true).describe("Freshly confirm that every TokenGraph v0.23.1 MCP and CLI process is stopped before this destructive reset.")
         })
       },
-      async ({ root, mode }) => {
+      async ({ root, mode, confirmNoLegacyProcesses }) => {
         const resolvedRoot = await workspaceRoot(root);
+        const confirmation = { confirmedNoLegacyTokenGraphProcesses: confirmNoLegacyProcesses };
         if (mode === "all") {
-          await clearProjectState(resolvedRoot);
+          await clearProjectState(resolvedRoot, confirmation);
         } else {
-          await clearProjectIndex(resolvedRoot);
+          await clearProjectIndex(resolvedRoot, confirmation);
         }
         return ok({ status: "reset", mode, root: resolvedRoot });
       }
@@ -28008,7 +31011,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root }) => {
         const resolvedRoot = await workspaceRoot(root);
-        return ok({ root: resolvedRoot, rules: await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list() });
+        return ok({ root: resolvedRoot, rules: await (await architectureRuleStore(resolvedRoot)).list() });
       }
     );
     server.registerTool(
@@ -28024,7 +31027,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, ...input }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const rule = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).add(input);
+        const rule = await (await architectureRuleStore(resolvedRoot)).add(input);
         return ok({ status: "added", root: resolvedRoot, rule });
       }
     );
@@ -28054,7 +31057,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, ...update }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const rule = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).update(id, update);
+        const rule = await (await architectureRuleStore(resolvedRoot)).update(id, update);
         if (!rule) {
           throw new Error(`No architecture rule found for id ${id}.`);
         }
@@ -28074,7 +31077,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const deleted = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).delete(id);
+        const deleted = await (await architectureRuleStore(resolvedRoot)).delete(id);
         if (!deleted) {
           throw new Error(`No architecture rule found for id ${id}.`);
         }
@@ -28095,7 +31098,7 @@ ${changedFiles.join("\n")}`, 8);
       async ({ root, files }) => {
         const resolvedRoot = await workspaceRoot(root);
         const project = await ensureProject(resolvedRoot);
-        const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
+        const rules = await (await architectureRuleStore(resolvedRoot)).list();
         return ok(await checkArchitecture({ root: resolvedRoot, project, rules, files }));
       }
     );
@@ -28116,7 +31119,7 @@ ${changedFiles.join("\n")}`, 8);
       async ({ root, kind, text, task, profile }) => {
         const resolvedRoot = await workspaceRoot(root);
         const project = await ensureProject(resolvedRoot);
-        const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(`${task ?? ""}
+        const memories = await (await memoryStore(resolvedRoot)).search(`${task ?? ""}
 ${text}`, 8);
         return ok(await traceFailure({ root: resolvedRoot, kind, text, task, profile, project, memories }));
       }
@@ -28138,8 +31141,8 @@ ${text}`, 8);
       async ({ root, changedFiles, diffSummary, task, profile }) => {
         const resolvedRoot = await workspaceRoot(root);
         const project = await ensureProject(resolvedRoot);
-        const rules = await new ArchitectureRuleStore(await repositoryRulesPath(resolvedRoot)).list();
-        const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(`${task ?? ""}
+        const rules = await (await architectureRuleStore(resolvedRoot)).list();
+        const memories = await (await memoryStore(resolvedRoot)).search(`${task ?? ""}
 ${diffSummary ?? ""}
 ${changedFiles.join("\n")}`, 8);
         return ok(await assessChangeRisk({ root: resolvedRoot, changedFiles, diffSummary, task, profile, project, rules, memories }));
@@ -28156,7 +31159,7 @@ ${changedFiles.join("\n")}`, 8);
       async ({ root }) => {
         const resolvedRoot = await workspaceRoot(root);
         const project = await ensureProject(resolvedRoot);
-        const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
+        const memories = await (await memoryStore(resolvedRoot)).list();
         const map = projectMap(project);
         map.counts.memories = memories.length;
         return ok(map);
@@ -28178,7 +31181,7 @@ ${changedFiles.join("\n")}`, 8);
         if (!project || !isSafeProjectIndex(resolvedRoot, project)) {
           throw new Error("No safe persisted TokenGraph index was found. Run tokengraph_index_project before tokengraph_generate_wiki.");
         }
-        const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
+        const memories = await (await memoryStore(resolvedRoot)).list();
         const wiki = buildProjectWiki(project, memories, await listAppliedKnowledge(resolvedRoot));
         await saveProjectWiki(resolvedRoot, wiki);
         return ok({
@@ -28240,7 +31243,7 @@ ${changedFiles.join("\n")}`, 8);
         const resolvedRoot = await workspaceRoot(root);
         const config2 = await loadTokenGraphConfig(resolvedRoot);
         const project = await ensureProject(resolvedRoot);
-        const memory = new MemoryStore(await repositoryMemoryPath(resolvedRoot));
+        const memory = await memoryStore(resolvedRoot);
         const memories = config2.memoryEnabled ? await memory.search(task, maxMemories ?? 20) : [];
         const plan = await buildContextPlan({
           root: resolvedRoot,
@@ -28336,7 +31339,7 @@ ${changedFiles.join("\n")}`, 8);
         const resolvedRoot = await workspaceRoot(root);
         const [project, config2, wiki] = await Promise.all([ensureProject(resolvedRoot), loadTokenGraphConfig(resolvedRoot), loadProjectWiki(resolvedRoot)]);
         const memoryQuery = [task, text ?? ""].join("\n");
-        const memories = config2.memoryEnabled ? await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).search(memoryQuery, config2.maxMemories) : [];
+        const memories = config2.memoryEnabled ? await (await memoryStore(resolvedRoot)).search(memoryQuery, config2.maxMemories) : [];
         return ok(
           await compressContext({
             root: resolvedRoot,
@@ -28381,7 +31384,7 @@ ${changedFiles.join("\n")}`, 8);
           throw new Error("Important durable memories require explicit approval. Retry with approved: true only when the user requested or approved storing it.");
         }
         const resolvedRoot = await workspaceRoot(root);
-        const entry = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).add({
+        const entry = await (await memoryStore(resolvedRoot)).add({
           type,
           title,
           body,
@@ -28424,7 +31427,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, ...update }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).update(id, update);
+        const memory = await (await memoryStore(resolvedRoot)).update(id, update);
         if (!memory) {
           throw new Error(`No memory found for id ${id}.`);
         }
@@ -28445,7 +31448,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, hard }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const deleted = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).delete(id, { hard: hard === true });
+        const deleted = await (await memoryStore(resolvedRoot)).delete(id, { hard: hard === true });
         if (!deleted) {
           throw new Error(`No memory found for id ${id}.`);
         }
@@ -28467,7 +31470,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, supersededBy, evidence }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).deprecate(id, supersededBy ?? [], evidence ?? []);
+        const memory = await (await memoryStore(resolvedRoot)).deprecate(id, supersededBy ?? [], evidence ?? []);
         if (!memory) {
           throw new Error(`No memory found for id ${id}.`);
         }
@@ -28489,7 +31492,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, evidence, confidence }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).confirm(id, evidence ?? [], confidence ?? "high");
+        const memory = await (await memoryStore(resolvedRoot)).confirm(id, evidence ?? [], confidence ?? "high");
         if (!memory) {
           throw new Error(`No memory found for id ${id}.`);
         }
@@ -28517,7 +31520,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, query, candidate, limit }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const conflicts = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).findConflicts({ id, query, candidate, limit });
+        const conflicts = await (await memoryStore(resolvedRoot)).findConflicts({ id, query, candidate, limit });
         return ok({
           root: resolvedRoot,
           conflicts,
@@ -28544,7 +31547,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, id, ...links }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const memory = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).link(id, links);
+        const memory = await (await memoryStore(resolvedRoot)).link(id, links);
         if (!memory) {
           throw new Error(`No memory found for id ${id}.`);
         }
@@ -28566,7 +31569,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, query, limit, auditMode }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const recall = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).recall(query ?? "", { limit, auditMode: auditMode === true });
+        const recall = await (await memoryStore(resolvedRoot)).recall(query ?? "", { limit, auditMode: auditMode === true });
         return ok({ root: resolvedRoot, ...recall });
       }
     );
@@ -28584,7 +31587,7 @@ ${changedFiles.join("\n")}`, 8);
       },
       async ({ root, query, limit }) => {
         const resolvedRoot = await workspaceRoot(root);
-        const memories = await new MemoryStore(await repositoryMemoryPath(resolvedRoot)).list();
+        const memories = await (await memoryStore(resolvedRoot)).list();
         return ok(await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 }));
       }
     );

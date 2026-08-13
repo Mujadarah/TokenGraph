@@ -13,7 +13,7 @@ Do not use for a known one-file lookup or when the user explicitly wants raw sou
 
 Follow the common lifecycle in the general `tokengraph` skill:
 
-1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root. If blocked, follow recovery and do not invent a taskId.
+1. After confirming every TokenGraph v0.23.1 MCP and CLI process is stopped, call `tokengraph_setup({ confirmNoLegacyProcesses: true })` and capture `trustedWorkspace.root` as the trusted root. If that confirmation is not true, stop without activating; if setup is blocked, follow recovery and do not invent a taskId.
 2. Use `tokengraph_prepare_context({ task })` only when a retrieval plan is needed. Otherwise omit `taskId` from the first `tokengraph_query_context` call so it can auto-start the ledger and return a taskId; capture the returned taskId.
 3. Reuse that exact taskId for queries. The trusted root may be omitted after ready setup when host workspace resolution is stable; otherwise pass only the captured trusted root:
    - `tokengraph_query_context({ taskId, mode: "overview" })` for project shape.

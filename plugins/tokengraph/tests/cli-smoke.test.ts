@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { unzipSync } from "fflate";
@@ -40,6 +41,25 @@ async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "tokengraph-cli-"));
   tempRoots.push(root);
   return root;
+}
+
+async function makePackageRepositoryCopy(): Promise<{ copiedPlugin: string; repoCopy: string }> {
+  const sandbox = await makeRoot();
+  const repoCopy = join(sandbox, "repo");
+  const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+  await mkdir(join(repoCopy, "plugins"), { recursive: true });
+  await cp(process.cwd(), copiedPlugin, {
+    recursive: true,
+    filter: (source) => !["node_modules", ".superpowers", ".tokengraph"].includes(source.split(/[\\/]/).at(-1) ?? "")
+  });
+  await cp(resolve("node_modules", "fflate"), join(copiedPlugin, "node_modules", "fflate"), { recursive: true });
+  await cp(resolve("..", "..", "LICENSE"), join(repoCopy, "LICENSE"));
+  await cp(resolve("..", "..", "NOTICE"), join(repoCopy, "NOTICE"));
+  return { copiedPlugin, repoCopy };
+}
+
+function sha256(bytes: Uint8Array) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 afterEach(async () => {
@@ -536,7 +556,8 @@ describe("tokengraph release package command", () => {
       plugins: [{ name: "tokengraph", source: "./tokengraph" }]
     });
 
-    const archiveListing = Object.keys(unzipSync(await readFile(report.archivePath)));
+    const archive = unzipSync(await readFile(report.archivePath));
+    const archiveListing = Object.keys(archive);
     expect(archiveListing).toEqual(expect.arrayContaining([
       ".agents/plugins/marketplace.json",
       ".claude-plugin/marketplace.json",
@@ -548,6 +569,73 @@ describe("tokengraph release package command", () => {
     ]));
     expect(archiveListing.join("\n")).not.toMatch(/tokengraph\/(src|tests|node_modules)\//);
     expect(archiveListing).not.toContain("tokengraph/scripts/native-lock-probe.mjs");
+
+    const nativeManifest = JSON.parse(await readFile(resolve("assets", "native-lock", "manifest.json"), "utf8")) as {
+      artifacts: Array<{ path: string; sha256: string }>;
+    };
+    expect(archiveListing.filter((path) => path.endsWith(".node"))).toHaveLength(6);
+    expect(archiveListing.join("\n")).not.toMatch(/tokengraph\/(?:src|tests|native|scripts)\//);
+    for (const artifact of nativeManifest.artifacts) {
+      const releaseBytes = await readFile(resolve(report.packageDir, "assets", "native-lock", artifact.path));
+      const archiveBytes = archive[`tokengraph/assets/native-lock/${artifact.path}`];
+      expect(sha256(releaseBytes), artifact.path).toBe(artifact.sha256);
+      expect(archiveBytes, artifact.path).toBeDefined();
+      expect(sha256(archiveBytes!), artifact.path).toBe(artifact.sha256);
+    }
+
+    const extractedBundle = join(outRoot, "extracted");
+    for (const [archivePath, bytes] of Object.entries(archive)) {
+      const parts = archivePath.split("/");
+      expect(archivePath, archivePath).not.toMatch(/^(?:[A-Za-z]:|[/\\])|\\/u);
+      expect(parts, archivePath).not.toContain("..");
+      const outputPath = join(extractedBundle, ...parts);
+      await mkdir(dirname(outputPath), { recursive: true });
+      await writeFile(outputPath, bytes);
+    }
+    await expect(execFileAsync(process.execPath, [
+      resolve("scripts", "validate-native-lock-addon.mjs"),
+      "--assets", join(extractedBundle, "tokengraph", "assets", "native-lock"),
+      "--load-current"
+    ], { cwd: process.cwd(), env: process.env })).resolves.toMatchObject({
+      stdout: expect.stringMatching(/validated \(6 artifacts\)/i)
+    });
+  });
+
+  it.each([
+    ["a missing addon", async (assetsRoot: string) => {
+      const manifest = JSON.parse(await readFile(join(assetsRoot, "manifest.json"), "utf8")) as {
+        artifacts: Array<{ path: string }>;
+      };
+      await rm(join(assetsRoot, manifest.artifacts[0]!.path));
+    }],
+    ["an extra executable", async (assetsRoot: string) => {
+      await writeFile(join(assetsRoot, "native-helper.exe"), "MZ");
+    }],
+    ["a mismatched manifest", async (assetsRoot: string) => {
+      const manifestPath = join(assetsRoot, "manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+        artifacts: Array<{ sha256: string }>;
+      };
+      manifest.artifacts[0]!.sha256 = "0".repeat(64);
+      await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    }],
+    ["an absolute manifest path", async (assetsRoot: string) => {
+      const manifestPath = join(assetsRoot, "manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+        artifacts: Array<{ path: string }>;
+      };
+      manifest.artifacts[0]!.path = "C:\\Users\\example\\tokengraph-lock.node";
+      await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    }]
+  ])("refuses to package a native asset set with %s", async (_label, mutate) => {
+    const { copiedPlugin, repoCopy } = await makePackageRepositoryCopy();
+    await mutate(join(copiedPlugin, "assets", "native-lock"));
+
+    await expect(execFileAsync(
+      process.execPath,
+      [join(copiedPlugin, "scripts", "package-plugin.mjs"), "--release", "--out-release", join(repoCopy, "release", "tokengraph")],
+      { cwd: copiedPlugin, env: process.env }
+    )).rejects.toMatchObject({ stderr: expect.stringMatching(/native|manifest|target|artifact/i) });
   });
 
   it("validates a freshly generated release with core skill contracts", async () => {
@@ -587,6 +675,57 @@ describe("tokengraph release package command", () => {
     await expect(execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "validate-plugin.mjs")], {
       cwd: copiedPlugin
     })).rejects.toMatchObject({ stderr: expect.stringMatching(/release skill.*match source/i) });
+  });
+
+  it("rejects a release whose native addon bytes drift from the source plugin", async () => {
+    const sandbox = await makeRoot();
+    const repoRoot = resolve("..", "..");
+    const repoCopy = join(sandbox, "repo");
+    await cp(repoRoot, repoCopy, {
+      recursive: true,
+      filter: (source) => ![".git", ".worktrees", "node_modules", ".tokengraph", "artifacts", ".superpowers"].includes(source.split(/[\\/]/).at(-1) ?? "")
+    });
+    const copiedPlugin = join(repoCopy, "plugins", "tokengraph");
+    const generatedRelease = join(repoCopy, "release", "tokengraph");
+    await execFileAsync(process.execPath, [resolve("scripts", "package-plugin.mjs"), "--release", "--out-release", generatedRelease, "--json"], {
+      cwd: process.cwd(),
+      env: process.env
+    });
+    const manifest = JSON.parse(await readFile(join(copiedPlugin, "assets", "native-lock", "manifest.json"), "utf8")) as {
+      artifacts: Array<{ path: string }>;
+    };
+    const driftedAddon = join(generatedRelease, "assets", "native-lock", manifest.artifacts[0]!.path);
+    await writeFile(driftedAddon, Buffer.concat([await readFile(driftedAddon), Buffer.from([0])]));
+
+    await expect(execFileAsync(process.execPath, [join(copiedPlugin, "scripts", "validate-plugin.mjs")], {
+      cwd: copiedPlugin,
+      env: process.env
+    })).rejects.toMatchObject({ stderr: expect.stringMatching(/native.*(?:match|byte|hash|integrity)/i) });
+  });
+
+  it("documents the native runtime and mixed-version rollout contract", async () => {
+    const repoRoot = resolve("..", "..");
+    const documents = await Promise.all([
+      readFile(resolve("README.md"), "utf8"),
+      readFile(join(repoRoot, "docs", "hosts", "codex.md"), "utf8"),
+      readFile(join(repoRoot, "docs", "hosts", "claude-code.md"), "utf8"),
+      readFile(join(repoRoot, "docs", "trust", "security.md"), "utf8"),
+      readFile(join(repoRoot, "docs", "trust", "privacy.md"), "utf8"),
+      readFile(join(repoRoot, "docs", "trust", "limitations.md"), "utf8"),
+      readFile(join(repoRoot, "docs", "trust", "release-install.md"), "utf8")
+    ]);
+    const combined = documents.join("\n");
+
+    expect(combined).toMatch(/six prebuilt|prebuilt.*six/i);
+    expect(combined).toMatch(/no (?:runtime )?(?:download|compiler)|without.*(?:download|compiler)/i);
+    expect(combined).toMatch(/glibc 2\.28/i);
+    expect(combined).toMatch(/musl.*(?:unsupported|refus|fail)/i);
+    expect(combined).toMatch(/stop every v0\.23\.1|stop all v0\.23\.1/i);
+    expect(combined).toMatch(/confirmNoLegacyProcesses:\s*true/);
+    expect(combined).toMatch(/--confirm-no-legacy-processes/);
+    expect(combined).toMatch(/Doctor.*never grants|never grants.*Doctor/is);
+    expect(combined).toMatch(/private.*(?:OS|operating-system).*temp/i);
+    expect(combined).toMatch(/mixed[- ]runtime|mixed[- ]version/i);
   });
 
   it("writes a direct release plugin layout when requested", async () => {

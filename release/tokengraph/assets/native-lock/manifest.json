@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "addonAbiVersion": 1,
+  "nodeApiVersion": 9,
+  "rustToolchain": "1.97.1",
+  "artifacts": [
+    {
+      "id": "darwin-arm64",
+      "platform": "darwin",
+      "arch": "arm64",
+      "libc": "none",
+      "rustTarget": "aarch64-apple-darwin",
+      "file": "tokengraph-lock.darwin-arm64.node",
+      "osFloor": "macos-11.0",
+      "path": "darwin-arm64/tokengraph-lock.darwin-arm64.node",
+      "bytes": 404416,
+      "sha256": "734be61726d6f56cf3fdabc3a187a2062d74b587537c1c8f019756f0e4c0982a"
+    },
+    {
+      "id": "darwin-x64",
+      "platform": "darwin",
+      "arch": "x64",
+      "libc": "none",
+      "rustTarget": "x86_64-apple-darwin",
+      "file": "tokengraph-lock.darwin-x64.node",
+      "osFloor": "macos-11.0",
+      "path": "darwin-x64/tokengraph-lock.darwin-x64.node",
+      "bytes": 393024,
+      "sha256": "784a6a0b53a414b500b21bd750ca2ee4a5e3756bbfe47d2a910e7e5ce61aa5e7"
+    },
+    {
+      "id": "linux-arm64-gnu",
+      "platform": "linux",
+      "arch": "arm64",
+      "libc": "glibc",
+      "rustTarget": "aarch64-unknown-linux-gnu",
+      "file": "tokengraph-lock.linux-arm64.node",
+      "osFloor": "kernel-4.18-glibc-2.28",
+      "path": "linux-arm64-gnu/tokengraph-lock.linux-arm64.node",
+      "bytes": 464984,
+      "sha256": "0daf0bd0631ba847970431994792549aac9d8026456e728c7d3ff1982ea7c748"
+    },
+    {
+      "id": "linux-x64-gnu",
+      "platform": "linux",
+      "arch": "x64",
+      "libc": "glibc",
+      "rustTarget": "x86_64-unknown-linux-gnu",
+      "file": "tokengraph-lock.linux-x64.node",
+      "osFloor": "kernel-4.18-glibc-2.28",
+      "path": "linux-x64-gnu/tokengraph-lock.linux-x64.node",
+      "bytes": 445048,
+      "sha256": "baf1e40f3df862a5366752c741c8a989a8f9e900238c2e5a5a8a4161f6ef5dea"
+    },
+    {
+      "id": "win32-arm64",
+      "platform": "win32",
+      "arch": "arm64",
+      "libc": "none",
+      "rustTarget": "aarch64-pc-windows-msvc",
+      "file": "tokengraph-lock.win32-arm64.node",
+      "osFloor": "windows-10",
+      "path": "win32-arm64/tokengraph-lock.win32-arm64.node",
+      "bytes": 403456,
+      "sha256": "1cb2a48487f13a811d353e8707bfb6e8abb970e2ea76a1473395c836e38a3b27"
+    },
+    {
+      "id": "win32-x64",
+      "platform": "win32",
+      "arch": "x64",
+      "libc": "none",
+      "rustTarget": "x86_64-pc-windows-msvc",
+      "file": "tokengraph-lock.win32-x64.node",
+      "osFloor": "windows-10-server-2016",
+      "path": "win32-x64/tokengraph-lock.win32-x64.node",
+      "bytes": 430080,
+      "sha256": "8cfa18b742666e4db7053a07fe7314aedd1c4a5eea074942e140b6ecbe426035"
+    }
+  ]
+}

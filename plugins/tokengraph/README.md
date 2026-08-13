@@ -17,6 +17,14 @@ pnpm package:plugin -- --release --json
 
 `pnpm build` produces self-contained Node.js 22 entries at `dist/index.js` for MCP, `dist/typescript-worker.cjs` and `dist/polyglot-worker.js` for isolated bundled parsing, `dist/cli.js` for bounded saved-run capture, and `dist/hooks.js` for lifecycle hooks. Run `node ./dist/cli.js run -- <command> [args...]` to capture a redacted, bounded command result. `pnpm package:plugin` creates a standalone Codex/Claude marketplace directory and deterministic ZIP under the repository `artifacts/` directory. `pnpm package:plugin -- --release` regenerates the committed `release/tokengraph/` plugin.
 
+## Native lock runtime
+
+The installable plugin contains exactly six prebuilt native lock addons: Windows x64/arm64, glibc Linux x64/arm64, and macOS x64/arm64. Loading them requires no native compiler, runtime download, package installation, network lookup, sidecar, or JavaScript lock fallback. Package validation checks the selected addon's target, ABI, byte length, SHA-256, and locked dependency notices before it is staged in a private operating-system temporary directory.
+
+Before native locking is activated, stop every v0.23.1 TokenGraph MCP and CLI process. Activate one MCP server with `tokengraph_setup({ confirmNoLegacyProcesses: true })`; each lock-taking CLI invocation separately requires `--confirm-no-legacy-processes`. If an old runtime is started later, stop it and restart or reactivate v2. Mixed-runtime operation is unsupported. Doctor may report the read-only activation state but never grants activation.
+
+Managed lifecycle hooks remain permanently unactivated and project-read-only. Host attestation and plugin-data hook state authorize only strict lifecycle reads for the matching workspace; neither grants native-lock activation.
+
 Draft GitHub release notes are rendered by `scripts/render-release-notes.mjs` and validated by `scripts/validate-release-notes.mjs`; both use the canonical contract in `scripts/release-note-contract.mjs`. Do not add free-form historical context to that draft. Historical corrections remain dated, append-only entries in the root `CHANGELOG.md`.
 
 ## Workspace trust

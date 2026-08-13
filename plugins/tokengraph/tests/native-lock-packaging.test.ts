@@ -708,6 +708,19 @@ describe("native lock asset validation", () => {
     await expect(validateNativeLockAssets({ assetsDir: root, metadata })).rejects.toThrow(/link|allowlist|regular/i);
   });
 
+  it("rejects an executable addon mode even when bytes and manifest match", async () => {
+    const root = await temporaryDirectory("executable-mode");
+    await generateFixture(root);
+
+    await expect(validateNativeLockAssets({
+      assetsDir: root,
+      metadata: metadataForLicenses(LICENSES),
+      runtime: {
+        artifactMode: (target: NativeTarget) => target.id === "linux-x64-gnu" ? 0o755 : 0o644
+      }
+    })).rejects.toThrow(/mode|executable|permission/i);
+  });
+
   it("rejects a wrong-target binary even when its hash and byte length are regenerated", async () => {
     const root = await temporaryDirectory("wrong-target");
     const metadata = metadataForLicenses(LICENSES);

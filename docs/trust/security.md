@@ -6,6 +6,12 @@ It excludes secrets by default, respects `.gitignore`, and excludes dependency f
 
 TokenGraph does not guarantee correctness and does not replace code review.
 
+## Native lock boundary
+
+Release packages contain six prebuilt native lock addons and never download or compile code at runtime. Validation checks the exact target, ABI, byte length, SHA-256, binary format, build-path policy, and locked dependency notices before loading. The verified bytes are copied to a fresh private operating-system temporary directory and loaded without `node_modules`, a compiler, network access, a sidecar, or a JavaScript lock fallback.
+
+The kernel lock is authoritative only on a cooperative local filesystem. Network filesystems and active same-account path replacement are best effort and are not a distributed-lock or hostile-local-process security claim. Existing legacy lock files, malformed state, unsafe links, integrity mismatch, unsupported targets, and indeterminate cleanup fail closed.
+
 ## Workspace boundary
 
 TokenGraph never treats a caller-supplied `root` as the workspace trust boundary. It resolves the trusted workspace from the first available source in this order:

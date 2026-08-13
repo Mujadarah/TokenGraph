@@ -49,6 +49,8 @@ After installation:
 3. Reuse the exact task id. After ready setup, omit `root` when host resolution is stable or pass only setup's trusted root.
 4. End completed and verified work with compact `tokengraph_task_report({ taskId })`. Use verbose mode only for diagnostics and `pause` for unfinished work.
 
+Before the first native lock activation, stop every TokenGraph v0.23.1 MCP and CLI process and call `tokengraph_setup({ confirmNoLegacyProcesses: true })` in the newly started MCP server. If an old runtime starts later, stop it and restart or reactivate v2. Mixed-runtime operation is unsupported. Doctor/status reporting is read-only and never grants activation.
+
 A paused task id is terminal. Start a new task with `tokengraph_prepare_context` or a direct intent that omits `taskId`; Stop remains allowed for the paused task.
 
 If plugin changes are not visible, run `/reload-plugins`. If setup is blocked, follow the diagnostic response rather than retrying arbitrary roots.
@@ -58,5 +60,7 @@ If plugin changes are not visible, run `/reload-plugins`. If setup is blocked, f
 Claude Code auto-discovers `hooks/hooks.json`. Use `/hooks` to confirm TokenGraph's PostToolUse and Stop commands and their plugin source. The shared Node adapter uses `${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_PLUGIN_DATA}` and has no shell, jq, or Python dependency.
 
 The hook stores only a session hash, task id, trusted root, turn id, schema/version, and timestamp in plugin data for up to 30 days. It never reads the transcript or stores prompts and tool payloads. Normal Stop may request one exact report call or the exact canonical footer; when `stop_hook_active` is already true it warns and allows the stop to avoid a loop.
+
+The hook process stays permanently unactivated and project-read-only. Host attestation and plugin-data state permit only strict lifecycle reads for the matching workspace; they do not grant native-lock activation or confirm legacy shutdown.
 
 To temporarily disable all Claude Code hooks, set `"disableAllHooks": true` in the applicable settings file. Claude Code does not support disabling just one configured hook; disable the TokenGraph plugin if only its bundled hook must be removed. When hooks are disabled or unavailable, call `tokengraph_task_report` explicitly. User interrupts, StopFailure, and API failures are outside completion enforcement and must not be reported as completed work.

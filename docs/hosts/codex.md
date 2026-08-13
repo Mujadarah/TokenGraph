@@ -38,11 +38,15 @@ The session attestation is scoped to the installed plugin root and the exact tas
 
 Call `tokengraph_setup` first. A `blocked` result includes the missing or unsafe trust reason and recovery commands without reading project files. A `ready` result identifies the trusted source and root.
 
+For the native lock rollout, first stop every TokenGraph v0.23.1 MCP and CLI process, then call `tokengraph_setup({ confirmNoLegacyProcesses: true })` in the new MCP server. If any old runtime is started later, stop it and restart or reactivate v2 before another lock-taking operation. Mixed-runtime operation is unsupported. Doctor/status reporting is read-only and never grants activation.
+
 ## Lifecycle hook trust and control
 
 Codex auto-discovers TokenGraph's `hooks/hooks.json`, but installing or enabling a plugin does not trust its hooks. Review and trust the current definition before expecting automatic workspace attestation, PostToolUse task tracking, or Stop completion checks. Codex supplies `PLUGIN_ROOT`/`PLUGIN_DATA` and the Claude-compatible aliases used by the shared adapter.
 
 The workspace bridge stores only plugin/session hashes, trusted root, schema/version, and timestamp in the operating-system temporary directory for up to 24 hours. The task lifecycle pointer separately stores only a session hash, task id, trusted root, turn id, schema/version, and timestamp in plugin data for up to 30 days. Neither stores prompts, transcripts, or tool payloads. On a normal Stop the hook can request one exact pause-or-complete report call or the exact canonical footer. Its retry continuation fails open with a warning rather than looping.
+
+These managed hook processes are permanently unactivated and project-read-only. A matching host attestation or plugin-data pointer permits only the strict lifecycle read path; it does not grant native-lock activation or confirm that legacy processes were stopped.
 
 To disable hooks globally, set this in Codex `config.toml` and restart the task:
 

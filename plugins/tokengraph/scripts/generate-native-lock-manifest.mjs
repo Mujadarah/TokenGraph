@@ -188,7 +188,7 @@ export async function withRegularUnlinkedFileSnapshot(path, label, consume, opti
       throw new Error(`${label} identity changed before reading.`);
     }
     const bytes = await handle.readFile();
-    const result = await consume(bytes);
+    const result = await consume(bytes, opened);
     if (options.afterSnapshot) await options.afterSnapshot();
     const after = await lstat(path).catch(() => undefined);
     if (!after || !after.isFile() || after.isSymbolicLink() || after.nlink !== 1 ||

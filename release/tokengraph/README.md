@@ -2,7 +2,7 @@
 
 This folder is the installable TokenGraph 0.23.1 plugin for Codex and Claude Code users.
 
-It includes the self-contained Node.js 22 MCP runtime at `dist/index.js`, bundled parser workers at `dist/typescript-worker.cjs` and `dist/polyglot-worker.js`, the bounded command runner at `dist/cli.js`, the cross-host lifecycle adapter at `dist/hooks.js`, hook and host manifests, MCP configs, skills, package metadata, and Apache-2.0 license and notice files. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
+It includes the self-contained Node.js 22 MCP runtime at `dist/index.js`, bundled parser workers at `dist/typescript-worker.cjs` and `dist/polyglot-worker.js`, the bounded command runner at `dist/cli.js`, the cross-host lifecycle adapter at `dist/hooks.js`, six prebuilt native lock addons, hook and host manifests, MCP configs, skills, package metadata, and Apache-2.0 license and notice files. It requires no dependency installation, TypeScript build, native compiler, runtime download, API key, cloud index, or embeddings service.
 
 ## Install
 
@@ -44,6 +44,8 @@ node ./dist/cli.js run -- <command> [args...]
 The server is local-first. It indexes the selected workspace locally and stores project state under `.tokengraph/` in that workspace.
 
 TokenGraph stores project state under `.tokengraph/` inside the trusted workspace. Token savings are estimates.
+
+Native locking supports Windows x64/arm64, glibc Linux x64/arm64 with kernel 4.18 and glibc 2.28 or newer, and macOS x64/arm64 11 or newer. Linux musl and unlisted targets fail closed. Before activation, stop every v0.23.1 TokenGraph MCP and CLI process. Activate an MCP server only with `tokengraph_setup({ confirmNoLegacyProcesses: true })`, or a CLI invocation with `--confirm-no-legacy-processes`. If any old runtime starts later, stop it and restart/reactivate v2. Mixed-runtime operation is unsupported. Doctor reports activation and native integrity status but never grants activation.
 
 The default surface exposes eight compact tools; the opt-in full surface exposes 42. JSON-only successes return one serialized JSON text item, with project-map resource links as the documented exception. Wiki and memory changes use source-linked review-before-apply proposals.
 

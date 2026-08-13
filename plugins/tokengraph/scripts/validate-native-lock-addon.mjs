@@ -167,7 +167,11 @@ export async function validateNativeLockAssets({ assetsDir, metadata, loadCurren
     const target = TARGETS[index];
     const expected = manifest.artifacts[index];
     const artifactPath = resolve(resolvedAssets, target.id, target.file);
-    await withRegularUnlinkedFileSnapshot(artifactPath, `Native artifact ${target.id}`, (bytes) => {
+    await withRegularUnlinkedFileSnapshot(artifactPath, `Native artifact ${target.id}`, (bytes, opened) => {
+      const mode = runtime.artifactMode ? runtime.artifactMode(target, opened.mode & 0o777) : opened.mode & 0o777;
+      if (!Number.isInteger(mode) || (mode & 0o111) !== 0) {
+        throw new Error(`Native artifact ${target.id} must not be executable.`);
+      }
       const sha256 = createHash("sha256").update(bytes).digest("hex");
       if (expected.bytes !== bytes.length || expected.sha256 !== sha256) {
         throw new Error(`Native artifact ${target.id} failed byte-length or SHA-256 validation.`);
