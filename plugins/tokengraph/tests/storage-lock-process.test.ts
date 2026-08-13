@@ -17,7 +17,7 @@ interface ProbeRecord {
 }
 
 interface ProbeRequest {
-  operation: "hold" | "try" | "crash" | "release";
+  operation: "hold" | "try" | "native-try" | "crash" | "release";
   workspaceRoot: string;
   domain: LockDomain;
   key: string;
@@ -310,13 +310,13 @@ describe("native lock process integration", () => {
       const workspaceRoot = await temporaryRoot("tg-lock-process-");
       const coordinationRoot = await temporaryRoot("tg-lock-counter-");
       const runs = await Promise.all(Array.from({ length: 6 }, () => runProbe({
-        operation: "try",
+        operation: "native-try",
         workspaceRoot,
         domain: "workspace-state",
         key: "config.json",
         coordinationRoot,
         timeoutMs: 10_000,
-        holdMs: 25,
+        holdMs: 100,
         activate: true
       })));
       const records = runs.flatMap((run) => run.records);

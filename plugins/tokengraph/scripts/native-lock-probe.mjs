@@ -60,7 +60,7 @@ function validateRequest(request) {
     "after-lease-create", "after-lease-write", "after-lease-sync", "after-lease-parent-flush",
     "after-lease-rename", "after-lease-rename-parent-flush"
   ]);
-  if (!new Set(["hold", "try", "crash", "release"]).has(request.operation) ||
+  if (!new Set(["hold", "try", "native-try", "crash", "release"]).has(request.operation) ||
       typeof request.workspaceRoot !== "string" || !isAbsolute(request.workspaceRoot) || request.workspaceRoot.includes("\0") ||
       !DOMAINS.has(request.domain) || typeof request.key !== "string" || !SAFE_KEY.test(request.key) ||
       typeof request.coordinationRoot !== "string" || !isAbsolute(request.coordinationRoot) || request.coordinationRoot.includes("\0") ||
@@ -182,10 +182,11 @@ async function main() {
   if (!runtimeRootValue || !isAbsolute(runtimeRootValue) || runtimeRootValue.includes("\0")) fail("PROBE_RUNTIME_INVALID");
   const runtimeRoot = await realpath(runtimeRootValue);
   const moduleUrl = (name) => pathToFileURL(join(runtimeRoot, "dist", "core", `${name}.js`)).href;
-  const [{ canonicalPersistenceLock }, storage, activation] = await Promise.all([
+  const [{ canonicalPersistenceLock }, storage, activation, nativeProvider] = await Promise.all([
     import(moduleUrl("lockDomain")),
     import(moduleUrl("storage")),
-    import(moduleUrl("legacyRuntimeActivation"))
+    import(moduleUrl("legacyRuntimeActivation")),
+    import(moduleUrl("nativeLockProvider"))
   ]);
   const capability = request.activate
     ? activation.activateLegacyRuntimeShutdown({ confirmedNoLegacyTokenGraphProcesses: true })
@@ -230,7 +231,36 @@ async function main() {
     }
   };
   try {
-    if (request.exerciseKeyCount !== undefined) {
+    if (request.operation === "native-try") {
+      if (!request.activate) {
+        throw Object.assign(new Error("Native contention probe is not activated."), {
+          code: "LEGACY_RUNTIME_SHUTDOWN_UNCONFIRMED"
+        });
+      }
+      await mkdir(lock.domainRoot, { recursive: true, mode: 0o700 });
+      const addon = await nativeProvider.getNativeLockAddon();
+      const acquisitionDeadline = Date.now() + request.timeoutMs;
+      let handle;
+      for (;;) {
+        try {
+          handle = addon.tryAcquireAnchor(lock.anchorPath);
+          break;
+        } catch (error) {
+          if (errno(error) !== "LOCK_BUSY") throw error;
+          if (Date.now() >= acquisitionDeadline) {
+            throw Object.assign(new Error("Native contention probe timed out."), { code: "LOCK_TIMEOUT" });
+          }
+          await delay(10);
+        }
+      }
+      try {
+        await operation();
+      } finally {
+        handle.release();
+      }
+      await emit({ status: "released", owner: process.pid, maxOwners: acquiredMax });
+      return;
+    } else if (request.exerciseKeyCount !== undefined) {
       const domains = ["runs", "tasks", "artifacts"];
       for (let index = 0; index < request.exerciseKeyCount; index += domains.length) {
         await Promise.all(domains.map(async (domain, offset) => {
