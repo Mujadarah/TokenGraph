@@ -722,11 +722,19 @@ describe("native lock asset validation", () => {
     ["UTF-8 Windows profile", "win32-x64", Buffer.from("C:\\Users\\private-build-user\\.cargo\\registry\\source.rs\0")],
     ["UTF-8 Windows workflow", "win32-x64", Buffer.from("D:\\a\\TokenGraph\\TokenGraph\\native\\lock-addon\\src\\lib.rs\0")],
     ["UTF-8 UNC", "win32-arm64", Buffer.from("\\\\build-server\\share\\cargo\\registry\\source.rs\0")],
+    ["UTF-8 forward-slash UNC", "win32-x64", Buffer.from("//build-server/share/cargo/registry/source.rs\0")],
+    ["UTF-8 punctuation UNC", "win32-arm64", Buffer.from("\\\\build-server\\#share\\cargo\\registry\\source.rs\0")],
     ["UTF-8 extended UNC", "win32-arm64", Buffer.from("\\\\?\\UNC\\build-server\\share\\cargo\\registry\\source.rs\0")],
+    ["UTF-8 punctuation extended UNC", "win32-x64", Buffer.from("\\\\?\\UNC\\build-server\\#share\\cargo\\registry\\source.rs\0")],
+    ["UTF-8 drive root", "win32-x64", Buffer.from("C:\\\0")],
     ["UTF-16LE Windows profile", "win32-x64", Buffer.from("C:\\Users\\private-build-user\\.cargo\\registry\\source.rs\0", "utf16le")],
     ["UTF-16LE Windows workflow", "win32-x64", Buffer.from("D:\\a\\TokenGraph\\TokenGraph\\native\\lock-addon\\src\\lib.rs\0", "utf16le")],
+    ["UTF-16LE forward-slash UNC", "win32-arm64", Buffer.from("//build-server/#share/cargo/registry/source.rs\0", "utf16le")],
+    ["UTF-16LE drive root", "win32-x64", Buffer.from("C:\\\0", "utf16le")],
     ["UTF-8 macOS profile", "darwin-x64", Buffer.from("/Users/private-build-user/.cargo/registry/source.rs\0")],
-    ["UTF-8 Linux temporary root", "linux-x64-gnu", Buffer.from("/tmp/private-cargo-home/registry/source.rs\0")]
+    ["UTF-8 Linux temporary root", "linux-x64-gnu", Buffer.from("/tmp/private-cargo-home/registry/source.rs\0")],
+    ["UTF-8 Linux temporary root only", "linux-arm64-gnu", Buffer.from("/tmp/\0")],
+    ["UTF-16LE Linux temporary root only", "linux-x64-gnu", Buffer.from("/tmp/\0", "utf16le")]
   ])("rejects a machine-local %s path in %s even when its hash and byte length are regenerated", async (_kind, targetId, embeddedPath) => {
     const root = await temporaryDirectory("machine-path");
     const metadata = metadataForLicenses(LICENSES);

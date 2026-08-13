@@ -90,10 +90,10 @@ function assertBinaryMagic(target, bytes) {
 }
 
 function assertNoMachineLocalPath(bytes) {
-  const windowsDrivePath = /[A-Za-z]:[\\/][^\0\r\n\t ]+/u;
-  const windowsUncPath = /\\\\(?![?.]\\)[\p{L}\p{N}._$ -]+\\[\p{L}\p{N}._$ -]+/u;
-  const windowsExtendedUncPath = /\\\\\?\\UNC\\[\p{L}\p{N}._$ -]+\\[\p{L}\p{N}._$ -]+/iu;
-  const posixBuildPath = /\/(?:Users|home|root|tmp|workspace|__w)\/[^\0\r\n\t ]+/u;
+  const windowsDrivePath = /[A-Za-z]:[\\/]/u;
+  const windowsUncPath = /(?:\\\\|\/\/)(?![?.][\\/])[^\\/\u0000-\u001f\uFFFD]+[\\/][^\\/\u0000-\u001f\uFFFD]+/u;
+  const windowsExtendedUncPath = /\\\\\?\\UNC\\[^\\/\u0000-\u001f\uFFFD]+[\\/][^\\/\u0000-\u001f\uFFFD]+/iu;
+  const posixBuildPath = /\/(?:Users|home|root|tmp|workspace|__w)\//u;
   const searchableRepresentations = [
     bytes.toString("utf8"),
     bytes.toString("utf16le"),
