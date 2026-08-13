@@ -1778,9 +1778,18 @@ Download with authenticated GitHub CLI into a newly created worktree-local stagi
 
 Run: `pnpm native:validate -- --assets assets/native-lock --load-current`
 
-Run: `pnpm vitest run tests/native-lock-addon.test.ts tests/native-lock-packaging.test.ts tests/storage-lock-process.test.ts --reporter=verbose`
+Run on the Windows verification host (see the decision-complete amendment in
+`docs/plans/2026-08-13-task9-contained-native-source-verification-decision.md`):
 
-Expected: PASS using the committed `win32-x64` source asset rather than a test override.
+```powershell
+$env:TOKENGRAPH_NATIVE_CURRENT_ASSET = (Resolve-Path "assets/native-lock/win32-x64/tokengraph-lock.win32-x64.node").Path
+pnpm vitest run tests/native-lock-addon.test.ts tests/native-lock-packaging.test.ts --reporter=verbose
+pnpm test:activated tests/storage-lock-process.test.ts --reporter=verbose
+Remove-Item Env:\TOKENGRAPH_NATIVE_CURRENT_ASSET
+```
+
+Expected: PASS using the committed `win32-x64` source asset rather than fresh
+harness build output.
 
 - [ ] **Step 7: Commit**
 
