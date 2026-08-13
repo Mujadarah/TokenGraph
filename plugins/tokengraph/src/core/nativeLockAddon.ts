@@ -84,6 +84,7 @@ export interface NativeLockStaleContext {
 }
 
 export interface NativeLockStagingIo {
+  readonly makeReadOnly?: (path: string, mode: number) => Promise<void>;
   readonly chmod?: (path: string, mode: number) => Promise<void>;
   readonly unlink?: (path: string) => Promise<void>;
   readonly rmdir?: (path: string) => Promise<void>;
@@ -128,6 +129,8 @@ const ADDON_MAX_BYTES = 64 * 1024 * 1024;
 const MARKER_MAX_BYTES = 4 * 1024;
 const STAGING_PREFIX = "tokengraph-native-addon-v1-";
 const STALE_SWEEP_LIMIT = 32;
+const STAGING_CHMOD_ATTEMPTS = 3;
+const STAGING_CHMOD_RETRY_MS = 25;
 const MANIFEST_KEYS = ["schemaVersion", "addonAbiVersion", "nodeApiVersion", "rustToolchain", "artifacts"] as const;
 const ARTIFACT_KEYS = ["id", "platform", "arch", "libc", "rustTarget", "file", "osFloor", "path", "bytes", "sha256"] as const;
 const OWNER_KEYS = ["schemaVersion", "pid", "targetId", "sha256", "addonFile"] as const;
@@ -461,7 +464,12 @@ function validatePrivateMode(stats: BigIntStats, expected: bigint): void {
   if (process.platform !== "win32" && (stats.mode & 0o777n) !== expected) fail("ADDON_INTEGRITY");
 }
 
-async function writeExclusiveSynced(path: string, bytes: Buffer): Promise<void> {
+async function writeExclusiveSynced(
+  path: string,
+  bytes: Buffer,
+  platform: NodeJS.Platform,
+  makeReadOnly: (path: string, mode: number) => Promise<void>
+): Promise<void> {
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
     handle = await open(path, "wx", 0o600);
@@ -478,10 +486,16 @@ async function writeExclusiveSynced(path: string, bytes: Buffer): Promise<void> 
       }
     }
   }
-  try {
-    await chmod(path, 0o400);
-  } catch {
-    fail("ADDON_INTEGRITY");
+  for (let attempt = 0; attempt < STAGING_CHMOD_ATTEMPTS; attempt += 1) {
+    try {
+      await makeReadOnly(path, 0o400);
+      return;
+    } catch (error) {
+      const transientWindowsFailure = platform === "win32" &&
+        ["EPERM", "EACCES", "EBUSY"].includes(errnoCode(error) ?? "");
+      if (!transientWindowsFailure || attempt + 1 >= STAGING_CHMOD_ATTEMPTS) fail("ADDON_INTEGRITY");
+      await new Promise<void>((resolveRetry) => setTimeout(resolveRetry, STAGING_CHMOD_RETRY_MS));
+    }
   }
 }
 
@@ -662,8 +676,9 @@ async function createStagingLifecycle(
       rootIdentity,
       markerBytes
     };
-    await writeExclusiveSynced(lifecycle.markerPath, markerBytes);
-    await writeExclusiveSynced(lifecycle.stagedPath, sourceBytes);
+    const makeReadOnly = runtime.stagingIo?.makeReadOnly ?? chmod;
+    await writeExclusiveSynced(lifecycle.markerPath, markerBytes, target.platform, makeReadOnly);
+    await writeExclusiveSynced(lifecycle.stagedPath, sourceBytes, target.platform, makeReadOnly);
     const staged = await verifyStagingLifecycle(lifecycle, sourceBytes);
     return { lifecycle, staged };
   } catch (error) {

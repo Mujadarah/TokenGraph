@@ -442,6 +442,47 @@ describe("private native addon staging and provenance", () => {
     expect(third).toBe(first);
   });
 
+  it("retries a transient Windows staging chmod while still requiring read-only files", async () => {
+    const fixture = await makeFixture({ label: "transient-staging-chmod" });
+    let chmodCalls = 0;
+    const stagingIo = {
+      makeReadOnly: async (path: string, mode: number) => {
+        chmodCalls += 1;
+        if (chmodCalls === 1) {
+          throw Object.assign(new Error("transient staging chmod"), { code: "EPERM" });
+        }
+        await chmod(path, mode);
+      }
+    } as NativeLockAddonRuntime["stagingIo"];
+
+    await expect(loadNativeLockAddon(fakeRuntime(fixture, {
+      loadModule: () => validRawAddon(),
+      stagingIo
+    }))).resolves.toMatchObject({ targetId: "win32-x64" });
+    expect(chmodCalls).toBe(3);
+  });
+
+  it.each([
+    ["persistent Windows-transient", "EPERM", 3],
+    ["nontransient", "EIO", 1]
+  ])("fails closed after a %s staging chmod error", async (_label, code, expectedCalls) => {
+    const fixture = await makeFixture({ label: `failed-staging-chmod-${code.toLowerCase()}` });
+    let chmodCalls = 0;
+    const stagingIo = {
+      makeReadOnly: async () => {
+        chmodCalls += 1;
+        throw Object.assign(new Error("staging chmod failed"), { code });
+      }
+    } as NativeLockAddonRuntime["stagingIo"];
+
+    await expectNativeFailure(loadNativeLockAddon(fakeRuntime(fixture, {
+      loadModule: () => validRawAddon(),
+      stagingIo
+    })), "ADDON_INTEGRITY", [fixture.root]);
+    expect(chmodCalls).toBe(expectedCalls);
+    expect(await readdir(fixture.stagingBase)).toEqual([]);
+  });
+
   it("fails a concurrent different identity while the original staged load remains valid", async () => {
     const fixture = await makeFixture({ label: "different-inflight" });
     const reachedStage = deferred();
