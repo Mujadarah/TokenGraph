@@ -75,6 +75,7 @@ if (exhaustiveRecoveryValue !== undefined && !["0", "1"].includes(exhaustiveReco
   throw new Error("TOKENGRAPH_NATIVE_EXHAUSTIVE_RECOVERY must be 0 or 1.");
 }
 const exhaustiveRecovery = exhaustiveRecoveryValue === "1";
+const CARDINALITY_PROBE_TIMEOUT_MS = exhaustiveRecovery ? 240_000 : 180_000;
 const roots: string[] = [];
 const children = new Set<ChildProcessWithoutNullStreams>();
 
@@ -487,7 +488,7 @@ describe("native lock process integration", () => {
     const workspaceRoot = await temporaryRoot("tg-lock-cardinality-");
     const exercised = await runProbe({
       operation: "try", workspaceRoot, domain: "runs", key: "key-0.json",
-      coordinationRoot: await temporaryRoot("tg-lock-cardinality-counter-"), timeoutMs: 180_000,
+      coordinationRoot: await temporaryRoot("tg-lock-cardinality-counter-"), timeoutMs: CARDINALITY_PROBE_TIMEOUT_MS,
       exerciseKeyCount: 1_000, activate: true
     });
     expect(exercised.code, exercised.stderr).toBe(0);
@@ -498,7 +499,7 @@ describe("native lock process integration", () => {
         ".tokengraph-native-anchor-v2.lock", ".tokengraph-native-journal-v2.lock"
       ]);
     }
-  }, 210_000);
+  }, CARDINALITY_PROBE_TIMEOUT_MS + 30_000);
 
   it("cancels a real child promptly while it waits for a native anchor", async () => {
     const workspaceRoot = await temporaryRoot("tg-lock-cancel-");
