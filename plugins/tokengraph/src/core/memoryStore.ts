@@ -19,9 +19,16 @@ interface MemoryRecallOptions extends MemoryListOptions {
 
 const DEFAULT_SOURCE = "manual";
 const CURRENT_MEMORY_SCHEMA_VERSION = 1;
+const memoryStoreWriteChains = new Map<string, Promise<void>>();
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function utcDay(timestamp: string | undefined): string | undefined {
+  if (!timestamp) return undefined;
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString().slice(0, 10);
 }
 
 function unique(values: string[] | undefined): string[] {
@@ -150,8 +157,6 @@ function filterByStatus(memories: MemoryEntry[], options: MemoryListOptions): Me
 }
 
 export class MemoryStore {
-  private static readonly writeChains = new Map<string, Promise<void>>();
-
   constructor(
     private readonly filePath: string,
     private readonly lock: CanonicalPersistenceLock
@@ -312,16 +317,17 @@ export class MemoryStore {
 
   private async markUsed(ids: string[]): Promise<void> {
     if (!ids.length) return;
+    const idsToMark = new Set(ids);
     await this.enqueueWrite(async () => {
       const memories = await this.readAll(true);
       const timestamp = nowIso();
+      const today = utcDay(timestamp);
       let changed = false;
       for (const memory of memories) {
-        if (ids.includes(memory.id)) {
-          memory.lastUsedAt = timestamp;
-          memory.updatedAt = timestamp;
-          changed = true;
-        }
+        if (!idsToMark.has(memory.id) || utcDay(memory.lastUsedAt) === today) continue;
+        memory.lastUsedAt = timestamp;
+        memory.updatedAt = timestamp;
+        changed = true;
       }
       if (changed) {
         await this.writeAtomic(memories);
@@ -369,18 +375,17 @@ export class MemoryStore {
 
   private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
     const key = this.lock.compatibilityPath;
-    const previous = MemoryStore.writeChains.get(key) ?? Promise.resolve();
+    const previous = memoryStoreWriteChains.get(key) ?? Promise.resolve();
     const current = previous.then(
       () => withFileLock(this.lock, operation),
       () => withFileLock(this.lock, operation)
     );
-    MemoryStore.writeChains.set(
-      key,
-      current.then(
-        () => undefined,
-        () => undefined
-      )
-    );
+    let settled: Promise<void>;
+    const cleanUp = (): void => {
+      if (memoryStoreWriteChains.get(key) === settled) memoryStoreWriteChains.delete(key);
+    };
+    settled = current.then(cleanUp, cleanUp);
+    memoryStoreWriteChains.set(key, settled);
     return current;
   }
 
@@ -401,4 +406,9 @@ export class MemoryStore {
       }
     }
   }
+}
+
+/** @internal Test-only diagnostic; not part of the public memory-store contract. */
+export function __getMemoryStoreWriteQueueSizeForTests(): number {
+  return memoryStoreWriteChains.size;
 }
