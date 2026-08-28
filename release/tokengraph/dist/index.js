@@ -27606,8 +27606,14 @@ import { readFile as readFile13, rename as rename5 } from "node:fs/promises";
 init_storage();
 var DEFAULT_SOURCE = "manual";
 var CURRENT_MEMORY_SCHEMA_VERSION = 1;
+var memoryStoreWriteChains = /* @__PURE__ */ new Map();
 function nowIso2() {
   return (/* @__PURE__ */ new Date()).toISOString();
+}
+function utcDay(timestamp) {
+  if (!timestamp) return void 0;
+  const date4 = new Date(timestamp);
+  return Number.isNaN(date4.getTime()) ? void 0 : date4.toISOString().slice(0, 10);
 }
 function unique4(values) {
   return Array.from(new Set((values ?? []).filter((value) => typeof value === "string" && value.trim().length > 0).map((value) => value.trim())));
@@ -27719,14 +27725,13 @@ function filterByStatus(memories, options) {
     return true;
   });
 }
-var MemoryStore = class _MemoryStore {
+var MemoryStore = class {
   constructor(filePath, lock) {
     this.filePath = filePath;
     this.lock = lock;
   }
   filePath;
   lock;
-  static writeChains = /* @__PURE__ */ new Map();
   async list(options = {}) {
     return filterByStatus(await this.readAll(false), options);
   }
@@ -27844,16 +27849,17 @@ var MemoryStore = class _MemoryStore {
   }
   async markUsed(ids) {
     if (!ids.length) return;
+    const idsToMark = new Set(ids);
     await this.enqueueWrite(async () => {
       const memories = await this.readAll(true);
       const timestamp = nowIso2();
+      const today = utcDay(timestamp);
       let changed = false;
       for (const memory of memories) {
-        if (ids.includes(memory.id)) {
-          memory.lastUsedAt = timestamp;
-          memory.updatedAt = timestamp;
-          changed = true;
-        }
+        if (!idsToMark.has(memory.id) || utcDay(memory.lastUsedAt) === today) continue;
+        memory.lastUsedAt = timestamp;
+        memory.updatedAt = timestamp;
+        changed = true;
       }
       if (changed) {
         await this.writeAtomic(memories);
@@ -27894,18 +27900,17 @@ var MemoryStore = class _MemoryStore {
   }
   async enqueueWrite(operation) {
     const key = this.lock.compatibilityPath;
-    const previous = _MemoryStore.writeChains.get(key) ?? Promise.resolve();
+    const previous = memoryStoreWriteChains.get(key) ?? Promise.resolve();
     const current = previous.then(
       () => withFileLock(this.lock, operation),
       () => withFileLock(this.lock, operation)
     );
-    _MemoryStore.writeChains.set(
-      key,
-      current.then(
-        () => void 0,
-        () => void 0
-      )
-    );
+    let settled;
+    const cleanUp = () => {
+      if (memoryStoreWriteChains.get(key) === settled) memoryStoreWriteChains.delete(key);
+    };
+    settled = current.then(cleanUp, cleanUp);
+    memoryStoreWriteChains.set(key, settled);
     return current;
   }
   async writeAtomic(memories) {
