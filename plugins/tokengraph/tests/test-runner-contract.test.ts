@@ -273,9 +273,9 @@ describe("real native test runner contract", () => {
     await writeFile(specPath, JSON.stringify({
       schemaVersion: 1,
       exe: process.execPath,
-      argv: [childPath, outputPath, "", "space value", 'quote"value', "trail\\", "λ"],
+      argv: [childPath, outputPath, "", "space value", 'quote"value', "trail\\", "\u03bb"],
       cwd: root,
-      env: { ...process.env, TOKENGRAPH_UNICODE_ROUNDTRIP: "zăpadă" },
+      env: { ...process.env, TOKENGRAPH_UNICODE_ROUNDTRIP: "z\u0103pad\u0103" },
       timeoutMs: 30_000,
       statusPath
     }));
@@ -286,8 +286,8 @@ describe("real native test runner contract", () => {
     ], { cwd: process.cwd(), windowsHide: true });
     expect(result.stderr).toBe("");
     expect(JSON.parse(await readFile(outputPath, "utf8"))).toEqual({
-      argv: ["", "space value", 'quote"value', "trail\\", "λ"],
-      value: "zăpadă"
+      argv: ["", "space value", 'quote"value', "trail\\", "\u03bb"],
+      value: "z\u0103pad\u0103"
     });
     const status = JSON.parse(await readFile(statusPath, "utf8")) as Record<string, unknown>;
     expect(Object.keys(status).sort()).toEqual([

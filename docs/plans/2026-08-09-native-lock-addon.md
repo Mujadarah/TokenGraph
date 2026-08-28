@@ -1744,9 +1744,9 @@ Each matrix job checks out, installs Node 22 and Rust 1.97.1, builds one exact t
 
 On every Windows, Linux, and macOS matrix entry, kill a real child after every
 generation-zero bootstrap create, write, file sync, rename, and parent flush;
-for every later journal generation—intent, `pendingBarrier`, barrier identity,
+for every later journal generation: intent, `pendingBarrier`, barrier identity,
 pending lease create, pending lease replace, temporary identity, lease-identity
-finalization, heartbeat, cleanup, and idle—after journal-temporary create,
+finalization, heartbeat, cleanup, and idle; after journal-temporary create,
 write, file sync, rename, and parent flush; after durable `pendingBarrier`;
 after `mkdir`; after barrier-identity commit; after stale/dead barrier adoption
 commits its identity but before pending lease create; after lease-created

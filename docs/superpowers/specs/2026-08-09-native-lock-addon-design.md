@@ -1381,9 +1381,9 @@ both lock implementations pass their crash and contention probes.
 
 Every real target kills a child at every generation-zero bootstrap create,
 write, file-sync, rename, and parent-flush boundary. For every later journal
-generation—intent, `pendingBarrier`, barrier identity, pending lease create,
+generation: intent, `pendingBarrier`, barrier identity, pending lease create,
 pending lease replace, temporary identity, lease-identity finalization,
-heartbeat, cleanup, and idle—it kills after journal-temporary create, write,
+heartbeat, cleanup, and idle; it kills after journal-temporary create, write,
 file sync, rename, and parent flush. It additionally kills after durable
 `pendingBarrier`, after `mkdir`, after stale/dead barrier adoption and its
 identity commit before pending lease create, after the normal barrier-identity

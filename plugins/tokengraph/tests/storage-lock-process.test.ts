@@ -743,7 +743,7 @@ describe("native lock process integration", () => {
     process.on("unhandledRejection", onUnhandled);
     try {
       probe.child.kill = (() => false) as typeof probe.child.kill;
-      const bounded = appendBoundedOutput("x".repeat(CHILD_OUTPUT_LIMIT - 1), "€payload", probe.child);
+      const bounded = appendBoundedOutput("x".repeat(CHILD_OUTPUT_LIMIT - 1), "\u20acpayload", probe.child);
       expect(Buffer.byteLength(bounded)).toBeLessThanOrEqual(CHILD_OUTPUT_LIMIT);
       const startedAt = Date.now();
       probe.child.emit("error", new Error("Forced ambiguous child wait failure."));
