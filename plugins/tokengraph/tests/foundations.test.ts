@@ -198,7 +198,7 @@ describe("repository identity and storage foundations", () => {
     expect(usage.bytes).toBe(10);
   });
 
-  it("accounts for storage classes, cleans cache, and refuses durable class overflow", async () => {
+  it("accounts for storage classes, preserves index evidence, and refuses class overflow", async () => {
     const root = await makeRoot();
     await mkdir(join(root, ".tokengraph", "runs"), { recursive: true });
     await mkdir(join(root, ".tokengraph", "wiki"), { recursive: true });
@@ -215,16 +215,14 @@ describe("repository identity and storage foundations", () => {
       vault: { bytes: 5 },
       durable: { bytes: 7 }
     });
-    const report = await enforceStorageClassQuotas(root, {
+    await expect(enforceStorageClassQuotas(root, {
       maxBytes: 1024,
       runsMaxBytes: 1024,
       cacheMaxBytes: 1,
       vaultMaxBytes: 1024,
       durableMaxBytes: 1024
-    });
-    expect(report.cleaned).toEqual(["cache"]);
-    expect(report.usage.cache.bytes).toBe(0);
-    await expect(access(join(root, ".tokengraph", "index.json"))).rejects.toThrow();
+    })).rejects.toThrow(/cache.*quota/i);
+    await expect(access(join(root, ".tokengraph", "index.json"))).resolves.toBeUndefined();
     await expect(access(join(root, ".tokengraph", "memory.json"))).resolves.toBeUndefined();
 
     await expect(enforceStorageClassQuotas(root, {

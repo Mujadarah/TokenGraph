@@ -27,6 +27,7 @@ import {
   clearProjectState,
   configPath,
   getWikiStatus,
+  indexManifestPath,
   indexPath,
   loadProjectIndex,
   loadProjectWiki,
@@ -983,7 +984,7 @@ describe("indexProject", () => {
     const second = await indexProject(root);
 
     expect(first.schemaVersion).toBe(CURRENT_INDEX_SCHEMA_VERSION);
-    expect(CURRENT_INDEX_SCHEMA_VERSION).toBe(4);
+    expect(CURRENT_INDEX_SCHEMA_VERSION).toBe(5);
     expect(first.retrievalSignals).toEqual({ source: "unavailable", historyDepth: 50, fileCommitDistance: {} });
     expect(first.scanMetadata?.files["src/patientSummary.ts"]).toMatchObject({ path: "src/patientSummary.ts" });
     expect(first.fingerprint).toMatch(/^[a-f0-9]{64}$/);
@@ -1319,6 +1320,7 @@ describe("index status and reset", () => {
     await clearProjectIndex(root, maintenanceConfirmation);
 
     await expect(access(indexPath(root))).rejects.toThrow();
+    await expect(access(indexManifestPath(root))).rejects.toThrow();
     await expect(access(memoryPath(root))).resolves.toBeUndefined();
   });
 
@@ -1640,6 +1642,7 @@ describe("project wiki", () => {
     await clearProjectIndex(root, maintenanceConfirmation);
 
     await expect(access(indexPath(root))).rejects.toThrow();
+    await expect(access(indexManifestPath(root))).rejects.toThrow();
     await expect(readdir(wikiDir(root))).resolves.toEqual([
       ".tokengraph-native-anchor-v2.lock",
       ".tokengraph-native-journal-v2.lock"

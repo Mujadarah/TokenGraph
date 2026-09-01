@@ -1,7 +1,7 @@
 # Phase 5 Windows reader atomicity decision
 
 Date: 2026-08-28
-Status: STOPPED pending approval of the revised active-index read protocol
+Status: APPROVED by the user on 2026-09-01 for implementation
 
 ## Observed boundary
 
@@ -105,9 +105,9 @@ The direct active-file open-reader test is retained as the proving RED boundary
 and must not be weakened or skipped on Windows. Its GREEN replacement is the
 manifest protocol above, not a weaker active-file rename.
 
-## Stop condition
+## Approval record
 
-Do not implement, merge, package, or publish Phase 5 until this protocol is
-approved as the replacement for direct `index.json` promotion. The current
-Phase 5 branch contains only RED tests and this decision note; it is not
-merge-ready.
+The user approved continuing the plan on 2026-09-01. This protocol replaces
+direct `index.json` promotion for Phase 5. Verification and merge readiness
+remain separate gates; approval of the design is not evidence that the
+implementation has passed them.

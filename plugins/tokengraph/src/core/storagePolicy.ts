@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, readFile, readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { repositoryStateDirectory } from "./repositoryIdentity.js";
-import { runsDir, stateDir, vaultDir, wikiDir } from "./persistence.js";
+import { indexManifestPath, isIndexGenerationArtifactName, readActiveIndexGenerationName, runsDir, stateDir, vaultDir, wikiDir } from "./persistence.js";
 import {
   withAutomaticMaintenance,
   withDestructiveMaintenance,
@@ -117,10 +117,22 @@ export async function storageUsage(root: string): Promise<StorageUsage> {
 export async function storageClassUsage(root: string): Promise<StorageClassUsage> {
   const repository = repositoryStateDirectory(root);
   const domainRoots = domainRootSet(root);
+  const state = stateDir(root);
+  const stateEntries = await readdir(state).catch((error: unknown) =>
+    (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : Promise.reject(error)
+  );
+  const generationArtifacts = stateEntries.filter(isIndexGenerationArtifactName).map((entry) => join(state, entry));
   const [total, runs, cache, vault] = await Promise.all([
     storageUsage(root),
     usage(runsDir(root), domainRoots),
-    usageMany([join(stateDir(root), "index.json"), wikiDir(root), join(repository, "index.json"), join(repository, "artifacts")], domainRoots),
+    usageMany([
+      join(state, "index.json"),
+      indexManifestPath(root),
+      ...generationArtifacts,
+      wikiDir(root),
+      join(repository, "index.json"),
+      join(repository, "artifacts")
+    ], domainRoots),
     usage(vaultDir(root), domainRoots)
   ]);
   return {
@@ -194,12 +206,21 @@ async function purgeStorageClassUnlocked(
 ): Promise<PurgeStorageResult> {
   const targets: Array<{ target: DestructiveMaintenanceTarget; label: string }> = [];
   if (storageClass === "runs" || storageClass === "derived") targets.push({ target: { domain: "runs" }, label: ".tokengraph/runs" });
-  if (storageClass === "cache" || storageClass === "derived") targets.push(
-    { target: { domain: "workspace-state", relativePath: "index.json" }, label: ".tokengraph/index.json" },
-    { target: { domain: "wiki" }, label: ".tokengraph/wiki" },
-    { target: { domain: "repository-state", relativePath: "index.json" }, label: "repository/index.json" },
-    { target: { domain: "artifacts" }, label: "repository/artifacts" }
-  );
+  if (storageClass === "cache" || storageClass === "derived") {
+    const [activeGeneration, stateEntries] = await Promise.all([
+      readActiveIndexGenerationName(root),
+      readdir(stateDir(root)).catch((error: unknown) =>
+        (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : Promise.reject(error)
+      )
+    ]);
+    targets.push(
+      ...stateEntries
+        .filter((entry) => isIndexGenerationArtifactName(entry) && entry !== activeGeneration)
+        .map((entry) => ({ target: { domain: "workspace-state" as const, relativePath: entry }, label: `.tokengraph/${entry}` })),
+      { target: { domain: "wiki" }, label: ".tokengraph/wiki" },
+      { target: { domain: "artifacts" }, label: "repository/artifacts" }
+    );
+  }
   if (storageClass === "outcomes" || storageClass === "derived") targets.push(...await outcomeTargets(root));
   if (storageClass === "derived") targets.push({ target: { domain: "vault" }, label: ".tokengraph/vault" });
   const removedPaths = await context.remove(targets.map(({ target }) => target));
@@ -255,7 +276,7 @@ export async function assertStorageWriteAllowed(root: string, storageClass: Stor
   if (storageClass === "cache" && projectedClassBytes > quotas.cacheMaxBytes && report.usage.cache.bytes > 0) {
     await purgeStorageClassAutomatically(root, "cache");
     report = { usage: await storageClassUsage(root), cleaned: [...new Set([...report.cleaned, "cache" as const])] };
-    projectedClassBytes = incomingBytes;
+    projectedClassBytes = report.usage.cache.bytes + incomingBytes;
   }
   const maximum = classQuota(quotas, storageClass);
   if (projectedClassBytes > maximum) throw quotaExceededError(storageClass, projectedClassBytes, maximum);
@@ -282,6 +303,22 @@ export async function assertStorageReplacementAllowed(root: string, storageClass
   }
   if (projectedTotal > quotas.maxBytes) throw new Error(`TokenGraph total storage quota would be exceeded by the replacement (${projectedTotal}/${quotas.maxBytes} bytes); explicitly purge storage or raise storage.maxBytes.`);
   return report;
+}
+
+export async function assertIndexGenerationWriteAllowed(root: string, generationBytes: number, quotas: StorageClassQuotas): Promise<void> {
+  if (!Number.isInteger(generationBytes) || generationBytes < 0) throw new Error("Index generation bytes must be a non-negative integer.");
+  assertClassQuotas(quotas);
+  const current = await storageClassUsage(root);
+  for (const storageClass of ["runs", "vault", "durable"] as const) {
+    const maximum = classQuota(quotas, storageClass);
+    if (current[storageClass].bytes > maximum) throw quotaExceededError(storageClass, current[storageClass].bytes, maximum);
+  }
+  const projectedCache = current.cache.bytes + generationBytes;
+  if (projectedCache > quotas.cacheMaxBytes) throw quotaExceededError("cache", projectedCache, quotas.cacheMaxBytes);
+  const projectedTotal = current.total.bytes + generationBytes;
+  if (projectedTotal > quotas.maxBytes) {
+    throw new Error(`TokenGraph total storage quota would be exceeded by the staged index generation (${projectedTotal}/${quotas.maxBytes} bytes); preserving the active publication.`);
+  }
 }
 
 export async function hardenStoragePermissions(root: string): Promise<void> {

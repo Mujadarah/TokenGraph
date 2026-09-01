@@ -205,8 +205,8 @@ describe("tokengraph run CLI", () => {
       const purge = await execFileAsync(process.execPath, [
         externalCliEntry, "purge", "--root", root, "--class", "cache", "--confirm-no-legacy-processes"
       ], cliOptions);
-      expect(JSON.parse(purge.stdout)).toMatchObject({ class: "cache", removed: expect.arrayContaining([".tokengraph/index.json", ".tokengraph/wiki"]) });
-      await expect(access(join(root, ".tokengraph", "index.json"))).rejects.toThrow();
+      expect(JSON.parse(purge.stdout)).toMatchObject({ class: "cache", removed: expect.arrayContaining([".tokengraph/wiki"]) });
+      await expect(access(join(root, ".tokengraph", "index.json"))).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

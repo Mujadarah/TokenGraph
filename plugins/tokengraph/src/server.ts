@@ -453,6 +453,7 @@ function projectIndexOptions(
       maxTsconfigChain: config.parser.maxTsconfigChain,
       maxAliases: config.parser.maxAliases
     },
+    storageQuotas: config.storage,
     // B7 parsing is a project-local capability. Routing promotion remains a
     // separate, shadow-only control plane and must not gate indexing.
     polyglotEnabled: config.parser.polyglotEnabled
@@ -491,7 +492,9 @@ export async function refreshProjectIndex(
         parsedFiles: [] as string[]
       };
   if (!existing) result.parsedFiles = result.index.files.map((file) => file.path);
-  await saveProjectIndex(root, result.index);
+  await saveProjectIndex(root, result.index, {
+    ...(options.storageQuotas ? { storageQuotas: options.storageQuotas } : {})
+  });
   return result;
 }
 

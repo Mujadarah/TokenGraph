@@ -296,6 +296,7 @@ export interface SqlGraph {
 export interface ProjectIndex extends CodeGraph {
   schemaVersion?: number;
   repositoryIdentity?: RepositoryIdentity;
+  generation?: IndexGenerationMetadata;
   scannedAt: string;
   fingerprint: string;
   scanSignature?: string;
@@ -306,6 +307,14 @@ export interface ProjectIndex extends CodeGraph {
   configuration?: ConfigurationEvidence[];
   unsupportedLanguageCounts?: Record<string, number>;
   retrievalSignals?: RetrievalSignals;
+}
+
+export interface IndexGenerationMetadata {
+  id: string;
+  createdAt: string;
+  sourceScanSignature: string;
+  intendedFileCount: number;
+  validatedContentSetHash: string;
 }
 
 export interface RetrievalSignals {
