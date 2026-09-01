@@ -53,6 +53,7 @@ describe("transactional index generations", () => {
       createdAt: index.scannedAt,
       sourceScanSignature: index.scanSignature,
       intendedFileCount: 1,
+      terminalExclusionsHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       validatedContentSetHash: expect.stringMatching(/^[a-f0-9]{64}$/)
     });
   });
@@ -143,28 +144,67 @@ describe("transactional index generations", () => {
     persisted.generation.validatedContentSetHash = "0".repeat(64);
     await writeFile(generationPath, serialized(persisted));
 
-    await expect(loadProjectIndex(root)).resolves.toBeUndefined();
+    await expect(loadProjectIndex(root)).rejects.toMatchObject({ code: "UNSAFE_INDEX_PUBLICATION" });
   });
 
   it("fails closed for malformed, foreign, and missing manifest targets", async () => {
     const root = await makeRoot();
     await mkdir(join(root, ".tokengraph"), { recursive: true });
     await writeFile(indexManifestPath(root), "{malformed");
-    await expect(loadProjectIndex(root)).resolves.toBeUndefined();
+    await expect(loadProjectIndex(root)).rejects.toMatchObject({ code: "UNSAFE_INDEX_PUBLICATION" });
 
     await writeFile(indexManifestPath(root), JSON.stringify({
       generationFile: "../foreign.json",
       generationId: "11111111-1111-4111-8111-111111111111",
       contentHash: "0".repeat(64)
     }));
-    await expect(loadProjectIndex(root)).resolves.toBeUndefined();
+    await expect(loadProjectIndex(root)).rejects.toMatchObject({ code: "UNSAFE_INDEX_PUBLICATION" });
 
     await writeFile(indexManifestPath(root), JSON.stringify({
       generationFile: ".index-generation-11111111-1111-4111-8111-111111111111.json",
       generationId: "11111111-1111-4111-8111-111111111111",
       contentHash: "0".repeat(64)
     }));
-    await expect(loadProjectIndex(root)).resolves.toBeUndefined();
+    await expect(loadProjectIndex(root)).rejects.toMatchObject({ code: "UNSAFE_INDEX_PUBLICATION" });
+  });
+
+  it("never deletes an existing active generation when the same generation is saved again", async () => {
+    const root = await makeRoot();
+    await writeFile(join(root, "src", "entry.ts"), "export const entry = true;\n");
+    const index = await indexProject(root);
+    await saveProjectIndex(root, index);
+    const manifestBefore = await readFile(indexManifestPath(root), "utf8");
+    const generationBefore = await readFile(indexGenerationPath(root, index.generation!.id), "utf8");
+
+    await expect(saveProjectIndex(root, index)).rejects.toMatchObject({ code: "EEXIST" });
+
+    await expect(readFile(indexManifestPath(root), "utf8")).resolves.toBe(manifestBefore);
+    await expect(readFile(indexGenerationPath(root, index.generation!.id), "utf8")).resolves.toBe(generationBefore);
+    await expect(loadProjectIndex(root)).resolves.toMatchObject({ generation: { id: index.generation!.id } });
+  });
+
+  it("preserves a self-inconsistent existing publication even when its outer hash is recomputed", async () => {
+    const root = await makeRoot();
+    await writeFile(join(root, "src", "entry.ts"), "export const entry = true;\n");
+    const active = await indexProject(root);
+    await saveProjectIndex(root, active);
+    const manifest = await readManifest(root);
+    const generationPath = join(root, ".tokengraph", manifest.generationFile);
+    const corrupt = JSON.parse(await readFile(generationPath, "utf8"));
+    corrupt.generation.id = "11111111-1111-4111-8111-111111111111";
+    const corruptContent = serialized(corrupt);
+    await writeFile(generationPath, corruptContent);
+    await writeFile(indexManifestPath(root), JSON.stringify({
+      ...manifest,
+      contentHash: createHash("sha256").update(corruptContent).digest("hex")
+    }));
+    const manifestBefore = await readFile(indexManifestPath(root), "utf8");
+    const candidate = await indexProject(root);
+
+    await expect(saveProjectIndex(root, candidate)).rejects.toThrow(/identity is inconsistent/i);
+
+    await expect(readFile(indexManifestPath(root), "utf8")).resolves.toBe(manifestBefore);
+    await expect(readFile(generationPath, "utf8")).resolves.toBe(corruptContent);
   });
 
   it("retries a bounded pointer race until the immutable generation appears", async () => {

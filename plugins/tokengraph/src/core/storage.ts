@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { BigIntStats } from "node:fs";
 import { chmod, lstat, mkdir, readFile, readdir, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 
@@ -69,8 +70,34 @@ function assertMaintenanceConfirmation(value: unknown): asserts value is Destruc
   }
 }
 
-function pathIdentity(stats: Awaited<ReturnType<typeof lstat>>): string {
-  return `${stats.dev}:${stats.ino}:${stats.birthtimeMs}`;
+interface MaintenanceIdentity {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly mode: bigint;
+  readonly nlink: bigint;
+  readonly size: bigint;
+  readonly birthtimeNs: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
+}
+
+function pathIdentity(stats: BigIntStats): MaintenanceIdentity {
+  return {
+    dev: stats.dev,
+    ino: stats.ino,
+    mode: stats.mode,
+    nlink: stats.nlink,
+    size: stats.size,
+    birthtimeNs: stats.birthtimeNs,
+    mtimeNs: stats.mtimeNs,
+    ctimeNs: stats.ctimeNs
+  };
+}
+
+function sameMaintenanceIdentity(left: MaintenanceIdentity, right: MaintenanceIdentity, directory: boolean): boolean {
+  if (left.dev !== right.dev || left.ino !== right.ino || left.mode !== right.mode || left.birthtimeNs !== right.birthtimeNs) return false;
+  return directory || (left.nlink === right.nlink && left.size === right.size &&
+    left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs);
 }
 
 function safeMaintenanceRelativePath(value: string | undefined): string | undefined {
@@ -83,7 +110,7 @@ function safeMaintenanceRelativePath(value: string | undefined): string | undefi
 
 interface PlannedMaintenanceEntry {
   readonly path: string;
-  readonly identity: string;
+  readonly identity: MaintenanceIdentity;
   readonly directory: boolean;
 }
 
@@ -96,7 +123,7 @@ async function planMaintenanceEntry(
   if (protectedPaths.has(key)) return;
   let stats;
   try {
-    stats = await lstat(path);
+    stats = await lstat(path, { bigint: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
@@ -116,12 +143,12 @@ async function planMaintenanceEntry(
 async function removePlannedMaintenanceEntries(plan: readonly PlannedMaintenanceEntry[]): Promise<ReadonlySet<string>> {
   const removed = new Set<string>();
   for (const entry of plan) {
-    const current = await lstat(entry.path).catch((error: unknown) => {
+    const current = await lstat(entry.path, { bigint: true }).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("Destructive maintenance target identity changed before deletion.");
       throw error;
     });
-    if (pathIdentity(current) !== entry.identity || current.isSymbolicLink() ||
-        (entry.directory ? !current.isDirectory() : !current.isFile() || current.nlink !== 1)) {
+    if (!sameMaintenanceIdentity(entry.identity, pathIdentity(current), entry.directory) || current.isSymbolicLink() ||
+        (entry.directory ? !current.isDirectory() : !current.isFile() || current.nlink !== 1n)) {
       throw new Error("Destructive maintenance target identity changed before deletion.");
     }
     if (entry.directory) await rmdir(entry.path);

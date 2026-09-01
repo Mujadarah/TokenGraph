@@ -92,19 +92,23 @@ export function validatedContentSetHash(scanMetadata: ProjectScanMetadata, exclu
   return fingerprintPayload({ files, terminalExclusions: terminalExclusions(scanMetadata, exclusions) });
 }
 
+function terminalExclusionsHash(scanMetadata: ProjectScanMetadata): string {
+  return fingerprintPayload(terminalExclusions(scanMetadata, scanMetadata.exclusions));
+}
+
 function buildGenerationMetadata(
   scanSignature: string,
   scanMetadata: ProjectScanMetadata,
-  exclusions: Exclusion[],
   createdAt: string
 ): IndexGenerationMetadata {
-  const terminal = terminalExclusions(scanMetadata, exclusions);
+  const terminal = terminalExclusions(scanMetadata, scanMetadata.exclusions);
   return {
     id: randomUUID(),
     createdAt,
     sourceScanSignature: scanSignature,
     intendedFileCount: Object.keys(scanMetadata.files).length + new Set(terminal.map((entry) => entry.path)).size,
-    validatedContentSetHash: validatedContentSetHash(scanMetadata, exclusions)
+    terminalExclusionsHash: terminalExclusionsHash(scanMetadata),
+    validatedContentSetHash: validatedContentSetHash(scanMetadata, scanMetadata.exclusions)
   };
 }
 
@@ -151,9 +155,10 @@ export function projectIndexFingerprint(
   });
 }
 
-function scanMetadataFromFiles(files: FileScanMetadata[]): ProjectScanMetadata {
+function scanMetadataFromFiles(files: FileScanMetadata[], exclusions: Exclusion[] = []): ProjectScanMetadata {
   return {
-    files: Object.fromEntries(files.map((file) => [file.path, file]))
+    files: Object.fromEntries(files.map((file) => [file.path, file])),
+    exclusions: [...exclusions]
   };
 }
 
@@ -188,7 +193,11 @@ function assertConsistentScan(metadata: ProjectFileMetadataScan, graph: CodeGrap
 }
 
 function isCompatibleIndex(index: ProjectIndex): boolean {
-  return index.schemaVersion === CURRENT_INDEX_SCHEMA_VERSION && Boolean(index.scanMetadata?.files);
+  return index.schemaVersion === CURRENT_INDEX_SCHEMA_VERSION && Boolean(
+    index.scanMetadata?.files &&
+    Array.isArray(index.scanMetadata.exclusions) &&
+    index.generation?.terminalExclusionsHash
+  );
 }
 
 function emptySqlGraph(): SqlGraph {
@@ -331,7 +340,7 @@ async function buildProjectIndex(root: string, graph: CodeGraph, sql: SqlGraph, 
     ...graph,
     schemaVersion: CURRENT_INDEX_SCHEMA_VERSION,
     repositoryIdentity,
-    generation: buildGenerationMetadata(scanSignature, scanMetadata, graph.exclusions, scannedAt),
+    generation: buildGenerationMetadata(scanSignature, scanMetadata, scannedAt),
     scannedAt,
     fingerprint,
     scanSignature,
@@ -378,7 +387,7 @@ async function indexProjectWithScanner(root: string, options: ProjectIndexOption
     sqlGraphs.push(parsePostgresMigration(file.path, sql));
   }
 
-  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits);
+  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), metadata.scanSignature, scanMetadataFromFiles(metadata.files, metadata.exclusions), options.parserLimits);
 }
 
 export async function indexProject(root: string, options: ProjectIndexOptions = {}, dependencies: ProjectIndexerDependencies = {}): Promise<ProjectIndex> {
@@ -516,7 +525,7 @@ export async function updateProjectIndexIncremental(
       graph,
       sql,
       validationMetadata.scanSignature,
-      scanMetadataFromFiles(validationMetadata.files),
+      scanMetadataFromFiles(validationMetadata.files, validationMetadata.exclusions),
       options.parserLimits
     ),
     mode: "incremental",

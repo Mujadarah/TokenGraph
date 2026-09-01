@@ -314,6 +314,7 @@ export interface IndexGenerationMetadata {
   createdAt: string;
   sourceScanSignature: string;
   intendedFileCount: number;
+  terminalExclusionsHash: string;
   validatedContentSetHash: string;
 }
 
@@ -361,6 +362,7 @@ export interface FileScanMetadata {
 
 export interface ProjectScanMetadata {
   files: Record<string, FileScanMetadata>;
+  exclusions: Exclusion[];
 }
 
 export type IndexState = "missing" | "fresh" | "stale";

@@ -53,7 +53,7 @@ import { traceFailure } from "./core/failureTracer.js";
 import { MemoryStore } from "./core/memoryStore.js";
 import { canonicalPersistenceLock } from "./core/lockDomain.js";
 import { buildContextPlan } from "./core/planner.js";
-import { indexProject, updateProjectIndexIncremental, type ProjectIndexerDependencies, type ProjectIndexOptions } from "./core/projectIndexer.js";
+import { CURRENT_INDEX_SCHEMA_VERSION, indexProject, updateProjectIndexIncremental, type ProjectIndexerDependencies, type ProjectIndexOptions } from "./core/projectIndexer.js";
 import { assessChangeRisk } from "./core/regressionRisk.js";
 import {
   clearProjectIndex,
@@ -505,7 +505,7 @@ async function ensureProject(root: string): Promise<ProjectIndex> {
     const currentScanSignature = await scanProjectSignature(root, options.parserLimits);
     const existing = await loadProjectIndex(root);
     if (existing && isSafeProjectIndex(root, existing)) {
-      if (existing.scanSignature === currentScanSignature) {
+      if (existing.schemaVersion === CURRENT_INDEX_SCHEMA_VERSION && existing.scanSignature === currentScanSignature) {
         return existing;
       }
       const updated = await refreshProjectIndex(root, existing, options);

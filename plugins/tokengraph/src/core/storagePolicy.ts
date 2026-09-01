@@ -305,19 +305,21 @@ export async function assertStorageReplacementAllowed(root: string, storageClass
   return report;
 }
 
-export async function assertIndexGenerationWriteAllowed(root: string, generationBytes: number, quotas: StorageClassQuotas): Promise<void> {
+export async function assertIndexGenerationWriteAllowed(root: string, generationBytes: number, manifestBytes: number, quotas: StorageClassQuotas): Promise<void> {
   if (!Number.isInteger(generationBytes) || generationBytes < 0) throw new Error("Index generation bytes must be a non-negative integer.");
+  if (!Number.isInteger(manifestBytes) || manifestBytes < 0) throw new Error("Index manifest bytes must be a non-negative integer.");
   assertClassQuotas(quotas);
   const current = await storageClassUsage(root);
   for (const storageClass of ["runs", "vault", "durable"] as const) {
     const maximum = classQuota(quotas, storageClass);
     if (current[storageClass].bytes > maximum) throw quotaExceededError(storageClass, current[storageClass].bytes, maximum);
   }
-  const projectedCache = current.cache.bytes + generationBytes;
+  const incomingBytes = generationBytes + manifestBytes;
+  const projectedCache = current.cache.bytes + incomingBytes;
   if (projectedCache > quotas.cacheMaxBytes) throw quotaExceededError("cache", projectedCache, quotas.cacheMaxBytes);
-  const projectedTotal = current.total.bytes + generationBytes;
+  const projectedTotal = current.total.bytes + incomingBytes;
   if (projectedTotal > quotas.maxBytes) {
-    throw new Error(`TokenGraph total storage quota would be exceeded by the staged index generation (${projectedTotal}/${quotas.maxBytes} bytes); preserving the active publication.`);
+    throw new Error(`TokenGraph total storage quota would be exceeded by the staged index publication (${projectedTotal}/${quotas.maxBytes} bytes); preserving the active publication.`);
   }
 }
 

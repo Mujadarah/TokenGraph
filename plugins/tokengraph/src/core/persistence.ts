@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants, type BigIntStats } from "node:fs";
 import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -137,6 +138,8 @@ const INDEX_MANIFEST_TEMP_PATTERN = /^\.index-manifest-([0-9a-f]{8}-[0-9a-f]{4}-
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MANIFEST_RETRY_ATTEMPTS = 5;
 const MANIFEST_RETRY_DELAY_MS = 12;
+const MAX_INDEX_MANIFEST_BYTES = 4 * 1024;
+const MAX_INDEX_GENERATION_BYTES = 256 * 1024 * 1024;
 
 export interface ProjectIndexManifest {
   generationFile: string;
@@ -187,7 +190,7 @@ function generationValidationFailure(
   if (!INDEX_GENERATION_PATTERN.test(`.index-generation-${generation.id}.json`)) return "generation id is malformed";
   if (!isCanonicalIsoTimestamp(generation.createdAt) || generation.createdAt !== index.scannedAt) return "generation creation time is invalid";
   if (generation.sourceScanSignature !== index.scanSignature) return "generation source scan signature does not match the index";
-  if (!index.scanMetadata?.files) return "scan metadata is missing";
+  if (!index.scanMetadata?.files || !Array.isArray(index.scanMetadata.exclusions)) return "scan metadata is missing";
   const metadataEntries = Object.entries(index.scanMetadata.files);
   if (metadataEntries.some(([path, metadata]) => path !== metadata.path || !isNormalizedRelativePath(path))) return "scan metadata paths are malformed";
   const indexedPaths = index.files.map((file) => file.path).sort();
@@ -200,7 +203,19 @@ function generationValidationFailure(
   }
   const indexedPathSet = new Set(indexedPaths);
   const terminalPaths = new Set(index.exclusions.filter((entry) => !indexedPathSet.has(entry.path)).map((entry) => entry.path));
+  const scannerTerminalExclusions = index.scanMetadata.exclusions
+    .filter((entry) => !indexedPathSet.has(entry.path))
+    .sort((left, right) => left.path.localeCompare(right.path) || left.reason.localeCompare(right.reason));
+  const indexedTerminalExclusions = index.exclusions
+    .filter((entry) => !indexedPathSet.has(entry.path))
+    .sort((left, right) => left.path.localeCompare(right.path) || left.reason.localeCompare(right.reason));
+  if (JSON.stringify(scannerTerminalExclusions) !== JSON.stringify(indexedTerminalExclusions)) {
+    return "scanner terminal exclusions and indexed exclusions differ";
+  }
   if (generation.intendedFileCount !== metadataPaths.length + terminalPaths.size) return "generation intended-file count is invalid";
+  if (generation.terminalExclusionsHash !== sha256(JSON.stringify(scannerTerminalExclusions))) {
+    return "generation terminal-exclusions hash is invalid";
+  }
   if (generation.validatedContentSetHash !== validatedContentSetHash(index.scanMetadata, index.exclusions)) {
     return "generation content-set hash is invalid";
   }
@@ -215,6 +230,41 @@ async function assertValidGeneration(root: string, index: ProjectIndex): Promise
   if (failure) throw new Error(`TokenGraph index generation validation failed: ${failure}.`);
 }
 
+interface StableFileSnapshot {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly mode: bigint;
+  readonly nlink: bigint;
+  readonly size: bigint;
+  readonly birthtimeNs: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
+}
+
+function stableFileSnapshot(stats: BigIntStats): StableFileSnapshot {
+  return {
+    dev: stats.dev,
+    ino: stats.ino,
+    mode: stats.mode,
+    nlink: stats.nlink,
+    size: stats.size,
+    birthtimeNs: stats.birthtimeNs,
+    mtimeNs: stats.mtimeNs,
+    ctimeNs: stats.ctimeNs
+  };
+}
+
+function sameStableFile(left: StableFileSnapshot, right: StableFileSnapshot): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
+    left.nlink === right.nlink && left.size === right.size && left.birthtimeNs === right.birthtimeNs &&
+    left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
+}
+
+function samePublishedFile(left: StableFileSnapshot, right: StableFileSnapshot): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
+    left.nlink === right.nlink && left.size === right.size && left.mtimeNs === right.mtimeNs;
+}
+
 function parseManifest(value: unknown): ProjectIndexManifest | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const entries = Object.keys(value);
@@ -227,15 +277,20 @@ function parseManifest(value: unknown): ProjectIndexManifest | undefined {
   return candidate as ProjectIndexManifest;
 }
 
-async function readRegularFileNoFollow(path: string): Promise<string> {
+async function readRegularFileNoFollow(path: string, maximumBytes: number): Promise<string> {
   await assertNoSymbolicLinkComponents(path);
   const before = await lstat(path, { bigint: true });
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new Error(`Unsafe TokenGraph index file: ${path}`);
-  const handle = await open(path, "r");
+  if (before.size < 0n || before.size > BigInt(maximumBytes)) throw new Error("TokenGraph index file exceeds its bounded read limit.");
+  const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
+  const handle = await open(path, constants.O_RDONLY | noFollow);
   try {
     const content = await handle.readFile("utf8");
     const after = await handle.stat({ bigint: true });
-    if (!after.isFile() || after.nlink !== 1n || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs) {
+    const pathAfter = await lstat(path, { bigint: true });
+    if (!after.isFile() || after.nlink !== 1n || !pathAfter.isFile() || pathAfter.isSymbolicLink() || pathAfter.nlink !== 1n ||
+        !sameStableFile(stableFileSnapshot(before), stableFileSnapshot(after)) ||
+        !sameStableFile(stableFileSnapshot(before), stableFileSnapshot(pathAfter))) {
       throw new Error(`TokenGraph index file changed while it was being read: ${path}`);
     }
     return content;
@@ -244,20 +299,44 @@ async function readRegularFileNoFollow(path: string): Promise<string> {
   }
 }
 
-async function writeDurableExclusive(path: string, content: string): Promise<void> {
+async function flushDirectory(path: string): Promise<void> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(path, constants.O_RDONLY);
+    await handle.sync();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (process.platform !== "win32" || !["EINVAL", "EPERM", "EACCES", "EBADF", "ENOTSUP"].includes(code ?? "")) throw error;
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function writeDurableExclusive(path: string, content: string): Promise<StableFileSnapshot> {
   const directory = dirname(path);
   await assertNoSymbolicLinkComponents(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await assertNoSymbolicLinkComponents(path);
   if (process.platform !== "win32") await chmod(directory, 0o700);
-  const handle = await open(path, "wx", 0o600);
+  const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
+  const handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600);
+  let opened: StableFileSnapshot;
   try {
     await handle.writeFile(content, "utf8");
     if (process.platform !== "win32") await handle.chmod(0o600);
     await handle.sync();
+    const stats = await handle.stat({ bigint: true });
+    if (!stats.isFile() || stats.nlink !== 1n) throw new Error(`Unsafe TokenGraph index file after durable creation: ${path}`);
+    opened = stableFileSnapshot(stats);
   } finally {
     await handle.close();
   }
+  await flushDirectory(directory);
+  const after = await lstat(path, { bigint: true });
+  if (!after.isFile() || after.isSymbolicLink() || after.nlink !== 1n || !sameStableFile(opened!, stableFileSnapshot(after))) {
+    throw new Error(`TokenGraph index file changed after durable creation: ${path}`);
+  }
+  return stableFileSnapshot(after);
 }
 
 function isTransientManifestReplaceError(error: unknown): boolean {
@@ -265,10 +344,16 @@ function isTransientManifestReplaceError(error: unknown): boolean {
   return code === "EPERM" || code === "EACCES" || code === "EBUSY";
 }
 
-async function replaceManifestWithBoundedRetry(tempPath: string, manifestPath: string): Promise<void> {
+async function replaceManifestWithBoundedRetry(tempPath: string, manifestPath: string, temporaryIdentity: StableFileSnapshot): Promise<void> {
   for (let attempt = 0; attempt < MANIFEST_RETRY_ATTEMPTS; attempt += 1) {
     try {
       await rename(tempPath, manifestPath);
+      await flushDirectory(dirname(manifestPath));
+      const published = await lstat(manifestPath, { bigint: true });
+      if (!published.isFile() || published.isSymbolicLink() || published.nlink !== 1n ||
+          !samePublishedFile(temporaryIdentity, stableFileSnapshot(published))) {
+        throw new Error("TokenGraph index manifest identity changed during publication.");
+      }
       return;
     } catch (error) {
       if (!isTransientManifestReplaceError(error) || attempt === MANIFEST_RETRY_ATTEMPTS - 1) throw error;
@@ -277,29 +362,43 @@ async function replaceManifestWithBoundedRetry(tempPath: string, manifestPath: s
   }
 }
 
-async function removeWriterOwnedFile(path: string): Promise<void> {
+async function removeWriterOwnedFile(path: string, expectedIdentity: StableFileSnapshot | undefined): Promise<void> {
+  if (!expectedIdentity) return;
   try {
-    const info = await lstat(path);
-    if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Refusing to remove unsafe TokenGraph index artifact: ${path}`);
+    const info = await lstat(path, { bigint: true });
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1n ||
+        !sameStableFile(expectedIdentity, stableFileSnapshot(info))) {
+      throw new Error(`Refusing to remove replaced TokenGraph index artifact: ${path}`);
+    }
     await rm(path);
+    await flushDirectory(dirname(path));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
 
-async function assertNoFuturePublication(root: string): Promise<void> {
+function unsafePublication(message: string): Error & { code: "UNSAFE_INDEX_PUBLICATION" } {
+  return Object.assign(new Error(message), { code: "UNSAFE_INDEX_PUBLICATION" as const });
+}
+
+async function assertExistingPublicationSafe(root: string): Promise<void> {
   let manifestContent: string | undefined;
   try {
-    manifestContent = await readRegularFileNoFollow(indexManifestPath(root));
+    manifestContent = await readRegularFileNoFollow(indexManifestPath(root), MAX_INDEX_MANIFEST_BYTES);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   if (manifestContent !== undefined) {
-    const manifest = parseManifest(JSON.parse(manifestContent) as unknown);
+    let manifest: ProjectIndexManifest | undefined;
+    try {
+      manifest = parseManifest(JSON.parse(manifestContent) as unknown);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+    }
     if (!manifest) throw new Error("The active TokenGraph index manifest is malformed; refusing to replace it.");
     let generationContent: string;
     try {
-      generationContent = await readRegularFileNoFollow(join(stateDir(root), manifest.generationFile));
+      generationContent = await readRegularFileNoFollow(join(stateDir(root), manifest.generationFile), MAX_INDEX_GENERATION_BYTES);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         throw new Error("The active TokenGraph index generation is missing; refusing to replace its manifest.");
@@ -309,25 +408,41 @@ async function assertNoFuturePublication(root: string): Promise<void> {
     if (sha256(generationContent) !== manifest.contentHash) {
       throw new Error("The active TokenGraph index generation hash is invalid; refusing to replace its manifest.");
     }
-    const generation = JSON.parse(generationContent) as { schemaVersion?: unknown };
-    if (typeof generation.schemaVersion === "number" && generation.schemaVersion > CURRENT_INDEX_SCHEMA_VERSION) {
-      throw new Error(`Unsupported newer TokenGraph index schema version ${generation.schemaVersion}; refusing to overwrite it.`);
+    let generation: unknown;
+    try {
+      generation = JSON.parse(generationContent) as unknown;
+    } catch (error) {
+      if (error instanceof SyntaxError) throw new Error("The active TokenGraph index generation is malformed; refusing to replace it.");
+      throw error;
+    }
+    if (!isProjectIndex(generation) || generation.schemaVersion !== CURRENT_INDEX_SCHEMA_VERSION) {
+      throw new Error("The active TokenGraph index generation schema is malformed; refusing to replace it.");
+    }
+    if (generation.generation?.id !== manifest.generationId || manifest.generationFile !== `.index-generation-${generation.generation.id}.json`) {
+      throw new Error("The active TokenGraph index generation identity is inconsistent; refusing to replace its manifest.");
+    }
+    const failure = generationValidationFailure(root, generation, generation.repositoryIdentity);
+    if (failure) {
+      throw new Error(`The active TokenGraph index generation is invalid (${failure}); refusing to replace its manifest.`);
     }
     return;
   }
   try {
-    const legacy = JSON.parse(await readRegularFileNoFollow(indexPath(root))) as { schemaVersion?: unknown };
-    if (typeof legacy.schemaVersion === "number" && legacy.schemaVersion > CURRENT_INDEX_SCHEMA_VERSION) {
-      throw new Error(`Unsupported newer TokenGraph index schema version ${legacy.schemaVersion}; refusing to overwrite it.`);
+    const legacy = JSON.parse(await readRegularFileNoFollow(indexPath(root), MAX_INDEX_GENERATION_BYTES)) as unknown;
+    if (!isProjectIndex(legacy) || legacy.schemaVersion !== 4 || resolve(legacy.root) !== resolve(root) ||
+        !legacy.repositoryIdentity || legacy.fingerprint !== projectIndexFingerprint(legacy)) {
+      throw new Error("The legacy TokenGraph index publication is malformed; refusing to replace it.");
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    if (error instanceof SyntaxError) throw new Error("The legacy TokenGraph index publication is malformed; refusing to replace it.");
+    throw error;
   }
 }
 
 export async function readActiveIndexGenerationName(root: string): Promise<string | undefined> {
   try {
-    const manifest = parseManifest(JSON.parse(await readRegularFileNoFollow(indexManifestPath(root))) as unknown);
+    const manifest = parseManifest(JSON.parse(await readRegularFileNoFollow(indexManifestPath(root), MAX_INDEX_MANIFEST_BYTES)) as unknown);
     if (!manifest) throw new Error("The active TokenGraph index manifest is malformed.");
     return manifest.generationFile;
   } catch (error) {
@@ -348,43 +463,53 @@ export async function saveProjectIndex(root: string, index: ProjectIndex, option
   }
   const worktreeLock = await canonicalPersistenceLock(root, "workspace-state", ".index-manifest.json");
   await withFileLock(worktreeLock, async () => {
-    await assertNoFuturePublication(root);
+    await assertExistingPublicationSafe(root);
     await assertValidGeneration(root, index);
     const serializedGeneration = `${JSON.stringify(index, null, 2)}\n`;
-    if (options.storageQuotas) {
-      const { assertIndexGenerationWriteAllowed } = await import("./storagePolicy.js");
-      await assertIndexGenerationWriteAllowed(root, Buffer.byteLength(serializedGeneration, "utf8"), options.storageQuotas);
-    }
+    const contentHash = sha256(serializedGeneration);
     const generationPath = indexGenerationPath(root, index.generation!.id);
     const manifestPath = indexManifestPath(root);
+    const manifest: ProjectIndexManifest = {
+      generationFile: basename(generationPath),
+      generationId: index.generation!.id,
+      contentHash
+    };
+    const serializedManifest = `${JSON.stringify(manifest)}\n`;
+    if (options.storageQuotas) {
+      const { assertIndexGenerationWriteAllowed } = await import("./storagePolicy.js");
+      await assertIndexGenerationWriteAllowed(
+        root,
+        Buffer.byteLength(serializedGeneration, "utf8"),
+        Buffer.byteLength(serializedManifest, "utf8"),
+        options.storageQuotas
+      );
+    }
     const manifestTempPath = join(stateDir(root), `.index-manifest-${randomUUID()}.tmp`);
     let published = false;
+    let generationIdentity: StableFileSnapshot | undefined;
+    let manifestTemporaryIdentity: StableFileSnapshot | undefined;
     try {
       // Index snapshots are derived caches and remain worktree-scoped.
-      await writeDurableExclusive(generationPath, serializedGeneration);
-      const rereadGeneration = await readRegularFileNoFollow(generationPath);
+      generationIdentity = await writeDurableExclusive(generationPath, serializedGeneration);
+      const rereadGeneration = await readRegularFileNoFollow(generationPath, MAX_INDEX_GENERATION_BYTES);
       const parsedGeneration = JSON.parse(rereadGeneration) as unknown;
       if (!isProjectIndex(parsedGeneration) || parsedGeneration.schemaVersion !== CURRENT_INDEX_SCHEMA_VERSION) {
         throw new Error("TokenGraph index generation validation failed: generation schema is malformed.");
       }
       await assertValidGeneration(root, parsedGeneration);
-      const contentHash = sha256(rereadGeneration);
-      const manifest: ProjectIndexManifest = {
-        generationFile: basename(generationPath),
-        generationId: index.generation!.id,
-        contentHash
-      };
-      const serializedManifest = `${JSON.stringify(manifest)}\n`;
-      await writeDurableExclusive(manifestTempPath, serializedManifest);
-      const rereadManifest = parseManifest(JSON.parse(await readRegularFileNoFollow(manifestTempPath)) as unknown);
+      if (sha256(rereadGeneration) !== contentHash) {
+        throw new Error("TokenGraph index generation hash changed before publication.");
+      }
+      manifestTemporaryIdentity = await writeDurableExclusive(manifestTempPath, serializedManifest);
+      const rereadManifest = parseManifest(JSON.parse(await readRegularFileNoFollow(manifestTempPath, MAX_INDEX_MANIFEST_BYTES)) as unknown);
       if (!rereadManifest || rereadManifest.contentHash !== contentHash || rereadManifest.generationId !== index.generation!.id) {
         throw new Error("TokenGraph index manifest validation failed before publication.");
       }
-      await replaceManifestWithBoundedRetry(manifestTempPath, manifestPath);
+      await replaceManifestWithBoundedRetry(manifestTempPath, manifestPath, manifestTemporaryIdentity);
       published = true;
     } finally {
-      await removeWriterOwnedFile(manifestTempPath);
-      if (!published) await removeWriterOwnedFile(generationPath);
+      await removeWriterOwnedFile(manifestTempPath, manifestTemporaryIdentity);
+      if (!published) await removeWriterOwnedFile(generationPath, generationIdentity);
     }
   });
 }
@@ -448,7 +573,13 @@ function isProjectIndex(value: unknown): value is ProjectIndex {
     Array.isArray(candidate.sql?.materializedViews) &&
     Array.isArray(candidate.sql?.history) &&
     hasValidRetrievalSignals(candidate) &&
-    (candidate.schemaVersion === 4 || Boolean(candidate.generation && candidate.scanMetadata?.files))
+    (candidate.schemaVersion === 4 || Boolean(
+      candidate.generation &&
+      typeof candidate.generation.terminalExclusionsHash === "string" &&
+      SHA256_PATTERN.test(candidate.generation.terminalExclusionsHash) &&
+      candidate.scanMetadata?.files &&
+      Array.isArray(candidate.scanMetadata.exclusions)
+    ))
   );
 }
 
@@ -456,24 +587,23 @@ async function loadManifestProjectIndex(root: string, currentIdentity: ProjectIn
   let manifestObserved = false;
   for (let attempt = 0; attempt < MANIFEST_RETRY_ATTEMPTS; attempt += 1) {
     try {
-      const manifestContent = await readRegularFileNoFollow(indexManifestPath(root));
+      const manifestContent = await readRegularFileNoFollow(indexManifestPath(root), MAX_INDEX_MANIFEST_BYTES);
       manifestObserved = true;
       const manifest = parseManifest(JSON.parse(manifestContent) as unknown);
-      if (!manifest) return { manifestPresent: true };
-      const generationContent = await readRegularFileNoFollow(join(stateDir(root), manifest.generationFile));
+      if (!manifest) throw unsafePublication("The active TokenGraph index manifest is unsafe.");
+      const generationContent = await readRegularFileNoFollow(join(stateDir(root), manifest.generationFile), MAX_INDEX_GENERATION_BYTES);
       if (sha256(generationContent) !== manifest.contentHash) {
-        if (attempt < MANIFEST_RETRY_ATTEMPTS - 1) {
-          await new Promise((resolveDelay) => setTimeout(resolveDelay, MANIFEST_RETRY_DELAY_MS * (attempt + 1)));
-          continue;
-        }
-        return { manifestPresent: true };
+        throw unsafePublication("The active TokenGraph index generation failed integrity validation.");
       }
       const parsed = JSON.parse(generationContent) as unknown;
-      if (!isProjectIndex(parsed) || parsed.schemaVersion !== CURRENT_INDEX_SCHEMA_VERSION) return { manifestPresent: true };
-      if (parsed.generation?.id !== manifest.generationId || basename(manifest.generationFile) !== `.index-generation-${parsed.generation.id}.json`) {
-        return { manifestPresent: true };
+      if (!isProjectIndex(parsed) || parsed.schemaVersion !== CURRENT_INDEX_SCHEMA_VERSION) {
+        throw unsafePublication("The active TokenGraph index generation has an unsafe schema.");
       }
-      if (generationValidationFailure(root, parsed, currentIdentity)) return { manifestPresent: true };
+      if (parsed.generation?.id !== manifest.generationId || basename(manifest.generationFile) !== `.index-generation-${parsed.generation.id}.json`) {
+        throw unsafePublication("The active TokenGraph index generation identity is inconsistent.");
+      }
+      const validationFailure = generationValidationFailure(root, parsed, currentIdentity);
+      if (validationFailure) throw unsafePublication(`The active TokenGraph index generation is unsafe: ${validationFailure}.`);
       return { manifestPresent: true, index: parsed };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -482,9 +612,9 @@ async function loadManifestProjectIndex(root: string, currentIdentity: ProjectIn
           await new Promise((resolveDelay) => setTimeout(resolveDelay, MANIFEST_RETRY_DELAY_MS * (attempt + 1)));
           continue;
         }
-        return { manifestPresent: true };
+        throw unsafePublication("The active TokenGraph index generation disappeared during bounded resolution.");
       }
-      if (error instanceof SyntaxError) return { manifestPresent: true };
+      if (error instanceof SyntaxError) throw unsafePublication("The active TokenGraph index publication is malformed.");
       throw error;
     }
   }
@@ -498,17 +628,12 @@ export async function loadProjectIndex(root: string): Promise<ProjectIndex | und
   const paths = [indexPath(root), await repositoryIndexPath(root)];
   for (const path of paths.filter((candidate, index, all) => all.indexOf(candidate) === index)) {
     try {
-      const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+      const parsed = JSON.parse(await readRegularFileNoFollow(path, MAX_INDEX_GENERATION_BYTES)) as unknown;
       if (isProjectIndex(parsed) && parsed.schemaVersion === 4) {
         if (resolve(parsed.root) !== resolve(root)) continue;
         const storedIdentity = parsed.repositoryIdentity;
-        if (storedIdentity && (
-          storedIdentity.repositoryId !== currentIdentity.repositoryId ||
-          storedIdentity.repositoryFingerprint !== currentIdentity.repositoryFingerprint ||
-          storedIdentity.worktreeId !== currentIdentity.worktreeId ||
-          storedIdentity.branch !== currentIdentity.branch ||
-          storedIdentity.headCommit !== currentIdentity.headCommit
-        )) continue;
+        if (!storedIdentity || !sameRepositoryIdentity(storedIdentity, currentIdentity)) continue;
+        if (parsed.fingerprint !== projectIndexFingerprint(parsed)) continue;
         return parsed;
       }
     } catch (error) {
