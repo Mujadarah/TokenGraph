@@ -131,7 +131,7 @@ async function planMaintenanceEntry(
   if (stats.isSymbolicLink()) throw new Error("Destructive maintenance refuses a symbolic-link or junction entry.");
   if (path.toLowerCase().endsWith(".lock")) throw new Error("Destructive maintenance refuses an unexplained legacy lock or compatibility barrier.");
   if (stats.isFile()) {
-    if (stats.nlink !== 1) throw new Error("Destructive maintenance refuses a multiply linked file.");
+    if (stats.nlink !== 1n) throw new Error("Destructive maintenance refuses a multiply linked file.");
     plan.push({ path, identity: pathIdentity(stats), directory: false });
     return;
   }

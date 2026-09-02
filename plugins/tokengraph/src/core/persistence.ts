@@ -344,21 +344,31 @@ function isTransientManifestReplaceError(error: unknown): boolean {
   return code === "EPERM" || code === "EACCES" || code === "EBUSY";
 }
 
-async function replaceManifestWithBoundedRetry(tempPath: string, manifestPath: string, temporaryIdentity: StableFileSnapshot): Promise<void> {
+async function replaceManifestWithBoundedRetry(
+  tempPath: string,
+  manifestPath: string,
+  temporaryIdentity: StableFileSnapshot,
+  markNamespaceCommitted: () => void
+): Promise<void> {
   for (let attempt = 0; attempt < MANIFEST_RETRY_ATTEMPTS; attempt += 1) {
     try {
       await rename(tempPath, manifestPath);
-      await flushDirectory(dirname(manifestPath));
-      const published = await lstat(manifestPath, { bigint: true });
-      if (!published.isFile() || published.isSymbolicLink() || published.nlink !== 1n ||
-          !samePublishedFile(temporaryIdentity, stableFileSnapshot(published))) {
-        throw new Error("TokenGraph index manifest identity changed during publication.");
-      }
-      return;
+      // The namespace commit is the irreversible boundary. Once rename has
+      // succeeded, the generation may be reachable through the manifest even
+      // if the durability flush or post-publication identity check fails. The
+      // caller must retain that generation on every later failure path.
+      markNamespaceCommitted();
+      break;
     } catch (error) {
       if (!isTransientManifestReplaceError(error) || attempt === MANIFEST_RETRY_ATTEMPTS - 1) throw error;
       await new Promise((resolveDelay) => setTimeout(resolveDelay, MANIFEST_RETRY_DELAY_MS * (attempt + 1)));
     }
+  }
+  await flushDirectory(dirname(manifestPath));
+  const published = await lstat(manifestPath, { bigint: true });
+  if (!published.isFile() || published.isSymbolicLink() || published.nlink !== 1n ||
+      !samePublishedFile(temporaryIdentity, stableFileSnapshot(published))) {
+    throw new Error("TokenGraph index manifest identity changed during publication.");
   }
 }
 
@@ -485,7 +495,7 @@ export async function saveProjectIndex(root: string, index: ProjectIndex, option
       );
     }
     const manifestTempPath = join(stateDir(root), `.index-manifest-${randomUUID()}.tmp`);
-    let published = false;
+    let namespaceCommitted = false;
     let generationIdentity: StableFileSnapshot | undefined;
     let manifestTemporaryIdentity: StableFileSnapshot | undefined;
     try {
@@ -505,11 +515,15 @@ export async function saveProjectIndex(root: string, index: ProjectIndex, option
       if (!rereadManifest || rereadManifest.contentHash !== contentHash || rereadManifest.generationId !== index.generation!.id) {
         throw new Error("TokenGraph index manifest validation failed before publication.");
       }
-      await replaceManifestWithBoundedRetry(manifestTempPath, manifestPath, manifestTemporaryIdentity);
-      published = true;
+      await replaceManifestWithBoundedRetry(
+        manifestTempPath,
+        manifestPath,
+        manifestTemporaryIdentity,
+        () => { namespaceCommitted = true; }
+      );
     } finally {
       await removeWriterOwnedFile(manifestTempPath, manifestTemporaryIdentity);
-      if (!published) await removeWriterOwnedFile(generationPath, generationIdentity);
+      if (!namespaceCommitted) await removeWriterOwnedFile(generationPath, generationIdentity);
     }
   });
 }
