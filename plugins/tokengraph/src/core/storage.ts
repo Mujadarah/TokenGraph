@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { chmod, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 
 import { runWithFileLock, type FileLockOptions } from "./fileLockLease.js";
@@ -43,6 +43,7 @@ export interface WriteTelemetryDocument {
 
 export const MAX_PERSISTED_WRITE_TELEMETRY_DAYS = 14;
 const MAX_ATOMIC_NOOP_READ_BYTES = 64 * 1024 * 1024;
+const MAX_WRITE_TELEMETRY_BYTES = 256 * 1024;
 const WRITE_STORAGE_CLASSES: readonly WriteStorageClass[] = ["runs", "cache", "vault", "durable"];
 const pendingWriteTelemetry = new Map<string, Map<string, DailyWriteTelemetry>>();
 const writeTelemetryFlushChains = new Map<string, Promise<void>>();
@@ -125,7 +126,9 @@ export function writeTelemetryPath(root: string): string {
 
 export async function readWriteTelemetry(root: string): Promise<WriteTelemetryDocument> {
   try {
-    return normalizeWriteTelemetry(JSON.parse(await readFile(writeTelemetryPath(root), "utf8")) as unknown);
+    const content = await readStableAtomicTarget(writeTelemetryPath(root), MAX_WRITE_TELEMETRY_BYTES);
+    if (content === undefined) return { schemaVersion: 1, days: [] };
+    return normalizeWriteTelemetry(JSON.parse(content) as unknown);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { schemaVersion: 1, days: [] };
     if (error instanceof SyntaxError) throw new Error("TokenGraph write telemetry is malformed; refusing to overwrite it.");
@@ -158,9 +161,10 @@ async function flushWriteTelemetryNow(root: string): Promise<boolean> {
   const key = telemetryKey(root);
   const snapshot = pendingWriteTelemetry.get(key);
   if (!snapshot?.size) return false;
-  pendingWriteTelemetry.set(key, new Map());
+  const writesDuringFlush = new Map<string, DailyWriteTelemetry>();
+  pendingWriteTelemetry.set(key, writesDuringFlush);
   try {
-    const lock = await canonicalPersistenceLock(root, "workspace-state", "telemetry", "write-aggregates.json");
+    const lock = await canonicalPersistenceLock(root, "workspace-state", "write-telemetry.json");
     await withFileLock(lock, async () => {
       const persisted = await readWriteTelemetry(root);
       const byDate = new Map(persisted.days.map((day) => [day.date, day]));
@@ -170,6 +174,9 @@ async function flushWriteTelemetryNow(root: string): Promise<boolean> {
         days: [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date)).slice(-MAX_PERSISTED_WRITE_TELEMETRY_DAYS)
       });
     });
+    if (pendingWriteTelemetry.get(key) === writesDuringFlush && writesDuringFlush.size === 0) {
+      pendingWriteTelemetry.delete(key);
+    }
     return true;
   } catch (error) {
     const pending = pendingWriteTelemetry.get(key) ?? new Map<string, DailyWriteTelemetry>();
@@ -433,7 +440,8 @@ export async function canonicalPersistenceLockKey(root: string, ...segments: str
   return process.platform === "win32" ? key.toLowerCase() : key;
 }
 
-async function readStableAtomicTarget(path: string): Promise<string | undefined> {
+export async function readStableAtomicTarget(path: string, maximumBytes = MAX_ATOMIC_NOOP_READ_BYTES): Promise<string | undefined> {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0) throw new Error("TokenGraph stable-read limit is invalid.");
   await assertNoSymbolicLinkComponents(path);
   let before: BigIntStats;
   try {
@@ -442,8 +450,12 @@ async function readStableAtomicTarget(path: string): Promise<string | undefined>
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
-  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n ||
-      before.size < 0n || before.size > BigInt(MAX_ATOMIC_NOOP_READ_BYTES)) return undefined;
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) {
+    throw new Error("TokenGraph atomic-write target is not a single-link regular file.");
+  }
+  if (before.size < 0n || before.size > BigInt(maximumBytes)) {
+    throw new Error("TokenGraph atomic-write target exceeds its bounded validation limit.");
+  }
   const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
   const handle = await open(path, constants.O_RDONLY | noFollow);
   try {
@@ -487,14 +499,7 @@ export async function writeTextAtomic(path: string, content: string, options: At
   } finally {
     await rm(tempPath, { force: true });
   }
-  let physicalBytes: number | undefined;
-  try {
-    const details = await stat(path);
-    if (Number.isSafeInteger(details.blocks) && details.blocks > 0) physicalBytes = details.blocks * 512;
-  } catch {
-    // The write succeeded even when allocation metadata is unavailable.
-  }
-  if (options.telemetry) observeSuccessfulWrite(options.telemetry, Buffer.byteLength(content, "utf8"), physicalBytes);
+  if (options.telemetry) observeSuccessfulWrite(options.telemetry, Buffer.byteLength(content, "utf8"));
   return true;
 }
 

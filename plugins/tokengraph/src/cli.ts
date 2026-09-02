@@ -16,6 +16,15 @@ function optionValue(args: string[], name: string): string | undefined {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
+function boundedCliErrorMessage(error: unknown): string {
+  const clean = (value: unknown) => (value instanceof Error ? value.message : String(value))
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .slice(0, 512);
+  if (!(error instanceof AggregateError)) return clean(error);
+  const causes = [...error.errors].slice(0, 8).map((cause, index) => `cause ${index + 1}: ${clean(cause)}`);
+  return [clean(error), ...causes].join("\n");
+}
+
 function activateConfirmedInvocation(options: string[], usage: string): void {
   if (!options.includes("--confirm-no-legacy-processes")) {
     throw new Error(`${usage} This lock-taking command requires --confirm-no-legacy-processes. ${LEGACY_RUNTIME_ROLLOUT}`);
@@ -136,7 +145,7 @@ async function main(argv: string[]): Promise<void> {
 // Hold one bounded process-local handle until the CLI invocation settles.
 const cliKeepAlive = setInterval(() => undefined, 1_000);
 void main(process.argv.slice(2)).catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(`${boundedCliErrorMessage(error)}\n`);
   process.exitCode = 2;
 }).finally(() => {
   clearInterval(cliKeepAlive);

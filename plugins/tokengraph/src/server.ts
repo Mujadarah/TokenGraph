@@ -762,6 +762,21 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     );
   }
 
+  async function flushTaskReportWrites(root: string): Promise<string[]> {
+    const results = await Promise.allSettled([
+      (async () => {
+        const path = await repositoryMemoryPath(root);
+        const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
+        await flushBufferedMemoryUses(path, lock, { telemetry: { root, storageClass: "durable" } });
+      })(),
+      flushWriteTelemetry(root)
+    ]);
+    return [
+      ...(results[0].status === "rejected" ? ["memory-use-flush-failed"] : []),
+      ...(results[1].status === "rejected" ? ["write-telemetry-flush-failed"] : [])
+    ];
+  }
+
   async function architectureRuleStore(root: string): Promise<ArchitectureRuleStore> {
     return new ArchitectureRuleStore(
       await repositoryRulesPath(root),
@@ -1371,7 +1386,13 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const resolvedRoot = await requireTaskRoot(root, taskId, true);
       if (disposition === "pause") {
         await setTaskDisposition(resolvedRoot, taskId, disposition);
-        return ok({ status: "paused", taskId, reportingStatus: "paused" });
+        const warnings = await flushTaskReportWrites(resolvedRoot);
+        return ok({
+          status: "paused",
+          taskId,
+          reportingStatus: warnings.length ? "paused-with-warnings" : "paused",
+          ...(warnings.length ? { warnings } : {})
+        });
       }
 
       const ledger = await loadTaskLedger(resolvedRoot, taskId);
@@ -1386,12 +1407,15 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         estimateTokens(previewFooter)
       );
       if (!result.report) throw new Error(`Task ledger ${taskId} did not produce a completion report.`);
-      const memoryPath = await repositoryMemoryPath(resolvedRoot);
-      const memoryLock = await canonicalPersistenceLock(resolvedRoot, "repository-state", "memory.json");
-      await flushBufferedMemoryUses(memoryPath, memoryLock, { telemetry: { root: resolvedRoot, storageClass: "durable" } });
-      await flushWriteTelemetry(resolvedRoot);
       const footer = formatTaskReportFooter(result.report);
-      const compact = { status: "completed", taskId, footer, reportingStatus: "ready" } as const;
+      const warnings = await flushTaskReportWrites(resolvedRoot);
+      const compact = {
+        status: "completed",
+        taskId,
+        footer,
+        reportingStatus: warnings.length ? "ready-with-warnings" : "ready",
+        ...(warnings.length ? { warnings } : {})
+      } as const;
       return ok(responseMode === "verbose" ? { ...compact, report: result.report } : compact);
     }
   );

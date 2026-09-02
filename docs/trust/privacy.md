@@ -2,7 +2,7 @@
 
 TokenGraph is local-first. It stores project state under `.tokengraph/` in the indexed workspace.
 
-TokenGraph does not require an OpenAI API key, cloud sync, or an embeddings service, and it sends no telemetry to a remote service. It keeps at most 14 days of local write-amplification aggregates in `.tokengraph/telemetry/write-aggregates.json`. Those aggregates contain only UTC dates, storage classes, operation and byte counts, and sampled process RSS. They contain no paths, prompts, command text, secrets, file contents, or per-file event stream.
+TokenGraph does not require an OpenAI API key, cloud sync, or an embeddings service, and it sends no telemetry to a remote service. It keeps at most 14 days of local write-amplification aggregates in `.tokengraph/telemetry/write-aggregates.json`. Those aggregates contain only UTC dates, storage classes, logical persistence-operation counts, logical payload bytes, optional measured physical-write bytes, and sampled process RSS. One index generation plus its manifest is one logical publication operation even though the protocol durably writes two files. TokenGraph leaves physical-write bytes absent when the runtime cannot measure them; filesystem allocation is not reported as I/O. The aggregates contain no paths, prompts, command text, secrets, file contents, or per-file event stream.
 
 The selected native addon is integrity-checked and copied into one fresh private operating-system temporary directory before loading. The staging marker contains bounded target, process, and hash metadata, never project content. POSIX removes proven staging state after load. Windows may retain at most one process-owned staging root until exit; later bounded dead-process cleanup preserves ambiguous state.
 

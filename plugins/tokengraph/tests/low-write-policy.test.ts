@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { link, mkdtemp, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -126,5 +126,50 @@ describe("Phase 6 low-write policy", () => {
     await expect(flushBufferedMemoryUses(filePath, lock, { telemetry: { root, storageClass: "durable" } })).resolves.toBe(true);
     const persisted = JSON.parse(await readFile(filePath, "utf8"));
     expect(persisted.memories.find((memory: { id: string }) => memory.id === created.id)?.lastUsedAt).toEqual(expect.any(String));
+  });
+
+  it("fails closed and preserves a multiply-linked atomic target", async () => {
+    const root = await makeRoot();
+    const path = join(root, ".tokengraph", "value.json");
+    const alias = join(root, "linked-value.json");
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(path, "evidence\n");
+    await link(path, alias);
+
+    await expect(writeJsonAtomic(path, { replacement: true })).rejects.toThrow(/single-link regular file/i);
+
+    await expect(readFile(path, "utf8")).resolves.toBe("evidence\n");
+    await expect(readFile(alias, "utf8")).resolves.toBe("evidence\n");
+  });
+
+  it("bounds telemetry reads before parsing", async () => {
+    const root = await makeRoot();
+    const path = writeTelemetryPath(root);
+    await mkdir(join(root, ".tokengraph", "telemetry"), { recursive: true });
+    const handle = await open(path, "w");
+    try {
+      await handle.truncate(256 * 1024 + 1);
+    } finally {
+      await handle.close();
+    }
+
+    await expect(readWriteTelemetry(root)).rejects.toThrow(/bounded validation limit/i);
+  });
+
+  it("preserves pending counters when malformed or future telemetry blocks a flush", async () => {
+    const root = await makeRoot();
+    const path = writeTelemetryPath(root);
+    await mkdir(join(root, ".tokengraph", "telemetry"), { recursive: true });
+    observeSuccessfulWrite({ root, storageClass: "durable" }, 11);
+    await writeFile(path, `${JSON.stringify({ schemaVersion: 2, days: [] })}\n`);
+
+    await expect(flushWriteTelemetry(root)).rejects.toThrow(/newer.*refusing to overwrite/i);
+    await expect(readFile(path, "utf8")).resolves.toContain('"schemaVersion":2');
+
+    await writeFile(path, `${JSON.stringify({ schemaVersion: 1, days: [] })}\n`);
+    await expect(flushWriteTelemetry(root)).resolves.toBe(true);
+    await expect(readWriteTelemetry(root)).resolves.toMatchObject({
+      days: [{ classes: { durable: { operationCount: 1, logicalBytes: 11 } } }]
+    });
   });
 });
