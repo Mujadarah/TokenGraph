@@ -1,6 +1,11 @@
 #!/usr/bin/env node
+import { realpath } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { executeRun, purgeRuns, saveRun, summarizeRun, taskOutcomeFromRun } from "./core/runner.js";
 import { loadTokenGraphConfig } from "./core/config.js";
+import { collectDoctorReport, formatDoctorReport } from "./core/doctor.js";
 import { assertStorageWriteAllowed, purgeStorageClass, type PurgeStorageClass } from "./core/storagePolicy.js";
 import { evaluateManifest, loadEvaluationManifest, persistPromotionReport } from "./core/pairedEval.js";
 import { loadPairedHostProtocol, runPairedHostEvaluation } from "./core/pairedHost.js";
@@ -35,6 +40,30 @@ function activateConfirmedInvocation(options: string[], usage: string): void {
 async function main(argv: string[]): Promise<void> {
   let telemetryRoot: string | undefined;
   try {
+  if (argv[0] === "doctor") {
+    const options = argv.slice(1);
+    const usage = "Usage: tokengraph doctor [--root <path>] [--json]";
+    if (options.includes("--help")) {
+      process.stdout.write(`${usage}\n`);
+      return;
+    }
+    const rootOption = optionValue(options, "--root");
+    if (options.includes("--root") && !rootOption) throw new Error(usage);
+    for (let index = 0; index < options.length; index += 1) {
+      const option = options[index]!;
+      if (option === "--json") continue;
+      if (option === "--root") {
+        index += 1;
+        continue;
+      }
+      throw new Error(usage);
+    }
+    const root = await realpath(rootOption ?? process.cwd());
+    const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const report = await collectDoctorReport({ workspace: { status: "ready", source: "cli-root", root }, pluginRoot });
+    process.stdout.write(options.includes("--json") ? `${JSON.stringify(report)}\n` : `${formatDoctorReport(report)}\n`);
+    return;
+  }
   if (argv[0] === "evaluate-host") {
     const options = argv.slice(1);
     const usage = "Usage: tokengraph evaluate-host [--root <path>] [--controller-root <path>] --protocol <path> [--output-manifest <path>] [--codex <executable>] [--timeout-ms <n>] [--dry-run] [--confirm-no-legacy-processes]";
@@ -88,7 +117,7 @@ async function main(argv: string[]): Promise<void> {
     }))}\n`);
     return;
   }
-  if (argv[0] !== "run") throw new Error(`Usage: tokengraph run [--root <path>] [--task-id <uuid>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] --confirm-no-legacy-processes -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived --confirm-no-legacy-processes; tokengraph evaluate-routing [--root <path>] --manifest <path> --confirm-no-legacy-processes; or tokengraph evaluate-host --protocol <path> [--dry-run]. ${LEGACY_RUNTIME_ROLLOUT}`);
+  if (argv[0] !== "run") throw new Error(`Usage: tokengraph doctor [--root <path>] [--json]; tokengraph run [--root <path>] [--task-id <uuid>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] --confirm-no-legacy-processes -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived --confirm-no-legacy-processes; tokengraph evaluate-routing [--root <path>] --manifest <path> --confirm-no-legacy-processes; or tokengraph evaluate-host --protocol <path> [--dry-run]. ${LEGACY_RUNTIME_ROLLOUT}`);
   const separator = argv.indexOf("--");
   if (separator < 0 || separator === argv.length - 1) throw new Error("tokengraph run requires `-- <command> [args...]`.");
   const commandArgs = argv.slice(separator + 1);

@@ -61,6 +61,7 @@ const legacyToolNames = [
   "tokengraph_delete_memory",
   "tokengraph_delete_rule",
   "tokengraph_deprecate_memory",
+  "tokengraph_doctor",
   "tokengraph_explain_symbol",
   "tokengraph_export_project_map",
   "tokengraph_find_memory_conflicts",
@@ -362,7 +363,7 @@ describe("TokenGraph MCP stdio server", () => {
     const names = tools.map((tool) => tool.name).sort();
 
     expect(names).toEqual([...coreToolNames, ...legacyToolNames].sort());
-    expect(new Set(names).size).toBe(42);
+    expect(new Set(names).size).toBe(43);
     expect(tools.filter((tool) => legacyToolNames.includes(tool.name)).every((tool) => /legacy|deprecated/i.test(tool.description ?? ""))).toBe(true);
     const coreSchemaTokens = Math.ceil(JSON.stringify(tools.filter((tool) => coreToolNames.includes(tool.name)).map((tool) => tool.inputSchema)).length / 4);
     const legacySchemaTokens = Math.ceil(JSON.stringify(tools.filter((tool) => legacyToolNames.includes(tool.name)).map((tool) => tool.inputSchema)).length / 4);
@@ -2082,6 +2083,18 @@ describe("TokenGraph MCP stdio server", () => {
       ]
     });
     expect(JSON.stringify(setup)).toMatch(/TOKENGRAPH_WORKSPACE_ROOT/);
+
+    const doctor = await request(43, "tools/call", {
+      name: "tokengraph_doctor",
+      arguments: {}
+    });
+    expect(doctor.structuredContent).toMatchObject({
+      status: "blocked",
+      workspace: { status: "blocked", blockingReason: "missing-trusted-workspace" },
+      lifecycle: { attestation: "missing" },
+      recommendations: ["missing-trusted-workspace"]
+    });
+    await expect(access(join(root, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
 
     await runWorkspaceHook("session-start", sessionId, root, "turn-full-mirror", {}, {
       pluginRoot: mirror.root,

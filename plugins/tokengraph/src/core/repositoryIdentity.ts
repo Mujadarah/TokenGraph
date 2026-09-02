@@ -164,6 +164,45 @@ export async function getRepositoryIdentity(root: string): Promise<RepositoryIde
   return getRepositoryIdentityUncached(workspaceRoot);
 }
 
+/**
+ * Resolves the current repository identity without creating state, updating
+ * Git excludes, or running legacy migrations. Diagnostics have read authority
+ * only, so an absent persisted repository id is reported as unavailable.
+ */
+export async function getRepositoryIdentityReadOnly(root: string): Promise<RepositoryIdentity | undefined> {
+  const workspaceRoot = resolve(root);
+  const [topLevel, gitDir, branch, headCommit, firstCommits, remote] = await Promise.all([
+    git(workspaceRoot, "rev-parse", "--show-toplevel"),
+    git(workspaceRoot, "rev-parse", "--git-dir"),
+    git(workspaceRoot, "symbolic-ref", "--quiet", "--short", "HEAD"),
+    git(workspaceRoot, "rev-parse", "HEAD"),
+    git(workspaceRoot, "rev-list", "--max-parents=0", "HEAD"),
+    remoteIdentity(workspaceRoot)
+  ]);
+  const normalizedRoot = resolve(topLevel ?? workspaceRoot);
+  const normalizedGitDir = gitDir ? resolve(workspaceRoot, gitDir) : undefined;
+  let repositoryId: string | undefined;
+  try {
+    const persisted = JSON.parse(await readFile(join(repositoryStateDirectory(normalizedRoot), "identity.json"), "utf8")) as Partial<PersistedIdentity>;
+    if (persisted.schemaVersion === 1 && typeof persisted.repositoryId === "string" && persisted.repositoryId.length >= 16) {
+      repositoryId = persisted.repositoryId;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+  }
+  if (!repositoryId) return undefined;
+  const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
+  return {
+    repositoryId,
+    repositoryFingerprint: digest(`${repositoryId}\n${firstCommit}`),
+    workspaceId: digest(normalizedRoot),
+    worktreeId: digest(normalizedGitDir ?? normalizedRoot),
+    branch: branch ?? "detached",
+    headCommit: headCommit ?? "unborn",
+    ...(remote ? { remoteIdentity: remote } : {})
+  };
+}
+
 async function getRepositoryIdentityUncached(workspaceRoot: string): Promise<RepositoryIdentity> {
   const [topLevel, commonDir, gitDir, branch, headCommit, firstCommits, remote] = await Promise.all([
     git(workspaceRoot, "rev-parse", "--show-toplevel"),

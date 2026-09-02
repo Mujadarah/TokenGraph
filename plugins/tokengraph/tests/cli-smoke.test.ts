@@ -18,7 +18,7 @@ const coreToolNames = [
 const legacyToolNames = [
   "tokengraph_add_rule", "tokengraph_assess_change_risk", "tokengraph_check_architecture", "tokengraph_compress_context",
   "tokengraph_compress_output", "tokengraph_confirm_memory", "tokengraph_delete_memory", "tokengraph_delete_rule",
-  "tokengraph_deprecate_memory", "tokengraph_explain_symbol", "tokengraph_export_project_map", "tokengraph_find_memory_conflicts",
+  "tokengraph_deprecate_memory", "tokengraph_doctor", "tokengraph_explain_symbol", "tokengraph_export_project_map", "tokengraph_find_memory_conflicts",
   "tokengraph_generate_wiki", "tokengraph_get_config", "tokengraph_index_project", "tokengraph_index_status",
   "tokengraph_link_memory", "tokengraph_list_rules", "tokengraph_plan_context", "tokengraph_project_map",
   "tokengraph_recall_memory", "tokengraph_remember_decision", "tokengraph_reset_project", "tokengraph_review_memories",
@@ -103,6 +103,17 @@ afterEach(async () => {
 });
 
 describe("tokengraph CLI smoke command", () => {
+  it("prints concise human and canonical JSON doctor output without creating state", async () => {
+    const root = await makeRoot();
+    const json = await execFileAsync(process.execPath, [resolve("dist", "cli.js"), "doctor", "--root", root, "--json"], { cwd: process.cwd() });
+    const report = JSON.parse(json.stdout) as { status: string; workspace: { source: string }; index: { state: string } };
+    expect(report).toMatchObject({ status: "healthy", workspace: { source: "cli-root" }, index: { state: "missing" } });
+
+    const human = await execFileAsync(process.execPath, [resolve("dist", "cli.js"), "doctor", "--root", root], { cwd: process.cwd() });
+    expect(human.stdout).toMatch(/^TokenGraph doctor: healthy[\s\S]*recommendations: none\r?\n$/);
+    await expect(access(join(root, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("validates the built stdio MCP server against a local project root", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
@@ -151,7 +162,7 @@ describe("tokengraph CLI smoke command", () => {
     expect(report.tools).toEqual([...coreToolNames, ...legacyToolNames].sort());
   });
 
-  it("rejects a full surface with one legacy name replaced despite retaining 42 unique tools", async () => {
+  it("rejects a full surface with one legacy name replaced despite retaining 43 unique tools", async () => {
     const root = await makeRoot();
     const serverRoot = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });

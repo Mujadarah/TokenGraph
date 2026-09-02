@@ -297,6 +297,7 @@ assert(distServer.includes("wikiRefreshed"), "built MCP server must report v0.9 
 assert(distServer.includes("tokengraph_list_rules"), "built MCP server must register architecture rule listing");
 assert(distServer.includes("tokengraph_add_rule"), "built MCP server must register architecture rule creation");
 assert(distServer.includes("tokengraph_update_rule"), "built MCP server must register architecture rule updates");
+assert(distServer.includes("tokengraph_doctor"), "built MCP server must register the read-only doctor diagnostic");
 assert(distServer.includes("tokengraph_delete_rule"), "built MCP server must register architecture rule deletion");
 assert(distServer.includes("tokengraph_check_architecture"), "built MCP server must register architecture checks");
 assert(distServer.includes("tokengraph_trace_failure"), "built MCP server must register failure tracing");

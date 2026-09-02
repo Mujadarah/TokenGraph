@@ -55,7 +55,7 @@ The default `TOKENGRAPH_TOOL_SURFACE=core` surface exposes exactly eight intent-
 - `tokengraph_propose_knowledge`
 - `tokengraph_task_report`
 
-Set `TOKENGRAPH_TOOL_SURFACE=full` before starting the MCP host to add the 34 deprecated compatibility tools below. Their names, schemas, and behavior remain available during migration; prefer the core tools for new tasks.
+Set `TOKENGRAPH_TOOL_SURFACE=full` before starting the MCP host to add the 35 deprecated compatibility tools below. Their names, schemas, and behavior remain available during migration; prefer the core tools for new tasks.
 
 JSON-only successful tool calls return one serialized JSON `TextContent` item. `tokengraph_export_project_map` is the resource-link exception and also returns matching structured content. Compact mode is the default; explicit `responseMode: "verbose"` is for diagnostics. Diagnostic token estimates always name their baseline and expose `baselineTokens`, `compactTokens`, `avoidedVsBaseline`, and the `estimated-tokens` unit.
 
@@ -72,6 +72,7 @@ Generated wiki Markdown uses deterministic Obsidian-compatible YAML frontmatter 
 Legacy setup and indexing:
 
 - `tokengraph_setup_status`
+- `tokengraph_doctor` - read-only health report; use `tokengraph doctor --root <path> [--json]` outside MCP.
 - `tokengraph_index_project`
 - `tokengraph_index_status`
 - `tokengraph_reset_project`

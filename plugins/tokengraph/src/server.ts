@@ -40,6 +40,7 @@ import {
   taskReportInputSchema
 } from "./core/toolContracts.js";
 import { loadTokenGraphConfig, setTokenSavingProfile, updateTokenGraphConfig } from "./core/config.js";
+import { collectDoctorReport, type DoctorAttestationStatus } from "./core/doctor.js";
 import { adviseRouting, failOpenRouting } from "./core/routingAdvisor.js";
 import { loadRoutingControl } from "./core/routingControl.js";
 import { getRepositoryIdentity, getRepositorySetupWarnings } from "./core/repositoryIdentity.js";
@@ -1461,6 +1462,44 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       inputSchema: z.object({})
     },
     async () => ok(await inspectWorkspaceSetup(server, options.trustedWorkspace, requestWorkspaceContext.getStore()))
+  );
+
+  server.registerTool(
+    "tokengraph_doctor",
+    {
+      title: "TokenGraph Doctor",
+      description: "Use this read-only diagnostic to inspect trusted workspace setup, runtime assets, local state, storage, and index health without repairing anything.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({
+        root: z.string().optional().describe("Workspace root to inspect. Defaults to the trusted host workspace root.")
+      })
+    },
+    async ({ root }) => {
+      const context = requestWorkspaceContext.getStore();
+      const setup = await inspectWorkspaceSetup(server, options.trustedWorkspace, context);
+      const metadata = codexTurnMetadata(context);
+      const threadId = metadata ? stringValue(metadata.thread_id) ?? stringValue(metadata.threadId) : process.env.CODEX_THREAD_ID?.trim();
+      const attestation: DoctorAttestationStatus = threadId
+        ? (await loadHostWorkspaceAttestation(ownPluginRoot(), threadId)).status
+        : "unavailable";
+      if (setup.status === "blocked" || !setup.trustedWorkspace) {
+        return ok(await collectDoctorReport({
+          workspace: {
+            status: "blocked",
+            source: setup.trustedWorkspace?.source ?? "host",
+            blockingReason: setup.blockingReason ?? "missing-trusted-workspace"
+          },
+          pluginRoot: ownPluginRoot(),
+          attestation
+        }));
+      }
+      const resolvedRoot = await workspaceRoot(root);
+      return ok(await collectDoctorReport({
+        workspace: { status: "ready", source: setup.trustedWorkspace.source, root: resolvedRoot },
+        pluginRoot: ownPluginRoot(),
+        attestation
+      }));
+    }
   );
 
   server.registerTool(
