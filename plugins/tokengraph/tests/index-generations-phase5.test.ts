@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { CURRENT_INDEX_SCHEMA_VERSION, indexProject } from "../src/core/projectIndexer.js";
+import { CURRENT_INDEX_SCHEMA_VERSION, indexProject, projectIndexFingerprint } from "../src/core/projectIndexer.js";
 import {
   indexGenerationPath,
   indexManifestPath,
@@ -207,6 +207,27 @@ describe("transactional index generations", () => {
     await expect(readFile(generationPath, "utf8")).resolves.toBe(corruptContent);
   });
 
+  it("rejects a self-consistent v5 publication with omitted source signatures", async () => {
+    const root = await makeRoot();
+    await writeFile(join(root, "src", "entry.ts"), "export const entry = true;\n");
+    const active = await indexProject(root);
+    await saveProjectIndex(root, active);
+    const manifest = await readManifest(root);
+    const generationPath = join(root, ".tokengraph", manifest.generationFile);
+    const malformed = JSON.parse(await readFile(generationPath, "utf8"));
+    delete malformed.scanSignature;
+    delete malformed.generation.sourceScanSignature;
+    malformed.fingerprint = projectIndexFingerprint(malformed);
+    const malformedContent = serialized(malformed);
+    await writeFile(generationPath, malformedContent);
+    await writeFile(indexManifestPath(root), JSON.stringify({
+      ...manifest,
+      contentHash: createHash("sha256").update(malformedContent).digest("hex")
+    }));
+
+    await expect(loadProjectIndex(root)).rejects.toMatchObject({ code: "UNSAFE_INDEX_PUBLICATION" });
+  });
+
   it("retries a bounded pointer race until the immutable generation appears", async () => {
     const root = await makeRoot();
     await writeFile(join(root, "src", "entry.ts"), "export const entry = true;\n");
@@ -338,6 +359,24 @@ describe("transactional index generations", () => {
     await execFile("git", ["-C", root, "switch", "-q", "-c", "other"]);
 
     await expect(saveProjectIndex(root, candidate)).rejects.toThrow(/repository identity changed/i);
+
+    await expect(readFile(indexManifestPath(root), "utf8")).resolves.toBe(activeManifest);
+  });
+
+  it("refuses to replace an active publication from a different current branch identity", async () => {
+    const root = await makeRoot();
+    await execFile("git", ["init", "-q", "-b", "main", root]);
+    await execFile("git", ["-C", root, "config", "user.email", "generation@example.invalid"]);
+    await execFile("git", ["-C", root, "config", "user.name", "Generation Fixture"]);
+    await writeFile(join(root, "src", "entry.ts"), "export const entry = true;\n");
+    await execFile("git", ["-C", root, "add", "."]);
+    await execFile("git", ["-C", root, "commit", "-qm", "baseline"]);
+    await saveProjectIndex(root, await indexProject(root));
+    const activeManifest = await readFile(indexManifestPath(root), "utf8");
+    await execFile("git", ["-C", root, "switch", "-q", "-c", "other"]);
+    const currentBranchCandidate = await indexProject(root);
+
+    await expect(saveProjectIndex(root, currentBranchCandidate)).rejects.toThrow(/repository identity changed/i);
 
     await expect(readFile(indexManifestPath(root), "utf8")).resolves.toBe(activeManifest);
   });
