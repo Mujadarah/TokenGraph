@@ -57,17 +57,27 @@ function telemetryDay(now = new Date()): string {
   return now.toISOString().slice(0, 10);
 }
 
-function boundedSum(left: number, right: number): number {
-  return Math.min(Number.MAX_SAFE_INTEGER, left + right);
+function isValidTelemetryDay(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function checkedTelemetrySum(left: number, right: number): number {
+  const sum = left + right;
+  if (!Number.isSafeInteger(sum)) {
+    throw new Error("TokenGraph write telemetry counter overflow; refusing to lose aggregate data.");
+  }
+  return sum;
 }
 
 function mergeAggregate(current: WriteTelemetryClassAggregate | undefined, incoming: WriteTelemetryClassAggregate): WriteTelemetryClassAggregate {
   return {
-    operationCount: boundedSum(current?.operationCount ?? 0, incoming.operationCount),
-    logicalBytes: boundedSum(current?.logicalBytes ?? 0, incoming.logicalBytes),
+    operationCount: checkedTelemetrySum(current?.operationCount ?? 0, incoming.operationCount),
+    logicalBytes: checkedTelemetrySum(current?.logicalBytes ?? 0, incoming.logicalBytes),
     ...(current?.physicalBytes === undefined && incoming.physicalBytes === undefined
       ? {}
-      : { physicalBytes: boundedSum(current?.physicalBytes ?? 0, incoming.physicalBytes ?? 0) })
+      : { physicalBytes: checkedTelemetrySum(current?.physicalBytes ?? 0, incoming.physicalBytes ?? 0) })
   };
 }
 
@@ -96,7 +106,7 @@ function isValidAggregate(value: unknown): value is WriteTelemetryClassAggregate
 function isValidDailyTelemetry(value: unknown): value is DailyWriteTelemetry {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Partial<DailyWriteTelemetry>;
-  if (typeof candidate.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(candidate.date) ||
+  if (!isValidTelemetryDay(candidate.date) ||
     !Number.isSafeInteger(candidate.sampledPeakRssBytes) || candidate.sampledPeakRssBytes! < 0 ||
     !candidate.classes || typeof candidate.classes !== "object" || Array.isArray(candidate.classes)) return false;
   return Object.entries(candidate.classes).every(([storageClass, aggregate]) =>

@@ -1,9 +1,10 @@
-import { link, mkdtemp, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { access, link, mkdtemp, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CURRENT_CONFIG_SCHEMA_VERSION, DEFAULT_TOKEN_GRAPH_CONFIG, loadTokenGraphConfig } from "../src/core/config.js";
+import { CURRENT_CONFIG_SCHEMA_VERSION, DEFAULT_TOKEN_GRAPH_CONFIG, loadTokenGraphConfig, updateTokenGraphConfig } from "../src/core/config.js";
 import { canonicalPersistenceLock } from "../src/core/lockDomain.js";
 import { flushBufferedMemoryUses, MemoryStore } from "../src/core/memoryStore.js";
 import { configPath } from "../src/core/persistence.js";
@@ -15,6 +16,8 @@ import {
   writeTelemetryPath
 } from "../src/core/storage.js";
 import { storageClassUsage } from "../src/core/storagePolicy.js";
+import { flushTaskReportWrites } from "../src/core/taskWriteFlush.js";
+import { externalCliEntry, externalRuntimeEnvironment } from "./support/externalRuntime.js";
 
 const roots: string[] = [];
 
@@ -31,6 +34,27 @@ function input(title: string) {
     body: `${title} body`,
     tags: ["phase6"]
   };
+}
+
+function runCli(root: string, script = "process.stdout.write('ok')"): Promise<number | null> {
+  return new Promise((resolveExit, reject) => {
+    const child = spawn(process.execPath, [
+      externalCliEntry,
+      "run",
+      "--root", root,
+      "--confirm-no-legacy-processes",
+      "--",
+      process.execPath,
+      "--eval", script
+    ], {
+      env: externalRuntimeEnvironment(),
+      windowsHide: true,
+      shell: false,
+      stdio: "ignore"
+    });
+    child.once("error", reject);
+    child.once("exit", resolveExit);
+  });
 }
 
 afterEach(async () => {
@@ -116,14 +140,14 @@ describe("Phase 6 low-write policy", () => {
     const root = await makeRoot();
     const filePath = join(root, ".tokengraph", "repository", "memory.json");
     const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
-    const store = new MemoryStore(filePath, lock, { writePolicy: "minimal", telemetry: { root, storageClass: "durable" } });
+    const store = new MemoryStore(filePath, lock, { writePolicy: "minimal", telemetry: { root, storageClass: "durable" }, bufferScope: "task-a" });
     const created = await store.add(input("Minimal recall"));
     const before = await readFile(filePath, "utf8");
 
     await store.recall("minimal recall");
     expect(await readFile(filePath, "utf8")).toBe(before);
 
-    await expect(flushBufferedMemoryUses(filePath, lock, { telemetry: { root, storageClass: "durable" } })).resolves.toBe(true);
+    await expect(flushBufferedMemoryUses(filePath, lock, "task-a", { telemetry: { root, storageClass: "durable" } })).resolves.toBe(true);
     const persisted = JSON.parse(await readFile(filePath, "utf8"));
     expect(persisted.memories.find((memory: { id: string }) => memory.id === created.id)?.lastUsedAt).toEqual(expect.any(String));
   });
@@ -171,5 +195,185 @@ describe("Phase 6 low-write policy", () => {
     await expect(readWriteTelemetry(root)).resolves.toMatchObject({
       days: [{ classes: { durable: { operationCount: 1, logicalBytes: 11 } } }]
     });
+  });
+
+  it("observes config updates and migration backup writes", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(configPath(root), `${JSON.stringify({ schemaVersion: 3, config: DEFAULT_TOKEN_GRAPH_CONFIG })}\n`);
+
+    await loadTokenGraphConfig(root);
+    await updateTokenGraphConfig(root, { storage: { writePolicy: "minimal" } });
+    await flushWriteTelemetry(root);
+
+    const durable = (await readWriteTelemetry(root)).days.at(-1)?.classes.durable;
+    expect(durable?.operationCount).toBeGreaterThanOrEqual(3);
+    expect(durable?.logicalBytes).toBeGreaterThan(0);
+  });
+
+  it("merges successful write counters from concurrent CLI processes", async () => {
+    const root = await makeRoot();
+
+    const codes = await Promise.all([runCli(root), runCli(root)]);
+
+    expect(codes).toEqual([0, 0]);
+    const telemetry = await readWriteTelemetry(root);
+    expect(telemetry.days.at(-1)?.classes.runs?.operationCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("bounds retention, output size, and the exact privacy schema", async () => {
+    const root = await makeRoot();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    for (let day = 1; day <= 20; day += 1) {
+      vi.setSystemTime(new Date(`2026-08-${String(day).padStart(2, "0")}T12:00:00.000Z`));
+      observeSuccessfulWrite({ root, storageClass: "cache" }, day, day * 2);
+      await flushWriteTelemetry(root);
+    }
+
+    const raw = await readFile(writeTelemetryPath(root), "utf8");
+    const document = JSON.parse(raw) as Record<string, unknown>;
+    expect(Object.keys(document).sort()).toEqual(["days", "schemaVersion"]);
+    expect((document.days as unknown[])).toHaveLength(14);
+    for (const day of document.days as Array<Record<string, unknown>>) {
+      expect(Object.keys(day).sort()).toEqual(["classes", "date", "sampledPeakRssBytes"]);
+      expect(Object.keys(day.classes as object)).toEqual(["cache"]);
+      expect(Object.keys((day.classes as { cache: object }).cache).sort()).toEqual([
+        "logicalBytes", "operationCount", "physicalBytes"
+      ]);
+    }
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(256 * 1024);
+    expect(raw).not.toMatch(/(?:prompt|command|secret|path|session|taskId)/i);
+  });
+
+  it("fails closed instead of saturating an aggregate counter", async () => {
+    const root = await makeRoot();
+    const path = writeTelemetryPath(root);
+    await mkdir(join(root, ".tokengraph", "telemetry"), { recursive: true });
+    const persisted = {
+      schemaVersion: 1,
+      days: [{
+        date: new Date().toISOString().slice(0, 10),
+        sampledPeakRssBytes: 0,
+        classes: { durable: { operationCount: Number.MAX_SAFE_INTEGER, logicalBytes: 1 } }
+      }]
+    };
+    await writeFile(path, `${JSON.stringify(persisted)}\n`);
+    observeSuccessfulWrite({ root, storageClass: "durable" }, 1);
+
+    await expect(flushWriteTelemetry(root)).rejects.toThrow(/counter overflow/i);
+    await expect(readFile(path, "utf8")).resolves.toBe(`${JSON.stringify(persisted)}\n`);
+    await writeFile(path, `${JSON.stringify({ schemaVersion: 1, days: [] })}\n`);
+    await expect(flushWriteTelemetry(root)).resolves.toBe(true);
+  });
+
+  it("rejects impossible telemetry calendar dates", async () => {
+    const root = await makeRoot();
+    const path = writeTelemetryPath(root);
+    await mkdir(join(root, ".tokengraph", "telemetry"), { recursive: true });
+    await writeFile(path, `${JSON.stringify({
+      schemaVersion: 1,
+      days: [{ date: "2026-02-31", sampledPeakRssBytes: 0, classes: {} }]
+    })}\n`);
+
+    await expect(readWriteTelemetry(root)).rejects.toThrow(/malformed/i);
+  });
+
+  it("excludes only the canonical telemetry directory from quota accounting", async () => {
+    const root = await makeRoot();
+    const lookalike = join(root, ".tokengraph", "repository", "telemetry", "user.json");
+    await mkdir(join(root, ".tokengraph", "repository", "telemetry"), { recursive: true });
+    await writeFile(lookalike, "user-owned\n");
+    observeSuccessfulWrite({ root, storageClass: "durable" }, 7);
+    await flushWriteTelemetry(root);
+
+    const usage = await storageClassUsage(root);
+    expect(usage.total).toMatchObject({ files: 1, bytes: Buffer.byteLength("user-owned\n") });
+  });
+
+  it("keeps minimal recall buffers task-owned and persists unscoped recalls immediately", async () => {
+    const root = await makeRoot();
+    const filePath = join(root, ".tokengraph", "repository", "memory.json");
+    const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
+    const setup = new MemoryStore(filePath, lock, { writePolicy: "durable" });
+    const first = await setup.add(input("First task memory"));
+    const second = await setup.add(input("Second task memory"));
+    const taskA = new MemoryStore(filePath, lock, { writePolicy: "minimal", bufferScope: "task-a" });
+    const taskB = new MemoryStore(filePath, lock, { writePolicy: "minimal", bufferScope: "task-b" });
+
+    await taskA.recall("first task memory");
+    await taskB.recall("second task memory");
+    await flushBufferedMemoryUses(filePath, lock, "task-a");
+    let persisted = JSON.parse(await readFile(filePath, "utf8"));
+    expect(persisted.memories.find((memory: { id: string }) => memory.id === first.id)?.lastUsedAt).toEqual(expect.any(String));
+    expect(persisted.memories.find((memory: { id: string }) => memory.id === second.id)?.lastUsedAt).toBeUndefined();
+
+    const unscoped = new MemoryStore(filePath, lock, { writePolicy: "minimal" });
+    await unscoped.recall("second task memory");
+    persisted = JSON.parse(await readFile(filePath, "utf8"));
+    expect(persisted.memories.find((memory: { id: string }) => memory.id === second.id)?.lastUsedAt).toEqual(expect.any(String));
+  });
+
+  it("flushes memory before telemetry and preserves bounded task-report warnings", async () => {
+    const root = await makeRoot();
+    const filePath = join(root, ".tokengraph", "repository", "memory.json");
+    const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
+    const store = new MemoryStore(filePath, lock, {
+      writePolicy: "minimal",
+      bufferScope: "task-a",
+      telemetry: { root, storageClass: "durable" }
+    });
+    await store.add(input("Task report flush"));
+    await flushWriteTelemetry(root);
+    const before = (await readWriteTelemetry(root)).days.at(-1)?.classes.durable?.operationCount ?? 0;
+    await store.recall("task report flush");
+
+    await expect(flushTaskReportWrites(root, "task-a")).resolves.toEqual([]);
+    const after = (await readWriteTelemetry(root)).days.at(-1)?.classes.durable?.operationCount ?? 0;
+    expect(after).toBe(before + 1);
+
+    await store.recall("task report flush");
+    await link(filePath, join(root, "memory-hardlink.json"));
+    observeSuccessfulWrite({ root, storageClass: "cache" }, 9);
+    await expect(flushTaskReportWrites(root, "task-a")).resolves.toEqual(["memory-use-flush-failed"]);
+    expect((await readWriteTelemetry(root)).days.at(-1)?.classes.cache?.logicalBytes).toBe(9);
+  });
+
+  it("defines crash loss as pending telemetry only, never the successful durable write", async () => {
+    const root = await makeRoot();
+    const child = spawn(process.execPath, [
+      externalCliEntry,
+      "run", "--root", root, "--confirm-no-legacy-processes", "--",
+      process.execPath, "--eval", "setTimeout(() => {}, 30000)"
+    ], {
+      env: externalRuntimeEnvironment(),
+      windowsHide: true,
+      detached: process.platform !== "win32",
+      shell: false,
+      stdio: "ignore"
+    });
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      try {
+        await access(configPath(root));
+        break;
+      } catch {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+      }
+    }
+    await access(configPath(root));
+    if (process.platform === "win32") {
+      await new Promise<void>((resolveExit) => {
+        const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+        killer.once("exit", () => resolveExit());
+      });
+    } else {
+      process.kill(-child.pid!, "SIGKILL");
+    }
+    if (child.exitCode === null && child.signalCode === null) {
+      await new Promise<void>((resolveExit) => child.once("exit", () => resolveExit()));
+    }
+
+    await expect(readFile(configPath(root), "utf8")).resolves.toContain(`"schemaVersion": ${CURRENT_CONFIG_SCHEMA_VERSION}`);
+    await expect(access(writeTelemetryPath(root))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

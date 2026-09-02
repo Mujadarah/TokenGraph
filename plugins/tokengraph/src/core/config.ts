@@ -1,9 +1,9 @@
-import { copyFile, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 
 import { configPath, stateDir } from "./persistence.js";
 import { canonicalPersistenceLock } from "./lockDomain.js";
 import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
-import { quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
+import { quarantineCorruptJson, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
 import type { RoutingMode, StorageWritePolicy, TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
 
 export const CURRENT_CONFIG_SCHEMA_VERSION = 4;
@@ -203,7 +203,8 @@ export async function saveTokenGraphConfig(root: string, config: TokenGraphConfi
 
 export async function loadTokenGraphConfig(root: string): Promise<TokenGraphConfig> {
   try {
-    const parsed = JSON.parse(await readFile(configPath(root), "utf8")) as unknown;
+    const rawConfig = await readFile(configPath(root), "utf8");
+    const parsed = JSON.parse(rawConfig) as unknown;
     const unwrapped = unwrapPersistedConfig(parsed);
     const persistedNormalized = normalizeConfig(unwrapped.config, false);
     const normalized = normalizeConfig(persistedNormalized);
@@ -215,9 +216,7 @@ export async function loadTokenGraphConfig(root: string): Promise<TokenGraphConf
         getLegacyRuntimeActivationStatus().activated) {
       const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
       await withFileLock(lock, async () => {
-        await copyFile(configPath(root), `${configPath(root)}.bak`).catch((error: unknown) => {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        });
+        await writeTextAtomic(`${configPath(root)}.bak`, rawConfig, { telemetry: { root, storageClass: "durable" } });
         await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: persistedNormalized }, { telemetry: { root, storageClass: "durable" } });
       });
     }

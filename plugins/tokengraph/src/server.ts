@@ -50,7 +50,7 @@ import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus } from "./core/indexStatus.js";
 import { loadHostWorkspaceAttestation } from "./core/hostWorkspace.js";
 import { traceFailure } from "./core/failureTracer.js";
-import { flushBufferedMemoryUses, MemoryStore } from "./core/memoryStore.js";
+import { MemoryStore } from "./core/memoryStore.js";
 import { canonicalPersistenceLock } from "./core/lockDomain.js";
 import { buildContextPlan } from "./core/planner.js";
 import { CURRENT_INDEX_SCHEMA_VERSION, indexProject, updateProjectIndexIncremental, type ProjectIndexerDependencies, type ProjectIndexOptions } from "./core/projectIndexer.js";
@@ -76,7 +76,7 @@ import { projectToVault } from "./core/vaultProjection.js";
 import { createTaskLedger, discardEmptyTaskLedger, listCompletedTaskOutcomes, loadTaskLedger, recordTaskArtifactDelivery, recordTaskEvent, setTaskDisposition, updateTaskReadPolicy, updateTaskRoutingObservation, type TaskHost } from "./core/taskLedger.js";
 import { listAppliedKnowledge, listKnowledgeSuggestions, proposeKnowledgeChange, reviewKnowledgeSuggestion } from "./core/knowledgeReviewQueue.js";
 import { activateLegacyRuntimeShutdown } from "./core/legacyRuntimeActivation.js";
-import { flushWriteTelemetry } from "./core/storage.js";
+import { flushTaskReportWrites } from "./core/taskWriteFlush.js";
 
 const architectureRuleTypeSchema = z.enum([
   "forbidden-import",
@@ -751,30 +751,19 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
   }) as typeof server.registerTool;
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
 
-  async function memoryStore(root: string): Promise<MemoryStore> {
+  async function memoryStore(root: string, taskId?: string): Promise<MemoryStore> {
     const config = await loadTokenGraphConfig(root);
     const path = await repositoryMemoryPath(root);
     const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
     return new MemoryStore(
       path,
       lock,
-      { writePolicy: config.storage.writePolicy, telemetry: { root, storageClass: "durable" } }
+      {
+        writePolicy: config.storage.writePolicy,
+        telemetry: { root, storageClass: "durable" },
+        ...(taskId ? { bufferScope: taskId } : {})
+      }
     );
-  }
-
-  async function flushTaskReportWrites(root: string): Promise<string[]> {
-    const results = await Promise.allSettled([
-      (async () => {
-        const path = await repositoryMemoryPath(root);
-        const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
-        await flushBufferedMemoryUses(path, lock, { telemetry: { root, storageClass: "durable" } });
-      })(),
-      flushWriteTelemetry(root)
-    ]);
-    return [
-      ...(results[0].status === "rejected" ? ["memory-use-flush-failed"] : []),
-      ...(results[1].status === "rejected" ? ["write-telemetry-flush-failed"] : [])
-    ];
   }
 
   async function architectureRuleStore(root: string): Promise<ArchitectureRuleStore> {
@@ -1254,13 +1243,14 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       }
       return withTaskIntent(root, taskId, async (task) => {
       const resolvedRoot = task.root;
-      const store = await memoryStore(resolvedRoot);
+      const store = await memoryStore(resolvedRoot, task.taskId);
       const project = await ensureProject(resolvedRoot);
       const memories = await store.list({ includeDeprecated: audit === true, includeDeleted: audit === true });
       const terms = tokenize(query ?? "");
       const recalled = memories
         .filter((memory) => terms.length === 0 || terms.some((term) => tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`).some((part) => part.includes(term) || term.includes(part))))
         .slice(0, limit ?? 10);
+      await store.recordUse(recalled.filter((memory) => memory.status === "active").map((memory) => memory.id));
       const verboseResult = mode === "review"
         ? await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 })
         : { query: query ?? "", auditMode: audit === true, memories: recalled };
@@ -1386,7 +1376,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const resolvedRoot = await requireTaskRoot(root, taskId, true);
       if (disposition === "pause") {
         await setTaskDisposition(resolvedRoot, taskId, disposition);
-        const warnings = await flushTaskReportWrites(resolvedRoot);
+        const warnings = await flushTaskReportWrites(resolvedRoot, taskId);
         return ok({
           status: "paused",
           taskId,
@@ -1408,7 +1398,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       );
       if (!result.report) throw new Error(`Task ledger ${taskId} did not produce a completion report.`);
       const footer = formatTaskReportFooter(result.report);
-      const warnings = await flushTaskReportWrites(resolvedRoot);
+      const warnings = await flushTaskReportWrites(resolvedRoot, taskId);
       const compact = {
         status: "completed",
         taskId,

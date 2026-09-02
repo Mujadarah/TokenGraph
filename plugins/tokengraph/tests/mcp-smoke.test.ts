@@ -12,6 +12,10 @@ import { benchmarkMcpInputSchemas } from "../src/core/toolContracts.js";
 import { loadTaskLedger, recordTaskOutcome } from "../src/core/taskLedger.js";
 import { listKnowledgeSuggestions } from "../src/core/knowledgeReviewQueue.js";
 import { createTokenGraphServer } from "../src/server.js";
+import { updateTokenGraphConfig } from "../src/core/config.js";
+import { canonicalPersistenceLock } from "../src/core/lockDomain.js";
+import { MemoryStore } from "../src/core/memoryStore.js";
+import { repositoryMemoryPath } from "../src/core/persistence.js";
 import {
   createExternalPluginMirror,
   externalHooksEntry,
@@ -88,6 +92,19 @@ async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "tokengraph-mcp-"));
   tempRoots.push(root);
   return root;
+}
+
+async function seedMinimalPolicyMemory(root: string, title: string): Promise<{ id: string; path: string }> {
+  await updateTokenGraphConfig(root, { storage: { writePolicy: "minimal" } });
+  const path = await repositoryMemoryPath(root);
+  const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
+  const memory = await new MemoryStore(path, lock, { writePolicy: "durable" }).add({
+    type: "architecture",
+    title,
+    body: `${title} body`,
+    tags: ["phase6"]
+  });
+  return { id: memory.id, path };
 }
 
 function send(message: Record<string, unknown>) {
@@ -885,6 +902,7 @@ describe("TokenGraph MCP stdio server", () => {
 
   it("returns the pause reporting status without a footer", async () => {
     const root = await makeRoot();
+    const seeded = await seedMinimalPolicyMemory(root, "Pause flush memory");
     await stopServer();
     startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
     await request(9051, "initialize", {
@@ -898,6 +916,11 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { task: "Pause this task" }
     });
     const prepared = preparedCall.structuredContent as { taskId: string };
+    await request(90521, "tools/call", {
+      name: "tokengraph_recall",
+      arguments: { taskId: prepared.taskId, mode: "recall", query: "pause flush memory" }
+    });
+    expect(JSON.parse(await readFile(seeded.path, "utf8")).memories.find((memory: { id: string }) => memory.id === seeded.id)?.lastUsedAt).toBeUndefined();
 
     const pauseCall = await request(9053, "tools/call", {
       name: "tokengraph_task_report",
@@ -908,6 +931,7 @@ describe("TokenGraph MCP stdio server", () => {
       taskId: prepared.taskId,
       reportingStatus: "paused"
     });
+    expect(JSON.parse(await readFile(seeded.path, "utf8")).memories.find((memory: { id: string }) => memory.id === seeded.id)?.lastUsedAt).toEqual(expect.any(String));
 
     for (const call of [
       { id: 90531, name: "tokengraph_query_context", arguments: { taskId: prepared.taskId, mode: "overview" } },
@@ -924,6 +948,7 @@ describe("TokenGraph MCP stdio server", () => {
 
   it("rejects pause after canonical completion and preserves the repeated completion response", async () => {
     const root = await makeRoot();
+    const seeded = await seedMinimalPolicyMemory(root, "Complete flush memory");
     await stopServer();
     startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
     await request(9054, "initialize", {
@@ -937,10 +962,15 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { task: "Complete, then reject pause" }
     });
     const prepared = preparedCall.structuredContent as { taskId: string };
+    await request(90551, "tools/call", {
+      name: "tokengraph_recall",
+      arguments: { taskId: prepared.taskId, mode: "recall", query: "complete flush memory" }
+    });
     const completedCall = await request(9056, "tools/call", {
       name: "tokengraph_task_report",
       arguments: { taskId: prepared.taskId, disposition: "complete" }
     });
+    expect(JSON.parse(await readFile(seeded.path, "utf8")).memories.find((memory: { id: string }) => memory.id === seeded.id)?.lastUsedAt).toEqual(expect.any(String));
 
     const pauseCall = await request(9057, "tools/call", {
       name: "tokengraph_task_report",

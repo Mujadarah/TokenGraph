@@ -25,6 +25,12 @@ const bufferedMemoryUseIds = new Map<string, Set<string>>();
 export interface MemoryStoreOptions {
   writePolicy?: StorageWritePolicy;
   telemetry?: WriteTelemetryContext;
+  /** Task identity that owns deferred minimal-policy recall writes. */
+  bufferScope?: string;
+}
+
+function bufferedUseKey(lock: CanonicalPersistenceLock, bufferScope: string): string {
+  return `${lock.compatibilityPath}\u0000${bufferScope}`;
 }
 
 function nowIso(): string {
@@ -172,9 +178,10 @@ export class MemoryStore {
   static async flushBufferedUses(
     filePath: string,
     lock: CanonicalPersistenceLock,
+    bufferScope: string,
     options: Pick<MemoryStoreOptions, "telemetry"> = {}
   ): Promise<boolean> {
-    const key = lock.compatibilityPath;
+    const key = bufferedUseKey(lock, bufferScope);
     const buffered = bufferedMemoryUseIds.get(key);
     if (!buffered?.size) return false;
     bufferedMemoryUseIds.delete(key);
@@ -293,6 +300,10 @@ export class MemoryStore {
     };
   }
 
+  async recordUse(ids: string[]): Promise<void> {
+    await this.markUsed(ids);
+  }
+
   async findConflicts(input: { id?: string; candidate?: MemoryInput; query?: string; limit?: number }): Promise<MemoryConflict[]> {
     const memories = await this.list();
     const baseMemory = input.id ? memories.find((memory) => memory.id === input.id) : undefined;
@@ -346,9 +357,17 @@ export class MemoryStore {
     if (!ids.length) return;
     const writePolicy = this.options.writePolicy ?? "balanced";
     if (writePolicy === "minimal") {
-      const buffered = bufferedMemoryUseIds.get(this.lock.compatibilityPath) ?? new Set<string>();
+      // Only a task-owned lifecycle can defer this correctness-neutral write.
+      // Surfaces without a task boundary persist at the call boundary so the
+      // observation cannot become ownerless or be flushed by another task.
+      if (!this.options.bufferScope) {
+        await this.persistUsed(ids, "durable");
+        return;
+      }
+      const key = bufferedUseKey(this.lock, this.options.bufferScope);
+      const buffered = bufferedMemoryUseIds.get(key) ?? new Set<string>();
       for (const id of ids) buffered.add(id);
-      bufferedMemoryUseIds.set(this.lock.compatibilityPath, buffered);
+      bufferedMemoryUseIds.set(key, buffered);
       return;
     }
     await this.persistUsed(ids, writePolicy);
@@ -450,9 +469,10 @@ export class MemoryStore {
 export async function flushBufferedMemoryUses(
   filePath: string,
   lock: CanonicalPersistenceLock,
+  bufferScope: string,
   options: Pick<MemoryStoreOptions, "telemetry"> = {}
 ): Promise<boolean> {
-  return MemoryStore.flushBufferedUses(filePath, lock, options);
+  return MemoryStore.flushBufferedUses(filePath, lock, bufferScope, options);
 }
 
 /** @internal Test-only diagnostic; not part of the public memory-store contract. */

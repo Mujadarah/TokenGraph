@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { repositoryStateDirectory } from "./repositoryIdentity.js";
 import { indexManifestPath, isIndexGenerationArtifactName, readActiveIndexGenerationName, runsDir, stateDir, vaultDir, wikiDir } from "./persistence.js";
 import {
+  writeTelemetryPath,
   withAutomaticMaintenance,
   withDestructiveMaintenance,
   type DestructiveMaintenanceConfirmation,
@@ -83,21 +84,20 @@ function isDomainRootInfrastructure(path: string, domainRoots: ReadonlySet<strin
     name.toLowerCase().endsWith(".lock");
 }
 
-function isWriteTelemetryInfrastructure(path: string, domainRoots: ReadonlySet<string>): boolean {
-  const canonical = resolve(path);
-  return [...domainRoots].some((domainRoot) => canonical === join(domainRoot, "telemetry"));
+function isWriteTelemetryInfrastructure(path: string, telemetryRoot: string): boolean {
+  return resolve(path) === telemetryRoot;
 }
 
-async function usage(path: string, domainRoots: ReadonlySet<string>): Promise<StorageUsage> {
+async function usage(path: string, domainRoots: ReadonlySet<string>, telemetryRoot: string): Promise<StorageUsage> {
   try {
     const info = await lstat(path);
     if (info.isSymbolicLink()) throw new Error(`TokenGraph storage accounting refuses symbolic-link paths: ${path}`);
-    if (isWriteTelemetryInfrastructure(path, domainRoots)) return { bytes: 0, files: 0 };
+    if (isWriteTelemetryInfrastructure(path, telemetryRoot)) return { bytes: 0, files: 0 };
     if (isDomainRootInfrastructure(path, domainRoots)) return { bytes: 0, files: 0 };
     if (info.isFile()) return { bytes: info.size, files: 1 };
     if (!info.isDirectory()) return { bytes: 0, files: 0 };
     const entries = await readdir(path);
-    const children = await Promise.all(entries.map((entry) => usage(join(path, entry), domainRoots)));
+    const children = await Promise.all(entries.map((entry) => usage(join(path, entry), domainRoots, telemetryRoot)));
     return children.reduce((total, child) => ({ bytes: total.bytes + child.bytes, files: total.files + child.files }), { bytes: 0, files: 0 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { bytes: 0, files: 0 };
@@ -105,24 +105,29 @@ async function usage(path: string, domainRoots: ReadonlySet<string>): Promise<St
   }
 }
 
-async function usageMany(paths: string[], domainRoots: ReadonlySet<string>): Promise<StorageUsage> {
+async function usageMany(paths: string[], domainRoots: ReadonlySet<string>, telemetryRoot: string): Promise<StorageUsage> {
   const unique = paths.map((path) => resolve(path)).filter((path, index, all) => all.indexOf(path) === index);
   const roots = unique.filter((path, index, all) => !all.some((candidate, candidateIndex) => {
     if (candidateIndex === index) return false;
     const nested = relative(candidate, path);
     return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
   }));
-  const values = await Promise.all(roots.map((path) => usage(path, domainRoots)));
+  const values = await Promise.all(roots.map((path) => usage(path, domainRoots, telemetryRoot)));
   return values.reduce((total, current) => ({ bytes: total.bytes + current.bytes, files: total.files + current.files }), { bytes: 0, files: 0 });
 }
 
 export async function storageUsage(root: string): Promise<StorageUsage> {
-  return usageMany([stateDir(root), repositoryStateDirectory(root)], domainRootSet(root));
+  return usageMany(
+    [stateDir(root), repositoryStateDirectory(root)],
+    domainRootSet(root),
+    resolve(dirname(writeTelemetryPath(root)))
+  );
 }
 
 export async function storageClassUsage(root: string): Promise<StorageClassUsage> {
   const repository = repositoryStateDirectory(root);
   const domainRoots = domainRootSet(root);
+  const telemetryRoot = resolve(dirname(writeTelemetryPath(root)));
   const state = stateDir(root);
   const stateEntries = await readdir(state).catch((error: unknown) =>
     (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : Promise.reject(error)
@@ -130,7 +135,7 @@ export async function storageClassUsage(root: string): Promise<StorageClassUsage
   const generationArtifacts = stateEntries.filter(isIndexGenerationArtifactName).map((entry) => join(state, entry));
   const [total, runs, cache, vault] = await Promise.all([
     storageUsage(root),
-    usage(runsDir(root), domainRoots),
+    usage(runsDir(root), domainRoots, telemetryRoot),
     usageMany([
       join(state, "index.json"),
       indexManifestPath(root),
@@ -138,8 +143,8 @@ export async function storageClassUsage(root: string): Promise<StorageClassUsage
       wikiDir(root),
       join(repository, "index.json"),
       join(repository, "artifacts")
-    ], domainRoots),
-    usage(vaultDir(root), domainRoots)
+    ], domainRoots, telemetryRoot),
+    usage(vaultDir(root), domainRoots, telemetryRoot)
   ]);
   return {
     total,
