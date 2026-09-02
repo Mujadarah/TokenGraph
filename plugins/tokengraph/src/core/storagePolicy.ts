@@ -83,10 +83,16 @@ function isDomainRootInfrastructure(path: string, domainRoots: ReadonlySet<strin
     name.toLowerCase().endsWith(".lock");
 }
 
+function isWriteTelemetryInfrastructure(path: string, domainRoots: ReadonlySet<string>): boolean {
+  const canonical = resolve(path);
+  return [...domainRoots].some((domainRoot) => canonical === join(domainRoot, "telemetry"));
+}
+
 async function usage(path: string, domainRoots: ReadonlySet<string>): Promise<StorageUsage> {
   try {
     const info = await lstat(path);
     if (info.isSymbolicLink()) throw new Error(`TokenGraph storage accounting refuses symbolic-link paths: ${path}`);
+    if (isWriteTelemetryInfrastructure(path, domainRoots)) return { bytes: 0, files: 0 };
     if (isDomainRootInfrastructure(path, domainRoots)) return { bytes: 0, files: 0 };
     if (info.isFile()) return { bytes: info.size, files: 1 };
     if (!info.isDirectory()) return { bytes: 0, files: 0 };

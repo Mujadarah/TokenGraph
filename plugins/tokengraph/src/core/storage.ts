@@ -1,15 +1,200 @@
 import { randomUUID } from "node:crypto";
-import type { BigIntStats } from "node:fs";
-import { chmod, lstat, mkdir, readFile, readdir, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
+import { constants, type BigIntStats } from "node:fs";
+import { chmod, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 
 import { runWithFileLock, type FileLockOptions } from "./fileLockLease.js";
+import { canonicalHash } from "./canonical.js";
 import { canonicalPersistenceLock, isCanonicalPersistenceLock, type CanonicalPersistenceLock, type LockDomain } from "./lockDomain.js";
 import { getLegacyRuntimeActivationStatus, requireLegacyRuntimeShutdownCapability } from "./legacyRuntimeActivation.js";
 
 export interface JsonTokenGraphStoreOptions {
   schemaVersion: number;
   dataKey: string;
+}
+
+export type WriteStorageClass = "runs" | "cache" | "vault" | "durable";
+
+export interface WriteTelemetryContext {
+  root: string;
+  storageClass: WriteStorageClass;
+}
+
+export interface AtomicWriteOptions {
+  telemetry?: WriteTelemetryContext;
+}
+
+export interface WriteTelemetryClassAggregate {
+  operationCount: number;
+  logicalBytes: number;
+  physicalBytes?: number;
+}
+
+export interface DailyWriteTelemetry {
+  date: string;
+  sampledPeakRssBytes: number;
+  classes: Partial<Record<WriteStorageClass, WriteTelemetryClassAggregate>>;
+}
+
+export interface WriteTelemetryDocument {
+  schemaVersion: 1;
+  days: DailyWriteTelemetry[];
+}
+
+export const MAX_PERSISTED_WRITE_TELEMETRY_DAYS = 14;
+const MAX_ATOMIC_NOOP_READ_BYTES = 64 * 1024 * 1024;
+const WRITE_STORAGE_CLASSES: readonly WriteStorageClass[] = ["runs", "cache", "vault", "durable"];
+const pendingWriteTelemetry = new Map<string, Map<string, DailyWriteTelemetry>>();
+const writeTelemetryFlushChains = new Map<string, Promise<void>>();
+
+function telemetryKey(root: string): string {
+  const key = resolve(root);
+  return process.platform === "win32" ? key.toLowerCase() : key;
+}
+
+function telemetryDay(now = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
+function boundedSum(left: number, right: number): number {
+  return Math.min(Number.MAX_SAFE_INTEGER, left + right);
+}
+
+function mergeAggregate(current: WriteTelemetryClassAggregate | undefined, incoming: WriteTelemetryClassAggregate): WriteTelemetryClassAggregate {
+  return {
+    operationCount: boundedSum(current?.operationCount ?? 0, incoming.operationCount),
+    logicalBytes: boundedSum(current?.logicalBytes ?? 0, incoming.logicalBytes),
+    ...(current?.physicalBytes === undefined && incoming.physicalBytes === undefined
+      ? {}
+      : { physicalBytes: boundedSum(current?.physicalBytes ?? 0, incoming.physicalBytes ?? 0) })
+  };
+}
+
+function mergeDailyTelemetry(current: DailyWriteTelemetry | undefined, incoming: DailyWriteTelemetry): DailyWriteTelemetry {
+  const classes: Partial<Record<WriteStorageClass, WriteTelemetryClassAggregate>> = {};
+  for (const storageClass of WRITE_STORAGE_CLASSES) {
+    const existing = current?.classes[storageClass];
+    const addition = incoming.classes[storageClass];
+    if (existing || addition) classes[storageClass] = mergeAggregate(existing, addition ?? { operationCount: 0, logicalBytes: 0 });
+  }
+  return {
+    date: incoming.date,
+    sampledPeakRssBytes: Math.max(current?.sampledPeakRssBytes ?? 0, incoming.sampledPeakRssBytes),
+    classes
+  };
+}
+
+function isValidAggregate(value: unknown): value is WriteTelemetryClassAggregate {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<WriteTelemetryClassAggregate>;
+  return Number.isSafeInteger(candidate.operationCount) && candidate.operationCount! >= 0 &&
+    Number.isSafeInteger(candidate.logicalBytes) && candidate.logicalBytes! >= 0 &&
+    (candidate.physicalBytes === undefined || (Number.isSafeInteger(candidate.physicalBytes) && candidate.physicalBytes >= 0));
+}
+
+function isValidDailyTelemetry(value: unknown): value is DailyWriteTelemetry {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<DailyWriteTelemetry>;
+  if (typeof candidate.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(candidate.date) ||
+    !Number.isSafeInteger(candidate.sampledPeakRssBytes) || candidate.sampledPeakRssBytes! < 0 ||
+    !candidate.classes || typeof candidate.classes !== "object" || Array.isArray(candidate.classes)) return false;
+  return Object.entries(candidate.classes).every(([storageClass, aggregate]) =>
+    WRITE_STORAGE_CLASSES.includes(storageClass as WriteStorageClass) && isValidAggregate(aggregate)
+  );
+}
+
+function normalizeWriteTelemetry(value: unknown): WriteTelemetryDocument {
+  const candidate = value && typeof value === "object" && !Array.isArray(value) ? value as Partial<WriteTelemetryDocument> : {};
+  if (typeof candidate.schemaVersion === "number" && candidate.schemaVersion > 1) {
+    throw new Error(`Unsupported newer TokenGraph write telemetry schema version ${candidate.schemaVersion}; refusing to overwrite it.`);
+  }
+  if (candidate.schemaVersion !== 1 || !Array.isArray(candidate.days) || candidate.days.some((day) => !isValidDailyTelemetry(day))) {
+    throw new Error("TokenGraph write telemetry is malformed; refusing to overwrite it.");
+  }
+  const byDate = new Map<string, DailyWriteTelemetry>();
+  for (const day of candidate.days.filter(isValidDailyTelemetry)) byDate.set(day.date, mergeDailyTelemetry(byDate.get(day.date), day));
+  return {
+    schemaVersion: 1,
+    days: [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date)).slice(-MAX_PERSISTED_WRITE_TELEMETRY_DAYS)
+  };
+}
+
+export function writeTelemetryPath(root: string): string {
+  return join(root, ".tokengraph", "telemetry", "write-aggregates.json");
+}
+
+export async function readWriteTelemetry(root: string): Promise<WriteTelemetryDocument> {
+  try {
+    return normalizeWriteTelemetry(JSON.parse(await readFile(writeTelemetryPath(root), "utf8")) as unknown);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { schemaVersion: 1, days: [] };
+    if (error instanceof SyntaxError) throw new Error("TokenGraph write telemetry is malformed; refusing to overwrite it.");
+    throw error;
+  }
+}
+
+export function observeSuccessfulWrite(context: WriteTelemetryContext, logicalBytes: number, physicalBytes?: number): void {
+  if (!Number.isSafeInteger(logicalBytes) || logicalBytes < 0 ||
+      (physicalBytes !== undefined && (!Number.isSafeInteger(physicalBytes) || physicalBytes < 0))) {
+    throw new Error("TokenGraph write telemetry accepts only non-negative safe-integer byte counts.");
+  }
+  const key = telemetryKey(context.root);
+  const day = telemetryDay();
+  const days = pendingWriteTelemetry.get(key) ?? new Map<string, DailyWriteTelemetry>();
+  const current = days.get(day) ?? { date: day, sampledPeakRssBytes: 0, classes: {} };
+  current.classes[context.storageClass] = mergeAggregate(current.classes[context.storageClass], {
+    operationCount: 1,
+    logicalBytes,
+    ...(physicalBytes === undefined ? {} : { physicalBytes })
+  });
+  current.sampledPeakRssBytes = Math.max(current.sampledPeakRssBytes, process.memoryUsage().rss);
+  days.set(day, current);
+  const retainedDates = [...days.keys()].sort().slice(-MAX_PERSISTED_WRITE_TELEMETRY_DAYS);
+  for (const date of [...days.keys()]) if (!retainedDates.includes(date)) days.delete(date);
+  pendingWriteTelemetry.set(key, days);
+}
+
+async function flushWriteTelemetryNow(root: string): Promise<boolean> {
+  const key = telemetryKey(root);
+  const snapshot = pendingWriteTelemetry.get(key);
+  if (!snapshot?.size) return false;
+  pendingWriteTelemetry.set(key, new Map());
+  try {
+    const lock = await canonicalPersistenceLock(root, "workspace-state", "telemetry", "write-aggregates.json");
+    await withFileLock(lock, async () => {
+      const persisted = await readWriteTelemetry(root);
+      const byDate = new Map(persisted.days.map((day) => [day.date, day]));
+      for (const day of snapshot.values()) byDate.set(day.date, mergeDailyTelemetry(byDate.get(day.date), day));
+      await writeJsonAtomic(writeTelemetryPath(root), {
+        schemaVersion: 1,
+        days: [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date)).slice(-MAX_PERSISTED_WRITE_TELEMETRY_DAYS)
+      });
+    });
+    return true;
+  } catch (error) {
+    const pending = pendingWriteTelemetry.get(key) ?? new Map<string, DailyWriteTelemetry>();
+    for (const day of snapshot.values()) pending.set(day.date, mergeDailyTelemetry(pending.get(day.date), day));
+    pendingWriteTelemetry.set(key, pending);
+    throw error;
+  }
+}
+
+export async function flushWriteTelemetry(root: string): Promise<boolean> {
+  const key = telemetryKey(root);
+  const previous = writeTelemetryFlushChains.get(key) ?? Promise.resolve();
+  let flushed = false;
+  const current = previous.then(
+    async () => { flushed = await flushWriteTelemetryNow(root); },
+    async () => { flushed = await flushWriteTelemetryNow(root); }
+  );
+  const settled = current.then(() => undefined, () => undefined);
+  writeTelemetryFlushChains.set(key, settled);
+  try {
+    await current;
+    return flushed;
+  } finally {
+    if (writeTelemetryFlushChains.get(key) === settled) writeTelemetryFlushChains.delete(key);
+  }
 }
 
 export interface DestructiveMaintenanceConfirmation {
@@ -248,11 +433,47 @@ export async function canonicalPersistenceLockKey(root: string, ...segments: str
   return process.platform === "win32" ? key.toLowerCase() : key;
 }
 
-export async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-  await writeTextAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
+async function readStableAtomicTarget(path: string): Promise<string | undefined> {
+  await assertNoSymbolicLinkComponents(path);
+  let before: BigIntStats;
+  try {
+    before = await lstat(path, { bigint: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n ||
+      before.size < 0n || before.size > BigInt(MAX_ATOMIC_NOOP_READ_BYTES)) return undefined;
+  const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
+  const handle = await open(path, constants.O_RDONLY | noFollow);
+  try {
+    const content = await handle.readFile("utf8");
+    const opened = await handle.stat({ bigint: true });
+    const after = await lstat(path, { bigint: true });
+    if (!opened.isFile() || opened.nlink !== 1n || !after.isFile() || after.isSymbolicLink() || after.nlink !== 1n ||
+        !sameMaintenanceIdentity(pathIdentity(before), pathIdentity(opened), false) ||
+        !sameMaintenanceIdentity(pathIdentity(before), pathIdentity(after), false)) {
+      throw new Error("TokenGraph atomic-write target changed during no-op validation.");
+    }
+    return content;
+  } finally {
+    await handle.close();
+  }
 }
 
-export async function writeTextAtomic(path: string, content: string): Promise<void> {
+export async function writeJsonAtomic(path: string, value: unknown, options: AtomicWriteOptions = {}): Promise<boolean> {
+  const payloadHash = canonicalHash(value);
+  try {
+    const existing = await readStableAtomicTarget(path);
+    if (existing !== undefined && canonicalHash(JSON.parse(existing) as unknown) === payloadHash) return false;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
+  return writeTextAtomic(path, `${JSON.stringify(value, null, 2)}\n`, options);
+}
+
+export async function writeTextAtomic(path: string, content: string, options: AtomicWriteOptions = {}): Promise<boolean> {
+  if (await readStableAtomicTarget(path) === content) return false;
   const directory = dirname(path);
   await assertNoSymbolicLinkComponents(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -266,6 +487,15 @@ export async function writeTextAtomic(path: string, content: string): Promise<vo
   } finally {
     await rm(tempPath, { force: true });
   }
+  let physicalBytes: number | undefined;
+  try {
+    const details = await stat(path);
+    if (Number.isSafeInteger(details.blocks) && details.blocks > 0) physicalBytes = details.blocks * 512;
+  } catch {
+    // The write succeeded even when allocation metadata is unavailable.
+  }
+  if (options.telemetry) observeSuccessfulWrite(options.telemetry, Buffer.byteLength(content, "utf8"), physicalBytes);
+  return true;
 }
 
 export async function assertNoSymbolicLinkComponents(path: string): Promise<void> {
@@ -317,8 +547,8 @@ export async function resolveConfinedPath(root: string, relativeFile: string, cr
   return filePath;
 }
 
-export async function writeTextAtomicConfined(root: string, relativeFile: string, content: string): Promise<void> {
-  await writeTextAtomic(await resolveConfinedPath(root, relativeFile, true), content);
+export async function writeTextAtomicConfined(root: string, relativeFile: string, content: string, options: AtomicWriteOptions = {}): Promise<boolean> {
+  return writeTextAtomic(await resolveConfinedPath(root, relativeFile, true), content, options);
 }
 
 export async function quarantineCorruptJson(path: string): Promise<void> {

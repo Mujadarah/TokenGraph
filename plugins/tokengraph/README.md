@@ -163,4 +163,4 @@ Do not edit `release/tokengraph/` by hand. Change source or the package generato
 
 ## Privacy and license
 
-TokenGraph is local-first and does not require an OpenAI API key, cloud sync, embeddings service, telemetry, or paid external API. Token savings are estimates. TokenGraph is licensed under Apache License 2.0; see the repository `LICENSE` and `NOTICE`.
+TokenGraph is local-first and does not require an OpenAI API key, cloud sync, embeddings service, cloud telemetry, or a paid external API. It keeps at most 14 days of local write-amplification aggregates under `.tokengraph/telemetry/`; those records contain only dates, storage classes, operation and byte counts, and sampled process RSS, never paths, prompts, commands, or file contents. Token savings are estimates. TokenGraph is licensed under Apache License 2.0; see the repository `LICENSE` and `NOTICE`.

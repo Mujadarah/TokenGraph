@@ -50,7 +50,7 @@ import { scanProjectSignature } from "./core/fileScanner.js";
 import { getIndexStatus } from "./core/indexStatus.js";
 import { loadHostWorkspaceAttestation } from "./core/hostWorkspace.js";
 import { traceFailure } from "./core/failureTracer.js";
-import { MemoryStore } from "./core/memoryStore.js";
+import { flushBufferedMemoryUses, MemoryStore } from "./core/memoryStore.js";
 import { canonicalPersistenceLock } from "./core/lockDomain.js";
 import { buildContextPlan } from "./core/planner.js";
 import { CURRENT_INDEX_SCHEMA_VERSION, indexProject, updateProjectIndexIncremental, type ProjectIndexerDependencies, type ProjectIndexOptions } from "./core/projectIndexer.js";
@@ -76,6 +76,7 @@ import { projectToVault } from "./core/vaultProjection.js";
 import { createTaskLedger, discardEmptyTaskLedger, listCompletedTaskOutcomes, loadTaskLedger, recordTaskArtifactDelivery, recordTaskEvent, setTaskDisposition, updateTaskReadPolicy, updateTaskRoutingObservation, type TaskHost } from "./core/taskLedger.js";
 import { listAppliedKnowledge, listKnowledgeSuggestions, proposeKnowledgeChange, reviewKnowledgeSuggestion } from "./core/knowledgeReviewQueue.js";
 import { activateLegacyRuntimeShutdown } from "./core/legacyRuntimeActivation.js";
+import { flushWriteTelemetry } from "./core/storage.js";
 
 const architectureRuleTypeSchema = z.enum([
   "forbidden-import",
@@ -751,16 +752,21 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
 
   async function memoryStore(root: string): Promise<MemoryStore> {
+    const config = await loadTokenGraphConfig(root);
+    const path = await repositoryMemoryPath(root);
+    const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
     return new MemoryStore(
-      await repositoryMemoryPath(root),
-      await canonicalPersistenceLock(root, "repository-state", "memory.json")
+      path,
+      lock,
+      { writePolicy: config.storage.writePolicy, telemetry: { root, storageClass: "durable" } }
     );
   }
 
   async function architectureRuleStore(root: string): Promise<ArchitectureRuleStore> {
     return new ArchitectureRuleStore(
       await repositoryRulesPath(root),
-      await canonicalPersistenceLock(root, "repository-state", "rules.json")
+      await canonicalPersistenceLock(root, "repository-state", "rules.json"),
+      { telemetry: { root, storageClass: "durable" } }
     );
   }
 
@@ -1380,6 +1386,10 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         estimateTokens(previewFooter)
       );
       if (!result.report) throw new Error(`Task ledger ${taskId} did not produce a completion report.`);
+      const memoryPath = await repositoryMemoryPath(resolvedRoot);
+      const memoryLock = await canonicalPersistenceLock(resolvedRoot, "repository-state", "memory.json");
+      await flushBufferedMemoryUses(memoryPath, memoryLock, { telemetry: { root: resolvedRoot, storageClass: "durable" } });
+      await flushWriteTelemetry(resolvedRoot);
       const footer = formatTaskReportFooter(result.report);
       const compact = { status: "completed", taskId, footer, reportingStatus: "ready" } as const;
       return ok(responseMode === "verbose" ? { ...compact, report: result.report } : compact);
@@ -1547,6 +1557,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         routing: z.object({ mode: z.enum(["shadow", "enforced", "always-activate", "always-advisory"]).optional(), killSwitch: z.boolean().optional() }).optional(),
         parser: z.object({ polyglotEnabled: z.boolean().optional(), maxFileBytes: z.number().int().min(1).optional(), maxTotalBytes: z.number().int().min(1).optional(), maxSymbols: z.number().int().min(1).optional(), maxNodes: z.number().int().min(1).optional(), perFileTimeoutMs: z.number().int().min(1).optional(), wholeIndexTimeoutMs: z.number().int().min(1).optional(), maxRecursionDepth: z.number().int().min(1).optional(), maxGraphDepth: z.number().int().min(0).optional(), maxGeneratedFiles: z.number().int().min(0).optional(), maxTsconfigChain: z.number().int().min(1).optional(), maxAliases: z.number().int().min(0).optional() }).optional(),
         storage: z.object({
+          writePolicy: z.enum(["minimal", "balanced", "durable"]).optional(),
           maxBytes: z.number().int().min(1).optional(),
           runsMaxBytes: z.number().int().min(0).optional(),
           cacheMaxBytes: z.number().int().min(0).optional(),

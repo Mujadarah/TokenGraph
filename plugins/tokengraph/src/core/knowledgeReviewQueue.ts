@@ -336,7 +336,7 @@ async function readQueue(root: string, repairInsideLock: boolean): Promise<Knowl
 }
 
 async function writeQueue(root: string, suggestions: KnowledgeSuggestion[]): Promise<void> {
-  await writeJsonAtomic(queuePath(root), { schemaVersion: REVIEW_QUEUE_SCHEMA_VERSION, suggestions });
+  await writeJsonAtomic(queuePath(root), { schemaVersion: REVIEW_QUEUE_SCHEMA_VERSION, suggestions }, { telemetry: { root, storageClass: "durable" } });
 }
 
 function applicationProvenanceStatus(sources: KnowledgeSourceReference[]): AppliedKnowledge["provenanceStatus"] {
@@ -432,7 +432,7 @@ function applicationMarkdown(application: AppliedKnowledge): string {
 
 async function writeApplication(root: string, applications: AppliedKnowledge[], application: AppliedKnowledge): Promise<void> {
   await ensureApplicationTargets(root, application);
-  await writeJsonAtomic(applicationPath(root), { schemaVersion: APPLICATION_SCHEMA_VERSION, applications: [...applications, application] });
+  await writeJsonAtomic(applicationPath(root), { schemaVersion: APPLICATION_SCHEMA_VERSION, applications: [...applications, application] }, { telemetry: { root, storageClass: "durable" } });
 }
 
 async function ensureApplicationTargets(root: string, application: AppliedKnowledge): Promise<void> {
@@ -445,7 +445,7 @@ async function ensureApplicationTargets(root: string, application: AppliedKnowle
       if (existing !== expected) throw new Error("Applied knowledge target differs from its reviewed payload.");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      await writeTextAtomic(path, expected);
+      await writeTextAtomic(path, expected, { telemetry: { root, storageClass: "durable" } });
     }
   }
 }

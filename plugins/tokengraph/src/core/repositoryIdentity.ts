@@ -133,7 +133,7 @@ async function loadOrCreateRepositoryIdUnqueued(workspaceRoot: string, directory
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
     }
-    await writeJsonAtomic(path, { schemaVersion: 1, repositoryId });
+    await writeJsonAtomic(path, { schemaVersion: 1, repositoryId }, { telemetry: { root: workspaceRoot, storageClass: "durable" } });
   });
   try {
     const persisted = JSON.parse(await readFile(path, "utf8")) as Partial<PersistedIdentity>;
@@ -272,12 +272,12 @@ async function migrateLegacyRepositoryState(workspaceRoot: string, source: strin
       skippedUnsupported: [],
       skippedSymlink: []
     };
-    await migrateLegacyEntries(source, target, "", report);
-    await writeJsonAtomic(join(target, "migration.json"), report);
+    await migrateLegacyEntries(workspaceRoot, source, target, "", report);
+    await writeJsonAtomic(join(target, "migration.json"), report, { telemetry: { root: workspaceRoot, storageClass: "durable" } });
   });
 }
 
-async function migrateLegacyEntries(sourceRoot: string, targetRoot: string, relativePath: string, report: LegacyMigrationReport): Promise<void> {
+async function migrateLegacyEntries(workspaceRoot: string, sourceRoot: string, targetRoot: string, relativePath: string, report: LegacyMigrationReport): Promise<void> {
   const sourceDirectory = join(sourceRoot, relativePath);
   for (const entry of await readdir(sourceDirectory, { withFileTypes: true })) {
     const entryRelativePath = relativePath ? join(relativePath, entry.name) : entry.name;
@@ -292,7 +292,7 @@ async function migrateLegacyEntries(sourceRoot: string, targetRoot: string, rela
       continue;
     }
     if (stats.isDirectory()) {
-      await migrateLegacyEntries(sourceRoot, targetRoot, entryRelativePath, report);
+      await migrateLegacyEntries(workspaceRoot, sourceRoot, targetRoot, entryRelativePath, report);
       continue;
     }
     if (!stats.isFile() || !entry.name.endsWith(".json")) {
@@ -318,7 +318,7 @@ async function migrateLegacyEntries(sourceRoot: string, targetRoot: string, rela
       }
       throw error;
     }
-    await writeTextAtomic(targetPath, contents);
+    await writeTextAtomic(targetPath, contents, { telemetry: { root: workspaceRoot, storageClass: "durable" } });
     report.migrated.push(entryRelativePath);
   }
 }

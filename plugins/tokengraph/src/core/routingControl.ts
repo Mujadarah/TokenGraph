@@ -88,6 +88,6 @@ export async function saveRoutingControl(root: string, control: RoutingControl):
   const path = routingControlPath(directory);
   const normalized = normalize(control);
   const lock = await canonicalPersistenceLock(root, "repository-state", "routing-control.json");
-  await withFileLock(lock, () => writeJsonAtomic(path, normalized));
+  await withFileLock(lock, () => writeJsonAtomic(path, normalized, { telemetry: { root, storageClass: "durable" } }));
   return normalized;
 }

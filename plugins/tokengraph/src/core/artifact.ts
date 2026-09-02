@@ -74,7 +74,7 @@ export async function saveStableArtifact<T>(root: string, artifact: StableArtifa
   const directory = await repositoryDir(root);
   const path = artifactPath(directory, artifact.hash);
   const lock = await canonicalPersistenceLock(root, "artifacts", `${artifact.hash}.json`);
-  await withFileLock(lock, () => writeJsonAtomic(path, artifact));
+  await withFileLock(lock, () => writeJsonAtomic(path, artifact, { telemetry: { root, storageClass: "cache" } }));
 }
 
 export async function loadStableArtifact<T = unknown>(root: string, hash: string): Promise<StableArtifact<T> | undefined> {

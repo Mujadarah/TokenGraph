@@ -4,8 +4,8 @@ import { readFile, rename } from "node:fs/promises";
 import { filterUntrustedSourceText } from "./storagePolicy.js";
 import type { CanonicalPersistenceLock } from "./lockDomain.js";
 import { tokenize } from "./token.js";
-import { withFileLock, writeJsonAtomic } from "./storage.js";
-import type { MemoryConflict, MemoryEntry, MemoryInput, MemoryRecall, MemoryStatus, MemoryUpdateInput } from "./types.js";
+import { withFileLock, writeJsonAtomic, type WriteTelemetryContext } from "./storage.js";
+import type { MemoryConflict, MemoryEntry, MemoryInput, MemoryRecall, MemoryStatus, MemoryUpdateInput, StorageWritePolicy } from "./types.js";
 
 interface MemoryListOptions {
   includeDeprecated?: boolean;
@@ -20,6 +20,12 @@ interface MemoryRecallOptions extends MemoryListOptions {
 const DEFAULT_SOURCE = "manual";
 const CURRENT_MEMORY_SCHEMA_VERSION = 1;
 const memoryStoreWriteChains = new Map<string, Promise<void>>();
+const bufferedMemoryUseIds = new Map<string, Set<string>>();
+
+export interface MemoryStoreOptions {
+  writePolicy?: StorageWritePolicy;
+  telemetry?: WriteTelemetryContext;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -159,8 +165,29 @@ function filterByStatus(memories: MemoryEntry[], options: MemoryListOptions): Me
 export class MemoryStore {
   constructor(
     private readonly filePath: string,
-    private readonly lock: CanonicalPersistenceLock
+    private readonly lock: CanonicalPersistenceLock,
+    private readonly options: MemoryStoreOptions = {}
   ) {}
+
+  static async flushBufferedUses(
+    filePath: string,
+    lock: CanonicalPersistenceLock,
+    options: Pick<MemoryStoreOptions, "telemetry"> = {}
+  ): Promise<boolean> {
+    const key = lock.compatibilityPath;
+    const buffered = bufferedMemoryUseIds.get(key);
+    if (!buffered?.size) return false;
+    bufferedMemoryUseIds.delete(key);
+    try {
+      await new MemoryStore(filePath, lock, { writePolicy: "durable", ...options }).persistUsed([...buffered], "durable");
+      return true;
+    } catch (error) {
+      const pending = bufferedMemoryUseIds.get(key) ?? new Set<string>();
+      for (const id of buffered) pending.add(id);
+      bufferedMemoryUseIds.set(key, pending);
+      throw error;
+    }
+  }
 
   async list(options: MemoryListOptions = {}): Promise<MemoryEntry[]> {
     return filterByStatus(await this.readAll(false), options);
@@ -317,14 +344,25 @@ export class MemoryStore {
 
   private async markUsed(ids: string[]): Promise<void> {
     if (!ids.length) return;
+    const writePolicy = this.options.writePolicy ?? "balanced";
+    if (writePolicy === "minimal") {
+      const buffered = bufferedMemoryUseIds.get(this.lock.compatibilityPath) ?? new Set<string>();
+      for (const id of ids) buffered.add(id);
+      bufferedMemoryUseIds.set(this.lock.compatibilityPath, buffered);
+      return;
+    }
+    await this.persistUsed(ids, writePolicy);
+  }
+
+  private async persistUsed(ids: string[], writePolicy: Exclude<StorageWritePolicy, "minimal">): Promise<boolean> {
     const idsToMark = new Set(ids);
-    await this.enqueueWrite(async () => {
+    return this.enqueueWrite(async () => {
       const memories = await this.readAll(true);
       const timestamp = nowIso();
       const today = utcDay(timestamp);
       let changed = false;
       for (const memory of memories) {
-        if (!idsToMark.has(memory.id) || utcDay(memory.lastUsedAt) === today) continue;
+        if (!idsToMark.has(memory.id) || (writePolicy === "balanced" && utcDay(memory.lastUsedAt) === today)) continue;
         memory.lastUsedAt = timestamp;
         memory.updatedAt = timestamp;
         changed = true;
@@ -332,6 +370,7 @@ export class MemoryStore {
       if (changed) {
         await this.writeAtomic(memories);
       }
+      return changed;
     });
   }
 
@@ -393,7 +432,7 @@ export class MemoryStore {
     await writeJsonAtomic(this.filePath, {
       schemaVersion: CURRENT_MEMORY_SCHEMA_VERSION,
       memories
-    });
+    }, this.options.telemetry ? { telemetry: this.options.telemetry } : {});
   }
 
   private async quarantineCorruptFile(): Promise<void> {
@@ -406,6 +445,14 @@ export class MemoryStore {
       }
     }
   }
+}
+
+export async function flushBufferedMemoryUses(
+  filePath: string,
+  lock: CanonicalPersistenceLock,
+  options: Pick<MemoryStoreOptions, "telemetry"> = {}
+): Promise<boolean> {
+  return MemoryStore.flushBufferedUses(filePath, lock, options);
 }
 
 /** @internal Test-only diagnostic; not part of the public memory-store contract. */

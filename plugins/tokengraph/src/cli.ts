@@ -7,6 +7,7 @@ import { loadPairedHostProtocol, runPairedHostEvaluation } from "./core/pairedHo
 import { recordTaskOutcome, requireOpenTaskForOutcome } from "./core/taskLedger.js";
 import { getRepositoryIdentity } from "./core/repositoryIdentity.js";
 import { activateLegacyRuntimeShutdown } from "./core/legacyRuntimeActivation.js";
+import { flushWriteTelemetry } from "./core/storage.js";
 
 const LEGACY_RUNTIME_ROLLOUT = "Every TokenGraph v0.23.1 MCP and CLI process must be stopped before v2 activation and must not be restarted while v2 runs.";
 
@@ -23,18 +24,24 @@ function activateConfirmedInvocation(options: string[], usage: string): void {
 }
 
 async function main(argv: string[]): Promise<void> {
+  let telemetryRoot: string | undefined;
+  let operationFailed = false;
+  let operationError: unknown;
+  try {
   if (argv[0] === "evaluate-host") {
     const options = argv.slice(1);
-    const usage = "Usage: tokengraph evaluate-host [--root <path>] [--controller-root <path>] --protocol <path> [--output-manifest <path>] [--codex <executable>] [--timeout-ms <n>] [--dry-run]";
+    const usage = "Usage: tokengraph evaluate-host [--root <path>] [--controller-root <path>] --protocol <path> [--output-manifest <path>] [--codex <executable>] [--timeout-ms <n>] [--dry-run] [--confirm-no-legacy-processes]";
     if (options.includes("--help")) {
       process.stdout.write(`${usage}\n`);
       return;
     }
     const root = optionValue(options, "--root") ?? process.cwd();
+    telemetryRoot = root;
     const protocolPath = optionValue(options, "--protocol");
     if (!protocolPath) throw new Error(usage);
     const timeoutMs = Number(optionValue(options, "--timeout-ms") ?? 30 * 60_000);
     if (!Number.isFinite(timeoutMs) || timeoutMs < 1) throw new Error("evaluate-host --timeout-ms must be a positive number.");
+    if (!options.includes("--dry-run")) activateConfirmedInvocation(options, usage);
     const result = await runPairedHostEvaluation({
       root,
       ...(optionValue(options, "--controller-root") ? { controllerRoot: optionValue(options, "--controller-root") } : {}),
@@ -51,6 +58,7 @@ async function main(argv: string[]): Promise<void> {
     const options = argv.slice(1);
     activateConfirmedInvocation(options, "Usage: tokengraph evaluate-routing [--root <path>] --manifest <path> --confirm-no-legacy-processes");
     const root = optionValue(options, "--root") ?? process.cwd();
+    telemetryRoot = root;
     const manifestPath = optionValue(options, "--manifest");
     if (!manifestPath) throw new Error("Usage: tokengraph evaluate-routing [--root <path>] --manifest <path>");
     const report = evaluateManifest(await loadEvaluationManifest(manifestPath));
@@ -63,6 +71,7 @@ async function main(argv: string[]): Promise<void> {
     const options = argv.slice(1);
     activateConfirmedInvocation(options, "Usage: tokengraph purge [--root <path>] --class runs|cache|outcomes|derived --confirm-no-legacy-processes");
     const root = optionValue(options, "--root") ?? process.cwd();
+    telemetryRoot = root;
     const storageClass = optionValue(options, "--class");
     if (!storageClass || !(["runs", "cache", "outcomes", "derived"] as string[]).includes(storageClass)) {
       throw new Error("Usage: tokengraph purge [--root <path>] --class runs|cache|outcomes|derived");
@@ -79,6 +88,7 @@ async function main(argv: string[]): Promise<void> {
   const options = argv.slice(1, separator);
   activateConfirmedInvocation(options, "Usage: tokengraph run [options] --confirm-no-legacy-processes -- <command> [args...]");
   const root = optionValue(options, "--root") ?? process.cwd();
+  telemetryRoot = root;
   const taskId = optionValue(options, "--task-id");
   const config = await loadTokenGraphConfig(root);
   const timeoutMs = Number(optionValue(options, "--timeout-ms") ?? config.runner.timeoutMs);
@@ -106,6 +116,20 @@ async function main(argv: string[]): Promise<void> {
   await purgeRuns(root, retentionCutoff());
   process.stdout.write(`${JSON.stringify({ ...summarizeRun(run), stdoutTruncated: run.stdoutTruncated, stderrTruncated: run.stderrTruncated })}\n`);
   if (run.status !== "completed") process.exitCode = run.status === "timed-out" ? 124 : 1;
+  } catch (error) {
+    operationFailed = true;
+    operationError = error;
+    throw error;
+  } finally {
+    if (telemetryRoot) {
+      try {
+        await flushWriteTelemetry(telemetryRoot);
+      } catch (flushError) {
+        if (operationFailed) throw new AggregateError([operationError, flushError], "TokenGraph CLI operation and telemetry flush both failed.");
+        throw flushError;
+      }
+    }
+  }
 }
 
 // Native addon promises do not by themselves keep Node's event loop alive.

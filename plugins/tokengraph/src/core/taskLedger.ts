@@ -127,9 +127,9 @@ async function runWithTaskLock<T>(lock: CanonicalPersistenceLock, operation: () 
   return withFileLock(lock, operation);
 }
 
-async function writeTaskJson(path: string, value: unknown): Promise<void> {
+async function writeTaskJson(root: string, path: string, value: unknown): Promise<void> {
   const { writeJsonAtomic } = await import("./storage.js");
-  await writeJsonAtomic(path, value);
+  await writeJsonAtomic(path, value, { telemetry: { root, storageClass: "durable" } });
 }
 
 async function readRepositoryIdentity(root: string): Promise<RepositoryIdentity> {
@@ -868,7 +868,7 @@ export async function createTaskLedger(root: string, options: CreateTaskLedgerOp
     events: []
   };
   await enqueueLedgerOperation(root, taskId, async () => {
-    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(root, taskLedgerPath(root, taskId), ledger);
   });
   return ledger;
 }
@@ -897,7 +897,7 @@ export async function attachTaskHostContext(
     ledger.sessionId = context.sessionId;
     ledger.turnId = context.turnId;
     ledger.updatedAt = new Date().toISOString();
-    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(root, taskLedgerPath(root, taskId), ledger);
     return ledger;
   });
 }
@@ -925,7 +925,7 @@ export async function loadTaskLedger(root: string, taskId: string, repairInsideL
       ledger.estimatorVersion = TASK_ESTIMATOR_VERSION;
       ledger.outcomes ??= [];
       if (ledger.status === "completed") ledger.completedReport = buildTaskReport(ledger);
-      if (repairInsideLock) await writeTaskJson(path, ledger);
+      if (repairInsideLock) await writeTaskJson(root, path, ledger);
     }
     return ledger;
   } catch (error) {
@@ -946,7 +946,7 @@ export async function updateTaskRoutingObservation(root: string, taskId: string,
     assertPausedTaskIsTerminal(ledger);
     ledger.routingObservation = sanitized;
     ledger.updatedAt = new Date().toISOString();
-    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(root, taskLedgerPath(root, taskId), ledger);
     return ledger;
   });
 }
@@ -959,7 +959,7 @@ export async function updateTaskReadPolicy(root: string, taskId: string, state: 
     assertPausedTaskIsTerminal(ledger);
     ledger.readPolicy = sanitized;
     ledger.updatedAt = new Date().toISOString();
-    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(root, taskLedgerPath(root, taskId), ledger);
     return ledger;
   });
 }
@@ -971,7 +971,7 @@ export async function recordTaskArtifactDelivery(root: string, taskId: string, a
     assertPausedTaskIsTerminal(ledger);
     ledger.deliveredArtifacts = [...new Set([...ledger.deliveredArtifacts, ...sanitized])];
     ledger.updatedAt = new Date().toISOString();
-    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(root, taskLedgerPath(root, taskId), ledger);
     return ledger;
   });
 }
@@ -1013,7 +1013,7 @@ export async function recordTaskEvent(root: string, taskId: string, event: TaskE
       ledger.events[existingIndex] = candidate;
     }
     ledger.updatedAt = new Date().toISOString();
-    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(root, taskLedgerPath(root, taskId), ledger);
     return ledger;
   });
 }
@@ -1053,7 +1053,7 @@ export async function recordTaskOutcome(root: string, taskId: string, outcome: T
       ledger.outcomes.push(candidate);
       ledger.outcomes.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
       ledger.updatedAt = new Date().toISOString();
-      await writeTaskJson(taskLedgerPath(root, taskId), ledger);
+      await writeTaskJson(root, taskLedgerPath(root, taskId), ledger);
     }
     return ledger;
   });
@@ -1098,7 +1098,7 @@ async function readCompletedOutcomesIndex(root: string, repairInsideLock: boolea
 }
 
 async function writeCompletedOutcomesIndex(root: string, outcomes: TaskOutcome[]): Promise<void> {
-  await writeTaskJson(completedOutcomesIndexPath(root), {
+  await writeTaskJson(root, completedOutcomesIndexPath(root), {
     schemaId: COMPLETED_OUTCOMES_INDEX_SCHEMA_ID,
     schemaVersion: COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION,
     outcomes: orderOutcomes(outcomes)
@@ -1182,14 +1182,14 @@ export async function setTaskDisposition(
     if (disposition === "pause") {
       ledger.status = "paused";
       ledger.pausedAt = now;
-      await writeTaskJson(taskLedgerPath(root, taskId), ledger);
+      await writeTaskJson(root, taskLedgerPath(root, taskId), ledger);
       return { result: { ledger } };
     }
 
     ledger.status = "completed";
     ledger.completedAt = now;
     ledger.completedReport = buildTaskReport(ledger, calibration, reportOverheadTokens);
-    await writeTaskJson(taskLedgerPath(root, taskId), ledger);
+    await writeTaskJson(root, taskLedgerPath(root, taskId), ledger);
     return {
       result: { ledger, report: ledger.completedReport },
       completedOutcomes: ledger.outcomes

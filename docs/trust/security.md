@@ -32,3 +32,5 @@ Architecture-rule patterns are validated in a bounded worker before they are per
 Runner secret redaction is best effort and not a guarantee. Saved captures are JSON under `.tokengraph/runs/` in the active worktree and are stored as plaintext. TokenGraph does not perform always-on process capture. To avoid runner capture entirely, do not invoke `tokengraph run`; use normal host execution instead.
 
 Do not send regulated or highly sensitive output through the runner. Storage is not encrypted today. The isolated storage interfaces and write boundaries preserve the option to add future optional local encryption, but no encryption feature is currently claimed.
+
+Local write-amplification telemetry is bounded to 14 daily aggregates and is never transmitted. Its schema records only UTC dates, storage classes, aggregate operation and byte counts, and sampled process RSS; it excludes paths, prompts, commands, secrets, file contents, and per-file events. The telemetry directory is storage infrastructure and does not consume user-configured content quotas.

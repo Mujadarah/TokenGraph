@@ -444,7 +444,7 @@ function sanitizeSavedRun(run: SavedRun): SavedRun {
 
 export async function saveRun(root: string, run: SavedRun): Promise<void> {
   const lock = await canonicalPersistenceLock(root, "runs", `${run.runId}.json`);
-  await withFileLock(lock, () => writeJsonAtomic(runPath(root, run.runId), sanitizeSavedRun(run)));
+  await withFileLock(lock, () => writeJsonAtomic(runPath(root, run.runId), sanitizeSavedRun(run), { telemetry: { root, storageClass: "runs" } }));
 }
 
 // `repairInsideLock` is set only by callers that own the runs domain anchor

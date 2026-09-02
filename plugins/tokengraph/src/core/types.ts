@@ -1,5 +1,6 @@
 export type TokenSavingProfile = "conservative" | "balanced" | "aggressive";
 export type RoutingMode = "shadow" | "enforced" | "always-activate" | "always-advisory";
+export type StorageWritePolicy = "minimal" | "balanced" | "durable";
 
 export interface RepositoryIdentity {
   repositoryId: string;
@@ -77,6 +78,7 @@ export interface TokenGraphConfig {
     maxAliases: number;
   };
   storage: {
+    writePolicy: StorageWritePolicy;
     maxBytes: number;
     runsMaxBytes: number;
     cacheMaxBytes: number;

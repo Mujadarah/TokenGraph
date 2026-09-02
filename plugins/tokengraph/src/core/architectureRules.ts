@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile, rename } from "node:fs/promises";
+import { join } from "node:path";
 
 import type { ArchitectureCheckReport, ArchitectureFinding, ArchitectureRule, ArchitectureRuleInput, ArchitectureRuleSeverity, ProjectIndex } from "./types.js";
 import { assertSafeArchitectureRulePatterns } from "./patternSafety.js";
 import type { CanonicalPersistenceLock } from "./lockDomain.js";
-import { withFileLock } from "./storage.js";
+import { withFileLock, writeJsonAtomic, type WriteTelemetryContext } from "./storage.js";
 
 const DEFAULT_SEVERITY: ArchitectureRuleSeverity = "warning";
 const CURRENT_RULES_SCHEMA_VERSION = 1;
+
+export interface ArchitectureRuleStoreOptions {
+  telemetry?: WriteTelemetryContext;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -53,7 +57,8 @@ export class ArchitectureRuleStore {
 
   constructor(
     private readonly filePath: string,
-    private readonly lock: CanonicalPersistenceLock
+    private readonly lock: CanonicalPersistenceLock,
+    private readonly options: ArchitectureRuleStoreOptions = {}
   ) {}
 
   async list(): Promise<ArchitectureRule[]> {
@@ -133,39 +138,20 @@ export class ArchitectureRuleStore {
       () => withFileLock(this.lock, operation),
       () => withFileLock(this.lock, operation)
     );
-    ArchitectureRuleStore.writeChains.set(
-      key,
-      current.then(
-        () => undefined,
-        () => undefined
-      )
-    );
+    let settled: Promise<void>;
+    const cleanUp = (): void => {
+      if (ArchitectureRuleStore.writeChains.get(key) === settled) ArchitectureRuleStore.writeChains.delete(key);
+    };
+    settled = current.then(cleanUp, cleanUp);
+    ArchitectureRuleStore.writeChains.set(key, settled);
     return current;
   }
 
   private async writeAtomic(rules: ArchitectureRule[]): Promise<void> {
-    const directory = dirname(this.filePath);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    if (process.platform !== "win32") await chmod(directory, 0o700);
-    const tempPath = join(directory, `.rules-${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
-    try {
-      await writeFile(
-        tempPath,
-        `${JSON.stringify(
-          {
-            schemaVersion: CURRENT_RULES_SCHEMA_VERSION,
-            rules
-          },
-          null,
-          2
-        )}\n`,
-        { mode: 0o600 }
-      );
-      await rename(tempPath, this.filePath);
-      if (process.platform !== "win32") await chmod(this.filePath, 0o600);
-    } finally {
-      await rm(tempPath, { force: true });
-    }
+    await writeJsonAtomic(this.filePath, {
+      schemaVersion: CURRENT_RULES_SCHEMA_VERSION,
+      rules
+    }, this.options.telemetry ? { telemetry: this.options.telemetry } : {});
   }
 
   private async quarantineCorruptFile(): Promise<void> {

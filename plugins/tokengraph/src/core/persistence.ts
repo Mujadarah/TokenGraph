@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { canonicalPersistenceLock } from "./lockDomain.js";
 import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
 import { CURRENT_INDEX_SCHEMA_VERSION, projectIndexFingerprint, validatedContentSetHash } from "./projectIndexer.js";
-import { assertNoSymbolicLinkComponents, quarantineCorruptJson, resolveConfinedPath, withDestructiveMaintenance, withFileLock, writeTextAtomic, writeTextAtomicConfined, SAFE_WIKI_SLUG_PATTERN, type DestructiveMaintenanceConfirmation } from "./storage.js";
+import { assertNoSymbolicLinkComponents, observeSuccessfulWrite, quarantineCorruptJson, resolveConfinedPath, withDestructiveMaintenance, withFileLock, writeTextAtomic, writeTextAtomicConfined, SAFE_WIKI_SLUG_PATTERN, type DestructiveMaintenanceConfirmation } from "./storage.js";
 import { getRepositoryIdentity, resolveRepositoryStateDirectory } from "./repositoryIdentity.js";
 import type { StorageClassQuotas } from "./storagePolicy.js";
 import type { ProjectIndex, ProjectWiki, WikiPage } from "./types.js";
@@ -55,7 +55,7 @@ async function migrateRepositoryRecord(root: string, fileName: "memory.json" | "
         await readFile(target, "utf8");
       } catch (targetError) {
         if ((targetError as NodeJS.ErrnoException).code !== "ENOENT") throw targetError;
-        await writeTextAtomic(target, contents);
+        await writeTextAtomic(target, contents, { telemetry: { root, storageClass: "durable" } });
       }
     });
   } catch (error) {
@@ -123,8 +123,8 @@ async function saveVaultProjectionUnlocked(root: string, notes: VaultNote[]): Pr
   }
   const retained = new Set(notes.map((note) => note.path));
   await Promise.all(previous.filter((note) => !retained.has(note.path)).map(async (note) => rm(await resolveConfinedPath(root, join(".tokengraph", "vault", note.path)), { force: true })));
-  for (const note of notes) await writeTextAtomicConfined(root, join(".tokengraph", "vault", note.path), note.body);
-  await writeTextAtomicConfined(root, join(".tokengraph", "vault", "manifest.json"), `${JSON.stringify({ schemaVersion: 1, notes: notes.map(({ path, title, hash, backlinks, archived }) => ({ path, title, hash, backlinks, archived })) }, null, 2)}\n`);
+  for (const note of notes) await writeTextAtomicConfined(root, join(".tokengraph", "vault", note.path), note.body, { telemetry: { root, storageClass: "vault" } });
+  await writeTextAtomicConfined(root, join(".tokengraph", "vault", "manifest.json"), `${JSON.stringify({ schemaVersion: 1, notes: notes.map(({ path, title, hash, backlinks, archived }) => ({ path, title, hash, backlinks, archived })) }, null, 2)}\n`, { telemetry: { root, storageClass: "vault" } });
 }
 
 export async function saveVaultProjection(root: string, notes: VaultNote[]): Promise<void> {
@@ -533,6 +533,10 @@ export async function saveProjectIndex(root: string, index: ProjectIndex, option
         manifestTemporaryIdentity,
         () => { namespaceCommitted = true; }
       );
+      observeSuccessfulWrite(
+        { root, storageClass: "cache" },
+        Buffer.byteLength(serializedGeneration, "utf8") + Buffer.byteLength(serializedManifest, "utf8")
+      );
     } catch (error) {
       operationFailed = true;
       operationFailure = error;
@@ -802,7 +806,7 @@ async function saveProjectWikiUnlocked(root: string, wiki: ProjectWiki): Promise
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    if (existing !== wikiPage.body) await writeTextAtomic(path, wikiPage.body);
+    if (existing !== wikiPage.body) await writeTextAtomic(path, wikiPage.body, { telemetry: { root, storageClass: "cache" } });
   }
   const retained = new Set(pages.map((page) => page.file));
   await Promise.all((previous?.pages ?? [])
@@ -814,7 +818,7 @@ async function saveProjectWikiUnlocked(root: string, wiki: ProjectWiki): Promise
     generatedAt: new Date().toISOString(),
     pages
   };
-  await writeTextAtomicConfined(root, join(".tokengraph", "wiki", "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeTextAtomicConfined(root, join(".tokengraph", "wiki", "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { telemetry: { root, storageClass: "cache" } });
 }
 
 export async function saveProjectWiki(root: string, wiki: ProjectWiki): Promise<void> {

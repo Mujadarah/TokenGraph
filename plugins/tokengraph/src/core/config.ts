@@ -4,9 +4,9 @@ import { configPath, stateDir } from "./persistence.js";
 import { canonicalPersistenceLock } from "./lockDomain.js";
 import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
 import { quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
-import type { RoutingMode, TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
+import type { RoutingMode, StorageWritePolicy, TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
 
-export const CURRENT_CONFIG_SCHEMA_VERSION = 3;
+export const CURRENT_CONFIG_SCHEMA_VERSION = 4;
 
 export const PROFILE_DEFAULTS = {
   conservative: {
@@ -70,6 +70,7 @@ export const DEFAULT_TOKEN_GRAPH_CONFIG: TokenGraphConfig = {
     maxAliases: 500
   },
   storage: {
+    writePolicy: "balanced",
     maxBytes: 64 * 1024 * 1024,
     runsMaxBytes: 16 * 1024 * 1024,
     cacheMaxBytes: 32 * 1024 * 1024,
@@ -89,6 +90,10 @@ function isProfile(value: unknown): value is TokenSavingProfile {
 
 function isRoutingMode(value: unknown): value is RoutingMode {
   return value === "shadow" || value === "enforced" || value === "always-activate" || value === "always-advisory";
+}
+
+function isStorageWritePolicy(value: unknown): value is StorageWritePolicy {
+  return value === "minimal" || value === "balanced" || value === "durable";
 }
 
 function sanitizeNumber(value: unknown, fallback: number, min = 0): number {
@@ -147,6 +152,9 @@ function normalizeConfig(value: unknown, applyEnvironment = true): TokenGraphCon
       maxAliases: integer(nestedParser, "maxAliases", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxAliases, 0)
     },
     storage: {
+      writePolicy: isStorageWritePolicy((nestedStorage as { writePolicy?: unknown }).writePolicy)
+        ? (nestedStorage as { writePolicy: StorageWritePolicy }).writePolicy
+        : DEFAULT_TOKEN_GRAPH_CONFIG.storage.writePolicy,
       maxBytes: storageMaxBytes,
       runsMaxBytes: integer(nestedStorage, "runsMaxBytes", legacyStorageCaps.runsMaxBytes, 0),
       cacheMaxBytes: integer(nestedStorage, "cacheMaxBytes", legacyStorageCaps.cacheMaxBytes, 0),
@@ -189,7 +197,7 @@ export async function saveTokenGraphConfig(root: string, config: TokenGraphConfi
   await withFileLock(lock, () => writeJsonAtomic(configPath(root), {
     schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
     config: persisted
-  }));
+  }, { telemetry: { root, storageClass: "durable" } }));
   return normalizeConfig(persisted);
 }
 
@@ -210,7 +218,7 @@ export async function loadTokenGraphConfig(root: string): Promise<TokenGraphConf
         await copyFile(configPath(root), `${configPath(root)}.bak`).catch((error: unknown) => {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         });
-        await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: persistedNormalized });
+        await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: persistedNormalized }, { telemetry: { root, storageClass: "durable" } });
       });
     }
     return normalized;
@@ -225,7 +233,7 @@ export async function loadTokenGraphConfig(root: string): Promise<TokenGraphConf
         const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
         return withFileLock(lock, async () => {
           await quarantineCorruptJson(configPath(root));
-          await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG, false) });
+          await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG, false) }, { telemetry: { root, storageClass: "durable" } });
           return normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG);
         });
       }
