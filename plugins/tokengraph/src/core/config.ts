@@ -201,71 +201,100 @@ export async function saveTokenGraphConfig(root: string, config: TokenGraphConfi
   return normalizeConfig(persisted);
 }
 
-export async function loadTokenGraphConfig(root: string): Promise<TokenGraphConfig> {
+type ConfigSnapshot =
+  | { state: "missing" | "corrupt"; config: TokenGraphConfig }
+  | { state: "valid"; config: TokenGraphConfig; persisted: TokenGraphConfig; rawBytes: string; needsRepair: boolean };
+
+async function readConfigSnapshot(root: string): Promise<ConfigSnapshot> {
+  let rawBytes: string;
   try {
-    const rawConfig = await readFile(configPath(root), "utf8");
-    const parsed = JSON.parse(rawConfig) as unknown;
-    const unwrapped = unwrapPersistedConfig(parsed);
-    const persistedNormalized = normalizeConfig(unwrapped.config, false);
-    const normalized = normalizeConfig(persistedNormalized);
-    // Repair (schema migration plus a .bak of the prior bytes) mutates project
-    // state, so it only runs after activation while owning the workspace-state
-    // domain. A pure read before activation returns the identical normalized
-    // value without touching the filesystem.
-    if ((unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(persistedNormalized)) &&
-        getLegacyRuntimeActivationStatus().activated) {
-      const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
-      return await withFileLock(lock, async () => {
-        const currentBytes = await readFile(configPath(root), "utf8");
-        const current = unwrapPersistedConfig(JSON.parse(currentBytes) as unknown);
-        const currentNormalized = normalizeConfig(current.config, false);
-        if (current.needsMigration || JSON.stringify(current.config) !== JSON.stringify(currentNormalized)) {
-          await writeTextAtomic(`${configPath(root)}.bak`, currentBytes, { telemetry: { root, storageClass: "durable" } });
-          await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: currentNormalized }, { telemetry: { root, storageClass: "durable" } });
-        }
-        return normalizeConfig(currentNormalized);
-      });
-    }
-    return normalized;
+    rawBytes = await readFile(configPath(root), "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      // Persisting defaults is a mutation; only an activated caller may do it.
-      if (getLegacyRuntimeActivationStatus().activated) return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
-      return normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG);
+      return { state: "missing", config: normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG) };
     }
-    if (error instanceof SyntaxError) {
-      if (getLegacyRuntimeActivationStatus().activated) {
-        const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
-        return withFileLock(lock, async () => {
-          await quarantineCorruptJson(configPath(root));
-          await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG, false) }, { telemetry: { root, storageClass: "durable" } });
-          return normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG);
-        });
-      }
-      return normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG);
-    }
+    throw error;
+  }
+  try {
+    const unwrapped = unwrapPersistedConfig(JSON.parse(rawBytes) as unknown);
+    const persisted = normalizeConfig(unwrapped.config, false);
+    return {
+      state: "valid",
+      config: normalizeConfig(persisted),
+      persisted,
+      rawBytes,
+      needsRepair: unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(persisted)
+    };
+  } catch (error) {
+    if (error instanceof SyntaxError) return { state: "corrupt", config: normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG) };
     throw error;
   }
 }
 
+async function persistConfigLocked(root: string, persisted: TokenGraphConfig): Promise<void> {
+  await writeJsonAtomic(configPath(root), {
+    schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
+    config: persisted
+  }, { telemetry: { root, storageClass: "durable" } });
+}
+
+async function repairConfigSnapshotLocked(root: string, snapshot: ConfigSnapshot): Promise<TokenGraphConfig> {
+  if (snapshot.state === "missing") {
+    const reread = await readConfigSnapshot(root);
+    if (reread.state !== "missing") return repairConfigSnapshotLocked(root, reread);
+    const persisted = normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG, false);
+    await persistConfigLocked(root, persisted);
+    return normalizeConfig(persisted);
+  }
+  if (snapshot.state === "corrupt") {
+    const reread = await readConfigSnapshot(root);
+    if (reread.state !== "corrupt") return repairConfigSnapshotLocked(root, reread);
+    await quarantineCorruptJson(configPath(root));
+    const persisted = normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG, false);
+    await persistConfigLocked(root, persisted);
+    return normalizeConfig(persisted);
+  }
+  if (snapshot.needsRepair) {
+    await writeTextAtomic(`${configPath(root)}.bak`, snapshot.rawBytes, { telemetry: { root, storageClass: "durable" } });
+    await persistConfigLocked(root, snapshot.persisted);
+  }
+  return snapshot.config;
+}
+
+export async function loadTokenGraphConfig(root: string): Promise<TokenGraphConfig> {
+  const initial = await readConfigSnapshot(root);
+  if (!getLegacyRuntimeActivationStatus().activated) return initial.config;
+  if (initial.state === "valid" && !initial.needsRepair) return initial.config;
+  const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+  return withFileLock(lock, async () => repairConfigSnapshotLocked(root, await readConfigSnapshot(root)));
+}
+
 export async function setTokenSavingProfile(root: string, profile: TokenSavingProfile): Promise<TokenGraphConfig> {
-  const config = await loadTokenGraphConfig(root);
-  return saveTokenGraphConfig(root, { ...config, tokenSavingProfile: profile });
+  return updateTokenGraphConfig(root, { tokenSavingProfile: profile });
 }
 
 export async function updateTokenGraphConfig(root: string, update: TokenGraphConfigUpdate): Promise<TokenGraphConfig> {
-  const config = await loadTokenGraphConfig(root);
-  const merged = {
-    ...config,
-    ...update,
-    routing: { ...config.routing, ...(update.routing ?? {}) },
-    parser: { ...config.parser, ...(update.parser ?? {}) },
-    storage: { ...config.storage, ...(update.storage ?? {}) },
-    runner: { ...config.runner, ...(update.runner ?? {}) },
-    memory: { ...config.memory, ...(update.memory ?? {}) },
-    responseFormat: { ...config.responseFormat, ...(update.responseFormat ?? {}) },
-    ...(update.routing?.mode === undefined ? {} : { routingMode: update.routing.mode }),
-    ...(update.routing?.killSwitch === undefined ? {} : { routingKillSwitch: update.routing.killSwitch })
-  };
-  return saveTokenGraphConfig(root, merged);
+  const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+  return withFileLock(lock, async () => {
+    const snapshot = await readConfigSnapshot(root);
+    const config = snapshot.config;
+    if (snapshot.state === "corrupt") await quarantineCorruptJson(configPath(root));
+    else if (snapshot.state === "valid" && snapshot.needsRepair) {
+      await writeTextAtomic(`${configPath(root)}.bak`, snapshot.rawBytes, { telemetry: { root, storageClass: "durable" } });
+    }
+    const merged = normalizeConfig({
+      ...config,
+      ...update,
+      routing: { ...config.routing, ...(update.routing ?? {}) },
+      parser: { ...config.parser, ...(update.parser ?? {}) },
+      storage: { ...config.storage, ...(update.storage ?? {}) },
+      runner: { ...config.runner, ...(update.runner ?? {}) },
+      memory: { ...config.memory, ...(update.memory ?? {}) },
+      responseFormat: { ...config.responseFormat, ...(update.responseFormat ?? {}) },
+      ...(update.routing?.mode === undefined ? {} : { routingMode: update.routing.mode }),
+      ...(update.routing?.killSwitch === undefined ? {} : { routingKillSwitch: update.routing.killSwitch })
+    }, false);
+    await persistConfigLocked(root, merged);
+    return normalizeConfig(merged);
+  });
 }

@@ -10,6 +10,18 @@ outcomes, hook behavior, or native activation.
 
 - In one MCP server, task intent operations and task reporting use the same
   task-keyed promise queue. The ledger is checked again inside that queue.
+- Process-local queues alone cannot settle a recall when a different MCP
+  process completes the task. The strict task event therefore carries an
+  optional, deduplicated `deferredMemoryUseIds` field, limited to 100 UUIDs.
+  This is an additive schema-v3 event field: older events remain valid, unknown
+  fields remain rejected, and the native rollout already requires every older
+  TokenGraph process to be stopped before activation. The reporting process
+  unions these ids with any local buffer and performs one memory-store write.
+  No prompt, query, title, body, path, or other memory content is persisted.
+- A repeated pause settles only ids whose stored `lastUsedAt` predates the
+  terminal ledger timestamp, so retrying a successful report does not create a
+  second memory-store write. A failed settlement restores the union to the
+  reporting process's bounded local buffer for retry.
 - Reporting waits for an earlier recall to finish. A later recall sees the
   terminal ledger and is rejected before it can buffer another use.
 - Repeating the same pause report is idempotent: it does not rewrite the paused
@@ -35,10 +47,11 @@ Config migration rereads and normalizes the current bytes while holding the
 workspace-state lock, backs up only the version actually replaced, and skips
 replacement if another writer already completed migration.
 
-Process termination can lose the process's unflushed telemetry and minimal
-usage timestamps. Correctness-critical state remains immediate. These counters
-and timestamps are not a durable event journal, and task buffering is local to
-the MCP process that received the recall.
+Process termination can lose unflushed telemetry. Minimal usage timestamps are
+reconstructable from the bounded task event by any reporting process; a recall
+that loses its process before its already-required event write may still lose
+that correctness-neutral observation. Correctness-critical state remains
+immediate, and telemetry counters are not a durable event journal.
 
 Required deferred contracts: overflow after a real atomic write; mixed physical
 byte completeness in both orders and across flushes; migration/update race;

@@ -179,18 +179,24 @@ export class MemoryStore {
     filePath: string,
     lock: CanonicalPersistenceLock,
     bufferScope: string,
-    options: Pick<MemoryStoreOptions, "telemetry"> = {}
+    options: Pick<MemoryStoreOptions, "telemetry"> & { additionalIds?: readonly string[]; settledAfter?: string } = {}
   ): Promise<boolean> {
     const key = bufferedUseKey(lock, bufferScope);
     const buffered = bufferedMemoryUseIds.get(key);
-    if (!buffered?.size) return false;
+    const ids = new Set([...(buffered ?? []), ...(options.additionalIds ?? [])]);
+    if (!ids.size) return false;
     bufferedMemoryUseIds.delete(key);
     try {
-      await new MemoryStore(filePath, lock, { writePolicy: "durable", ...options }).persistUsed([...buffered], "durable");
+      const store = new MemoryStore(filePath, lock, {
+        writePolicy: "durable",
+        ...(options.telemetry ? { telemetry: options.telemetry } : {})
+      });
+      if (options.settledAfter) await store.persistUsedAfter([...ids], options.settledAfter);
+      else await store.persistUsed([...ids], "durable");
       return true;
     } catch (error) {
       const pending = bufferedMemoryUseIds.get(key) ?? new Set<string>();
-      for (const id of buffered) pending.add(id);
+      for (const id of ids) pending.add(id);
       bufferedMemoryUseIds.set(key, pending);
       throw error;
     }
@@ -393,6 +399,25 @@ export class MemoryStore {
     });
   }
 
+  private async persistUsedAfter(ids: string[], settledAfter: string): Promise<boolean> {
+    const idsToMark = new Set(ids);
+    const cutoff = Date.parse(settledAfter);
+    if (!Number.isFinite(cutoff)) throw new Error("TokenGraph task settlement timestamp is invalid.");
+    return this.enqueueWrite(async () => {
+      const memories = await this.readAll(true);
+      const timestamp = nowIso();
+      let changed = false;
+      for (const memory of memories) {
+        if (!idsToMark.has(memory.id) || (memory.lastUsedAt && Date.parse(memory.lastUsedAt) >= cutoff)) continue;
+        memory.lastUsedAt = timestamp;
+        memory.updatedAt = timestamp;
+        changed = true;
+      }
+      if (changed) await this.writeAtomic(memories);
+      return changed;
+    });
+  }
+
   private async mutate(id: string, transform: (memory: MemoryEntry) => MemoryEntry): Promise<MemoryEntry | undefined> {
     return this.enqueueWrite(async () => {
       const memories = await this.readAll(true);
@@ -470,7 +495,7 @@ export async function flushBufferedMemoryUses(
   filePath: string,
   lock: CanonicalPersistenceLock,
   bufferScope: string,
-  options: Pick<MemoryStoreOptions, "telemetry"> = {}
+  options: Pick<MemoryStoreOptions, "telemetry"> & { additionalIds?: readonly string[]; settledAfter?: string } = {}
 ): Promise<boolean> {
   return MemoryStore.flushBufferedUses(filePath, lock, bufferScope, options);
 }

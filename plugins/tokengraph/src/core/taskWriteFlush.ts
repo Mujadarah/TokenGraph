@@ -4,6 +4,7 @@ import { canonicalPersistenceLock } from "./lockDomain.js";
 import { discardBufferedMemoryUses, flushBufferedMemoryUses } from "./memoryStore.js";
 import { repositoryMemoryPath } from "./persistence.js";
 import { flushWriteTelemetry } from "./storage.js";
+import { loadTaskLedger } from "./taskLedger.js";
 
 export type TaskWriteFlushWarning = "memory-use-flush-failed" | "write-telemetry-flush-failed";
 const taskLifecycleChains = new Map<string, Promise<void>>();
@@ -33,9 +34,16 @@ export async function discardTaskMemoryUses(root: string, taskId: string): Promi
 export async function flushTaskReportWrites(root: string, taskId: string): Promise<TaskWriteFlushWarning[]> {
   const warnings: TaskWriteFlushWarning[] = [];
   try {
+    const ledger = await loadTaskLedger(root, taskId);
+    const deferredMemoryUseIds = [...new Set(ledger?.events.flatMap((event) => event.deferredMemoryUseIds ?? []) ?? [])];
+    const settledAfter = ledger?.pausedAt ?? ledger?.completedAt ?? ledger?.updatedAt;
     const path = await repositoryMemoryPath(root);
     const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
-    await flushBufferedMemoryUses(path, lock, taskId, { telemetry: { root, storageClass: "durable" } });
+    await flushBufferedMemoryUses(path, lock, taskId, {
+      telemetry: { root, storageClass: "durable" },
+      additionalIds: deferredMemoryUseIds,
+      ...(settledAfter ? { settledAfter } : {})
+    });
   } catch {
     warnings.push("memory-use-flush-failed");
   }

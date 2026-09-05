@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { access, link, mkdtemp, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import { CURRENT_CONFIG_SCHEMA_VERSION, DEFAULT_TOKEN_GRAPH_CONFIG, loadTokenGra
 import { canonicalPersistenceLock } from "../src/core/lockDomain.js";
 import { flushBufferedMemoryUses, MemoryStore } from "../src/core/memoryStore.js";
 import { configPath } from "../src/core/persistence.js";
+import { createTaskLedger, recordTaskEvent } from "../src/core/taskLedger.js";
 import {
   flushWriteTelemetry,
   observeSuccessfulWrite,
@@ -81,6 +83,33 @@ describe("Phase 6 low-write policy", () => {
       schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
       config: { storage: { writePolicy: "balanced" } }
     });
+  });
+
+  it("serializes missing, corrupt, and partial config updates under one lock", async () => {
+    const missingRoot = await makeRoot();
+    await Promise.all([
+      loadTokenGraphConfig(missingRoot),
+      updateTokenGraphConfig(missingRoot, { storage: { writePolicy: "minimal" } })
+    ]);
+    expect((await loadTokenGraphConfig(missingRoot)).storage.writePolicy).toBe("minimal");
+
+    const corruptRoot = await makeRoot();
+    await mkdir(join(corruptRoot, ".tokengraph"), { recursive: true });
+    await writeFile(configPath(corruptRoot), "{corrupt");
+    await Promise.all([
+      loadTokenGraphConfig(corruptRoot),
+      updateTokenGraphConfig(corruptRoot, { runner: { timeoutMs: 12_345 } })
+    ]);
+    expect((await loadTokenGraphConfig(corruptRoot)).runner.timeoutMs).toBe(12_345);
+
+    const updateRoot = await makeRoot();
+    await Promise.all([
+      updateTokenGraphConfig(updateRoot, { storage: { writePolicy: "minimal" } }),
+      updateTokenGraphConfig(updateRoot, { runner: { timeoutMs: 23_456 } })
+    ]);
+    const merged = await loadTokenGraphConfig(updateRoot);
+    expect(merged.storage.writePolicy).toBe("minimal");
+    expect(merged.runner.timeoutMs).toBe(23_456);
   });
 
   it("skips an unchanged canonical payload and records only successful writes", async () => {
@@ -330,16 +359,25 @@ describe("Phase 6 low-write policy", () => {
     await expect(flushWriteTelemetry(root)).rejects.toThrow(/overflow.*retained/i);
   });
 
-  it("excludes only the canonical telemetry directory from quota accounting", async () => {
+  it("excludes only the canonical telemetry artifact from quota accounting", async () => {
     const root = await makeRoot();
-    const lookalike = join(root, ".tokengraph", "repository", "telemetry", "user.json");
-    await mkdir(join(root, ".tokengraph", "repository", "telemetry"), { recursive: true });
-    await writeFile(lookalike, "user-owned\n");
+    const unrelated = join(root, ".tokengraph", "telemetry", "user.json");
+    await mkdir(join(root, ".tokengraph", "telemetry"), { recursive: true });
+    await writeFile(unrelated, "user-owned\n");
     observeSuccessfulWrite({ root, storageClass: "durable" }, 7);
     await flushWriteTelemetry(root);
 
     const usage = await storageClassUsage(root);
     expect(usage.total).toMatchObject({ files: 1, bytes: Buffer.byteLength("user-owned\n") });
+  });
+
+  it("does not fail a successful CLI mutation when telemetry is malformed", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".tokengraph", "telemetry"), { recursive: true });
+    await writeFile(writeTelemetryPath(root), "{malformed");
+
+    await expect(runCli(root)).resolves.toBe(0);
+    await expect(readFile(configPath(root), "utf8")).resolves.toContain(`"schemaVersion": ${CURRENT_CONFIG_SCHEMA_VERSION}`);
   });
 
   it("keeps minimal recall buffers task-owned and persists unscoped recalls immediately", async () => {
@@ -386,6 +424,33 @@ describe("Phase 6 low-write policy", () => {
     await store.recordUse([memory.id]);
     await discardTaskMemoryUses(root, "task-a");
     await expect(flushBufferedMemoryUses(filePath, lock, "task-a")).resolves.toBe(false);
+  });
+
+  it("settles minimal memory ids recorded by another MCP process", async () => {
+    const root = await makeRoot();
+    const filePath = join(root, ".tokengraph", "repository", "memory.json");
+    const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
+    const store = new MemoryStore(filePath, lock, { writePolicy: "durable" });
+    const memory = await store.add(input("Cross-process settlement"));
+    const ledger = await createTaskLedger(root, { host: "codex" });
+    await recordTaskEvent(root, ledger.taskId, {
+      id: randomUUID(),
+      fingerprint: randomUUID().replaceAll("-", ""),
+      category: "memory-recall",
+      toolName: "tokengraph_recall",
+      originalTokens: 10,
+      compactTokens: 5,
+      overheadTokens: 1,
+      confidence: "low",
+      timestamp: new Date().toISOString(),
+      qualityChecks: [{ name: "compact-output-produced", passed: true }],
+      deferredMemoryUseIds: [memory.id]
+    });
+
+    // This process has no local buffer; settlement is reconstructed from the
+    // strict task ledger written by the process that served the recall.
+    await expect(flushTaskReportWrites(root, ledger.taskId)).resolves.toEqual([]);
+    expect((await store.list())[0]?.lastUsedAt).toEqual(expect.any(String));
   });
 
   it("flushes memory before telemetry and preserves bounded task-report warnings", async () => {

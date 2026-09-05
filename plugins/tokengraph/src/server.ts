@@ -154,6 +154,7 @@ async function recordCoreEvent(input: {
   originalTokens: number;
   compactTokens: number;
   overheadTokens?: number;
+  deferredMemoryUseIds?: string[];
 }): Promise<number> {
   const overheadTokens = input.overheadTokens ?? coreEventOverheadTokens(input.taskId, input.toolName, input.category);
   await recordTaskEvent(input.root, input.taskId, {
@@ -166,7 +167,8 @@ async function recordCoreEvent(input: {
     overheadTokens,
     confidence: "low",
     timestamp: new Date().toISOString(),
-    qualityChecks: [{ name: "compact-output-produced", passed: true }]
+    qualityChecks: [{ name: "compact-output-produced", passed: true }],
+    ...(input.deferredMemoryUseIds?.length ? { deferredMemoryUseIds: input.deferredMemoryUseIds } : {})
   });
   return overheadTokens;
 }
@@ -751,8 +753,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
   }) as typeof server.registerTool;
   const workspaceRoot = createWorkspaceResolver(server, options.trustedWorkspace);
 
-  async function memoryStore(root: string, taskId?: string): Promise<MemoryStore> {
-    const config = await loadTokenGraphConfig(root);
+  async function memoryStore(root: string, taskId?: string, loadedConfig?: Awaited<ReturnType<typeof loadTokenGraphConfig>>): Promise<MemoryStore> {
+    const config = loadedConfig ?? await loadTokenGraphConfig(root);
     const path = await repositoryMemoryPath(root);
     const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
     return new MemoryStore(
@@ -803,17 +805,33 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     taskId: string | undefined,
     operation: (task: { root: string; taskId: string; autoStarted: boolean }) => Promise<T>
   ): Promise<T> {
-    const task = await beginOrRequireTask(root, taskId);
+    let task: { root: string; taskId: string; autoStarted: boolean };
+    try {
+      task = await beginOrRequireTask(root, taskId);
+    } catch (error) {
+      if (taskId) {
+        const resolvedRoot = await workspaceRoot(root);
+        try { await discardTaskMemoryUses(resolvedRoot, taskId); }
+        catch (cleanupError) { throw new AggregateError([error, cleanupError], "TokenGraph task admission and deferred-write cleanup both failed."); }
+      }
+      throw error;
+    }
     return withTaskWriteLifecycle(task.root, task.taskId, async () => {
     try {
       await requireTaskRoot(task.root, task.taskId);
-      return await operation(task);
+      const result = await operation(task);
+      // A different MCP process may have completed the task while this call
+      // was running. Detect that before returning so its process-local minimal
+      // buffer cannot remain owned by a terminal task.
+      await requireTaskRoot(task.root, task.taskId);
+      return result;
     } catch (error) {
-      if (task.autoStarted) {
-        await Promise.allSettled([
-          discardTaskMemoryUses(task.root, task.taskId),
-          discardEmptyTaskLedger(task.root, task.taskId)
-        ]);
+      const cleanup = [discardTaskMemoryUses(task.root, task.taskId)];
+      if (task.autoStarted) cleanup.push(discardEmptyTaskLedger(task.root, task.taskId));
+      const settled = await Promise.allSettled(cleanup);
+      const cleanupErrors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+      if (cleanupErrors.length) {
+        throw new AggregateError([error, ...cleanupErrors], "TokenGraph task operation and deferred-write cleanup both failed.");
       }
       throw error;
     }
@@ -1251,14 +1269,16 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       }
       return withTaskIntent(root, taskId, async (task) => {
       const resolvedRoot = task.root;
-      const store = await memoryStore(resolvedRoot, task.taskId);
+      const config = await loadTokenGraphConfig(resolvedRoot);
+      const store = await memoryStore(resolvedRoot, task.taskId, config);
       const project = await ensureProject(resolvedRoot);
       const memories = await store.list({ includeDeprecated: audit === true, includeDeleted: audit === true });
       const terms = tokenize(query ?? "");
       const recalled = memories
         .filter((memory) => terms.length === 0 || terms.some((term) => tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`).some((part) => part.includes(term) || term.includes(part))))
         .slice(0, limit ?? 10);
-      if (mode === "recall") await store.recordUse(recalled.filter((memory) => memory.status === "active").map((memory) => memory.id));
+      const usedMemoryIds = mode === "recall" ? recalled.filter((memory) => memory.status === "active").map((memory) => memory.id) : [];
+      if (usedMemoryIds.length) await store.recordUse(usedMemoryIds);
       const verboseResult = mode === "review"
         ? await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 })
         : { query: query ?? "", auditMode: audit === true, memories: recalled };
@@ -1272,7 +1292,8 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       await recordCoreEvent({
         root: resolvedRoot, taskId: task.taskId, toolName: "tokengraph_recall", category: `memory-${mode}`,
         operation: { mode, queryHash: createHash("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
-        originalTokens: estimateTokens(compactJson(memories)), compactTokens
+        originalTokens: estimateTokens(compactJson(memories)), compactTokens,
+        ...(config.storage.writePolicy === "minimal" && usedMemoryIds.length ? { deferredMemoryUseIds: usedMemoryIds } : {})
       });
       return ok(task.autoStarted ? { ...response, taskId: task.taskId } : response);
       });

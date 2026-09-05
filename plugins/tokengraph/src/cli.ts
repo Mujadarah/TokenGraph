@@ -34,8 +34,6 @@ function activateConfirmedInvocation(options: string[], usage: string): void {
 
 async function main(argv: string[]): Promise<void> {
   let telemetryRoot: string | undefined;
-  let operationFailed = false;
-  let operationError: unknown;
   try {
   if (argv[0] === "evaluate-host") {
     const options = argv.slice(1);
@@ -125,17 +123,15 @@ async function main(argv: string[]): Promise<void> {
   await purgeRuns(root, retentionCutoff());
   process.stdout.write(`${JSON.stringify({ ...summarizeRun(run), stdoutTruncated: run.stdoutTruncated, stderrTruncated: run.stderrTruncated })}\n`);
   if (run.status !== "completed") process.exitCode = run.status === "timed-out" ? 124 : 1;
-  } catch (error) {
-    operationFailed = true;
-    operationError = error;
-    throw error;
   } finally {
     if (telemetryRoot) {
       try {
         await flushWriteTelemetry(telemetryRoot);
-      } catch (flushError) {
-        if (operationFailed) throw new AggregateError([operationError, flushError], "TokenGraph CLI operation and telemetry flush both failed.");
-        throw flushError;
+      } catch {
+        // Telemetry is correctness-neutral. A failed flush retains the bounded
+        // pending aggregate for retry, but must never make a committed command
+        // appear to have failed and invite an unsafe duplicate mutation.
+        process.stderr.write("TokenGraph warning: write-telemetry-flush-failed\n");
       }
     }
   }
