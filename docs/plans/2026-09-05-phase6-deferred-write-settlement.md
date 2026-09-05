@@ -23,8 +23,9 @@ outcomes, hook behavior, or native activation.
   No prompt, query, title, body, path, or other memory content is persisted.
 - A repeated pause settles only ids whose stored `lastUsedAt` predates the
   terminal ledger timestamp, so retrying a successful report does not create a
-  second memory-store write. A failed settlement restores the union to the
-  reporting process's bounded local buffer for retry.
+  second memory-store write. A failed settlement restores local raw ids to the
+  reporting process's bounded buffer; digest evidence remains in the ledger,
+  so the same or another process can retry without exposing the original ids.
 - Reporting waits for an earlier recall to finish. A later recall sees the
   terminal ledger and is rejected before it can buffer another use.
 - Repeating the same pause report is idempotent: it does not rewrite the paused
