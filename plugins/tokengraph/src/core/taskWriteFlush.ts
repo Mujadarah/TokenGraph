@@ -1,9 +1,29 @@
+import { resolve } from "node:path";
+
 import { canonicalPersistenceLock } from "./lockDomain.js";
-import { flushBufferedMemoryUses } from "./memoryStore.js";
+import { discardBufferedMemoryUses, flushBufferedMemoryUses } from "./memoryStore.js";
 import { repositoryMemoryPath } from "./persistence.js";
 import { flushWriteTelemetry } from "./storage.js";
 
 export type TaskWriteFlushWarning = "memory-use-flush-failed" | "write-telemetry-flush-failed";
+const taskLifecycleChains = new Map<string, Promise<void>>();
+
+/** Serializes in-process recalls and reporting for the same task, not other tasks. */
+export async function withTaskWriteLifecycle<T>(root: string, taskId: string, operation: () => Promise<T>): Promise<T> {
+  const canonicalRoot = process.platform === "win32" ? resolve(root).toLowerCase() : resolve(root);
+  const key = `${canonicalRoot}\u0000${taskId}`;
+  const previous = taskLifecycleChains.get(key) ?? Promise.resolve();
+  const current = previous.then(operation, operation);
+  const settled = current.then(() => undefined, () => undefined);
+  taskLifecycleChains.set(key, settled);
+  try { return await current; }
+  finally { if (taskLifecycleChains.get(key) === settled) taskLifecycleChains.delete(key); }
+}
+
+export async function discardTaskMemoryUses(root: string, taskId: string): Promise<void> {
+  const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
+  discardBufferedMemoryUses(lock, taskId);
+}
 
 /**
  * Flushes one task's deferred, correctness-neutral writes. Memory must settle

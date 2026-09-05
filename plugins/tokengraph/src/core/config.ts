@@ -215,9 +215,15 @@ export async function loadTokenGraphConfig(root: string): Promise<TokenGraphConf
     if ((unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(persistedNormalized)) &&
         getLegacyRuntimeActivationStatus().activated) {
       const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
-      await withFileLock(lock, async () => {
-        await writeTextAtomic(`${configPath(root)}.bak`, rawConfig, { telemetry: { root, storageClass: "durable" } });
-        await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: persistedNormalized }, { telemetry: { root, storageClass: "durable" } });
+      return await withFileLock(lock, async () => {
+        const currentBytes = await readFile(configPath(root), "utf8");
+        const current = unwrapPersistedConfig(JSON.parse(currentBytes) as unknown);
+        const currentNormalized = normalizeConfig(current.config, false);
+        if (current.needsMigration || JSON.stringify(current.config) !== JSON.stringify(currentNormalized)) {
+          await writeTextAtomic(`${configPath(root)}.bak`, currentBytes, { telemetry: { root, storageClass: "durable" } });
+          await writeJsonAtomic(configPath(root), { schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION, config: currentNormalized }, { telemetry: { root, storageClass: "durable" } });
+        }
+        return normalizeConfig(currentNormalized);
       });
     }
     return normalized;

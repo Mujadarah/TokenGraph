@@ -12,11 +12,12 @@ import {
   flushWriteTelemetry,
   observeSuccessfulWrite,
   readWriteTelemetry,
+  withFileLock,
   writeJsonAtomic,
   writeTelemetryPath
 } from "../src/core/storage.js";
 import { storageClassUsage } from "../src/core/storagePolicy.js";
-import { flushTaskReportWrites } from "../src/core/taskWriteFlush.js";
+import { discardTaskMemoryUses, flushTaskReportWrites, withTaskWriteLifecycle } from "../src/core/taskWriteFlush.js";
 import { externalCliEntry, externalRuntimeEnvironment } from "./support/externalRuntime.js";
 
 const roots: string[] = [];
@@ -211,6 +212,26 @@ describe("Phase 6 low-write policy", () => {
     expect(durable?.logicalBytes).toBeGreaterThan(0);
   });
 
+  it("rereads configuration under the migration lock before replacing it", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(configPath(root), `${JSON.stringify({ schemaVersion: 3, config: DEFAULT_TOKEN_GRAPH_CONFIG })}\n`);
+    const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+    let pendingLoad!: ReturnType<typeof loadTokenGraphConfig>;
+
+    await withFileLock(lock, async () => {
+      pendingLoad = loadTokenGraphConfig(root);
+      await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+      await writeFile(configPath(root), `${JSON.stringify({
+        schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
+        config: { ...DEFAULT_TOKEN_GRAPH_CONFIG, storage: { ...DEFAULT_TOKEN_GRAPH_CONFIG.storage, writePolicy: "minimal" } }
+      })}\n`);
+    });
+
+    await expect(pendingLoad).resolves.toMatchObject({ storage: { writePolicy: "minimal" } });
+    await expect(access(`${configPath(root)}.bak`)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("merges successful write counters from concurrent CLI processes", async () => {
     const root = await makeRoot();
 
@@ -278,6 +299,37 @@ describe("Phase 6 low-write policy", () => {
     await expect(readWriteTelemetry(root)).rejects.toThrow(/malformed/i);
   });
 
+  it.each([true, false])("omits incomplete physical bytes regardless of order (known first: %s)", async (knownFirst) => {
+    for (const separateFlushes of [false, true]) {
+      const root = await makeRoot();
+      observeSuccessfulWrite({ root, storageClass: "cache" }, 11, knownFirst ? 13 : undefined);
+      if (separateFlushes) await flushWriteTelemetry(root);
+      observeSuccessfulWrite({ root, storageClass: "cache" }, 17, knownFirst ? undefined : 19);
+      await flushWriteTelemetry(root);
+      expect((await readWriteTelemetry(root)).days.at(-1)?.classes.cache).toEqual({ operationCount: 2, logicalBytes: 28 });
+    }
+  });
+
+  it("retains a complete physical aggregate when only another class receives a new write", async () => {
+    const root = await makeRoot();
+    observeSuccessfulWrite({ root, storageClass: "cache" }, 11, 13);
+    await flushWriteTelemetry(root);
+    observeSuccessfulWrite({ root, storageClass: "runs" }, 7);
+    await flushWriteTelemetry(root);
+    expect((await readWriteTelemetry(root)).days.at(-1)?.classes.cache?.physicalBytes).toBe(13);
+  });
+
+  it("keeps a successful atomic write successful and retains pending overflow", async () => {
+    const root = await makeRoot();
+    const target = join(root, ".tokengraph", "overflow-value.json");
+    observeSuccessfulWrite({ root, storageClass: "durable" }, Number.MAX_SAFE_INTEGER);
+
+    await expect(writeJsonAtomic(target, { committed: true }, { telemetry: { root, storageClass: "durable" } })).resolves.toBe(true);
+    expect(JSON.parse(await readFile(target, "utf8"))).toEqual({ committed: true });
+    await expect(flushWriteTelemetry(root)).rejects.toThrow(/overflow.*retained/i);
+    await expect(flushWriteTelemetry(root)).rejects.toThrow(/overflow.*retained/i);
+  });
+
   it("excludes only the canonical telemetry directory from quota accounting", async () => {
     const root = await makeRoot();
     const lookalike = join(root, ".tokengraph", "repository", "telemetry", "user.json");
@@ -300,8 +352,8 @@ describe("Phase 6 low-write policy", () => {
     const taskA = new MemoryStore(filePath, lock, { writePolicy: "minimal", bufferScope: "task-a" });
     const taskB = new MemoryStore(filePath, lock, { writePolicy: "minimal", bufferScope: "task-b" });
 
-    await taskA.recall("first task memory");
-    await taskB.recall("second task memory");
+    await taskA.recordUse([first.id]);
+    await taskB.recordUse([second.id]);
     await flushBufferedMemoryUses(filePath, lock, "task-a");
     let persisted = JSON.parse(await readFile(filePath, "utf8"));
     expect(persisted.memories.find((memory: { id: string }) => memory.id === first.id)?.lastUsedAt).toEqual(expect.any(String));
@@ -311,6 +363,29 @@ describe("Phase 6 low-write policy", () => {
     await unscoped.recall("second task memory");
     persisted = JSON.parse(await readFile(filePath, "utf8"));
     expect(persisted.memories.find((memory: { id: string }) => memory.id === second.id)?.lastUsedAt).toEqual(expect.any(String));
+    const beforeRepeatedRecall = await readFile(filePath, "utf8");
+    await unscoped.recall("second task memory");
+    expect(await readFile(filePath, "utf8")).toBe(beforeRepeatedRecall);
+  });
+
+  it("settles an in-flight recall before reporting and discards failed task usage", async () => {
+    const root = await makeRoot();
+    const filePath = join(root, ".tokengraph", "repository", "memory.json");
+    const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
+    const store = new MemoryStore(filePath, lock, { writePolicy: "minimal", bufferScope: "task-a" });
+    const memory = await store.add(input("In-flight memory"));
+    let release!: () => void;
+    const held = new Promise<void>((resolveRelease) => { release = resolveRelease; });
+    const recall = withTaskWriteLifecycle(root, "task-a", async () => { await held; await store.recordUse([memory.id]); });
+    const report = withTaskWriteLifecycle(root, "task-a", () => flushTaskReportWrites(root, "task-a"));
+    release();
+    await recall;
+    await expect(report).resolves.toEqual([]);
+    expect((await store.list())[0]?.lastUsedAt).toEqual(expect.any(String));
+
+    await store.recordUse([memory.id]);
+    await discardTaskMemoryUses(root, "task-a");
+    await expect(flushBufferedMemoryUses(filePath, lock, "task-a")).resolves.toBe(false);
   });
 
   it("flushes memory before telemetry and preserves bounded task-report warnings", async () => {
@@ -336,6 +411,9 @@ describe("Phase 6 low-write policy", () => {
     observeSuccessfulWrite({ root, storageClass: "cache" }, 9);
     await expect(flushTaskReportWrites(root, "task-a")).resolves.toEqual(["memory-use-flush-failed"]);
     expect((await readWriteTelemetry(root)).days.at(-1)?.classes.cache?.logicalBytes).toBe(9);
+    await rm(join(root, "memory-hardlink.json"));
+    await expect(flushTaskReportWrites(root, "task-a")).resolves.toEqual([]);
+    expect((await store.list())[0]?.lastUsedAt).toEqual(expect.any(String));
   });
 
   it("defines crash loss as pending telemetry only, never the successful durable write", async () => {

@@ -76,7 +76,7 @@ import { projectToVault } from "./core/vaultProjection.js";
 import { createTaskLedger, discardEmptyTaskLedger, listCompletedTaskOutcomes, loadTaskLedger, recordTaskArtifactDelivery, recordTaskEvent, setTaskDisposition, updateTaskReadPolicy, updateTaskRoutingObservation, type TaskHost } from "./core/taskLedger.js";
 import { listAppliedKnowledge, listKnowledgeSuggestions, proposeKnowledgeChange, reviewKnowledgeSuggestion } from "./core/knowledgeReviewQueue.js";
 import { activateLegacyRuntimeShutdown } from "./core/legacyRuntimeActivation.js";
-import { flushTaskReportWrites } from "./core/taskWriteFlush.js";
+import { discardTaskMemoryUses, flushTaskReportWrites, withTaskWriteLifecycle } from "./core/taskWriteFlush.js";
 
 const architectureRuleTypeSchema = z.enum([
   "forbidden-import",
@@ -804,12 +804,20 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
     operation: (task: { root: string; taskId: string; autoStarted: boolean }) => Promise<T>
   ): Promise<T> {
     const task = await beginOrRequireTask(root, taskId);
+    return withTaskWriteLifecycle(task.root, task.taskId, async () => {
     try {
+      await requireTaskRoot(task.root, task.taskId);
       return await operation(task);
     } catch (error) {
-      if (task.autoStarted) await discardEmptyTaskLedger(task.root, task.taskId);
+      if (task.autoStarted) {
+        await Promise.allSettled([
+          discardTaskMemoryUses(task.root, task.taskId),
+          discardEmptyTaskLedger(task.root, task.taskId)
+        ]);
+      }
       throw error;
     }
+    });
   }
 
   async function probeRoutingState(resolvedRoot: string) {
@@ -1250,7 +1258,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const recalled = memories
         .filter((memory) => terms.length === 0 || terms.some((term) => tokenize(`${memory.type} ${memory.title} ${memory.body} ${memory.tags.join(" ")}`).some((part) => part.includes(term) || term.includes(part))))
         .slice(0, limit ?? 10);
-      await store.recordUse(recalled.filter((memory) => memory.status === "active").map((memory) => memory.id));
+      if (mode === "recall") await store.recordUse(recalled.filter((memory) => memory.status === "active").map((memory) => memory.id));
       const verboseResult = mode === "review"
         ? await reviewMemories({ memories, query: query ?? "", limit: limit ?? 20 })
         : { query: query ?? "", auditMode: audit === true, memories: recalled };
@@ -1373,9 +1381,12 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       inputSchema: taskReportInputSchema
     },
     async ({ taskId, root, disposition, responseMode }) => {
-      const resolvedRoot = await requireTaskRoot(root, taskId, true);
+      const resolvedRoot = await workspaceRoot(root);
+      return withTaskWriteLifecycle(resolvedRoot, taskId, async () => {
+      await requireTaskRoot(resolvedRoot, taskId, true);
       if (disposition === "pause") {
-        await setTaskDisposition(resolvedRoot, taskId, disposition);
+        const current = await loadTaskLedger(resolvedRoot, taskId);
+        if (current?.status !== "paused") await setTaskDisposition(resolvedRoot, taskId, disposition);
         const warnings = await flushTaskReportWrites(resolvedRoot, taskId);
         return ok({
           status: "paused",
@@ -1407,6 +1418,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         ...(warnings.length ? { warnings } : {})
       } as const;
       return ok(responseMode === "verbose" ? { ...compact, report: result.report } : compact);
+      });
     }
   );
 

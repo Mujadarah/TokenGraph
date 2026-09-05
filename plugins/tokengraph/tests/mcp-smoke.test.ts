@@ -916,6 +916,11 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { task: "Pause this task" }
     });
     const prepared = preparedCall.structuredContent as { taskId: string };
+    await request(90520, "tools/call", {
+      name: "tokengraph_recall",
+      arguments: { taskId: prepared.taskId, mode: "review", query: "pause flush memory" }
+    });
+    expect(JSON.parse(await readFile(seeded.path, "utf8")).memories.find((memory: { id: string }) => memory.id === seeded.id)?.lastUsedAt).toBeUndefined();
     await request(90521, "tools/call", {
       name: "tokengraph_recall",
       arguments: { taskId: prepared.taskId, mode: "recall", query: "pause flush memory" }
@@ -933,9 +938,14 @@ describe("TokenGraph MCP stdio server", () => {
     });
     expect(JSON.parse(await readFile(seeded.path, "utf8")).memories.find((memory: { id: string }) => memory.id === seeded.id)?.lastUsedAt).toEqual(expect.any(String));
 
+    const retryPause = await request(90532, "tools/call", {
+      name: "tokengraph_task_report",
+      arguments: { taskId: prepared.taskId, disposition: "pause" }
+    });
+    expect(retryPause.structuredContent).toEqual(pauseCall.structuredContent);
+
     for (const call of [
       { id: 90531, name: "tokengraph_query_context", arguments: { taskId: prepared.taskId, mode: "overview" } },
-      { id: 90532, name: "tokengraph_task_report", arguments: { taskId: prepared.taskId, disposition: "pause" } },
       { id: 90533, name: "tokengraph_task_report", arguments: { taskId: prepared.taskId, disposition: "complete" } }
     ]) {
       const rejected = await request(call.id, "tools/call", { name: call.name, arguments: call.arguments });

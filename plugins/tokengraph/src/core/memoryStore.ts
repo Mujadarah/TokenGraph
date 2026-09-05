@@ -361,7 +361,7 @@ export class MemoryStore {
       // Surfaces without a task boundary persist at the call boundary so the
       // observation cannot become ownerless or be flushed by another task.
       if (!this.options.bufferScope) {
-        await this.persistUsed(ids, "durable");
+        await this.persistUsed(ids, "balanced");
         return;
       }
       const key = bufferedUseKey(this.lock, this.options.bufferScope);
@@ -473,6 +473,10 @@ export async function flushBufferedMemoryUses(
   options: Pick<MemoryStoreOptions, "telemetry"> = {}
 ): Promise<boolean> {
   return MemoryStore.flushBufferedUses(filePath, lock, bufferScope, options);
+}
+
+export function discardBufferedMemoryUses(lock: CanonicalPersistenceLock, bufferScope: string): void {
+  bufferedMemoryUseIds.delete(bufferedUseKey(lock, bufferScope));
 }
 
 /** @internal Test-only diagnostic; not part of the public memory-store contract. */

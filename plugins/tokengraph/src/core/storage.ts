@@ -45,7 +45,13 @@ export const MAX_PERSISTED_WRITE_TELEMETRY_DAYS = 14;
 const MAX_ATOMIC_NOOP_READ_BYTES = 64 * 1024 * 1024;
 const MAX_WRITE_TELEMETRY_BYTES = 256 * 1024;
 const WRITE_STORAGE_CLASSES: readonly WriteStorageClass[] = ["runs", "cache", "vault", "durable"];
-const pendingWriteTelemetry = new Map<string, Map<string, DailyWriteTelemetry>>();
+interface PendingWriteAggregate { operationCount: bigint; logicalBytes: bigint; physicalBytes?: bigint }
+interface PendingWriteDay {
+  date: string;
+  sampledPeakRssBytes: number;
+  classes: Partial<Record<WriteStorageClass, PendingWriteAggregate>>;
+}
+const pendingWriteTelemetry = new Map<string, Map<string, PendingWriteDay>>();
 const writeTelemetryFlushChains = new Map<string, Promise<void>>();
 
 function telemetryKey(root: string): string {
@@ -72,10 +78,11 @@ function checkedTelemetrySum(left: number, right: number): number {
 }
 
 function mergeAggregate(current: WriteTelemetryClassAggregate | undefined, incoming: WriteTelemetryClassAggregate): WriteTelemetryClassAggregate {
+  if (!current) return { ...incoming };
   return {
     operationCount: checkedTelemetrySum(current?.operationCount ?? 0, incoming.operationCount),
     logicalBytes: checkedTelemetrySum(current?.logicalBytes ?? 0, incoming.logicalBytes),
-    ...(current?.physicalBytes === undefined && incoming.physicalBytes === undefined
+    ...(current.physicalBytes === undefined || incoming.physicalBytes === undefined
       ? {}
       : { physicalBytes: checkedTelemetrySum(current?.physicalBytes ?? 0, incoming.physicalBytes ?? 0) })
   };
@@ -86,13 +93,47 @@ function mergeDailyTelemetry(current: DailyWriteTelemetry | undefined, incoming:
   for (const storageClass of WRITE_STORAGE_CLASSES) {
     const existing = current?.classes[storageClass];
     const addition = incoming.classes[storageClass];
-    if (existing || addition) classes[storageClass] = mergeAggregate(existing, addition ?? { operationCount: 0, logicalBytes: 0 });
+    if (addition) classes[storageClass] = mergeAggregate(existing, addition);
+    else if (existing) classes[storageClass] = { ...existing };
   }
   return {
     date: incoming.date,
     sampledPeakRssBytes: Math.max(current?.sampledPeakRssBytes ?? 0, incoming.sampledPeakRssBytes),
     classes
   };
+}
+
+function mergePendingDay(current: PendingWriteDay | undefined, incoming: PendingWriteDay): PendingWriteDay {
+  const classes = { ...current?.classes };
+  for (const storageClass of WRITE_STORAGE_CLASSES) {
+    const addition = incoming.classes[storageClass];
+    if (!addition) continue;
+    const existing = classes[storageClass];
+    classes[storageClass] = !existing ? { ...addition } : {
+      operationCount: existing.operationCount + addition.operationCount,
+      logicalBytes: existing.logicalBytes + addition.logicalBytes,
+      ...(existing.physicalBytes === undefined || addition.physicalBytes === undefined ? {} : {
+        physicalBytes: existing.physicalBytes + addition.physicalBytes
+      })
+    };
+  }
+  return { date: incoming.date, sampledPeakRssBytes: Math.max(current?.sampledPeakRssBytes ?? 0, incoming.sampledPeakRssBytes), classes };
+}
+
+function serializePendingDay(day: PendingWriteDay): DailyWriteTelemetry {
+  const safeNumber = (value: bigint): number => {
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("TokenGraph write telemetry counter overflow; exact pending counters are retained in memory.");
+    return Number(value);
+  };
+  const classes: DailyWriteTelemetry["classes"] = {};
+  for (const storageClass of WRITE_STORAGE_CLASSES) {
+    const value = day.classes[storageClass];
+    if (value) classes[storageClass] = {
+      operationCount: safeNumber(value.operationCount), logicalBytes: safeNumber(value.logicalBytes),
+      ...(value.physicalBytes === undefined ? {} : { physicalBytes: safeNumber(value.physicalBytes) })
+    };
+  }
+  return { date: day.date, sampledPeakRssBytes: day.sampledPeakRssBytes, classes };
 }
 
 function isValidAggregate(value: unknown): value is WriteTelemetryClassAggregate {
@@ -153,14 +194,14 @@ export function observeSuccessfulWrite(context: WriteTelemetryContext, logicalBy
   }
   const key = telemetryKey(context.root);
   const day = telemetryDay();
-  const days = pendingWriteTelemetry.get(key) ?? new Map<string, DailyWriteTelemetry>();
-  const current = days.get(day) ?? { date: day, sampledPeakRssBytes: 0, classes: {} };
-  current.classes[context.storageClass] = mergeAggregate(current.classes[context.storageClass], {
-    operationCount: 1,
-    logicalBytes,
-    ...(physicalBytes === undefined ? {} : { physicalBytes })
+  const days = pendingWriteTelemetry.get(key) ?? new Map<string, PendingWriteDay>();
+  const current = mergePendingDay(days.get(day), {
+    date: day, sampledPeakRssBytes: process.memoryUsage().rss,
+    classes: { [context.storageClass]: {
+      operationCount: 1n, logicalBytes: BigInt(logicalBytes),
+      ...(physicalBytes === undefined ? {} : { physicalBytes: BigInt(physicalBytes) })
+    } }
   });
-  current.sampledPeakRssBytes = Math.max(current.sampledPeakRssBytes, process.memoryUsage().rss);
   days.set(day, current);
   const retainedDates = [...days.keys()].sort().slice(-MAX_PERSISTED_WRITE_TELEMETRY_DAYS);
   for (const date of [...days.keys()]) if (!retainedDates.includes(date)) days.delete(date);
@@ -171,14 +212,14 @@ async function flushWriteTelemetryNow(root: string): Promise<boolean> {
   const key = telemetryKey(root);
   const snapshot = pendingWriteTelemetry.get(key);
   if (!snapshot?.size) return false;
-  const writesDuringFlush = new Map<string, DailyWriteTelemetry>();
+  const writesDuringFlush = new Map<string, PendingWriteDay>();
   pendingWriteTelemetry.set(key, writesDuringFlush);
   try {
     const lock = await canonicalPersistenceLock(root, "workspace-state", "write-telemetry.json");
     await withFileLock(lock, async () => {
       const persisted = await readWriteTelemetry(root);
       const byDate = new Map(persisted.days.map((day) => [day.date, day]));
-      for (const day of snapshot.values()) byDate.set(day.date, mergeDailyTelemetry(byDate.get(day.date), day));
+      for (const day of snapshot.values()) byDate.set(day.date, mergeDailyTelemetry(byDate.get(day.date), serializePendingDay(day)));
       await writeJsonAtomic(writeTelemetryPath(root), {
         schemaVersion: 1,
         days: [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date)).slice(-MAX_PERSISTED_WRITE_TELEMETRY_DAYS)
@@ -189,8 +230,8 @@ async function flushWriteTelemetryNow(root: string): Promise<boolean> {
     }
     return true;
   } catch (error) {
-    const pending = pendingWriteTelemetry.get(key) ?? new Map<string, DailyWriteTelemetry>();
-    for (const day of snapshot.values()) pending.set(day.date, mergeDailyTelemetry(pending.get(day.date), day));
+    const pending = pendingWriteTelemetry.get(key) ?? new Map<string, PendingWriteDay>();
+    for (const day of snapshot.values()) pending.set(day.date, mergePendingDay(pending.get(day.date), day));
     pendingWriteTelemetry.set(key, pending);
     throw error;
   }
