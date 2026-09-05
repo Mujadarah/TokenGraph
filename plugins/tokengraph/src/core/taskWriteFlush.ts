@@ -35,13 +35,13 @@ export async function flushTaskReportWrites(root: string, taskId: string): Promi
   const warnings: TaskWriteFlushWarning[] = [];
   try {
     const ledger = await loadTaskLedger(root, taskId);
-    const deferredMemoryUseIds = [...new Set(ledger?.events.flatMap((event) => event.deferredMemoryUseIds ?? []) ?? [])];
+    const deferredMemoryUseDigests = [...new Set(ledger?.events.flatMap((event) => event.deferredMemoryUseDigests ?? []) ?? [])];
     const settledAfter = ledger?.pausedAt ?? ledger?.completedAt ?? ledger?.updatedAt;
     const path = await repositoryMemoryPath(root);
     const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
     await flushBufferedMemoryUses(path, lock, taskId, {
       telemetry: { root, storageClass: "durable" },
-      additionalIds: deferredMemoryUseIds,
+      additionalDigests: deferredMemoryUseDigests,
       ...(settledAfter ? { settledAfter } : {})
     });
   } catch {

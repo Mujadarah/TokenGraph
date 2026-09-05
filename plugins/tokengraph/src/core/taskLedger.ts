@@ -40,8 +40,8 @@ export interface TaskEvent {
   confidence: EstimateConfidence;
   timestamp: string;
   qualityChecks: TaskQualityCheck[];
-  /** Bounded ids whose minimal-policy usage timestamp settles at task report. */
-  deferredMemoryUseIds?: string[];
+  /** Bounded privacy-safe id digests settled at task report. */
+  deferredMemoryUseDigests?: string[];
 }
 
 export interface TaskLedger {
@@ -103,6 +103,7 @@ export interface PruneTaskLedgersResult {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const COMPLETED_OUTCOMES_INDEX_SCHEMA_ID = "tokengraph-completed-outcomes-index";
 const COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION = 1;
 const MAX_COMPLETED_OUTCOMES = 100;
@@ -372,13 +373,13 @@ function decodeCurrentQualityCheck(value: unknown): TaskQualityCheck | undefined
 function decodeCurrentEvent(value: unknown): TaskEvent | undefined {
   if (!hasExactKeys(value, [
     "id", "fingerprint", "category", "toolName", "originalTokens", "compactTokens", "overheadTokens", "confidence", "timestamp", "qualityChecks"
-  ], ["deferredMemoryUseIds"]) || typeof value.id !== "string" || typeof value.fingerprint !== "string" || typeof value.category !== "string" ||
+  ], ["deferredMemoryUseDigests"]) || typeof value.id !== "string" || typeof value.fingerprint !== "string" || typeof value.category !== "string" ||
       typeof value.toolName !== "string" || !finiteNonnegative(value.originalTokens) || !finiteNonnegative(value.compactTokens) ||
       !finiteNonnegative(value.overheadTokens) || !isLiteral(value.confidence, ["low", "medium", "high"] as const) ||
       !isTimestamp(value.timestamp) || !Array.isArray(value.qualityChecks) ||
-      (value.deferredMemoryUseIds !== undefined && (!Array.isArray(value.deferredMemoryUseIds) || value.deferredMemoryUseIds.length > 100 ||
-        !value.deferredMemoryUseIds.every((id) => typeof id === "string" && UUID_PATTERN.test(id)) ||
-        new Set(value.deferredMemoryUseIds).size !== value.deferredMemoryUseIds.length))) return undefined;
+      (value.deferredMemoryUseDigests !== undefined && (!Array.isArray(value.deferredMemoryUseDigests) || value.deferredMemoryUseDigests.length > 100 ||
+        !value.deferredMemoryUseDigests.every((digest) => typeof digest === "string" && SHA256_PATTERN.test(digest)) ||
+        new Set(value.deferredMemoryUseDigests).size !== value.deferredMemoryUseDigests.length))) return undefined;
   const qualityChecks = value.qualityChecks.map(decodeCurrentQualityCheck);
   if (qualityChecks.some((entry) => entry === undefined)) return undefined;
   return {
@@ -392,7 +393,7 @@ function decodeCurrentEvent(value: unknown): TaskEvent | undefined {
     confidence: value.confidence as EstimateConfidence,
     timestamp: value.timestamp,
     qualityChecks: qualityChecks as TaskQualityCheck[],
-    ...(value.deferredMemoryUseIds === undefined ? {} : { deferredMemoryUseIds: [...value.deferredMemoryUseIds] as string[] })
+    ...(value.deferredMemoryUseDigests === undefined ? {} : { deferredMemoryUseDigests: [...value.deferredMemoryUseDigests] as string[] })
   };
 }
 
@@ -599,8 +600,8 @@ function reconstructEvent(value: unknown): TaskEvent | undefined {
     (value.confidence !== "low" && value.confidence !== "medium" && value.confidence !== "high") ||
     !isTimestamp(value.timestamp) ||
     qualityChecks.some((check) => check === undefined) ||
-    (value.deferredMemoryUseIds !== undefined && (!Array.isArray(value.deferredMemoryUseIds) || value.deferredMemoryUseIds.length > 100 ||
-      !value.deferredMemoryUseIds.every((id) => typeof id === "string" && UUID_PATTERN.test(id))))
+    (value.deferredMemoryUseDigests !== undefined && (!Array.isArray(value.deferredMemoryUseDigests) || value.deferredMemoryUseDigests.length > 100 ||
+      !value.deferredMemoryUseDigests.every((digest) => typeof digest === "string" && SHA256_PATTERN.test(digest))))
   ) {
     return undefined;
   }
@@ -615,7 +616,7 @@ function reconstructEvent(value: unknown): TaskEvent | undefined {
     confidence: value.confidence,
     timestamp: value.timestamp,
     qualityChecks: qualityChecks as TaskQualityCheck[],
-    ...(value.deferredMemoryUseIds === undefined ? {} : { deferredMemoryUseIds: [...new Set(value.deferredMemoryUseIds)] as string[] })
+    ...(value.deferredMemoryUseDigests === undefined ? {} : { deferredMemoryUseDigests: [...new Set(value.deferredMemoryUseDigests)] as string[] })
   };
 }
 
@@ -824,8 +825,8 @@ function sanitizeEvent(event: TaskEvent): TaskEvent {
     qualityChecks: Array.isArray(event.qualityChecks)
       ? event.qualityChecks.map((check) => ({ name: String(check.name), passed: check.passed === true }))
       : [],
-    ...(event.deferredMemoryUseIds === undefined ? {} : {
-      deferredMemoryUseIds: [...new Set(event.deferredMemoryUseIds.filter((id) => UUID_PATTERN.test(id)))].sort().slice(0, 100)
+    ...(event.deferredMemoryUseDigests === undefined ? {} : {
+      deferredMemoryUseDigests: [...new Set(event.deferredMemoryUseDigests.filter((digest) => SHA256_PATTERN.test(digest)))].sort().slice(0, 100)
     })
   };
 }
@@ -1025,13 +1026,13 @@ export async function recordTaskEvent(root: string, taskId: string, event: TaskE
       const existing = ledger.events[existingIndex]!;
       ledger.events[existingIndex] = {
         ...candidate,
-        ...((candidate.deferredMemoryUseIds || existing.deferredMemoryUseIds) ? {
-          deferredMemoryUseIds: [...new Set([...(existing.deferredMemoryUseIds ?? []), ...(candidate.deferredMemoryUseIds ?? [])])].sort().slice(0, 100)
+        ...((candidate.deferredMemoryUseDigests || existing.deferredMemoryUseDigests) ? {
+          deferredMemoryUseDigests: [...new Set([...(existing.deferredMemoryUseDigests ?? []), ...(candidate.deferredMemoryUseDigests ?? [])])].sort().slice(0, 100)
         } : {})
       };
-    } else if (candidate.deferredMemoryUseIds?.length) {
+    } else if (candidate.deferredMemoryUseDigests?.length) {
       const existing = ledger.events[existingIndex]!;
-      existing.deferredMemoryUseIds = [...new Set([...(existing.deferredMemoryUseIds ?? []), ...candidate.deferredMemoryUseIds])].sort().slice(0, 100);
+      existing.deferredMemoryUseDigests = [...new Set([...(existing.deferredMemoryUseDigests ?? []), ...candidate.deferredMemoryUseDigests])].sort().slice(0, 100);
     }
     ledger.updatedAt = new Date().toISOString();
     await writeTaskJson(root, taskLedgerPath(root, taskId), ledger);

@@ -120,7 +120,7 @@ export async function storageUsage(root: string): Promise<StorageUsage> {
   return usageMany(
     [stateDir(root), repositoryStateDirectory(root)],
     domainRootSet(root),
-    resolve(dirname(writeTelemetryPath(root)))
+    resolve(writeTelemetryPath(root))
   );
 }
 

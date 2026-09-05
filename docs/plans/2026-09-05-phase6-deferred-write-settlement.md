@@ -12,11 +12,14 @@ outcomes, hook behavior, or native activation.
   task-keyed promise queue. The ledger is checked again inside that queue.
 - Process-local queues alone cannot settle a recall when a different MCP
   process completes the task. The strict task event therefore carries an
-  optional, deduplicated `deferredMemoryUseIds` field, limited to 100 UUIDs.
+  optional, deduplicated `deferredMemoryUseDigests` field, limited to 100
+  lowercase SHA-256 values. TokenGraph memory ids include non-UUID and legacy
+  caller-controlled strings, so raw ids are never copied into the ledger.
   This is an additive schema-v3 event field: older events remain valid, unknown
   fields remain rejected, and the native rollout already requires every older
   TokenGraph process to be stopped before activation. The reporting process
-  unions these ids with any local buffer and performs one memory-store write.
+  matches these digests against ids already inside the bounded memory store,
+  unions the matches with any local buffer, and performs one memory-store write.
   No prompt, query, title, body, path, or other memory content is persisted.
 - A repeated pause settles only ids whose stored `lastUsedAt` predates the
   terminal ledger timestamp, so retrying a successful report does not create a

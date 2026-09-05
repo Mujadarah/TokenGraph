@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile, rename } from "node:fs/promises";
 
 import { filterUntrustedSourceText } from "./storagePolicy.js";
@@ -179,19 +179,20 @@ export class MemoryStore {
     filePath: string,
     lock: CanonicalPersistenceLock,
     bufferScope: string,
-    options: Pick<MemoryStoreOptions, "telemetry"> & { additionalIds?: readonly string[]; settledAfter?: string } = {}
+    options: Pick<MemoryStoreOptions, "telemetry"> & { additionalDigests?: readonly string[]; settledAfter?: string } = {}
   ): Promise<boolean> {
     const key = bufferedUseKey(lock, bufferScope);
     const buffered = bufferedMemoryUseIds.get(key);
-    const ids = new Set([...(buffered ?? []), ...(options.additionalIds ?? [])]);
-    if (!ids.size) return false;
+    const ids = new Set(buffered ?? []);
+    const digests = new Set(options.additionalDigests ?? []);
+    if (!ids.size && !digests.size) return false;
     bufferedMemoryUseIds.delete(key);
     try {
       const store = new MemoryStore(filePath, lock, {
         writePolicy: "durable",
         ...(options.telemetry ? { telemetry: options.telemetry } : {})
       });
-      if (options.settledAfter) await store.persistUsedAfter([...ids], options.settledAfter);
+      if (options.settledAfter) await store.persistUsedAfter([...ids], digests, options.settledAfter);
       else await store.persistUsed([...ids], "durable");
       return true;
     } catch (error) {
@@ -399,7 +400,7 @@ export class MemoryStore {
     });
   }
 
-  private async persistUsedAfter(ids: string[], settledAfter: string): Promise<boolean> {
+  private async persistUsedAfter(ids: string[], digests: ReadonlySet<string>, settledAfter: string): Promise<boolean> {
     const idsToMark = new Set(ids);
     const cutoff = Date.parse(settledAfter);
     if (!Number.isFinite(cutoff)) throw new Error("TokenGraph task settlement timestamp is invalid.");
@@ -408,7 +409,8 @@ export class MemoryStore {
       const timestamp = nowIso();
       let changed = false;
       for (const memory of memories) {
-        if (!idsToMark.has(memory.id) || (memory.lastUsedAt && Date.parse(memory.lastUsedAt) >= cutoff)) continue;
+        const selected = idsToMark.has(memory.id) || digests.has(createHash("sha256").update(memory.id).digest("hex"));
+        if (!selected || (memory.lastUsedAt && Date.parse(memory.lastUsedAt) >= cutoff)) continue;
         memory.lastUsedAt = timestamp;
         memory.updatedAt = timestamp;
         changed = true;
@@ -495,7 +497,7 @@ export async function flushBufferedMemoryUses(
   filePath: string,
   lock: CanonicalPersistenceLock,
   bufferScope: string,
-  options: Pick<MemoryStoreOptions, "telemetry"> & { additionalIds?: readonly string[]; settledAfter?: string } = {}
+  options: Pick<MemoryStoreOptions, "telemetry"> & { additionalDigests?: readonly string[]; settledAfter?: string } = {}
 ): Promise<boolean> {
   return MemoryStore.flushBufferedUses(filePath, lock, bufferScope, options);
 }

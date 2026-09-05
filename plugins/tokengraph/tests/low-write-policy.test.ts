@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { access, link, mkdtemp, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -444,7 +444,7 @@ describe("Phase 6 low-write policy", () => {
       confidence: "low",
       timestamp: new Date().toISOString(),
       qualityChecks: [{ name: "compact-output-produced", passed: true }],
-      deferredMemoryUseIds: [memory.id]
+      deferredMemoryUseDigests: [createHash("sha256").update(memory.id).digest("hex")]
     });
 
     // This process has no local buffer; settlement is reconstructed from the

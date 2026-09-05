@@ -154,7 +154,7 @@ async function recordCoreEvent(input: {
   originalTokens: number;
   compactTokens: number;
   overheadTokens?: number;
-  deferredMemoryUseIds?: string[];
+  deferredMemoryUseDigests?: string[];
 }): Promise<number> {
   const overheadTokens = input.overheadTokens ?? coreEventOverheadTokens(input.taskId, input.toolName, input.category);
   await recordTaskEvent(input.root, input.taskId, {
@@ -168,7 +168,7 @@ async function recordCoreEvent(input: {
     confidence: "low",
     timestamp: new Date().toISOString(),
     qualityChecks: [{ name: "compact-output-produced", passed: true }],
-    ...(input.deferredMemoryUseIds?.length ? { deferredMemoryUseIds: input.deferredMemoryUseIds } : {})
+    ...(input.deferredMemoryUseDigests?.length ? { deferredMemoryUseDigests: input.deferredMemoryUseDigests } : {})
   });
   return overheadTokens;
 }
@@ -1293,7 +1293,9 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         root: resolvedRoot, taskId: task.taskId, toolName: "tokengraph_recall", category: `memory-${mode}`,
         operation: { mode, queryHash: createHash("sha256").update(query ?? "").digest("hex"), limit: limit ?? null, audit: audit === true },
         originalTokens: estimateTokens(compactJson(memories)), compactTokens,
-        ...(config.storage.writePolicy === "minimal" && usedMemoryIds.length ? { deferredMemoryUseIds: usedMemoryIds } : {})
+        ...(config.storage.writePolicy === "minimal" && usedMemoryIds.length ? {
+          deferredMemoryUseDigests: usedMemoryIds.map((id) => createHash("sha256").update(id).digest("hex")).sort()
+        } : {})
       });
       return ok(task.autoStarted ? { ...response, taskId: task.taskId } : response);
       });
