@@ -43,16 +43,23 @@ async function main(argv: string[]): Promise<void> {
   if (argv[0] === "doctor") {
     const options = argv.slice(1);
     const usage = "Usage: tokengraph doctor [--root <path>] [--json]";
-    if (options.includes("--help")) {
+    if (options.length === 1 && options[0] === "--help") {
       process.stdout.write(`${usage}\n`);
       return;
     }
-    const rootOption = optionValue(options, "--root");
-    if (options.includes("--root") && !rootOption) throw new Error(usage);
+    let rootOption: string | undefined;
+    let json = false;
     for (let index = 0; index < options.length; index += 1) {
       const option = options[index]!;
-      if (option === "--json") continue;
+      if (option === "--json") {
+        if (json) throw new Error(usage);
+        json = true;
+        continue;
+      }
       if (option === "--root") {
+        const candidate = options[index + 1];
+        if (rootOption !== undefined || !candidate || candidate.startsWith("--")) throw new Error(usage);
+        rootOption = candidate;
         index += 1;
         continue;
       }
@@ -61,7 +68,7 @@ async function main(argv: string[]): Promise<void> {
     const root = await realpath(rootOption ?? process.cwd());
     const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
     const report = await collectDoctorReport({ workspace: { status: "ready", source: "cli-root", root }, pluginRoot });
-    process.stdout.write(options.includes("--json") ? `${JSON.stringify(report)}\n` : `${formatDoctorReport(report)}\n`);
+    process.stdout.write(json ? `${JSON.stringify(report)}\n` : `${formatDoctorReport(report)}\n`);
     return;
   }
   if (argv[0] === "evaluate-host") {

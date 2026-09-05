@@ -108,7 +108,7 @@ const COMPLETED_OUTCOMES_INDEX_SCHEMA_ID = "tokengraph-completed-outcomes-index"
 const COMPLETED_OUTCOMES_INDEX_SCHEMA_VERSION = 1;
 const MAX_COMPLETED_OUTCOMES = 100;
 const taskLedgerWriteChains = new Map<string, Promise<void>>();
-const MAX_READ_ONLY_LEDGER_BYTES = 8 * 1024 * 1024;
+export const MAX_READ_ONLY_LEDGER_BYTES = 8 * 1024 * 1024;
 const CURRENT_LEDGER_KEYS = new Set([
   "schemaId", "schemaVersion", "taskId", "host", "sessionId", "turnId", "status",
   "createdAt", "updatedAt", "pausedAt", "completedAt", "estimatorVersion",
@@ -471,7 +471,7 @@ function decodeCurrentTaskReport(value: unknown, expectedTaskId: string, expecte
   };
 }
 
-function decodeCurrentTaskLedger(value: unknown, expectedTaskId: string): TaskLedger | undefined {
+export function decodeCurrentTaskLedger(value: unknown, expectedTaskId: string): TaskLedger | undefined {
   if (!hasExactKeys(value, REQUIRED_CURRENT_LEDGER_KEYS, [...CURRENT_LEDGER_KEYS].filter((key) => !REQUIRED_CURRENT_LEDGER_KEYS.includes(key as typeof REQUIRED_CURRENT_LEDGER_KEYS[number]))) ||
       value.schemaId !== TASK_LEDGER_SCHEMA_ID || value.schemaVersion !== TASK_LEDGER_SCHEMA_VERSION || value.taskId !== expectedTaskId ||
       !isLiteral(value.host, ["codex", "claude", "unknown"] as const) || !isLiteral(value.status, ["open", "paused", "completed", "quarantined"] as const) ||

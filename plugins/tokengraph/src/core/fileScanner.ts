@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { BigIntStats, Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, normalize, relative, sep } from "node:path";
 
@@ -45,6 +46,13 @@ export interface ScanBudget {
   wholeIndexTimeoutMs?: number;
   polyglotEnabled?: boolean;
   onFileContent?: (file: { path: string; language: string; content: string }) => void;
+}
+
+/** Optional bounded reader used by non-mutating diagnostics. */
+export interface ScanReadProvider {
+  directory(path: string): Promise<Dirent[] | undefined>;
+  inspect(path: string): Promise<BigIntStats | undefined>;
+  text(path: string, maximumBytes: number): Promise<string | undefined>;
 }
 
 interface WalkState {
@@ -105,16 +113,22 @@ function exclusionForName(name: string): Exclusion["reason"] | undefined {
   return undefined;
 }
 
-async function loadIgnoreScopes(base: string, inherited: IgnoreScope[] = []): Promise<IgnoreScope[]> {
+async function loadIgnoreScopes(base: string, inherited: IgnoreScope[] = [], reader?: ScanReadProvider): Promise<IgnoreScope[]> {
   let content: string;
-  try {
-    content = await readFile(join(base, ".gitignore"), "utf8");
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT" && code !== "ENOTDIR") {
-      throw error;
+  if (reader) {
+    const inspected = await reader.text(join(base, ".gitignore"), MAX_INDEXED_BYTES);
+    if (inspected === undefined) return inherited;
+    content = inspected;
+  } else {
+    try {
+      content = await readFile(join(base, ".gitignore"), "utf8");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
+        throw error;
+      }
+      return inherited;
     }
-    return inherited;
   }
   const matcher = createIgnore();
   matcher.add(content);
@@ -640,9 +654,14 @@ export async function scanProject(root: string, options?: ScanBudget): Promise<C
   return (await scanProjectContent(root, options, false)).graph;
 }
 
-async function configurationSignatureRows(root: string): Promise<Array<{ path: string; contentHash: string }>> {
+async function configurationSignatureRows(root: string, reader?: ScanReadProvider): Promise<Array<{ path: string; contentHash: string }>> {
   const configurationRows: Array<{ path: string; contentHash: string }> = [];
   for (const path of CONFIGURATION_FILES) {
+    if (reader) {
+      const content = await reader.text(join(root, path), MAX_INDEXED_BYTES);
+      if (content !== undefined) configurationRows.push({ path, contentHash: hashText(content) });
+      continue;
+    }
     try {
       configurationRows.push({ path, contentHash: hashText(await readFile(join(root, path), "utf8")) });
     } catch (error) {
@@ -665,12 +684,12 @@ export async function scanProjectGeneration(root: string, options?: ScanBudget):
   };
 }
 
-export async function scanProjectSignature(root: string, options?: ScanBudget): Promise<string> {
-  return (await scanProjectFileMetadata(root, options)).scanSignature;
+export async function scanProjectSignature(root: string, options?: ScanBudget, reader?: ScanReadProvider): Promise<string> {
+  return (await scanProjectFileMetadata(root, options, reader)).scanSignature;
 }
 
-export async function scanProjectFileMetadata(root: string, options?: ScanBudget): Promise<ProjectFileMetadataScan> {
-  const ignoreScopes = await loadIgnoreScopes(root);
+export async function scanProjectFileMetadata(root: string, options?: ScanBudget, reader?: ScanReadProvider): Promise<ProjectFileMetadataScan> {
+  const ignoreScopes = await loadIgnoreScopes(root, [], reader);
   const rows: Array<Record<string, unknown>> = [];
   const files: FileScanMetadata[] = [];
   const exclusions: Exclusion[] = [];
@@ -682,11 +701,13 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
   let generatedFiles = 0;
 
   async function walkSignature(current: string, depth: number, inheritedScopes: IgnoreScope[]): Promise<void> {
-    const currentScopes = current === root ? inheritedScopes : await loadIgnoreScopes(current, inheritedScopes);
+    const currentScopes = current === root ? inheritedScopes : await loadIgnoreScopes(current, inheritedScopes, reader);
     let entries;
     try {
-      entries = await readdir(current, { withFileTypes: true });
-    } catch {
+      entries = reader ? await reader.directory(current) : await readdir(current, { withFileTypes: true });
+      if (entries === undefined) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    } catch (error) {
+      if (reader) throw error;
       const path = normalizePath(relative(root, current)) || ".";
       rows.push({ path, reason: "unreadable" });
       exclusions.push({ path, reason: "unreadable" });
@@ -742,8 +763,10 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
       }
       let fileStat;
       try {
-        fileStat = await stat(absolute, { bigint: true });
-      } catch {
+        fileStat = reader ? await reader.inspect(absolute) : await stat(absolute, { bigint: true });
+        if (!fileStat) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      } catch (error) {
+        if (reader) throw error;
         rows.push({ path: relativePath, reason: "unreadable" });
         exclusions.push({ path: relativePath, reason: "unreadable" });
         continue;
@@ -761,8 +784,10 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
       }
       let content;
       try {
-        content = await readFile(absolute, "utf8");
-      } catch {
+        content = reader ? await reader.text(absolute, budget.maxFileBytes) : await readFile(absolute, "utf8");
+        if (content === undefined) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      } catch (error) {
+        if (reader) throw error;
         rows.push({ path: relativePath, reason: "unreadable" });
         exclusions.push({ path: relativePath, reason: "unreadable" });
         continue;
@@ -801,7 +826,7 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
   await walkSignature(root, 0, ignoreScopes);
   files.sort((a, b) => a.path.localeCompare(b.path));
   exclusions.sort((a, b) => a.path.localeCompare(b.path));
-  const configurationRows = await configurationSignatureRows(root);
+  const configurationRows = await configurationSignatureRows(root, reader);
   return { files, exclusions, scanSignature: hashText(JSON.stringify({ rows, configurationRows })) };
 }
 

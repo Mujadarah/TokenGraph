@@ -34,8 +34,9 @@ export class LockDomainError extends Error {
 
 const lockBrand = new WeakSet<object>();
 const domainSet = new Set<string>(LOCK_DOMAINS);
-const ANCHOR_NAME = ".tokengraph-native-anchor-v2.lock";
-const JOURNAL_NAME = ".tokengraph-native-journal-v2.lock";
+export const NATIVE_LOCK_ANCHOR_NAME = ".tokengraph-native-anchor-v2.lock";
+export const NATIVE_LOCK_JOURNAL_NAME = ".tokengraph-native-journal-v2.lock";
+export const NATIVE_LOCK_JOURNAL_TEMP_NAME = ".tokengraph-native-journal-v2.lock.tokengraph-write-v2.tmp";
 const MAX_SEGMENT_BYTES = 240;
 const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
 
@@ -51,7 +52,7 @@ function isSafeSingleSegment(value: string): boolean {
   if (Buffer.byteLength(value, "utf8") > MAX_SEGMENT_BYTES) return false;
   const compatibilityName = `${value}.lock`;
   const portableName = compatibilityName.toLowerCase();
-  return portableName !== ANCHOR_NAME && portableName !== JOURNAL_NAME;
+  return portableName !== NATIVE_LOCK_ANCHOR_NAME && portableName !== NATIVE_LOCK_JOURNAL_NAME;
 }
 
 function confinedDirectChild(root: string, candidate: string): boolean {
@@ -160,11 +161,20 @@ export async function canonicalPersistenceLock(
     domain,
     domainRoot: root,
     compatibilityPath,
-    anchorPath: join(root, ANCHOR_NAME),
-    journalPath: join(root, JOURNAL_NAME)
+    anchorPath: join(root, NATIVE_LOCK_ANCHOR_NAME),
+    journalPath: join(root, NATIVE_LOCK_JOURNAL_NAME)
   });
   lockBrand.add(lock);
   return lock;
+}
+
+/** Resolves an existing canonical domain root without creating or chmodding it. */
+export async function resolveLockDomainRootReadOnly(workspaceRoot: string, domain: LockDomain): Promise<string> {
+  if (typeof workspaceRoot !== "string" || !domainSet.has(domain)) fail();
+  const requestedWorkspace = resolve(workspaceRoot);
+  const canonicalWorkspace = await canonicalExistingDirectory(requestedWorkspace);
+  if (canonicalWorkspace !== requestedWorkspace) fail();
+  return resolve(await domainRoot(canonicalWorkspace, domain));
 }
 
 export function isCanonicalPersistenceLock(value: unknown): value is CanonicalPersistenceLock {

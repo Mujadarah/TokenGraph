@@ -2,6 +2,8 @@ import { chmod, lstat, mkdir, readFile, readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { repositoryStateDirectory } from "./repositoryIdentity.js";
+import { NATIVE_LOCK_ANCHOR_NAME, NATIVE_LOCK_JOURNAL_NAME, NATIVE_LOCK_JOURNAL_TEMP_NAME } from "./lockDomain.js";
+import { DiagnosticReader } from "./diagnosticRead.js";
 import { indexManifestPath, isIndexGenerationArtifactName, readActiveIndexGenerationName, runsDir, stateDir, vaultDir, wikiDir } from "./persistence.js";
 import {
   writeTelemetryPath,
@@ -51,10 +53,6 @@ export interface PurgeStorageResult {
   removed: string[];
 }
 
-const NATIVE_ANCHOR_NAME = ".tokengraph-native-anchor-v2.lock";
-const NATIVE_JOURNAL_NAME = ".tokengraph-native-journal-v2.lock";
-const NATIVE_JOURNAL_TEMP_NAME = ".tokengraph-native-journal-v2.lock.tokengraph-write-v2.tmp";
-
 // The eight canonical domain roots that live under the accounted state trees.
 // The `git-info` domain resolves inside the user's `.git` directory, which the
 // state-tree walks never reach, so it needs no accounting exclusion here.
@@ -80,7 +78,7 @@ function domainRootSet(root: string): ReadonlySet<string> {
 function isDomainRootInfrastructure(path: string, domainRoots: ReadonlySet<string>): boolean {
   if (!domainRoots.has(resolve(dirname(path)))) return false;
   const name = basename(path);
-  return name === NATIVE_ANCHOR_NAME || name === NATIVE_JOURNAL_NAME || name === NATIVE_JOURNAL_TEMP_NAME ||
+  return name === NATIVE_LOCK_ANCHOR_NAME || name === NATIVE_LOCK_JOURNAL_NAME || name === NATIVE_LOCK_JOURNAL_TEMP_NAME ||
     name.toLowerCase().endsWith(".lock");
 }
 
@@ -88,16 +86,21 @@ function isWriteTelemetryInfrastructure(path: string, telemetryArtifact: string)
   return resolve(path) === telemetryArtifact;
 }
 
-async function usage(path: string, domainRoots: ReadonlySet<string>, telemetryArtifact: string): Promise<StorageUsage> {
+async function usage(path: string, domainRoots: ReadonlySet<string>, telemetryArtifact: string, reader?: DiagnosticReader): Promise<StorageUsage> {
   try {
-    const info = await lstat(path);
+    const info = reader ? await reader.inspect(path) : await lstat(path);
+    if (!info) return { bytes: 0, files: 0 };
     if (info.isSymbolicLink()) throw new Error(`TokenGraph storage accounting refuses symbolic-link paths: ${path}`);
     if (isWriteTelemetryInfrastructure(path, telemetryArtifact)) return { bytes: 0, files: 0 };
     if (isDomainRootInfrastructure(path, domainRoots)) return { bytes: 0, files: 0 };
-    if (info.isFile()) return { bytes: info.size, files: 1 };
+    if (info.isFile()) {
+      const bytes = Number(info.size);
+      if (!Number.isSafeInteger(bytes)) throw new Error("TokenGraph storage usage exceeds the safe integer range.");
+      return { bytes, files: 1 };
+    }
     if (!info.isDirectory()) return { bytes: 0, files: 0 };
-    const entries = await readdir(path);
-    const children = await Promise.all(entries.map((entry) => usage(join(path, entry), domainRoots, telemetryArtifact)));
+    const entries = reader ? (await reader.directory(path) ?? []).map((entry) => entry.name) : await readdir(path);
+    const children = await Promise.all(entries.map((entry) => usage(join(path, entry), domainRoots, telemetryArtifact, reader)));
     return children.reduce((total, child) => ({ bytes: total.bytes + child.bytes, files: total.files + child.files }), { bytes: 0, files: 0 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { bytes: 0, files: 0 };
@@ -105,14 +108,14 @@ async function usage(path: string, domainRoots: ReadonlySet<string>, telemetryAr
   }
 }
 
-async function usageMany(paths: string[], domainRoots: ReadonlySet<string>, telemetryArtifact: string): Promise<StorageUsage> {
+async function usageMany(paths: string[], domainRoots: ReadonlySet<string>, telemetryArtifact: string, reader?: DiagnosticReader): Promise<StorageUsage> {
   const unique = paths.map((path) => resolve(path)).filter((path, index, all) => all.indexOf(path) === index);
   const roots = unique.filter((path, index, all) => !all.some((candidate, candidateIndex) => {
     if (candidateIndex === index) return false;
     const nested = relative(candidate, path);
     return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
   }));
-  const values = await Promise.all(roots.map((path) => usage(path, domainRoots, telemetryArtifact)));
+  const values = await Promise.all(roots.map((path) => usage(path, domainRoots, telemetryArtifact, reader)));
   return values.reduce((total, current) => ({ bytes: total.bytes + current.bytes, files: total.files + current.files }), { bytes: 0, files: 0 });
 }
 
@@ -124,18 +127,18 @@ export async function storageUsage(root: string): Promise<StorageUsage> {
   );
 }
 
-export async function storageClassUsage(root: string): Promise<StorageClassUsage> {
+async function collectStorageClassUsage(root: string, reader?: DiagnosticReader): Promise<StorageClassUsage> {
   const repository = repositoryStateDirectory(root);
   const domainRoots = domainRootSet(root);
   const telemetryArtifact = resolve(writeTelemetryPath(root));
   const state = stateDir(root);
-  const stateEntries = await readdir(state).catch((error: unknown) =>
+  const stateEntries = reader ? (await reader.directory(state) ?? []).map((entry) => entry.name) : await readdir(state).catch((error: unknown) =>
     (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : Promise.reject(error)
   );
   const generationArtifacts = stateEntries.filter(isIndexGenerationArtifactName).map((entry) => join(state, entry));
   const [total, runs, cache, vault] = await Promise.all([
-    storageUsage(root),
-    usage(runsDir(root), domainRoots, telemetryArtifact),
+    usageMany([stateDir(root), repositoryStateDirectory(root)], domainRoots, telemetryArtifact, reader),
+    usage(runsDir(root), domainRoots, telemetryArtifact, reader),
     usageMany([
       join(state, "index.json"),
       indexManifestPath(root),
@@ -143,8 +146,8 @@ export async function storageClassUsage(root: string): Promise<StorageClassUsage
       wikiDir(root),
       join(repository, "index.json"),
       join(repository, "artifacts")
-    ], domainRoots, telemetryArtifact),
-    usage(vaultDir(root), domainRoots, telemetryArtifact)
+    ], domainRoots, telemetryArtifact, reader),
+    usage(vaultDir(root), domainRoots, telemetryArtifact, reader)
   ]);
   return {
     total,
@@ -156,6 +159,14 @@ export async function storageClassUsage(root: string): Promise<StorageClassUsage
       files: Math.max(0, total.files - runs.files - cache.files - vault.files)
     }
   };
+}
+
+export async function storageClassUsage(root: string): Promise<StorageClassUsage> {
+  return collectStorageClassUsage(root);
+}
+
+export async function storageClassUsageReadOnly(root: string): Promise<StorageClassUsage> {
+  return collectStorageClassUsage(root, new DiagnosticReader(root));
 }
 
 export async function enforceStorageQuota(root: string, quota: StorageQuota): Promise<StorageUsage> {

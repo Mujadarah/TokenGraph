@@ -180,7 +180,7 @@ function sameRepositoryIdentity(left: ProjectIndex["repositoryIdentity"], right:
     left.remoteIdentity === right.remoteIdentity);
 }
 
-function generationValidationFailure(
+export function generationValidationFailure(
   root: string,
   index: ProjectIndex,
   currentIdentity: ProjectIndex["repositoryIdentity"]
@@ -269,7 +269,7 @@ function samePublishedFile(left: StableFileSnapshot, right: StableFileSnapshot):
     left.nlink === right.nlink && left.size === right.size && left.mtimeNs === right.mtimeNs;
 }
 
-function parseManifest(value: unknown): ProjectIndexManifest | undefined {
+export function parseManifest(value: unknown): ProjectIndexManifest | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const entries = Object.keys(value);
   if (entries.length !== 3 || !entries.includes("generationFile") || !entries.includes("generationId") || !entries.includes("contentHash")) return undefined;
@@ -593,7 +593,7 @@ function hasValidRetrievalSignals(index: Partial<ProjectIndex>): boolean {
   return entries.every(([path], index) => index === 0 || entries[index - 1]![0].localeCompare(path) < 0);
 }
 
-function isProjectIndex(value: unknown): value is ProjectIndex {
+export function isProjectIndex(value: unknown): value is ProjectIndex {
   if (!value || typeof value !== "object") {
     return false;
   }

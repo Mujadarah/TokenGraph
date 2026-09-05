@@ -155,7 +155,7 @@ function isValidDailyTelemetry(value: unknown): value is DailyWriteTelemetry {
   );
 }
 
-function normalizeWriteTelemetry(value: unknown): WriteTelemetryDocument {
+export function normalizeWriteTelemetry(value: unknown): WriteTelemetryDocument {
   const candidate = value && typeof value === "object" && !Array.isArray(value) ? value as Partial<WriteTelemetryDocument> : {};
   if (typeof candidate.schemaVersion === "number" && candidate.schemaVersion > 1) {
     throw new Error(`Unsupported newer TokenGraph write telemetry schema version ${candidate.schemaVersion}; refusing to overwrite it.`);

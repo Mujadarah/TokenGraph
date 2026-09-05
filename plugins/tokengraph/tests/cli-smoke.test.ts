@@ -106,12 +106,26 @@ describe("tokengraph CLI smoke command", () => {
   it("prints concise human and canonical JSON doctor output without creating state", async () => {
     const root = await makeRoot();
     const json = await execFileAsync(process.execPath, [resolve("dist", "cli.js"), "doctor", "--root", root, "--json"], { cwd: process.cwd() });
-    const report = JSON.parse(json.stdout) as { status: string; workspace: { source: string }; index: { state: string } };
-    expect(report).toMatchObject({ status: "healthy", workspace: { source: "cli-root" }, index: { state: "missing" } });
+    const report = JSON.parse(json.stdout) as { status: string; workspace: { source: string }; index: { state: string }; recommendations: string[] };
+    expect(report).toMatchObject({ status: "degraded", workspace: { source: "cli-root" }, index: { state: "missing" }, recommendations: ["index-missing"] });
 
     const human = await execFileAsync(process.execPath, [resolve("dist", "cli.js"), "doctor", "--root", root], { cwd: process.cwd() });
-    expect(human.stdout).toMatch(/^TokenGraph doctor: healthy[\s\S]*recommendations: none\r?\n$/);
+    expect(human.stdout).toMatch(/^TokenGraph doctor: degraded[\s\S]*recommendations: index-missing\r?\n$/);
     await expect(access(join(root, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects ambiguous or duplicate doctor options", async () => {
+    const entry = resolve("dist", "cli.js");
+    for (const options of [
+      ["doctor", "--root", "--json"],
+      ["doctor", "--json", "--json"],
+      ["doctor", "--root", process.cwd(), "--root", process.cwd()],
+      ["doctor", "--help", "--json"]
+    ]) {
+      await expect(execFileAsync(process.execPath, [entry, ...options], { cwd: process.cwd() })).rejects.toMatchObject({
+        stderr: expect.stringContaining("Usage: tokengraph doctor")
+      });
+    }
   });
 
   it("validates the built stdio MCP server against a local project root", async () => {

@@ -191,6 +191,16 @@ function unwrapPersistedConfig(value: unknown): { config: unknown; needsMigratio
   return { config: value, needsMigration: true };
 }
 
+/** Pure decoder shared by diagnostics; never initializes or migrates state. */
+export function inspectTokenGraphConfig(value: unknown): { config: TokenGraphConfig; valid: boolean } {
+  const unwrapped = unwrapPersistedConfig(value);
+  const persisted = normalizeConfig(unwrapped.config, false);
+  return {
+    config: normalizeConfig(persisted),
+    valid: !unwrapped.needsMigration && JSON.stringify(unwrapped.config) === JSON.stringify(persisted)
+  };
+}
+
 export async function saveTokenGraphConfig(root: string, config: TokenGraphConfig): Promise<TokenGraphConfig> {
   const persisted = normalizeConfig(config, false);
   const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");

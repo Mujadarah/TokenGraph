@@ -253,7 +253,7 @@ function exactKeys(record: Record<string, unknown>, required: readonly string[],
   return true;
 }
 
-function parseLease(text: string): FileLockLeaseV1 | undefined {
+export function parseFileLockLease(text: string): FileLockLeaseV1 | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -549,7 +549,7 @@ async function validateRecoverableLease(
   if (pair === undefined || pair[1].nlink !== 1 || (expectedIdentity !== undefined && pair[1].identity !== expectedIdentity)) {
     fail("LOCK_LEASE_OCCUPIED");
   }
-  const lease = parseLease(pair[1].text);
+  const lease = parseFileLockLease(pair[1].text);
   if (lease === undefined || lease.nonce !== expectedNonce || lease.pid !== expectedOwner.pid ||
     lease.startedAt !== expectedOwner.startedAt ||
     !await confirmedDead(lease.pid, lease.heartbeatAt, runtime, policy)) {
@@ -772,7 +772,7 @@ function leasePayloadForJournal(
   record: ActiveLockRecoveryJournalV2,
   operation: "create" | "replace"
 ): FileLockLeaseV1 {
-  const lease = parseLease(text);
+  const lease = parseFileLockLease(text);
   if (lease === undefined || lease.pid !== record.pid || lease.nonce !== record.nonce ||
     lease.startedAt !== record.startedAt || Date.parse(lease.heartbeatAt) < Date.parse(record.heartbeatAt) ||
     (operation === "create" && lease.heartbeatAt !== record.heartbeatAt)) {
@@ -786,7 +786,7 @@ function currentLeaseForJournal(
   record: ActiveLockRecoveryJournalV2
 ): FileLockLeaseV1 {
   if (snapshot === undefined || snapshot.identity !== record.leaseIdentity) fail("LOCK_LEASE_OCCUPIED");
-  const lease = parseLease(snapshot.text);
+  const lease = parseFileLockLease(snapshot.text);
   if (lease === undefined || lease.pid !== record.pid || lease.nonce !== record.nonce ||
     lease.startedAt !== record.startedAt || lease.heartbeatAt !== record.heartbeatAt) {
     fail("LOCK_LEASE_OCCUPIED");
@@ -1074,7 +1074,7 @@ async function recoverActiveJournalV2(
     const leasePath = join(recoveryLock.compatibilityPath, "lease.json");
     const lease = await stableProtocolFile(leasePath, LEASE_MAX_BYTES, runtime, policy, "LOCK_LEASE_OCCUPIED");
     if (lease !== undefined) {
-      const parsed = parseLease(lease.text);
+      const parsed = parseFileLockLease(lease.text);
       if (lease.identity !== state.record.leaseIdentity || parsed?.nonce !== state.record.nonce) {
         fail("LOCK_LEASE_OCCUPIED");
       }
@@ -1228,7 +1228,7 @@ async function cleanupOwnedStateV2(
   } else if (state.record.phase === "lease-created") {
     const leasePath = join(lock.compatibilityPath, "lease.json");
     const lease = await stableProtocolFile(leasePath, LEASE_MAX_BYTES, runtime, policy, "LOCK_LEASE_OCCUPIED");
-    const parsed = lease === undefined ? undefined : parseLease(lease.text);
+    const parsed = lease === undefined ? undefined : parseFileLockLease(lease.text);
     if (lease === undefined || lease.identity !== state.record.leaseIdentity || parsed?.nonce !== state.record.nonce) {
       fail("LOCK_LEASE_OCCUPIED");
     }
@@ -1335,7 +1335,7 @@ async function runOwnedV2<T>(
     heartbeat = runtime.scheduleHeartbeat(policy.heartbeatMs, async () => serialized(async () => {
       if (owned === undefined || owned.journal.record.phase !== "lease-created") return;
       const current = await stableProtocolFile(leasePath, LEASE_MAX_BYTES, runtime, policy, "LOCK_LEASE_OCCUPIED");
-      const currentLease = current === undefined ? undefined : parseLease(current.text);
+      const currentLease = current === undefined ? undefined : parseFileLockLease(current.text);
       if (current === undefined || current.identity !== owned.journal.record.leaseIdentity ||
         currentLease === undefined || currentLease.nonce !== nonce) fail("LOCK_LEASE_OCCUPIED");
       const heartbeatAt = iso(Math.max(

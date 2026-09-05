@@ -2,12 +2,13 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { access, lstat, readFile, readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import type { RepositoryIdentity, RetrievalSignals } from "./types.js";
 import { canonicalPersistenceLock } from "./lockDomain.js";
 import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
 import { withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
+import { DiagnosticReader } from "./diagnosticRead.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -171,6 +172,12 @@ export async function getRepositoryIdentity(root: string): Promise<RepositoryIde
  */
 export async function getRepositoryIdentityReadOnly(root: string): Promise<RepositoryIdentity | undefined> {
   const workspaceRoot = resolve(root);
+  const reader = new DiagnosticReader(workspaceRoot);
+  await reader.inspect(join(workspaceRoot, ".tokengraph"));
+  const dotGit = await reader.inspect(join(workspaceRoot, ".git"));
+  // Refuse parent-repository discovery and linked-worktree indirection: neither
+  // grants Doctor authority to inspect Git state outside the trusted root.
+  if (!dotGit?.isDirectory()) return undefined;
   const [topLevel, gitDir, branch, headCommit, firstCommits, remote] = await Promise.all([
     git(workspaceRoot, "rev-parse", "--show-toplevel"),
     git(workspaceRoot, "rev-parse", "--git-dir"),
@@ -180,10 +187,15 @@ export async function getRepositoryIdentityReadOnly(root: string): Promise<Repos
     remoteIdentity(workspaceRoot)
   ]);
   const normalizedRoot = resolve(topLevel ?? workspaceRoot);
+  const within = relative(workspaceRoot, normalizedRoot);
+  // A nested diagnostic request does not authorize reading its parent's state.
+  if (isAbsolute(within) || within === ".." || within.startsWith("..\\") || within.startsWith("../")) return undefined;
   const normalizedGitDir = gitDir ? resolve(workspaceRoot, gitDir) : undefined;
   let repositoryId: string | undefined;
   try {
-    const persisted = JSON.parse(await readFile(join(repositoryStateDirectory(normalizedRoot), "identity.json"), "utf8")) as Partial<PersistedIdentity>;
+    const text = await reader.text(join(repositoryStateDirectory(normalizedRoot), "identity.json"), 64 * 1024);
+    if (text === undefined) return undefined;
+    const persisted = JSON.parse(text) as Partial<PersistedIdentity>;
     if (persisted.schemaVersion === 1 && typeof persisted.repositoryId === "string" && persisted.repositoryId.length >= 16) {
       repositoryId = persisted.repositoryId;
     }

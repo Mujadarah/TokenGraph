@@ -1099,6 +1099,7 @@ describe("TokenGraph MCP stdio server", () => {
       ])
     );
     expect(listedTools.find((tool) => tool.name === "tokengraph_setup_status")?.annotations?.readOnlyHint).toBe(true);
+    expect(listedTools.find((tool) => tool.name === "tokengraph_doctor")?.annotations?.readOnlyHint).toBe(true);
     const indexWritingTools = [
       "tokengraph_check_architecture",
       "tokengraph_trace_failure",
