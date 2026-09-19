@@ -12,6 +12,8 @@ Hook attestation and plugin-data pointers do not grant native-lock activation. M
 
 TokenGraph respects .gitignore, excludes secrets by default, and excludes dependency folders and build output by default.
 
+When local change analysis is requested, a stable change capsule may contain repository-relative paths, content hashes, symbols, risks, and bounded exact source slices from the selected target revision. Capsules stay under `.tokengraph/repository/artifacts/` in the trusted workspace. Pull-request-shaped input means local base and head refs only: TokenGraph does not contact a forge, fetch refs, or upload capsule content.
+
 Runner secret redaction is best effort and not a guarantee. Saved captures are JSON under `.tokengraph/runs/` in the active worktree and are stored as plaintext. TokenGraph has no always-on process capture. To avoid capture entirely, do not invoke `tokengraph run`; use normal host execution instead.
 
 Regulated or highly sensitive output should not pass through the runner. Storage is not encrypted today. The isolated storage interfaces and write boundaries permit future optional local encryption, but TokenGraph does not provide local encryption today.

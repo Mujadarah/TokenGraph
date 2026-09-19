@@ -244,6 +244,28 @@ Status: complete
 - B7 bounded Python, Go, Rust, and Java parsing is active independently of B6 routing promotion. `parser.polyglotEnabled` defaults to `true` and is an explicit project-local kill switch; routing remains shadow-only until its separate evidence gates pass.
 - The implementation tracker and evidence contract are recorded in [`docs/plans/2026-07-28-tokengraph-v023-portability.md`](docs/plans/2026-07-28-tokengraph-v023-portability.md).
 
+## v0.24 - Durable Local Runtime Foundation
+
+Status: implementation complete; release verification deferred to the v0.25 integration
+
+- Six-target native locking, crash recovery, strict identity checks, and the decided POSIX lock-directory mode boundary replace the former process-local persistence lock.
+- Memory-use timestamps coalesce to daily writes, write chains release settled entries, and bounded local aggregates describe logical and measurable physical write amplification without paths or content.
+- Indexes publish immutable generations through an atomic manifest, retain recoverable prior generations, and never weaken Windows or POSIX durability behavior to write in place.
+- A read-only doctor reports workspace trust, activation, native assets, parsers, persistence, hooks, and storage state without granting trust, activating locks, or repairing state.
+- The nine public skills keep their names while delegating shared setup, retrieval, reporting, and fallback behavior to one compact router.
+- The release workflow produces checksums, an SPDX JSON SBOM, keyless Sigstore bundles, and GitHub provenance and SBOM attestations for tagged artifacts.
+
+## v0.25 - Local Change Evidence And Measured Evaluation
+
+Status: source implementation complete; release gates pending
+
+- `tokengraph_analyze` can build bounded, stable risk capsules from local working-tree, staged, commit, range, and pull-request-ref changes without fetching from a remote.
+- Change capsules use target revision bytes for symbols and exact slices, link affected files, routes, SQL, rules, risks, and recommended tests, and enforce aggregate entry, symbol, slice, and byte limits.
+- Six tracked Plugin Eval scenarios cover setup, compact retrieval, local change analysis, SQL architecture, compression, and memory workflows through a deterministic verifier and TokenGraph metric pack.
+- Plugin Eval complements rather than replaces the deterministic 30-task fixture benchmark and paired-host evidence. Routing remains shadow-only because its independent promotion gates have not all passed.
+- The repository has no canonical terms-of-service URL. The v0.25 source integration explicitly accepts the external evaluator warning rather than inventing a URL or repurposing the privacy policy.
+- Merge, tag, and publication remain blocked on the complete generated-release, live evaluation, managed-runtime, ZIP, checksum, SBOM, signature, attestation, and independent-review gates.
+
 ## Later
 
 Ideas under consideration:

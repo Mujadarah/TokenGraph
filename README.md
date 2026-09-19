@@ -7,12 +7,12 @@ TokenGraph is a local-first MCP plugin for Codex and Claude Code that helps codi
 
 ## Why TokenGraph
 
-- **Local and self-contained:** no cloud index, embeddings service, telemetry, paid external service, or OpenAI/Anthropic API key.
+- **Local and self-contained:** no cloud index, embeddings service, cloud telemetry, paid external service, or OpenAI/Anthropic API key.
 - **Task-scoped:** agents retrieve focused project maps, plans, summaries, failure traces, and exact source slices instead of dumping an entire index into context.
 - **Trust-bounded:** the host must identify the workspace; installed plugin launches fail closed instead of trusting an arbitrary path.
 - **Evidence-led:** deterministic benchmarks and reviewed real-host traces are checked into the repository, while automatic routing stays in shadow mode until every promotion gate passes.
 
-Current source version: `0.23.1` | Runtime: Node.js 22 or newer | Open source under the [Apache License 2.0](LICENSE). The downloadable version is the one shown by the GitHub Latest release badge; a source version is not a published release asset.
+Current source version: `0.25.0` | Runtime: Node.js 22 or newer | Open source under the [Apache License 2.0](LICENSE). The downloadable version is the one shown by the GitHub Latest release badge; a source version is not a published release asset.
 
 ## Install from GitHub
 
@@ -93,13 +93,14 @@ The setup diagnostic never grants filesystem trust. If it reports `blocked`, fol
 
 ## What agents can use
 
-TokenGraph exposes eight compact intent-level tools by default and 42 tools on the opt-in full compatibility surface. Nine focused skills cover:
+TokenGraph exposes eight compact intent-level tools by default and 43 tools on the opt-in full compatibility surface. Nine focused skills cover:
 
 - setup diagnosis and workspace-safe indexing;
 - project maps, symbol/import search, and context planning;
 - PostgreSQL and Supabase migration/RLS summaries;
 - local wiki and memory lifecycle workflows;
 - architecture rules, failure tracing, and regression risk;
+- read-only runtime diagnostics and bounded local Git change capsules;
 - context, logs, builds, tests, diffs, and SQL compression;
 - token-saving profiles and release-package auditing.
 
@@ -161,7 +162,7 @@ The default package command creates `artifacts/tokengraph-<version>/` and a dete
 
 ## Privacy
 
-Indexes, configuration, wiki pages, token events, rules, and memories stay under `.tokengraph/` in the trusted workspace. Token savings are estimates, and TokenGraph does not replace code review or guarantee correctness.
+Indexes, configuration, wiki pages, token events, rules, memories, local write aggregates, and stable change-capsule artifacts stay under `.tokengraph/` in the trusted workspace. Token savings are estimates, and TokenGraph does not replace code review or guarantee correctness.
 
 ## License
 

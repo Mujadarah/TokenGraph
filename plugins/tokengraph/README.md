@@ -1,6 +1,6 @@
 # TokenGraph Source Plugin
 
-This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.23.1. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
+This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.25.0. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
 
 ## Development
 
@@ -60,6 +60,8 @@ Set `TOKENGRAPH_TOOL_SURFACE=full` before starting the MCP host to add the 35 de
 JSON-only successful tool calls return one serialized JSON `TextContent` item. `tokengraph_export_project_map` is the resource-link exception and also returns matching structured content. Compact mode is the default; explicit `responseMode: "verbose"` is for diagnostics. Diagnostic token estimates always name their baseline and expose `baselineTokens`, `compactTokens`, `avoidedVsBaseline`, and the `estimated-tokens` unit.
 
 Use `tokengraph_prepare_context` only when planning is needed. The direct query, compress, recall, and analyze tools accept an omitted `taskId`, atomically start a task ledger, and return the new id. Reuse that id for later calls. After ready setup, `root` may be omitted when host workspace resolution is stable. `tokengraph_task_report({ taskId })` defaults to complete and returns the compact `status`, `taskId`, canonical `footer`, and `reportingStatus`; request verbose mode only for report diagnostics or explicitly pause unfinished work.
+
+For local change analysis, `tokengraph_analyze` risk mode accepts either explicit `changedFiles` or a `changeSource`. Sources may be the working tree, staged index, one local commit, a local ref range, or pull-request-shaped local base/head refs. TokenGraph does not fetch a pull request or contact a forge. It resolves the refs already present in the repository, reads target revision bytes, and returns a stable bounded capsule with changed entries, symbols, exact slices, affected graph entities, risks, and recommended tests.
 
 ### Reviewed local knowledge
 
@@ -164,4 +166,4 @@ Do not edit `release/tokengraph/` by hand. Change source or the package generato
 
 ## Privacy and license
 
-TokenGraph is local-first and does not require an OpenAI API key, cloud sync, embeddings service, cloud telemetry, or a paid external API. It keeps at most 14 days of local write-amplification aggregates under `.tokengraph/telemetry/`; those records contain only dates, storage classes, logical persistence-operation counts, logical payload bytes, optional measured physical-write bytes, and sampled process RSS, never paths, prompts, commands, or file contents. A generation plus manifest is one logical publication operation, and physical-write bytes are omitted when the runtime cannot measure them. Token savings are estimates. TokenGraph is licensed under Apache License 2.0; see the repository `LICENSE` and `NOTICE`.
+TokenGraph is local-first and does not require an OpenAI API key, cloud sync, embeddings service, cloud telemetry, or a paid external API. It keeps at most 14 days of local write-amplification aggregates under `.tokengraph/telemetry/`; those records contain only dates, storage classes, logical persistence-operation counts, logical payload bytes, optional measured physical-write bytes, and sampled process RSS, never paths, prompts, commands, or file contents. Local change capsules may contain bounded target-revision source slices and hashes; they remain in stable artifacts under the trusted workspace and are never uploaded by TokenGraph. A generation plus manifest is one logical publication operation, and physical-write bytes are omitted when the runtime cannot measure them. Token savings are estimates. TokenGraph is licensed under Apache License 2.0; see the repository `LICENSE` and `NOTICE`.

@@ -429,7 +429,7 @@ describe("tokengraph focused skills", () => {
 });
 
 describe("tokengraph release package command", () => {
-  it("uses v0.23.1 and Apache-2.0 across every active source and marketplace contract", async () => {
+  it("uses v0.25.0 and Apache-2.0 across every active source and marketplace contract", async () => {
     const repoRoot = resolve("..", "..");
     const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8"));
     const codexManifest = JSON.parse(await readFile(resolve(".codex-plugin", "plugin.json"), "utf8"));
@@ -445,14 +445,14 @@ describe("tokengraph release package command", () => {
     const firstUse = rootReadme.split("## First use")[1]?.split("## What agents can use")[0] ?? "";
     const troubleshooting = rootReadme.split("## Troubleshooting")[1]?.split("## Maintainer workflow")[0] ?? "";
 
-    expect(packageJson.version).toBe("0.23.1");
+    expect(packageJson.version).toBe("0.25.0");
     expect(packageJson.license).toBe("Apache-2.0");
-    expect(codexManifest.version).toBe("0.23.1");
+    expect(codexManifest.version).toBe("0.25.0");
     expect(codexManifest.license).toBe("Apache-2.0");
-    expect(claudeManifest.version).toBe("0.23.1");
+    expect(claudeManifest.version).toBe("0.25.0");
     expect(claudeManifest.license).toBe("Apache-2.0");
-    expect(claudeMarketplace.plugins[0].version).toBe("0.23.1");
-    expect(serverSource).toContain('version: "0.23.1"');
+    expect(claudeMarketplace.plugins[0].version).toBe("0.25.0");
+    expect(serverSource).toContain('version: "0.25.0"');
     expect(license).toContain("Apache License");
     expect(license).toContain("Version 2.0, January 2004");
     expect(notice).toContain("Copyright 2026 Mujadarah");
@@ -563,11 +563,11 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.23.1"
+      version: "0.25.0"
     });
-    expect(report.bundleDir).toBe(resolve(outRoot, "tokengraph-0.23.1"));
+    expect(report.bundleDir).toBe(resolve(outRoot, "tokengraph-0.25.0"));
     expect(report.packageDir).toBe(resolve(report.bundleDir, "tokengraph"));
-    expect(report.archivePath).toBe(resolve(outRoot, "tokengraph-0.23.1.zip"));
+    expect(report.archivePath).toBe(resolve(outRoot, "tokengraph-0.25.0.zip"));
     expect(report.codexMarketplacePath).toBe(resolve(report.bundleDir, ".agents", "plugins", "marketplace.json"));
     expect(report.claudeMarketplacePath).toBe(resolve(report.bundleDir, ".claude-plugin", "marketplace.json"));
     expect(report.files).toEqual(
@@ -767,7 +767,7 @@ describe("tokengraph release package command", () => {
     })).rejects.toMatchObject({ stderr: expect.stringMatching(/asset|link|regular|allowlist/i) });
     await expect(access(args.includes("--release")
       ? join(repoCopy, "release", "tokengraph")
-      : join(repoCopy, "artifacts", "tokengraph-0.23.1"))).rejects.toMatchObject({ code: "ENOENT" });
+      : join(repoCopy, "artifacts", "tokengraph-0.25.0"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("refuses a linked source asset directory", async () => {
@@ -1089,7 +1089,7 @@ describe("tokengraph release package command", () => {
 
     expect(report).toMatchObject({
       status: "ok",
-      version: "0.23.1",
+      version: "0.25.0",
       releaseDir: releaseRoot
     });
     expect(report.files).toEqual(

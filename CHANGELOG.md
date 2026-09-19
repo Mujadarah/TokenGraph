@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.25.0 - 2026-09-20
+
+- Added fail-closed native file locking for six supported Windows, glibc Linux, and macOS targets, including crash recovery, journal maintenance, integrity-checked private staging, and the documented POSIX directory-mode boundary.
+- Reduced persistent write amplification with daily memory-use updates, bounded local write aggregates, and transactional index generations selected through an atomic manifest.
+- Added a read-only doctor for MCP and CLI diagnostics covering workspace trust, activation, native assets, parser grammars, persistence state, hooks, and storage health without repairing or activating anything.
+- Centralized the nine public skill lifecycles in a shared router so specialized skills stay compact while preserving their public names and fail-closed operating rules.
+- Added release SBOM generation, keyless Sigstore bundles, checksum manifests, and GitHub build-provenance and SBOM attestations to the tagged-release workflow.
+- Added bounded local Git change capsules for working-tree, staged, commit, range, and locally resolved pull-request inputs, including target-blob symbols, exact slices, affected graph entities, risks, and recommended tests.
+- Added six tracked Plugin Eval scenarios, a deterministic verifier, and a TokenGraph metric pack for tool use, duration, workspace changes, and task-specific correctness signals.
+- Routing remains shadow-only and B7 polyglot parsing remains independently activated. The v0.25 source integration is not a publication claim; full release, generated-package, live Plugin Eval, managed-runtime, ZIP, signature, and attestation gates remain required before merge, tag, or publication.
+
 ## 0.23.1 - 2026-07-30
 
 - Relicensed TokenGraph from the proprietary source-available terms to the OSI-approved Apache License 2.0, including consistent package and marketplace metadata plus distributable `LICENSE` and `NOTICE` files.

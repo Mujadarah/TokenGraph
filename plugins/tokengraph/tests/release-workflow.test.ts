@@ -120,7 +120,7 @@ function fixturePath(fixture: string) {
   return resolve(process.cwd(), "tests", "fixtures", "release-notes", fixture);
 }
 
-function validateReleaseNotes(fixture: string, args: string[] = ["--version", "0.23.0"]) {
+function validateReleaseNotes(fixture: string, args: string[] = ["--version", "0.25.0"]) {
   return runReleaseNoteValidator(["--file", fixturePath(fixture), ...args]);
 }
 
@@ -130,7 +130,7 @@ function runReleaseNoteValidator(args: string[]) {
   });
 }
 
-function renderReleaseNotes(args: string[] = ["--version", "0.23.0"]) {
+function renderReleaseNotes(args: string[] = ["--version", "0.25.0"]) {
   return spawnSync(process.execPath, [resolve(process.cwd(), "scripts", "render-release-notes.mjs"), ...args], {
     encoding: "utf8"
   });
@@ -140,7 +140,7 @@ function packagePath() {
   return resolve(process.cwd(), "package.json");
 }
 
-function validateReleaseVersion(args: string[] = ["--package", packagePath(), "--version", "0.23.1"]) {
+function validateReleaseVersion(args: string[] = ["--package", packagePath(), "--version", "0.25.0"]) {
   return spawnSync(process.execPath, [resolve(process.cwd(), "scripts", "validate-release-version.mjs"), ...args], {
     encoding: "utf8"
   });
@@ -161,7 +161,9 @@ describe("release-note contract", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe(readFileSync(fixturePath("canonical-v023.md"), "utf8"));
+    expect(result.stdout).toBe(readFileSync(fixturePath("canonical-v025.md"), "utf8"));
+    expect(result.stdout).toMatch(/SPDX JSON.*Sigstore bundles/i);
+    expect(result.stdout).toMatch(/change capsules derive only from local Git state/i);
     expect(result.stdout).toContain("B7 polyglot indexing is active by default and independent of routing promotion.\nRouting remains shadow-only.\nEnforcement remains disabled.");
   });
 
@@ -181,7 +183,7 @@ describe("release-note contract", () => {
   });
 
   it("accepts only the full canonical artifact for its explicit version", () => {
-    const result = validateReleaseNotes("canonical-v023.md");
+    const result = validateReleaseNotes("canonical-v025.md");
 
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
@@ -190,7 +192,7 @@ describe("release-note contract", () => {
 
   it.each([
     ["renderer", () => renderReleaseNotes([])],
-    ["validator", () => validateReleaseNotes("canonical-v023.md", [])]
+    ["validator", () => validateReleaseNotes("canonical-v025.md", [])]
   ])("requires an explicit version for the %s CLI", (_label, invoke) => {
     const result = invoke();
 
@@ -238,11 +240,11 @@ describe("release tag and package parity", () => {
   });
 
   it("rejects a package version that differs from the tag version", () => {
-    const result = validateReleaseVersion(["--package", packagePath(), "--version", "0.23.0"]);
+    const result = validateReleaseVersion(["--package", packagePath(), "--version", "0.24.0"]);
 
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("does not match release tag version 0.23.0");
+    expect(result.stderr).toContain("does not match release tag version 0.24.0");
   });
 
   it.each([

@@ -2,7 +2,11 @@
 
 TokenGraph stores project state under `.tokengraph/` in the indexed workspace.
 
-Stored state can include indexes, config, wiki manifests, memory, architecture rules, token event records, and benchmark run records. Every opened workspace owns its own `.tokengraph/` directory, including `.tokengraph/repository/`; no active state is written to a shared `.git/tokengraph` directory. A one-time migration copies valid legacy JSON records into the workspace directory, lets existing workspace records win conflicts, writes a migration manifest, and leaves the legacy files in place as a recoverable backup. Token savings are estimates.
+Stored state can include indexes, config, wiki manifests, memory, architecture rules, token event records, benchmark run records, local write aggregates, and stable retrieval or change-capsule artifacts. Every opened workspace owns its own `.tokengraph/` directory, including `.tokengraph/repository/`; no active state is written to a shared `.git/tokengraph` directory. A one-time migration copies valid legacy JSON records into the workspace directory, lets existing workspace records win conflicts, writes a migration manifest, and leaves the legacy files in place as a recoverable backup. Token savings are estimates.
+
+Stable artifacts are content-addressed JSON under `.tokengraph/repository/artifacts/`. A change capsule can include bounded target-revision source slices selected for the requested local Git change. Write-amplification aggregates are retained for at most 14 days under `.tokengraph/telemetry/` and contain aggregate dates, storage classes, operation counts, byte counts, and sampled process RSS rather than paths or content.
+
+Current indexes are immutable schema-v5 generation files selected by `.index-manifest.json`. Publication durably writes and validates a generation before atomically replacing the manifest; earlier validated generations remain available for bounded recovery and later pruning. A valid legacy schema-v4 `index.json` remains readable and is promoted to the generation format only by a later activated writer. Newer or malformed schemas are refused rather than overwritten.
 
 Lifecycle hook data is kept under the host-provided plugin data directory, not in the repository: only a session hash, task id, trusted root, turn id, schema/version, and timestamp are retained. Prompts, transcripts, environment values, and tool payloads are not stored.
 
