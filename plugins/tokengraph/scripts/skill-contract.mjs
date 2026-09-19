@@ -24,7 +24,8 @@ export const LEGACY_TOOL_NAMES = [
 const coreTools = new Set(CORE_TOOL_NAMES);
 const legacyTools = new Set(LEGACY_TOOL_NAMES);
 
-// Transitional compatibility only: Phase 5 will remove legacy skill-contract acceptance after the committed release is regenerated.
+// Transitional packaging compatibility only: remove legacy acceptance after
+// the committed release has been regenerated with the compact core skills.
 export function classifySkillContract(skills) {
   const references = [...new Set(skills.flatMap((skill) => [...skill.matchAll(/\btokengraph_[a-z0-9_]+\b/g)].map((match) => match[0])))].sort();
   const hasCoreReference = references.some((name) => coreTools.has(name));

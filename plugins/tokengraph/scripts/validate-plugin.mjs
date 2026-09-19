@@ -120,11 +120,9 @@ async function assertRequiredFocusedSkills(skillsRoot, label, coreLifecycle = fa
     assert(/^---[\s\S]*\nname:\s*\S+[\s\S]*\ndescription:\s*\S+[\s\S]*\n---/.test(skill), `${label} skill ${skillDir} must include name and description frontmatter`);
     if (coreLifecycle) {
       assert(/When not to use/i.test(skill), `${label} skill ${skillDir} must define a negative trigger boundary`);
-      assert(/tokengraph_setup\(\{ confirmNoLegacyProcesses: true \}\)/.test(skill), `${label} skill ${skillDir} must begin with core setup`);
-      assert(/tokengraph_prepare_context/.test(skill), `${label} skill ${skillDir} must create a task`);
-      assert(/tokengraph_task_report/.test(skill), `${label} skill ${skillDir} must report its disposition`);
-      assert(/disposition: "pause"/.test(skill) && /tokengraph_task_report\(\{ taskId \}\)/.test(skill) && /compact reporting is the default/i.test(skill), `${label} skill ${skillDir} must define pause and default compact completion behavior`);
-      assert(/TokenGraph was not used/.test(skill) && /unavailable/i.test(skill), `${label} skill ${skillDir} must define honest unavailable fallback`);
+      assert(/shared `tokengraph` router contract/i.test(skill), `${label} skill ${skillDir} must reference the canonical router contract`);
+      assert(/Unique tool sequence/i.test(skill) && /Evidence required/i.test(skill) && /Failure boundaries/i.test(skill) && /Completion criteria/i.test(skill), `${label} skill ${skillDir} must define its compact role contract`);
+      assert(!/tokengraph_setup\(/.test(skill) && !/tokengraph_task_report/.test(skill), `${label} specialized skill ${skillDir} must not duplicate router lifecycle calls`);
     } else {
       assert(/Use this skill when/i.test(skill), `${label} skill ${skillDir} must tell Codex when to use it`);
       assert(/MCP tools to call/i.test(skill), `${label} skill ${skillDir} must list TokenGraph MCP tools to call`);
@@ -134,6 +132,16 @@ async function assertRequiredFocusedSkills(skillsRoot, label, coreLifecycle = fa
       assert(/unavailable/i.test(skill), `${label} skill ${skillDir} must state how to handle unavailable MCP tools`);
     }
   }
+}
+
+async function assertCanonicalRouter(skillsRoot, label) {
+  const routerPath = resolve(skillsRoot, "tokengraph", "SKILL.md");
+  const router = await readFile(routerPath, "utf8").catch((error) =>
+    fail(`${label} canonical tokengraph router is missing or unreadable: ${error.message}`)
+  );
+  assert(/tokengraph_setup\(\{ confirmNoLegacyProcesses: true \}\).*trustedWorkspace\.root.*trusted root/is.test(router), `${label} router must own trusted setup and native-lock confirmation`);
+  assert(/tokengraph_task_report\(\{ taskId \}\)/.test(router), `${label} router must own task reporting`);
+  assert(/disposition: "pause"/.test(router) && /TokenGraph was not used/.test(router), `${label} router must own pause and fallback guidance`);
 }
 
 const packageJsonPath = resolve(pluginRoot, "package.json");
@@ -272,6 +280,7 @@ const sourceSkillContract = await inspectSkillContract(skillsPath, "source plugi
 assert(sourceSkillContract.contract === "core", "source plugin skills must use the core contract");
 assert(sourceSkillContract.forbiddenCoreTools.length === 0, `source plugin core skills reference non-core tools: ${sourceSkillContract.forbiddenCoreTools.join(", ")}`);
 await assertSkillFrontmatter(skillsPath, "source plugin", true);
+await assertCanonicalRouter(skillsPath, "source plugin");
 await assertRequiredFocusedSkills(skillsPath, "source plugin", true);
 assert(distServer.includes("tokengraph_index_status"), "built MCP server must register tokengraph_index_status");
 assert(distServer.includes("tokengraph_reset_project"), "built MCP server must register tokengraph_reset_project");
@@ -381,6 +390,7 @@ const releaseSkillContract = await inspectSkillContract(releaseSkillsPath, "rele
 assert(releaseSkillContract.forbiddenCoreTools.length === 0, `release plugin core skills reference non-core tools: ${releaseSkillContract.forbiddenCoreTools.join(", ")}`);
 const releaseUsesCoreLifecycle = releaseSkillContract.contract === "core";
 await assertSkillFrontmatter(releaseSkillsPath, "release plugin", releaseUsesCoreLifecycle);
+if (releaseUsesCoreLifecycle) await assertCanonicalRouter(releaseSkillsPath, "release plugin");
 await assertRequiredFocusedSkills(releaseSkillsPath, "release plugin", releaseUsesCoreLifecycle);
 const sourceSkillFiles = await collectSkillFiles(skillsPath);
 const releaseSkillFiles = await collectSkillFiles(releaseSkillsPath);

@@ -407,19 +407,22 @@ describe("tokengraph benchmark harness and trust docs", () => {
 });
 
 describe("tokengraph focused skills", () => {
-  it("ships specialized skills with the core task lifecycle and fallback guidance", async () => {
+  it("ships specialized skills that load the canonical router contract", async () => {
+    const router = await readFile(resolve("skills", "tokengraph", "SKILL.md"), "utf8");
+    expect(router).toMatch(/tokengraph_setup\(\{ confirmNoLegacyProcesses: true \}\)/);
+    expect(router).toMatch(/tokengraph_prepare_context/);
+    expect(router).toMatch(/tokengraph_task_report/);
+    expect(router).toMatch(/disposition: "pause"/);
+    expect(router).toMatch(/TokenGraph was not used/);
+
     for (const skillDir of requiredFocusedSkillDirs) {
       const skill = await readFile(resolve("skills", skillDir, "SKILL.md"), "utf8");
 
       expect(skill).toMatch(/^---[\s\S]*\nname:\s*\S+[\s\S]*\ndescription:\s*Use when\b[^\n]+\n---/);
       expect(skill).toMatch(/When not to use/i);
-      expect(skill).toMatch(/tokengraph_setup\(\{ confirmNoLegacyProcesses: true \}\)/);
-      expect(skill).toMatch(/tokengraph_prepare_context/);
-      expect(skill).toMatch(/tokengraph_task_report/);
-      expect(skill).toMatch(/disposition: "pause"/);
-      expect(skill).toMatch(/tokengraph_task_report\(\{ taskId \}\)/);
-      expect(skill).toMatch(/compact reporting is the default/i);
-      expect(skill).toMatch(/TokenGraph was not used/);
+      expect(skill).toMatch(/Load the shared `tokengraph` router contract/i);
+      expect(skill).not.toMatch(/tokengraph_setup\(/);
+      expect(skill).not.toMatch(/tokengraph_task_report/);
       expect(skill).toMatch(/unavailable/i);
     }
   });

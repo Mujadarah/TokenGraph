@@ -38,44 +38,69 @@ function loadSkill(name: string): { frontmatter: Record<string, string>; body: s
   return { frontmatter, body: match![2], text };
 }
 
-function expectCommonContract(name: string): void {
-  const { frontmatter, body, text } = loadSkill(name);
+function wordCount(text: string): number {
+  return (text.match(/\S+/g) ?? []).length;
+}
+
+function expectFrontmatterContract(name: string): void {
+  const { frontmatter, text } = loadSkill(name);
   expect(frontmatter.name).toBe(name);
   expect(Object.keys(frontmatter).sort()).toEqual(["description", "name"]);
   expect(frontmatter.description).toMatch(/^Use when\b/);
   expect(frontmatter.description).not.toMatch(/\b(call|workflow|tool|TokenGraph)\b/i);
   expect((frontmatter.description.match(/\bUse when\b/g) ?? [])).toHaveLength(1);
-
   const references = [...text.matchAll(/\btokengraph_[a-z0-9_]+\b/g)].map((match) => match[0]);
   expect([...new Set(references)].filter((tool) => !coreTools.has(tool)), `${name} references non-core tools`).toEqual([]);
-  expect(body).toContain("tokengraph_setup({ confirmNoLegacyProcesses: true })");
-  expect(body).toContain("tokengraph_prepare_context");
-  expect(body).toMatch(/tokengraph_setup\(\{ confirmNoLegacyProcesses: true \}\)[^\n]*capture[^\n]*trustedWorkspace\.root[^\n]*trusted root/i);
-  expect(body).toMatch(/prepare_context[^.]*only when[^.]*plan/i);
-  expect(body).toMatch(/omit[^.]*taskId[^.]*auto-start[^.]*return[^.]*taskId/i);
-  expect(body).toMatch(/capture[^.]*returned taskId/i);
-  expect(body).toContain("taskId");
-  expect(body).toContain("trusted root");
-  expect(body).toContain("tokengraph_task_report");
-  expect(body).toContain("tokengraph_task_report({ taskId })");
-  expect(body).toMatch(/compact[^.]*default/i);
-  expect(body).toMatch(/responseMode: "verbose"[^.]*diagnostic/i);
-  expect(body).toContain('disposition: "pause"');
-  expect(body).toMatch(/do not invent|never invent/i);
-  expect(body).toMatch(/unavailable/i);
-  expect(body).toMatch(/TokenGraph was not used/);
-  expect(body).toMatch(/fresh task|\/reload-plugins/);
-  expect(body).toMatch(/report.*status|status.*report/i);
-  expect(body).toMatch(/paused task id.*terminal.*new task.*prepare_context.*omit.*taskId/is);
-  expect(text.trim().split(/\s+/).length).toBeLessThanOrEqual(500);
+  expect(wordCount(text)).toBeLessThanOrEqual(500);
+}
+
+const routerLifecycleMarkers = [
+  /tokengraph_setup\(\{ confirmNoLegacyProcesses: true \}\).*trustedWorkspace\.root.*trusted root/is,
+  /tokengraph_prepare_context.*only when.*plan/is,
+  /omit.*taskId.*auto-start.*return.*taskId/is,
+  /capture.*returned taskId/is,
+  /never merge tasks.*invent an id.*reuse.*completed taskId/is,
+  /compact.*default.*responseMode: "verbose".*diagnostic/is,
+  /disposition: "pause"/,
+  /TokenGraph was not used/,
+  /fresh task.*\/reload-plugins/is,
+  /paused task id.*terminal.*new task.*prepare_context.*omit.*taskId/is,
+  /lifecycle hook.*normal Stop/is,
+  /knownArtifacts[\s\S]*id@hash[\s\S]*prior response/is,
+  /omit.*knownArtifacts[\s\S]*resend/is
+];
+
+const sharedRouterReference = /shared `tokengraph` router contract/i;
+
+const specializedMarkers: Record<string, RegExp[]> = {
+  "graph-context-retrieval": [/mode: "overview"/, /mode: "search"/, /mode: "symbol"/, /mode: "sql"/, /mode: "wiki"/, /targeted raw reads/i, /confidence/i, /knownArtifacts[\s\S]*id@hash[\s\S]*prior response/i, /omit.*knownArtifacts[\s\S]*resend/i],
+  "context-compression": [/mode: "output"/, /mode: "context"/, /omissions/i, /constraints/i, /targeted raw reads/i, /omittedLineCount/i, /token estimate/i, /context mode.*confidence/is],
+  "token-budget-optimizer": [/profile/i, /budgets/i, /task policy/i, /no fixed.*defaults/i, /tokengraph_query_context/, /tokengraph_compress/, /overhead/i, /estimated savings/i, /exact claims/i],
+  "root-cause-debugger": [/mode: "output"/, /mode: "failure"/, /original failure text.*exactly once/is, /returned compressed evidence/i, /not the consumer/i, /tokengraph_query_context/, /facts/i, /hypotheses/i, /regression evidence/i],
+  "regression-detector": [/mode: "risk"/, /mode: "symbol"/, /mode: "sql"/, /recommend/i, /verif(?:y|ied).*tests/i],
+  "architecture-consistency-checker": [/mode: "architecture"/, /mode: "risk"/, /import/i, /SQL/i, /security/i, /release/i, /proposals/i, /enforced facts/i],
+  "memory-curator": [/mode: "review"/, /audit: true/, /tokengraph_query_context/, /action: "propose"/, /applicationStatus.*applied/i, /stale or expired.*cannot|cannot.*stale or expired/i, /approval/i, /application/i],
+  "release-packaging-auditor": [/tokengraph_prepare_context/, /tokengraph_query_context/, /mode: "risk"/, /tokengraph_compress/, /typecheck/i, /full tests/i, /build/i, /core smoke/i, /full smoke/i, /validation/i, /generated release/i, /direct release/i, /extracted ZIP/i, /host/i]
+};
+
+function expectSpecializedContract(name: string): void {
+  const { body } = loadSkill(name);
+  expectFrontmatterContract(name);
+  expect(body).toMatch(sharedRouterReference);
+  expect(body).toMatch(/^## When not to use/m);
+  expect(body).toMatch(/^## Unique tool sequence/m);
+  expect(body).toMatch(/^## Evidence required/m);
+  expect(body).toMatch(/^## Failure boundaries/m);
+  expect(body).toMatch(/^## Completion criteria/m);
+  expect(body).not.toMatch(/tokengraph_setup\(/);
+  expect(body).not.toContain("tokengraph_task_report");
+  expect(body).not.toMatch(/lifecycle hook.*normal Stop|TokenGraph was not used|paused task id.*terminal/is);
+  for (const marker of specializedMarkers[name] ?? []) expect(body, `${name} is missing ${marker}`).toMatch(marker);
 }
 
 describe("bundled skill contracts", () => {
   test("skill directory names remain invocation-compatible", () => {
-    const actual = readdirSync(skillsRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
+    const actual = readdirSync(skillsRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
     expect(actual).toEqual(expectedNames);
   });
 
@@ -84,35 +109,42 @@ describe("bundled skill contracts", () => {
     expect(new Set(descriptions).size).toBe(9);
   });
 
-  test("tokengraph", () => {
-    expectCommonContract("tokengraph");
+  test("tokengraph is the canonical lifecycle router", () => {
+    expectFrontmatterContract("tokengraph");
     const { body } = loadSkill("tokengraph");
     expect(body).toMatch(/router/i);
-    expect(body).toMatch(/blocked setup.*recovery/is);
-    expect(body).toMatch(/exact taskId/i);
-    expect(body).toMatch(/never.*completed.*taskId/is);
-    expect(body).toMatch(/lifecycle hook.*normal Stop/i);
-    expect(body).toMatch(/knownArtifacts[\s\S]*id@hash[\s\S]*prior response/i);
-    expect(body).toMatch(/omit.*knownArtifacts[\s\S]*resend/i);
+    for (const marker of routerLifecycleMarkers) expect(body, `router is missing ${marker}`).toMatch(marker);
   });
 
-  const specialized: Record<string, RegExp[]> = {
-    "graph-context-retrieval": [/When not to use/i, /mode: "overview"/, /mode: "search"/, /mode: "symbol"/, /mode: "sql"/, /mode: "wiki"/, /targeted raw reads/i, /confidence/i, /knownArtifacts[\s\S]*id@hash[\s\S]*prior response/i, /omit.*knownArtifacts[\s\S]*resend/i],
-    "context-compression": [/When not to use/i, /mode: "output"/, /mode: "context"/, /omissions/i, /constraints/i, /targeted raw reads/i, /omittedLineCount/i, /token estimate/i, /context mode.*confidence/is],
-    "token-budget-optimizer": [/When not to use/i, /profile/i, /budgets/i, /task policy/i, /no fixed.*defaults/i, /tokengraph_query_context/, /tokengraph_compress/, /overhead/i, /estimated savings/i, /exact claims/i],
-    "root-cause-debugger": [/When not to use/i, /mode: "output"/, /mode: "failure"/, /original failure text/i, /exactly once/i, /returned compressed evidence/i, /not the consumer/i, /tokengraph_query_context/, /facts/i, /hypotheses/i, /regression evidence/i],
-    "regression-detector": [/When not to use/i, /mode: "risk"/, /mode: "symbol"/, /mode: "sql"/, /recommend/i, /verif(?:y|ied).*tests/i],
-    "architecture-consistency-checker": [/When not to use/i, /mode: "architecture"/, /mode: "risk"/, /import/i, /SQL/i, /security/i, /release/i, /proposals/i, /enforced facts/i],
-    "memory-curator": [/When not to use/i, /mode: "review"/, /audit: true/, /tokengraph_query_context/, /action: "propose"/, /applicationStatus.*applied/i, /stale or expired.*cannot|cannot.*stale or expired/i, /approval/i, /application/i],
-    "release-packaging-auditor": [/When not to use/i, /tokengraph_prepare_context/, /tokengraph_query_context/, /mode: "risk"/, /tokengraph_compress/, /typecheck/i, /full tests/i, /build/i, /core smoke/i, /full smoke/i, /validation/i, /generated release/i, /direct release/i, /extracted ZIP/i, /host/i]
-  };
+  for (const name of Object.keys(specializedMarkers)) test(name, () => expectSpecializedContract(name));
 
-  for (const [name, markers] of Object.entries(specialized)) {
-    test(name, () => {
-      expectCommonContract(name);
-      const { body } = loadSkill(name);
-      expect(body).toMatch(/lifecycle.*tokengraph.*skill/i);
-      for (const marker of markers) expect(body, `${name} is missing ${marker}`).toMatch(marker);
-    });
-  }
+  test("router is the only skill that carries lifecycle instructions", () => {
+    const router = loadSkill("tokengraph").body;
+    expect(routerLifecycleMarkers.every((marker) => marker.test(router))).toBe(true);
+    for (const name of Object.keys(specializedMarkers)) {
+      const body = loadSkill(name).body;
+      expect(body).not.toMatch(/tokengraph_setup\(/);
+      expect(body).not.toContain("tokengraph_task_report");
+    }
+  });
+
+  test("specialized skills stay compact without deleting safety sections", () => {
+    const specializedNames = Object.keys(specializedMarkers);
+    const specializedWords = specializedNames.reduce((total, name) => total + wordCount(loadSkill(name).text), 0);
+    expect(specializedWords).toBeLessThanOrEqual(1_300);
+    for (const name of specializedNames) expect(wordCount(loadSkill(name).text), name).toBeLessThanOrEqual(170);
+  });
+
+  test("specialized skills do not duplicate the router body", () => {
+    const routerSentences = loadSkill("tokengraph").body
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter((sentence) => sentence.length >= 48)
+      .filter((sentence) => /trustedWorkspace\.root|tokengraph_task_report|TokenGraph was not used|paused task id|lifecycle hook/i.test(sentence));
+    for (const name of Object.keys(specializedMarkers)) {
+      const body = loadSkill(name).body;
+      const duplicated = routerSentences.filter((sentence) => body.includes(sentence));
+      expect(duplicated, `${name} duplicates router lifecycle prose`).toEqual([]);
+    }
+  });
 });
