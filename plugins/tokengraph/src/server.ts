@@ -828,7 +828,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       await requireTaskRoot(task.root, task.taskId);
       return result;
     } catch (error) {
-      const cleanup = [discardTaskMemoryUses(task.root, task.taskId)];
+      const cleanup: Array<Promise<unknown>> = [discardTaskMemoryUses(task.root, task.taskId)];
       if (task.autoStarted) cleanup.push(discardEmptyTaskLedger(task.root, task.taskId));
       const settled = await Promise.allSettled(cleanup);
       const cleanupErrors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);

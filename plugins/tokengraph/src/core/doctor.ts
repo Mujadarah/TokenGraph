@@ -424,7 +424,9 @@ async function collectIndex(root: string, config: TokenGraphConfig, failures: st
     return corruptIndex(schemaVersion, generation);
   }
   if ((manifestText !== undefined && index.schemaVersion !== 5) || (manifestText === undefined && index.schemaVersion !== 4) ||
-      (generation !== null && index.generation?.id !== generation)) return corruptIndex(index.schemaVersion, generation);
+      (generation !== null && index.generation?.id !== generation)) {
+    return corruptIndex(typeof index.schemaVersion === "number" ? index.schemaVersion : null, generation);
+  }
 
   const rootValid = resolve(index.root) === resolve(root);
   const currentIdentity = await getRepositoryIdentityReadOnly(root);
@@ -503,7 +505,8 @@ export async function collectDoctorReport(options: CollectDoctorReportOptions): 
       options.workspace.blockingReason
     );
   }
-  const workspace = { status: "ready" as const, source: options.workspace.source };
+  const readyWorkspace = options.workspace;
+  const workspace = { status: "ready" as const, source: readyWorkspace.source };
   const emptyLeases: DoctorReport["leases"] = { active: 0, stale: 0, malformed: 0, unavailableDomains: [] };
   const emptyLedgers: DoctorReport["ledgers"] = { open: 0, paused: 0, completed: 0, orphanCandidates: 0, malformed: 0 };
   const emptyIndex: DoctorReport["index"] = { presence: "missing", state: "unknown", schemaVersion: null, generation: null, rootValid: null, identityValid: null, metadataContentConsistent: null };
@@ -513,9 +516,9 @@ export async function collectDoctorReport(options: CollectDoctorReportOptions): 
   let index = emptyIndex;
   const now = options.now ?? new Date();
   try {
-    const boundary = new DiagnosticReader(options.workspace.root);
-    await boundary.inspect(options.workspace.root);
-    await boundary.inspect(stateDir(options.workspace.root));
+    const boundary = new DiagnosticReader(readyWorkspace.root);
+    await boundary.inspect(readyWorkspace.root);
+    await boundary.inspect(stateDir(readyWorkspace.root));
   } catch (error) {
     if (!(error instanceof DiagnosticBoundaryError)) failures.push("workspace-state-unavailable");
     return blockedReport(workspace, versions, parser, attestation, "state-boundary-violation");
@@ -532,14 +535,14 @@ export async function collectDoctorReport(options: CollectDoctorReportOptions): 
   };
   try {
     configured = await collect(
-      () => collectConfig(options.workspace.root),
+      () => collectConfig(readyWorkspace.root),
       { config: DEFAULT_TOKEN_GRAPH_CONFIG, state: "invalid" },
       "config-state-unavailable"
     );
-    leases = await collect(() => collectLeases(options.workspace.root, now), emptyLeases, "lease-state-unavailable");
-    ledgers = await collect(() => collectLedgers(options.workspace.root, now), emptyLedgers, "ledger-state-unavailable");
-    storage = await collect(() => collectStorage(options.workspace.root, configured, failures), defaultStorage(), "storage-state-unavailable");
-    index = await collect(() => collectIndex(options.workspace.root, configured.config, failures), emptyIndex, "index-state-unavailable");
+    leases = await collect(() => collectLeases(readyWorkspace.root, now), emptyLeases, "lease-state-unavailable");
+    ledgers = await collect(() => collectLedgers(readyWorkspace.root, now), emptyLedgers, "ledger-state-unavailable");
+    storage = await collect(() => collectStorage(readyWorkspace.root, configured, failures), defaultStorage(), "storage-state-unavailable");
+    index = await collect(() => collectIndex(readyWorkspace.root, configured.config, failures), emptyIndex, "index-state-unavailable");
   } catch (error) {
     if (error instanceof DiagnosticBoundaryError) return blockedReport(workspace, versions, parser, attestation, "state-boundary-violation");
     throw error;

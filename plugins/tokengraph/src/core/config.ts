@@ -212,7 +212,8 @@ export async function saveTokenGraphConfig(root: string, config: TokenGraphConfi
 }
 
 type ConfigSnapshot =
-  | { state: "missing" | "corrupt"; config: TokenGraphConfig }
+  | { state: "missing"; config: TokenGraphConfig }
+  | { state: "corrupt"; config: TokenGraphConfig }
   | { state: "valid"; config: TokenGraphConfig; persisted: TokenGraphConfig; rawBytes: string; needsRepair: boolean };
 
 async function readConfigSnapshot(root: string): Promise<ConfigSnapshot> {
