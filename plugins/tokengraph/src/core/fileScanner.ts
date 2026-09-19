@@ -830,6 +830,41 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
   return { files, exclusions, scanSignature: hashText(JSON.stringify({ rows, configurationRows })) };
 }
 
+export async function parseProjectFileText(path: string, content: string, options: ScanBudget = {}): Promise<ParsedProjectFile | undefined> {
+  const normalizedPath = path.replace(/\\/g, "/");
+  const extension = extname(normalizedPath).toLowerCase();
+  if (!SUPPORTED_EXTENSIONS.has(extension)) return undefined;
+  if (content.includes("\u0000")) {
+    return undefined;
+  }
+  const file: CodeFile = {
+    path: normalizedPath,
+    kind: detectFileKind(normalizedPath, extension, content),
+    language: languageForExtension(extension),
+    size: normalizedTextSize(content),
+    estimatedTokens: estimateTokens(normalizedText(content)),
+    contentHash: hashText(content),
+    route: nextRouteForPath(normalizedPath),
+    isTest: isTestPath(normalizedPath)
+  };
+  const limits = budgetFromOptions(options);
+  const parsed = TYPESCRIPT_EXTENSIONS.has(extension)
+    ? await extractTypeScriptSymbols(normalizedPath, content, limits)
+    : options.polyglotEnabled
+      ? await extractPolyglotSymbols(normalizedPath, extension, content, options)
+      : { symbols: [] as CodeSymbol[] };
+  const selectedSymbols = parsed.symbols.slice(0, limits.maxSymbols);
+  return {
+    file,
+    imports: CODE_EXTENSIONS.has(extension) ? extractImports(normalizedPath, content) : [],
+    symbols: selectedSymbols,
+    content,
+    ...((parsed.degradedReason || parsed.symbols.length > limits.maxSymbols)
+      ? { degradedReason: parsed.degradedReason ?? "symbol limit exceeded" }
+      : {})
+  };
+}
+
 export async function scanProjectFile(root: string, metadata: FileScanMetadata, options: ScanBudget = {}): Promise<ParsedProjectFile | undefined> {
   let content;
   try {
@@ -837,35 +872,7 @@ export async function scanProjectFile(root: string, metadata: FileScanMetadata, 
   } catch {
     return undefined;
   }
-  if (content.includes("\u0000")) {
-    return undefined;
-  }
-  const file: CodeFile = {
-    path: metadata.path,
-    kind: detectFileKind(metadata.path, metadata.extension, content),
-    language: metadata.language,
-    size: normalizedTextSize(content),
-    estimatedTokens: estimateTokens(normalizedText(content)),
-    contentHash: hashText(content),
-    route: metadata.route,
-    isTest: metadata.isTest
-  };
-  const limits = budgetFromOptions(options);
-  const parsed = TYPESCRIPT_EXTENSIONS.has(metadata.extension)
-    ? await extractTypeScriptSymbols(metadata.path, content, limits)
-    : options.polyglotEnabled
-      ? await extractPolyglotSymbols(metadata.path, metadata.extension, content, options)
-      : { symbols: [] as CodeSymbol[] };
-  const selectedSymbols = parsed.symbols.slice(0, limits.maxSymbols);
-  return {
-    file,
-    imports: CODE_EXTENSIONS.has(metadata.extension) ? extractImports(metadata.path, content) : [],
-    symbols: selectedSymbols,
-    content,
-    ...((parsed.degradedReason || parsed.symbols.length > limits.maxSymbols)
-      ? { degradedReason: parsed.degradedReason ?? "symbol limit exceeded" }
-      : {})
-  };
+  return parseProjectFileText(metadata.path, content, options);
 }
 
 export function isSupportedCodeFile(path: string): boolean {

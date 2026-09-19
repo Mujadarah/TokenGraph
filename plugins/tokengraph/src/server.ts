@@ -11,6 +11,7 @@ import * as z from "zod/v4";
 
 import { ArchitectureRuleStore, checkArchitecture } from "./core/architectureRules.js";
 import { artifactKey, createStableArtifact, loadStableArtifact, saveStableArtifact, shouldSuppressArtifact, type RoutingDecision } from "./core/artifact.js";
+import { resolveLocalChangeSnapshot } from "./core/changeSource.js";
 import { buildAdaptiveProjectBrief, composeMemoryContext } from "./core/memoryCore.js";
 import { compressContext } from "./core/contextCompressor.js";
 import { compressOutput } from "./core/compressor.js";
@@ -1329,11 +1330,29 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         const verbose = await traceFailure({ root: resolvedRoot, kind: kind!, text: text!, task, project, memories });
         result = input.responseMode === "verbose" ? verbose : compactFailureResponse(verbose, { constraints: input.constraints, includeSql: hasSqlIntent(`${task ?? ""}\n${text}`) });
       } else if (mode === "risk") {
-        const { changedFiles, diffSummary, task } = input;
+        const { changedFiles: suppliedChangedFiles, changeSource, diffSummary, task: taskText, knownArtifacts } = input;
         const rules = await (await architectureRuleStore(resolvedRoot)).list();
-        const memories = await store.search(`${task ?? ""}\n${diffSummary ?? ""}\n${changedFiles!.join("\n")}`, 8);
-        const verbose = await assessChangeRisk({ root: resolvedRoot, changedFiles: changedFiles!, diffSummary, task, project, rules, memories });
-        result = input.responseMode === "verbose" ? verbose : compactRiskResponse(verbose, { constraints: input.constraints });
+        const changeSnapshot = changeSource === undefined ? undefined : await resolveLocalChangeSnapshot(resolvedRoot, changeSource);
+        const changedFiles = changeSnapshot?.changedFiles ?? suppliedChangedFiles;
+        if (changedFiles === undefined) throw new Error("Risk mode requires changedFiles or changeSource.");
+        const sourceTerms = changeSnapshot === undefined
+          ? changedFiles
+          : [...changeSnapshot.changedFiles, ...changeSnapshot.symbols.map((symbol) => `${symbol.filePath} ${symbol.name}`)];
+        const memories = await store.search(`${taskText ?? ""}\n${diffSummary ?? ""}\n${sourceTerms.join("\n")}`, 8);
+        const verbose = await assessChangeRisk({ root: resolvedRoot, changedFiles, changeSnapshot, diffSummary, task: taskText, project, rules, memories });
+        const { changeCapsule, ...riskReport } = verbose;
+        let artifactDelivery: { artifact?: typeof changeCapsule; artifactReference?: { id: string; hash: string }; deliveredArtifacts?: string[] } = {};
+        if (changeCapsule !== undefined) {
+          await saveStableArtifact(resolvedRoot, changeCapsule);
+          artifactDelivery = shouldSuppressArtifact(changeCapsule, knownArtifacts)
+            ? { artifactReference: { id: changeCapsule.id, hash: changeCapsule.hash }, deliveredArtifacts: [] }
+            : { artifact: changeCapsule, deliveredArtifacts: [artifactKey(changeCapsule)] };
+          if (artifactDelivery.deliveredArtifacts?.length) {
+            await recordTaskArtifactDelivery(resolvedRoot, task.taskId, artifactDelivery.deliveredArtifacts);
+          }
+        }
+        const riskResult = input.responseMode === "verbose" ? riskReport : compactRiskResponse(verbose, { constraints: input.constraints });
+        result = { ...riskResult, ...artifactDelivery };
       } else {
         const { files } = input;
         const rules = await (await architectureRuleStore(resolvedRoot)).list();

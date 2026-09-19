@@ -1,8 +1,9 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { indexProject } from "../src/core/projectIndexer.js";
@@ -33,6 +34,7 @@ interface JsonRpcResponse {
 }
 
 const tempRoots: string[] = [];
+const execFileAsync = promisify(execFile);
 let server: ChildProcessWithoutNullStreams | undefined;
 let advertisedRoots: Array<{ uri: string; name?: string }> | undefined;
 let automaticServerActivation = true;
@@ -106,6 +108,11 @@ async function seedMinimalPolicyMemory(root: string, title: string): Promise<{ i
     tags: ["phase6"]
   });
   return { id: memory.id, path };
+}
+
+async function git(root: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", args, { cwd: root });
+  return stdout.trim();
 }
 
 function send(message: Record<string, unknown>) {
@@ -1509,6 +1516,99 @@ describe("TokenGraph MCP stdio server", () => {
     });
     expect((assessed.structuredContent as { riskScore: number }).riskScore).toBeGreaterThanOrEqual(70);
     expect(JSON.stringify((assessed.structuredContent as { manualReviewWarnings: string[] }).manualReviewWarnings)).toMatch(/RLS|tenant|audit/i);
+  });
+
+  it("derives and delivers a local change capsule through tokengraph_analyze risk mode", async () => {
+    const root = await makeRoot();
+    await git(root, ["init", "-q", "-b", "main"]);
+    await git(root, ["config", "user.email", "test@example.invalid"]);
+    await git(root, ["config", "user.name", "TokenGraph test"]);
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patient.ts"), "export function beforePatient() { return 'before'; }\n");
+    await git(root, ["add", "--all"]);
+    await git(root, ["commit", "-qm", "base"]);
+    await writeFile(join(root, "src", "patient.ts"), "export function afterPatient() { return 'after'; }\n");
+    await git(root, ["add", "--all"]);
+    await git(root, ["commit", "-qm", "change"]);
+    const targetCommit = await git(root, ["rev-parse", "HEAD"]);
+
+    await stopServer();
+    startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
+    await request(17200, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-change-capsule-test", version: "0.25.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const analyzed = await request(17201, "tools/call", {
+      name: "tokengraph_analyze",
+      arguments: { root, mode: "risk", changeSource: { kind: "commit", ref: targetCommit }, responseMode: "verbose" }
+    });
+    expect(analyzed.isError).not.toBe(true);
+    const structured = analyzed.structuredContent as {
+      mode: string;
+      result: { artifact?: { id: string; hash: string; content: { source: { targetCommit: string }; symbols: Array<{ name: string }> } }; deliveredArtifacts?: string[] };
+    };
+    expect(structured).toMatchObject({
+      mode: "risk",
+      result: {
+        artifact: {
+          id: "capsule/change",
+          hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          content: { source: { targetCommit }, symbols: expect.arrayContaining([expect.objectContaining({ name: "afterPatient" })]) }
+        }
+      }
+    });
+    const artifact = structured.result.artifact!;
+    expect(structured.result.deliveredArtifacts).toEqual([`${artifact.id}@${artifact.hash}`]);
+
+    const repeated = await request(17202, "tools/call", {
+      name: "tokengraph_analyze",
+      arguments: {
+        root,
+        mode: "risk",
+        changeSource: { kind: "commit", ref: targetCommit },
+        responseMode: "verbose",
+        knownArtifacts: [`${artifact.id}@${artifact.hash}`]
+      }
+    });
+    expect((repeated.structuredContent as { result: { artifactReference?: { id: string; hash: string }; deliveredArtifacts?: string[] } }).result).toMatchObject({
+      artifactReference: { id: artifact.id, hash: artifact.hash },
+      deliveredArtifacts: []
+    });
+  });
+
+  it("does not surface TokenGraph state as a working-tree change", async () => {
+    const root = await makeRoot();
+    await git(root, ["init", "-q", "-b", "main"]);
+    await git(root, ["config", "user.email", "test@example.invalid"]);
+    await git(root, ["config", "user.name", "TokenGraph test"]);
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "tracked.ts"), "export const tracked = true;\n");
+    await git(root, ["add", "--all"]);
+    await git(root, ["commit", "-qm", "base"]);
+    await writeFile(join(root, "src", "draft.ts"), "export const draft = true;\n");
+
+    await stopServer();
+    startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
+    await request(17203, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-working-tree-capsule-test", version: "0.25.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const analyzed = await request(17204, "tools/call", {
+      name: "tokengraph_analyze",
+      arguments: { root, mode: "risk", changeSource: { kind: "working-tree" }, responseMode: "verbose" }
+    });
+    await access(join(root, ".tokengraph", "index.json"));
+    const entries = (analyzed.structuredContent as {
+      result: { artifact?: { content: { entries: Array<{ path: string; provenance: string }> } } };
+    }).result.artifact?.content.entries;
+    expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({ path: "src/draft.ts", provenance: "untracked" })]));
+    expect(entries?.map((entry) => entry.path)).not.toEqual(expect.arrayContaining([expect.stringMatching(/^\.tokengraph(?:\/|$)/)]));
   });
 
   it("manages memory lifecycle metadata over JSON-RPC stdio", async () => {

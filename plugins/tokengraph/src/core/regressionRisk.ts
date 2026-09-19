@@ -1,10 +1,15 @@
 import { checkArchitecture } from "./architectureRules.js";
+import { createStableArtifact } from "./artifact.js";
+import { resolveLocalChangeSnapshot } from "./changeSource.js";
 import { estimateSavings, tokenize } from "./token.js";
 import type {
   ArchitectureFinding,
   ArchitectureRule,
+  ChangeCapsuleArtifact,
   ChangeRiskReport,
+  ChangeSource,
   ImportEdge,
+  LocalChangeSnapshot,
   MemoryEntry,
   ProjectIndex,
   RankedFile,
@@ -237,7 +242,9 @@ function recommendedTests(tests: RankedFile[]): string[] {
 
 export async function assessChangeRisk(input: {
   root: string;
-  changedFiles: string[];
+  changedFiles?: string[];
+  changeSource?: ChangeSource;
+  changeSnapshot?: LocalChangeSnapshot;
   diffSummary?: string;
   task?: string;
   profile?: TokenSavingProfile;
@@ -245,8 +252,15 @@ export async function assessChangeRisk(input: {
   rules: ArchitectureRule[];
   memories: MemoryEntry[];
 }): Promise<ChangeRiskReport> {
-  const changedFiles = unique(input.changedFiles.map((path) => path.replace(/\\/g, "/"))).filter((path) => path.length > 0);
-  const text = [input.task, input.diffSummary, changedFiles.join(" ")].filter(Boolean).join("\n");
+  if (input.changeSource !== undefined && input.changedFiles !== undefined) {
+    throw new Error("Risk analysis accepts either changedFiles or changeSource, not both.");
+  }
+  const snapshot = input.changeSnapshot ?? (input.changeSource === undefined ? undefined : await resolveLocalChangeSnapshot(input.root, input.changeSource));
+  const requestedFiles = snapshot?.changedFiles ?? input.changedFiles;
+  if (requestedFiles === undefined) throw new Error("Risk analysis requires changedFiles or changeSource.");
+  const changedFiles = unique(requestedFiles.map((path) => path.replace(/\\/g, "/"))).filter((path) => path.length > 0);
+  const sourceSymbols = snapshot?.symbols.map((symbol) => `${symbol.filePath} ${symbol.name}`).join("\n");
+  const text = [input.task, input.diffSummary, changedFiles.join(" "), sourceSymbols].filter(Boolean).join("\n");
   const code = relatedCode(input.project, changedFiles, input.task);
   const sql = relatedSql(input.project, changedFiles, text);
   const architecture = await checkArchitecture({ root: input.root, project: input.project, rules: input.rules, files: changedFiles });
@@ -278,7 +292,7 @@ export async function assessChangeRisk(input: {
     sql.map(sqlTextForObject).join("\n"),
     warnings.join("\n")
   ].join("\n");
-  return {
+  const report: ChangeRiskReport = {
     riskScore: score,
     riskLevel: riskLevel(score),
     affectedFiles: code.affectedFiles,
@@ -291,4 +305,21 @@ export async function assessChangeRisk(input: {
     manualReviewWarnings: warnings,
     tokenEstimate: estimateSavings(baselineText, compactText, "task-files-and-memories")
   };
+  if (!snapshot) return report;
+
+  const changed = new Set(changedFiles);
+  const content = {
+    schemaVersion: 1 as const,
+    source: snapshot.source,
+    entries: snapshot.entries,
+    symbols: snapshot.symbols,
+    dependents: code.affectedFiles.filter((file) => !changed.has(file.path)),
+    sqlObjects: sql,
+    rules: ruleFindings,
+    slices: snapshot.slices,
+    risks: { riskScore: score, riskLevel: riskLevel(score), manualReviewWarnings: warnings },
+    recommendedTests: report.recommendedTests
+  };
+  const changeCapsule = createStableArtifact("capsule/change", content, 1) as ChangeCapsuleArtifact;
+  return { ...report, changeCapsule };
 }

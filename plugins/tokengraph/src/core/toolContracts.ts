@@ -18,6 +18,14 @@ const compactResponseFields = {
   responseMode: z.enum(["compact", "verbose"]).optional(),
   ...routingFields
 };
+const gitRefSchema = z.string().min(1).max(512).refine((value) => !value.includes("\0"), "Git refs cannot include NUL bytes.");
+const changeSourceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("working-tree") }).strict(),
+  z.object({ kind: z.literal("staged") }).strict(),
+  z.object({ kind: z.literal("commit"), ref: gitRefSchema }).strict(),
+  z.object({ kind: z.literal("range"), base: gitRefSchema, head: gitRefSchema }).strict(),
+  z.object({ kind: z.literal("pull-request"), baseRef: gitRefSchema, headRef: gitRefSchema }).strict()
+]);
 
 export const prepareContextInputSchema = z.object({
   root: z.string().optional(), task: z.string().min(3), profile: tokenSavingProfileSchema.optional(),
@@ -65,11 +73,13 @@ export const recallInputSchema = z.object({
 export const analyzeInputSchema = z.object({
   taskId: taskIdSchema.optional(), root: z.string().optional(), mode: z.enum(["failure", "risk", "architecture"]),
   kind: z.enum(["test", "build", "runtime", "install", "log"]).optional(), text: z.string().min(1).optional(),
-  changedFiles: z.array(z.string().min(1)).min(1).optional(), diffSummary: z.string().optional(), task: z.string().optional(),
+  changedFiles: z.array(z.string().min(1)).min(1).optional(), changeSource: changeSourceSchema.optional(), diffSummary: z.string().optional(), task: z.string().optional(),
   files: z.array(z.string()).optional(), ...compactResponseFields
 }).superRefine((input, context) => {
   if (input.mode === "failure" && (!input.kind || !input.text)) context.addIssue({ code: "custom", message: "failure mode requires kind and text." });
-  if (input.mode === "risk" && !input.changedFiles) context.addIssue({ code: "custom", message: "risk mode requires changedFiles." });
+  if (input.mode === "risk" && (input.changedFiles === undefined) === (input.changeSource === undefined)) {
+    context.addIssue({ code: "custom", message: "risk mode requires exactly one of changedFiles or changeSource." });
+  }
 });
 
 export const setupInputSchema = z.object({

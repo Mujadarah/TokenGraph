@@ -473,6 +473,82 @@ export interface FailureTraceReport {
 
 export type ChangeRiskLevel = "low" | "medium" | "high";
 
+export type ChangeSource =
+  | { kind: "working-tree" }
+  | { kind: "staged" }
+  | { kind: "commit"; ref: string }
+  | { kind: "range"; base: string; head: string }
+  | { kind: "pull-request"; baseRef: string; headRef: string };
+
+export type ChangeProvenance = "staged" | "unstaged" | "untracked" | "commit" | "range" | "pull-request";
+export type ChangeStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "type-changed" | "unmerged" | "unknown";
+export type ChangeTargetStatus = "available" | "missing" | "binary" | "too-large" | "unmerged";
+
+export type ChangeSourceIdentity =
+  | { kind: "working-tree"; headCommit?: string }
+  | { kind: "staged"; headCommit?: string }
+  | { kind: "commit"; ref: string; baseCommit?: string; targetCommit: string }
+  | { kind: "range"; base: string; head: string; baseCommit: string; targetCommit: string; mergeBase: string }
+  | { kind: "pull-request"; baseRef: string; headRef: string; baseCommit: string; targetCommit: string; mergeBase: string };
+
+export interface ChangeEntry {
+  path: string;
+  status: ChangeStatus;
+  provenance: ChangeProvenance;
+  previousPath?: string;
+  target: {
+    status: ChangeTargetStatus;
+    blob?: string;
+    bytes?: number;
+    contentHash?: string;
+  };
+}
+
+export type ChangeSymbol = CodeSymbol & {
+  changeProvenance: ChangeProvenance;
+  contentHash: string;
+};
+
+export interface ChangeSlice {
+  path: string;
+  provenance: ChangeProvenance;
+  startLine: number;
+  endLine: number;
+  text: string;
+  hash: string;
+  contentHash: string;
+  truncated?: true;
+}
+
+export interface LocalChangeSnapshot {
+  source: ChangeSourceIdentity;
+  entries: ChangeEntry[];
+  changedFiles: string[];
+  symbols: ChangeSymbol[];
+  slices: ChangeSlice[];
+}
+
+export interface ChangeCapsuleContent {
+  schemaVersion: 1;
+  source: ChangeSourceIdentity;
+  entries: ChangeEntry[];
+  symbols: ChangeSymbol[];
+  dependents: RankedFile[];
+  sqlObjects: RankedSqlObject[];
+  rules: ArchitectureFinding[];
+  slices: ChangeSlice[];
+  risks: { riskScore: number; riskLevel: ChangeRiskLevel; manualReviewWarnings: string[] };
+  recommendedTests: string[];
+}
+
+export interface ChangeCapsuleArtifact {
+  id: "capsule/change";
+  hash: string;
+  artifactSchemaVersion: number;
+  content: ChangeCapsuleContent;
+  hashContext?: Record<string, unknown>;
+}
+
 export interface ChangeRiskReport {
   riskScore: number;
   riskLevel: ChangeRiskLevel;
@@ -485,6 +561,7 @@ export interface ChangeRiskReport {
   recommendedTests: string[];
   manualReviewWarnings: string[];
   tokenEstimate: TokenEstimate;
+  changeCapsule?: ChangeCapsuleArtifact;
 }
 
 export interface MemoryInput {
