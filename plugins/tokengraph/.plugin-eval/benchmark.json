@@ -1,0 +1,101 @@
+{
+  "kind": "plugin-eval-benchmark",
+  "schemaVersion": 2,
+  "version": 2,
+  "targetKind": "plugin",
+  "targetName": "tokengraph",
+  "runner": {
+    "type": "codex-cli",
+    "model": "gpt-5.6-luna",
+    "sandbox": "workspace-write",
+    "approvalPolicy": "never",
+    "extraArgs": []
+  },
+  "workspace": {
+    "sourcePath": "../..",
+    "setupMode": "git-worktree",
+    "preserve": "on-failure"
+  },
+  "targetProvisioning": {
+    "mode": "workspace-plugin-marketplace"
+  },
+  "verifiers": {
+    "commands": [
+      "node plugins/tokengraph/scripts/plugin-eval-verifier.mjs"
+    ]
+  },
+  "notes": [
+    "Run from plugins/tokengraph so the relative workspace source resolves to the repository root.",
+    "Live execution is Linux-only because Plugin Eval 0.1.2 invokes verifiers through /bin/zsh.",
+    "A scenario is successful only when Codex succeeds and the deterministic verifier passes."
+  ],
+  "setupQuestions": [],
+  "scenarios": [
+    {
+      "id": "trusted-setup-graph",
+      "title": "Trusted setup and graph retrieval",
+      "purpose": "Measure trusted activation, task-scoped graph retrieval, required-file recall, and clean read-only completion.",
+      "userInput": "Use the installed TokenGraph plugin. Complete trusted setup, open a task, and use graph retrieval to explain how the core analyze tool is registered, validated, and exercised. Do not modify tracked files. Report the task through TokenGraph. Write artifacts/plugin-eval/scenario-result.json with schemaVersion 1, scenario trusted-setup-graph, taskSuccess true, requiredFiles containing exactly plugins/tokengraph/src/server.ts, plugins/tokengraph/src/core/toolContracts.ts, and plugins/tokengraph/tests/mcp-smoke.test.ts, plus a non-empty evidence array of concise strings.",
+      "successChecklist": [
+        "TokenGraph is used with trusted setup and a reported task.",
+        "All required files are recalled and tied to the explanation.",
+        "Tracked files remain unchanged."
+      ]
+    },
+    {
+      "id": "indexing-race-recovery",
+      "title": "Indexing race recovery",
+      "purpose": "Measure recovery-oriented retrieval across transactional index publication and its regression contracts.",
+      "userInput": "Use the installed TokenGraph plugin to analyze the current indexing-race recovery design and identify the exact publication, persistence, and regression-test paths that prevent mixed generations. Do not modify tracked files. Report the task through TokenGraph. Write artifacts/plugin-eval/scenario-result.json with schemaVersion 1, scenario indexing-race-recovery, taskSuccess true, requiredFiles containing exactly plugins/tokengraph/src/core/projectIndexer.ts, plugins/tokengraph/src/core/persistence.ts, plugins/tokengraph/tests/index-generations-phase5.test.ts, and plugins/tokengraph/tests/indexing-foundations.test.ts, plus a non-empty evidence array.",
+      "successChecklist": [
+        "The analysis distinguishes publication from validation and recovery.",
+        "Focused index regression contracts pass in the verifier.",
+        "Tracked files remain unchanged."
+      ]
+    },
+    {
+      "id": "runner-failure-diagnosis",
+      "title": "Runner failure diagnosis",
+      "purpose": "Measure failure compression, runner lifecycle retrieval, and evidence-led diagnosis.",
+      "userInput": "Use the installed TokenGraph plugin to diagnose how a timed-out child and its descendants are contained, redacted, and persisted by the runner. Use failure analysis and targeted source retrieval; do not modify tracked files. Report the task through TokenGraph. Write artifacts/plugin-eval/scenario-result.json with schemaVersion 1, scenario runner-failure-diagnosis, taskSuccess true, requiredFiles containing exactly plugins/tokengraph/src/core/runner.ts, plugins/tokengraph/src/core/taskLedger.ts, and plugins/tokengraph/tests/runner.test.ts, plus a non-empty evidence array.",
+      "successChecklist": [
+        "The diagnosis separates observed guarantees from hypotheses.",
+        "The focused runner regression contract passes in the verifier.",
+        "Tracked files remain unchanged."
+      ]
+    },
+    {
+      "id": "local-change-capsule",
+      "title": "Local change capsule",
+      "purpose": "Measure local working-tree derivation, exact changed-symbol evidence, and patch correctness.",
+      "userInput": "Change only plugins/tokengraph/tests/fixtures/plugin-eval/change-capsule-input.ts so benchmarkChangeCapsule returns the string after instead of before. Then use the installed TokenGraph plugin risk analysis with a working-tree change source and explain the resulting change capsule. Report the task through TokenGraph. Write artifacts/plugin-eval/scenario-result.json with schemaVersion 1, scenario local-change-capsule, taskSuccess true, requiredFiles containing exactly plugins/tokengraph/src/core/changeSource.ts, plugins/tokengraph/src/core/regressionRisk.ts, plugins/tokengraph/tests/change-capsule.test.ts, and plugins/tokengraph/tests/fixtures/plugin-eval/change-capsule-input.ts, patchCorrect true, plus a non-empty evidence array containing the capsule artifact key.",
+      "successChecklist": [
+        "Only the designated fixture is changed.",
+        "The capsule is derived from working-tree content.",
+        "The exact patch and focused capsule regression contract pass in the verifier."
+      ]
+    },
+    {
+      "id": "memory-knowledge-review",
+      "title": "Memory recall and knowledge review",
+      "purpose": "Measure durable-memory recall, drift-aware review, and proposal-without-application behavior.",
+      "userInput": "Use the installed TokenGraph plugin to explain the separation between memory recall, task-scoped usage settlement, and review-before-apply knowledge changes. Create a proposal only; do not approve or reject it, and do not modify tracked files. Report the task through TokenGraph. Write artifacts/plugin-eval/scenario-result.json with schemaVersion 1, scenario memory-knowledge-review, taskSuccess true, requiredFiles containing exactly plugins/tokengraph/src/core/memoryStore.ts, plugins/tokengraph/src/core/knowledgeReviewQueue.ts, plugins/tokengraph/tests/knowledge-review-queue.test.ts, and plugins/tokengraph/tests/memory-store-phase4.test.ts, plus a non-empty evidence array.",
+      "successChecklist": [
+        "Recall and proposal/application states remain distinct.",
+        "Focused memory and review contracts pass in the verifier.",
+        "Tracked files remain unchanged."
+      ]
+    },
+    {
+      "id": "doctor-release-audit",
+      "title": "Doctor and release audit",
+      "purpose": "Measure read-only diagnostics, release-boundary retrieval, and complete-suite evidence.",
+      "userInput": "Use the installed TokenGraph plugin to perform a read-only doctor and release-packaging audit. Explain current diagnostic boundaries and how the tagged release workflow verifies signed assets. Do not repair state, package, publish, or modify tracked files. Report the task through TokenGraph. Write artifacts/plugin-eval/scenario-result.json with schemaVersion 1, scenario doctor-release-audit, taskSuccess true, requiredFiles containing exactly plugins/tokengraph/src/core/doctor.ts, .github/workflows/release.yml, plugins/tokengraph/tests/release-workflow.test.ts, and plugins/tokengraph/scripts/validate-plugin.mjs, plus a non-empty evidence array.",
+      "successChecklist": [
+        "Doctor remains read-only and release conclusions are evidence-based.",
+        "The full test command passes in the verifier.",
+        "Tracked files remain unchanged."
+      ]
+    }
+  ]
+}
