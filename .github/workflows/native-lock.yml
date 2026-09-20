@@ -148,7 +148,11 @@ jobs:
           import { unzipSync } from "fflate";
           import { assertExactInstallablePlugin } from "./scripts/installable-plugin-contract.mjs";
 
-          const archive = unzipSync(await readFile(resolve("../../artifacts/tokengraph-0.23.1.zip")));
+          const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8"));
+          if (typeof packageJson.version !== "string" || !/^\d+\.\d+\.\d+$/u.test(packageJson.version)) {
+            throw new Error("TokenGraph package version is invalid.");
+          }
+          const archive = unzipSync(await readFile(resolve(`../../artifacts/tokengraph-${packageJson.version}.zip`)));
           const extractionRoot = resolve("native-archive-validation");
           await mkdir(extractionRoot, { mode: 0o700 });
           for (const [archivePath, bytes] of Object.entries(archive)) {
