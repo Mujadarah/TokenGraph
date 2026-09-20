@@ -185,7 +185,7 @@ function readResponse(id: number, timeoutMs = process.platform === "win32" ? 15_
   });
 }
 
-async function requestRaw(id: number, method: string, params?: Record<string, unknown>) {
+async function requestRaw(id: number, method: string, params?: Record<string, unknown>, synthesizeStructuredContent = true) {
   const pending = readResponse(id);
   send({ id, method, ...(params ? { params } : {}) });
   const response = await pending;
@@ -193,15 +193,20 @@ async function requestRaw(id: number, method: string, params?: Record<string, un
     throw new Error(`${method} failed: ${response.error.message}`);
   }
   const result = response.result as Record<string, unknown>;
-  if (method === "tools/call" && result && !result.isError && !("structuredContent" in result)) {
+  if (synthesizeStructuredContent && method === "tools/call" && result && !result.isError) {
     const content = result.content as Array<{ type?: string; text?: string }> | undefined;
     const text = content?.find((item) => item.type === "text")?.text;
-    if (text) Object.defineProperty(result, "structuredContent", { value: JSON.parse(text), enumerable: false });
+    if (text) {
+      if ("structuredContent" in result) {
+        Object.defineProperty(result, "wireStructuredContent", { value: result.structuredContent, enumerable: false });
+      }
+      Object.defineProperty(result, "structuredContent", { value: JSON.parse(text), enumerable: false });
+    }
   }
   return result;
 }
 
-async function request(id: number, method: string, params?: Record<string, unknown>) {
+async function request(id: number, method: string, params?: Record<string, unknown>, synthesizeStructuredContent = true) {
   const toolName = method === "tools/call" ? params?.name : undefined;
   if (automaticServerActivation && !serverActivated && toolName !== undefined &&
       toolName !== "tokengraph_setup" && toolName !== "tokengraph_setup_status") {
@@ -213,7 +218,7 @@ async function request(id: number, method: string, params?: Record<string, unkno
     if (activation.isError) throw new Error(`Automatic MCP test activation failed: ${JSON.stringify(activation)}`);
     serverActivated = true;
   }
-  const result = await requestRaw(id, method, params);
+  const result = await requestRaw(id, method, params, synthesizeStructuredContent);
   if (toolName === "tokengraph_setup" && !result.isError) serverActivated = true;
   return result;
 }
@@ -475,8 +480,9 @@ describe("TokenGraph MCP stdio server", () => {
     const preparedCall = await request(9032, "tools/call", {
       name: "tokengraph_prepare_context",
       arguments: { root: "first", task: "Debug patient summary", constraints: ["  Must preserve patient privacy.  "], profile: "balanced", maxTokens: 4000, host: "codex" }
-    });
-    const prepared = preparedCall.structuredContent as { taskId: string; plan: unknown };
+    }, false);
+    const prepared = JSON.parse((preparedCall.content as Array<{ type: string; text: string }>)[0]!.text) as { taskId: string; plan: unknown };
+    expect(preparedCall.structuredContent).toEqual({ taskId: prepared.taskId });
     expect(prepared).toMatchObject({ taskId: expect.any(String), plan: expect.any(Object) });
     expect(prepared).not.toHaveProperty("root");
     expect(prepared).not.toHaveProperty("index");
@@ -876,8 +882,9 @@ describe("TokenGraph MCP stdio server", () => {
     const taskIds = new Set<string>();
 
     for (const [index, intent] of intents.entries()) {
-      const called = await request(90591 + index * 2, "tools/call", intent);
-      const result = called.structuredContent as { taskId?: string };
+      const called = await request(90591 + index * 2, "tools/call", intent, false);
+      const result = JSON.parse((called.content as Array<{ type: string; text: string }>)[0]!.text) as { taskId?: string };
+      expect(called.structuredContent).toEqual({ taskId: result.taskId });
       expect(called.content).toEqual([{ type: "text", text: JSON.stringify(result) }]);
       expect(result.taskId).toEqual(expect.any(String));
       taskIds.add(result.taskId!);

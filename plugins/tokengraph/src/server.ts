@@ -425,6 +425,10 @@ function ok<T extends object>(output: T) {
   return compactToolResultEnvelope(output);
 }
 
+function okWithTaskAuthority<T extends object>(output: T, taskId: string) {
+  return { ...compactToolResultEnvelope(output), structuredContent: { taskId } };
+}
+
 function okWithResourceLinks<T extends { resourceLinks?: Array<{ label: string; uri: string; mimeType: string }> }>(output: T) {
   return {
     content: [
@@ -1088,7 +1092,7 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         originalTokens: project.files.reduce((total, file) => total + file.estimatedTokens, 0),
         compactTokens: estimateTokens(compactJson(compactToolResultEnvelope(response)))
       });
-      return ok(response);
+      return okWithTaskAuthority(response, ledger.taskId);
     }
   );
 
@@ -1182,7 +1186,9 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         operation: { mode, queryHash: createHash("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
         originalTokens, compactTokens
       });
-      return ok(task.autoStarted ? { ...response, taskId: task.taskId } : response);
+      return task.autoStarted
+        ? okWithTaskAuthority({ ...response, taskId: task.taskId }, task.taskId)
+        : ok(response);
       });
     }
   );
@@ -1241,7 +1247,9 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         operation: { mode, kind: mode === "output" ? input.kind : input.contentKind, inputHash: createHash("sha256").update(`${"task" in input ? input.task : ""}\n${input.text ?? ""}`).digest("hex") },
         originalTokens: estimates.baselineTokens, compactTokens, overheadTokens
       });
-      return ok(task.autoStarted ? { ...returnedResponse, taskId: task.taskId } : returnedResponse);
+      return task.autoStarted
+        ? okWithTaskAuthority({ ...returnedResponse, taskId: task.taskId }, task.taskId)
+        : ok(returnedResponse);
       });
     }
   );
@@ -1290,7 +1298,9 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
           deferredMemoryUseDigests: usedMemoryIds.map((id) => createHash("sha256").update(id).digest("hex")).sort()
         } : {})
       });
-      return ok(task.autoStarted ? { ...response, taskId: task.taskId } : response);
+      return task.autoStarted
+        ? okWithTaskAuthority({ ...response, taskId: task.taskId }, task.taskId)
+        : ok(response);
       });
     }
   );
@@ -1356,7 +1366,9 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
         operation: { mode, inputHash: createHash("sha256").update(JSON.stringify(input)).digest("hex") },
         originalTokens: Math.max(compactTokens, project.files.reduce((total, file) => total + file.estimatedTokens, 0)), compactTokens
       });
-      return ok(task.autoStarted ? { ...response, taskId: task.taskId } : response);
+      return task.autoStarted
+        ? okWithTaskAuthority({ ...response, taskId: task.taskId }, task.taskId)
+        : ok(response);
       });
     }
   );
