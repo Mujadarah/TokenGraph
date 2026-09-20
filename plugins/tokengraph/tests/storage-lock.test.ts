@@ -1766,6 +1766,34 @@ describe("failure-preserving cleanup", () => {
     expect(runtime.activeAnchors.size).toBe(0);
   });
 
+  it("lets the exact live owner resume a failed barrier cleanup on its next acquisition", async () => {
+    const root = await temporaryWorkspace();
+    const lock = await canonicalPersistenceLock(root, "vault", "cleanup-resume.json");
+    const runtime = new FakeLockRuntime();
+    runtime.cleanupFailure = "rmdir";
+
+    await expect(runWithFileLockForTesting(lock, async () => "first", {}, {
+      capability: activateLegacyRuntimeShutdown({ confirmedNoLegacyTokenGraphProcesses: true }),
+      runtime,
+      policy: TEST_POLICY
+    })).rejects.toMatchObject({ code: "EIO" });
+    expect(runtime.directories.has(lock.compatibilityPath)).toBe(true);
+
+    runtime.cleanupFailure = undefined;
+    let resumed = false;
+    await expect(runWithFileLockForTesting(lock, async () => {
+      resumed = true;
+      return "second";
+    }, {}, {
+      capability: activateLegacyRuntimeShutdown({ confirmedNoLegacyTokenGraphProcesses: true }),
+      runtime,
+      policy: TEST_POLICY
+    })).resolves.toBe("second");
+    expect(resumed).toBe(true);
+    expect(runtime.directories.has(lock.compatibilityPath)).toBe(false);
+    expect(runtime.activeAnchors.size).toBe(0);
+  });
+
   it("returns operation and cleanup failures in ordered AggregateError", async () => {
     const root = await temporaryWorkspace();
     const lock = await canonicalPersistenceLock(root, "vault", "aggregate.json");

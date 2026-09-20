@@ -201,6 +201,48 @@ interface ExactPathQueue {
 
 const sameProcessQueues = new Map<string, ExactPathQueue>();
 
+interface OwnerRecoveryReceipt {
+  readonly pid: number;
+  readonly nonce: string;
+  readonly relativeLegacyName: string;
+  readonly keyHash: string;
+}
+
+const ownerRecoveryReceipts = new WeakMap<FileLockRuntime, Map<string, OwnerRecoveryReceipt>>();
+
+function ownerRecoveryReceipt(runtime: FileLockRuntime, lock: CanonicalPersistenceLock): OwnerRecoveryReceipt | undefined {
+  return ownerRecoveryReceipts.get(runtime)?.get(lock.anchorPath);
+}
+
+function retainOwnerRecoveryReceipt(
+  runtime: FileLockRuntime,
+  lock: CanonicalPersistenceLock,
+  record: ActiveLockRecoveryJournalV2
+): void {
+  let receipts = ownerRecoveryReceipts.get(runtime);
+  if (receipts === undefined) {
+    receipts = new Map();
+    ownerRecoveryReceipts.set(runtime, receipts);
+  }
+  receipts.set(lock.anchorPath, {
+    pid: record.pid,
+    nonce: record.nonce,
+    relativeLegacyName: record.relativeLegacyName,
+    keyHash: record.keyHash
+  });
+}
+
+function clearOwnerRecoveryReceipt(runtime: FileLockRuntime, lock: CanonicalPersistenceLock): void {
+  const receipts = ownerRecoveryReceipts.get(runtime);
+  receipts?.delete(lock.anchorPath);
+  if (receipts?.size === 0) ownerRecoveryReceipts.delete(runtime);
+}
+
+function matchesOwnerRecoveryReceipt(receipt: OwnerRecoveryReceipt, record: ActiveLockRecoveryJournalV2): boolean {
+  return receipt.pid === record.pid && receipt.nonce === record.nonce &&
+    receipt.relativeLegacyName === record.relativeLegacyName && receipt.keyHash === record.keyHash;
+}
+
 function fail(code: FileLockErrorCode): never {
   throw new FileLockError(code);
 }
@@ -543,7 +585,8 @@ async function validateRecoverableLease(
   expectedIdentity: string | undefined,
   runtime: FileLockRuntime,
   policy: FileLockPolicy,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  allowLiveOwner = false
 ): Promise<{ lease: FileLockLeaseV1; snapshot: FileSnapshot }> {
   const pair = await readStableFile(leasePath, LEASE_MAX_BYTES, runtime, policy, signal);
   if (pair === undefined || pair[1].nlink !== 1 || (expectedIdentity !== undefined && pair[1].identity !== expectedIdentity)) {
@@ -552,7 +595,7 @@ async function validateRecoverableLease(
   const lease = parseFileLockLease(pair[1].text);
   if (lease === undefined || lease.nonce !== expectedNonce || lease.pid !== expectedOwner.pid ||
     lease.startedAt !== expectedOwner.startedAt ||
-    !await confirmedDead(lease.pid, lease.heartbeatAt, runtime, policy)) {
+    (!allowLiveOwner && !await confirmedDead(lease.pid, lease.heartbeatAt, runtime, policy))) {
     fail("LOCK_LEASE_OCCUPIED");
   }
   return { lease, snapshot: pair[1] };
@@ -1027,7 +1070,12 @@ async function recoverActiveJournalV2(
   policy: FileLockPolicy
 ): Promise<JournalStateV2> {
   let state = initial;
-  if (!await confirmedDead(state.record.pid, state.record.heartbeatAt, runtime, policy)) fail("LOCK_JOURNAL_UNSAFE");
+  const receipt = ownerRecoveryReceipt(runtime, lock);
+  const sameOwnerRecovery = receipt !== undefined && matchesOwnerRecoveryReceipt(receipt, state.record);
+  if (receipt !== undefined && !sameOwnerRecovery) clearOwnerRecoveryReceipt(runtime, lock);
+  if (!sameOwnerRecovery && !await confirmedDead(state.record.pid, state.record.heartbeatAt, runtime, policy)) {
+    fail("LOCK_JOURNAL_UNSAFE");
+  }
   const recordedBarrierPath = pathForJournal(lock, state.record);
   const recoveryLock = recordedBarrierPath === lock.compatibilityPath ? lock : {
     ...lock,
@@ -1060,7 +1108,8 @@ async function recoverActiveJournalV2(
   } else if (state.record.phase === "lease-created") {
     const leasePath = join(recoveryLock.compatibilityPath, "lease.json");
     const recovered = await validateRecoverableLease(
-      leasePath, state.record.nonce, state.record, state.record.leaseIdentity, runtime, policy
+      leasePath, state.record.nonce, state.record, state.record.leaseIdentity, runtime, policy, undefined,
+      sameOwnerRecovery
     );
     const cleanup = nextJournalRecord(state, {
       ...activeWithoutPending(state.record), phase: "cleanup", leaseIdentity: recovered.snapshot.identity
@@ -1098,6 +1147,7 @@ async function reconcileJournalV2(
     record: ActiveLockRecoveryJournalV2;
   }, runtime, policy);
   if (state.record.phase !== "idle") fail("LOCK_JOURNAL_UNSAFE");
+  clearOwnerRecoveryReceipt(runtime, lock);
   await classifyDomainRoot(lock, state.record, runtime, policy);
   return state as JournalStateV2 & { record: IdleLockRecoveryJournalV2 };
 }
@@ -1367,6 +1417,7 @@ async function runOwnedV2<T>(
   } catch (error) {
     cleanupError = error;
     cleanupFailed = true;
+    if (owned !== undefined) retainOwnerRecoveryReceipt(runtime, lock, owned.journal.record);
   }
 
   if (owned?.compatibilityProtected) {

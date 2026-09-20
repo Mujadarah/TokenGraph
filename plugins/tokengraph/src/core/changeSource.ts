@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { open } from "node:fs/promises";
+import { constants, type BigIntStats } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 
 import { parseProjectFileText } from "./fileScanner.js";
 import { EXACT_SLICE_MAX_BYTES, EXACT_SLICE_MAX_LINES, EXACT_SLICE_MAX_SOURCE_BYTES } from "./retrieval.js";
@@ -32,6 +33,12 @@ interface ChangeBudget {
   symbols: number;
   slices: number;
   sliceBytes: number;
+}
+
+function sameStableFile(left: BigIntStats, right: BigIntStats): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
+    left.nlink === right.nlink && left.size === right.size && left.birthtimeNs === right.birthtimeNs &&
+    left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
 }
 
 function normalizedText(text: string): string {
@@ -273,21 +280,58 @@ async function stagedTargetContent(root: string, path: string): Promise<TargetCo
 }
 
 async function workingTreeTargetContent(root: string, path: string): Promise<TargetContent> {
-  let handle;
+  const targetPath = await resolveConfinedPath(root, path);
+  let before: BigIntStats;
   try {
-    handle = await open(await resolveConfinedPath(root, path), "r");
+    before = await lstat(targetPath, { bigint: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { entryTarget: { status: "missing" } };
+    throw error;
+  }
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) {
+    throw new Error("Local working-tree target is not a single-link regular file.");
+  }
+  if (before.size < 0n || before.size > BigInt(EXACT_SLICE_MAX_SOURCE_BYTES)) {
+    return { entryTarget: { status: "too-large", bytes: EXACT_SLICE_MAX_SOURCE_BYTES + 1 } };
+  }
+
+  const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
+  const handle = await open(targetPath, constants.O_RDONLY | noFollow);
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!opened.isFile() || opened.nlink !== 1n || !sameStableFile(before, opened)) {
+      throw new Error("Local working-tree target changed before its bounded read.");
+    }
     const buffer = Buffer.alloc(EXACT_SLICE_MAX_SOURCE_BYTES + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead > EXACT_SLICE_MAX_SOURCE_BYTES) return { entryTarget: { status: "too-large", bytes: bytesRead } };
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const result = await handle.read(buffer, bytesRead, buffer.length - bytesRead, null);
+      if (result.bytesRead === 0) break;
+      bytesRead += result.bytesRead;
+    }
+    const openedAfter = await handle.stat({ bigint: true });
+    let after: BigIntStats;
+    try {
+      after = await lstat(targetPath, { bigint: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error("Local working-tree target changed during its bounded read.");
+      }
+      throw error;
+    }
+    if (!after.isFile() || after.isSymbolicLink() || after.nlink !== 1n ||
+        !sameStableFile(opened, openedAfter) || !sameStableFile(opened, after) || BigInt(bytesRead) !== openedAfter.size) {
+      throw new Error("Local working-tree target changed during its bounded read.");
+    }
+    if (bytesRead > EXACT_SLICE_MAX_SOURCE_BYTES) {
+      return { entryTarget: { status: "too-large", bytes: bytesRead } };
+    }
     const content = buffer.subarray(0, bytesRead);
     if (content.includes(0)) return { entryTarget: { status: "binary", bytes: content.byteLength } };
     const text = content.toString("utf8");
     return { entryTarget: { status: "available", bytes: content.byteLength, contentHash: sha256(normalizedText(text)) }, text };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { entryTarget: { status: "missing" } };
-    throw error;
   } finally {
-    await handle?.close();
+    await handle.close();
   }
 }
 

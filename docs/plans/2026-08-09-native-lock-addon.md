@@ -902,6 +902,11 @@ after a successful operation; throw
 `AggregateError([operationError, cleanupError])` when both fail. Native unproven
 release does not return because the addon fail-stops.
 
+The 2026-09-20 same-owner cleanup recovery amendment is recorded in
+`docs/plans/2026-09-20-same-owner-cleanup-recovery.md`. It preserves the
+handle-release-before-remove ordering while allowing only the exact in-memory
+owner receipt to resume a failed live cleanup on a later acquisition.
+
 - [ ] **Step 7: Implement and test same-process serialization**
 
 Use a `Map<string, ExactPathQueue>` keyed by exact canonical path. Each queue
