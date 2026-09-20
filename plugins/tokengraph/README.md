@@ -57,7 +57,7 @@ The default `TOKENGRAPH_TOOL_SURFACE=core` surface exposes exactly eight intent-
 
 Set `TOKENGRAPH_TOOL_SURFACE=full` before starting the MCP host to add the 35 deprecated compatibility tools below. Their names, schemas, and behavior remain available during migration; prefer the core tools for new tasks.
 
-JSON-only successful tool calls return one serialized JSON `TextContent` item. `tokengraph_export_project_map` is the resource-link exception and also returns matching structured content. Compact mode is the default; explicit `responseMode: "verbose"` is for diagnostics. Diagnostic token estimates always name their baseline and expose `baselineTokens`, `compactTokens`, `avoidedVsBaseline`, and the `estimated-tokens` unit.
+JSON-only successful tool calls return one serialized JSON `TextContent` item. Task-creating core calls additionally return minimal structured task authority containing only `taskId`, without duplicating the full result. `tokengraph_export_project_map` is the resource-link exception and also returns matching structured content. Compact mode is the default; explicit `responseMode: "verbose"` is for diagnostics. Diagnostic token estimates always name their baseline and expose `baselineTokens`, `compactTokens`, `avoidedVsBaseline`, and the `estimated-tokens` unit.
 
 Use `tokengraph_prepare_context` only when planning is needed. The direct query, compress, recall, and analyze tools accept an omitted `taskId`, atomically start a task ledger, and return the new id. Reuse that id for later calls. After ready setup, `root` may be omitted when host workspace resolution is stable. `tokengraph_task_report({ taskId })` defaults to complete and returns the compact `status`, `taskId`, canonical `footer`, and `reportingStatus`; request verbose mode only for report diagnostics or explicitly pause unfinished work.
 
@@ -131,7 +131,7 @@ reviewed real-host promotion gate passes.
 
 Deterministic fixture economics and real-host evidence are distinct. The
 30-task fixture benchmark has 27 activated tasks and three unbooked Stage 0
-bypasses, with a +172.3-token execution-inclusive median and +38.3-token p25.
+bypasses, with a +162.3-token execution-inclusive median and +39.3-token p25.
 Four edit/debug tasks charge one hash-validated exact source slice each, for
 711 estimated tokens total. These are fixture estimates, not provider billing.
 
@@ -158,7 +158,7 @@ The default `hooks/hooks.json` is auto-discovered by Codex and Claude Code. Sess
 
 Pause is terminal for that task id. Stop remains allowed for a paused task, but later task-aware calls are rejected. Start a new task through `tokengraph_prepare_context` or a direct intent call that omits `taskId`.
 
-The adapter reads documented hook fields and strictly parses only the single JSON `TextContent` result needed to capture a returned task id. The workspace bridge stores schema/version, SHA-256 plugin and session hashes, the host-provided root, and a timestamp under the operating-system temporary directory for up to 24 hours. The lifecycle adapter stores a separate minimal 30-day task pointer in the host-provided plugin data directory: schema/version, a SHA-256 session hash, task id, trusted root, turn id, and timestamp. It does not store raw session ids, prompts, transcripts, tool inputs, tool responses, or raw response text. Missing, corrupt, expired, or mismatched workspace attestations do not grant trust; missing or corrupt lifecycle state fails open with an honest warning and never fabricates savings.
+The adapter reads documented hook fields and accepts initial task authority only from a successful, unambiguous `structuredContent` or `structured_content` object. Task-creating core tools provide only `{ taskId }` through that channel; the hook never derives authority by parsing JSON-looking response text. The workspace bridge stores schema/version, SHA-256 plugin and session hashes, the host-provided root, and a timestamp under the operating-system temporary directory for up to 24 hours. The lifecycle adapter stores a separate minimal 30-day task pointer in the host-provided plugin data directory: schema/version, a SHA-256 session hash, task id, turn id, and timestamp. It does not store the trusted root, raw session ids, prompts, transcripts, tool inputs, tool responses, or raw response text. Missing, corrupt, expired, or mismatched workspace attestations do not grant trust; missing or corrupt lifecycle state fails open with an honest warning and never fabricates savings.
 
 Codex users must review and trust plugin hooks before they run. Hooks can be disabled globally with `[features] hooks = false`; Claude Code users can inspect them with `/hooks` and disable all hooks with `"disableAllHooks": true`. When hooks are off or unavailable, call `tokengraph_task_report` explicitly.
 

@@ -59,7 +59,7 @@ If plugin changes are not visible, run `/reload-plugins`. If setup is blocked, f
 
 Claude Code auto-discovers `hooks/hooks.json`. Use `/hooks` to confirm TokenGraph's PostToolUse and Stop commands and their plugin source. The shared Node adapter uses `${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_PLUGIN_DATA}` and has no shell, jq, or Python dependency.
 
-The hook stores only a session hash, task id, trusted root, turn id, schema/version, and timestamp in plugin data for up to 30 days. It never reads the transcript or stores prompts and tool payloads. Normal Stop may request one exact report call or the exact canonical footer; when `stop_hook_active` is already true it warns and allows the stop to avoid a loop.
+The hook stores only a session hash, task id, turn id, schema/version, and timestamp in plugin data for up to 30 days; the trusted root remains in the separate short-lived workspace attestation. It never reads the transcript or stores prompts and tool payloads. Normal Stop may request one exact report call or the exact canonical footer; when `stop_hook_active` is already true it warns and allows the stop to avoid a loop.
 
 The hook process stays permanently unactivated and project-read-only. Host attestation and plugin-data state permit only strict lifecycle reads for the matching workspace; they do not grant native-lock activation or confirm legacy shutdown.
 

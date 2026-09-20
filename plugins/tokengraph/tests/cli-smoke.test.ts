@@ -302,8 +302,8 @@ describe("tokengraph benchmark harness and trust docs", () => {
       criticalConstraintPreservationRate: 1,
       criticalFalseNegativeCount: 0,
       requiredFileRecall: 1,
-      medianNetSavings: 180.53333333333333,
-      executionInclusiveP25: 38.53333333333333,
+      medianNetSavings: 170.26666666666665,
+      executionInclusiveP25: 39.266666666666666,
       nonNegativeActivatedRate: expect.any(Number),
       taskFailures: []
     });
@@ -339,11 +339,11 @@ describe("tokengraph benchmark harness and trust docs", () => {
     }
     const benchmarkResults = await readFile(resolve(repoRoot, "docs", "benchmarks", "results-current.md"), "utf8");
     expect(benchmarkResults).toMatch(/22 of 27 activated tasks are non-negative/i);
-    expect(benchmarkResults).toMatch(/execution-inclusive median.*\+172\.3/i);
+    expect(benchmarkResults).toMatch(/execution-inclusive median.*\+162\.3/i);
     expect(benchmarkResults).toMatch(/low-confidence/i);
     expect(benchmarkResults).not.toMatch(/third.*(?:remain|campaign).*incomplete|three-repository B6 target is not met/is);
     const benchmarkMethodology = await readFile(resolve(repoRoot, "docs", "benchmarks", "methodology.md"), "utf8");
-    expect(benchmarkMethodology).toMatch(/\+172\.3-token activated-task median.*\+38\.3-token p25/i);
+    expect(benchmarkMethodology).toMatch(/\+162\.3-token activated-task median.*\+39\.3-token p25/i);
 
     const trustFiles = ["privacy.md", "security.md", "permissions.md", "local-storage.md", "limitations.md", "release-install.md"];
     const trustText = (
@@ -594,7 +594,12 @@ describe("tokengraph release package command", () => {
     }
     const generatedReadme = await readFile(resolve(report.packageDir, "README.md"), "utf8");
     expect(generatedReadme.match(/The default surface exposes eight compact tools/g)).toHaveLength(1);
-    expect(generatedReadme.match(/\+174\.5-token execution-inclusive median/g)).toHaveLength(1);
+    expect(generatedReadme.match(/opt-in full surface exposes 43/g)).toHaveLength(1);
+    expect(generatedReadme.match(/\+162\.3-token execution-inclusive median/g)).toHaveLength(1);
+    expect(generatedReadme.match(/\+39\.3-token p25/g)).toHaveLength(1);
+    expect(generatedReadme).toMatch(/task-creating core calls additionally return minimal structured task authority/i);
+    expect(generatedReadme).toMatch(/lifecycle pointer separately stores only a schema-versioned session hash, task id, turn id, and timestamp/i);
+    expect(generatedReadme).not.toMatch(/lifecycle pointer[^.]*trusted root/i);
     await expect(access(resolve(report.packageDir, "src"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "tests"))).rejects.toThrow();
     await expect(access(resolve(report.packageDir, "node_modules"))).rejects.toThrow();

@@ -204,8 +204,8 @@ Status: complete
 Status: complete
 
 - Task ledgers produce one canonical, uncertainty-aware completion footer; cooperative PostToolUse/Stop hooks request missing reports or footers without looping.
-- The default MCP surface is eight intent-level tools, with 42 tools on the opt-in full compatibility surface.
-- JSON-only success results use one serialized JSON text item, while project-map resource links keep their documented structured exception.
+- The default MCP surface is eight intent-level tools, with 43 tools on the opt-in full compatibility surface.
+- JSON-only success results use one serialized JSON text item. Task-creating core calls also expose only their task id as structured lifecycle authority, while project-map resource links keep their documented structured exception.
 - Source-linked wiki and memory proposals require review and explicit approval before application, rechecking provenance and expiry.
 - The v0.20 routing-lifecycle evidence benchmark preserved 100% constraint preservation, zero critical false negatives, and 100% recall; its historical fixture claims are retained as evidence rather than release eligibility.
 - Deterministic v0.20 release packaging includes nine skills, the MCP and hook bundles, both host manifests, and a standalone marketplace archive.
@@ -224,7 +224,7 @@ Status: complete
 - R4.4 is complete as an evidence milestone, not a promotion: the first reviewed real-host run records five successful ON/OFF pairs, but enforcement remains disabled because every frozen gate did not pass. One repository does not satisfy multi-repository B6 validation.
 - The standalone release packages `web-tree-sitter@0.26.11` with pinned Python, Go, Rust, and Java grammar WASM assets and asserts zero workspace execution.
 - v0.21.0 benchmark claims use the checked-in artifact: routing median net savings 5.7 tokens and execution-inclusive median net savings -94.3 tokens, with 19/30 execution-inclusive tasks non-positive. The frozen execution-inclusive release gate failed; no corrective tag or publication was made, and these are measured fixture results rather than universal savings guarantees.
-- The current v0.21.1 fixture artifact passes the deterministic release gate: 27 activated tasks, three unbooked Stage-0 bypasses, a +172.3-token execution-inclusive median, +38.3-token p25, 81.5% non-negative activated tasks, 100% constraint preservation and recall, and zero critical false negatives. The separate reviewed real-host report is non-promoting, so enforced routing and B7 activation remain disabled.
+- The current v0.25.0 fixture artifact passes the deterministic release gate: 27 activated tasks, three unbooked Stage-0 bypasses, a +162.3-token execution-inclusive median, +39.3-token p25, 81.5% non-negative activated tasks, 100% constraint preservation and recall, and zero critical false negatives. The separate reviewed real-host report is non-promoting, so enforced routing remains disabled; B7 polyglot indexing is independently active by default.
 
 ## v0.22 - Evidence And Release Closeout
 
