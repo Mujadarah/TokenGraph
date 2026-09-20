@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 
 describe("tagged release workflow", () => {
@@ -70,6 +72,9 @@ describe("tagged release workflow", () => {
     expect(workflow).toContain("cosign-release: v3.0.6");
     expect(workflow).toContain(String.raw`unzip -q "$archive" -d "$extract_dir"`);
     expect(workflow).toContain(String.raw`plugin_dir="$extract_dir/tokengraph"`);
+    expect(workflow).toContain(String.raw`node scripts/verify-package-parity.mjs --release ../../release/tokengraph --archive "$archive"`);
+    expect(workflow).toContain(String.raw`pnpm smoke -- --root "$smoke_root" --server "$plugin_dir/dist/index.js" --json`);
+    expect(workflow).toContain(String.raw`pnpm smoke -- --root "$smoke_root" --server "$plugin_dir/dist/index.js" --surface full --json`);
     expect(workflow).toContain("path: " + output("steps.extract.outputs.plugin_dir"));
     expect(workflow).toContain("format: spdx-json");
     expect(workflow).toContain("output-file: " + sbom);
@@ -102,6 +107,8 @@ describe("tagged release workflow", () => {
       "Build standalone release archive",
       "Prepare release assets",
       "Extract installable plugin for SBOM",
+      "Verify packaged release parity",
+      "Smoke extracted release runtime",
       "Generate SPDX SBOM",
       "Install Cosign",
       "Sign release assets",
@@ -113,6 +120,60 @@ describe("tagged release workflow", () => {
     const positions = orderedSteps.map((step) => workflow.indexOf("- name: " + step));
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual(positions.slice().sort((left, right) => left - right));
+  });
+});
+
+function runPackageParity(options: {
+  releaseFiles?: Record<string, string>;
+  archiveFiles?: Record<string, string>;
+}) {
+  const root = mkdtempSync(join(tmpdir(), "tokengraph-parity-"));
+  try {
+    const releaseRoot = join(root, "release");
+    const releaseFiles = options.releaseFiles ?? { "README.md": "same\n", "dist/index.js": "index\n" };
+    const archiveFiles = options.archiveFiles ?? releaseFiles;
+    for (const [path, text] of Object.entries(releaseFiles)) {
+      const output = join(releaseRoot, ...path.split("/"));
+      mkdirSync(dirname(output), { recursive: true });
+      writeFileSync(output, text);
+    }
+    const archivePath = join(root, "bundle.zip");
+    const entries: Record<string, Uint8Array> = {
+      ".agents/plugins/marketplace.json": Buffer.from("{}\n")
+    };
+    for (const [path, text] of Object.entries(archiveFiles)) {
+      entries[`tokengraph/${path}`] = Buffer.from(text);
+    }
+    writeFileSync(archivePath, zipSync(entries));
+    return spawnSync(process.execPath, [
+      resolve(process.cwd(), "scripts", "verify-package-parity.mjs"),
+      "--release", releaseRoot,
+      "--archive", archivePath
+    ], { encoding: "utf8" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+describe("standalone package parity", () => {
+  it("accepts an exact installable payload while ignoring marketplace wrappers", () => {
+    const result = runPackageParity({});
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/matches the committed release byte-for-byte/i);
+  });
+
+  it.each([
+    ["mutated bytes", { archiveFiles: { "README.md": "changed\n", "dist/index.js": "index\n" } }],
+    ["an extra payload file", { archiveFiles: { "README.md": "same\n", "dist/index.js": "index\n", "extra.txt": "extra\n" } }],
+    ["a missing payload file", { archiveFiles: { "README.md": "same\n" } }]
+  ])("rejects %s", (_label, options) => {
+    const result = runPackageParity(options);
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/package parity verification failed/i);
   });
 });
 

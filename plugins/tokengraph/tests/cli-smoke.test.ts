@@ -677,6 +677,22 @@ describe("tokengraph release package command", () => {
     ], { cwd: process.cwd(), env: process.env })).resolves.toMatchObject({
       stdout: expect.stringMatching(/validated \(6 artifacts\)/i)
     });
+
+    const smokeRoot = join(outRoot, "extracted-smoke-project");
+    await mkdir(smokeRoot, { recursive: true });
+    await writeFile(join(smokeRoot, "README.md"), "# Extracted TokenGraph smoke project\n");
+    for (const surface of ["core", "full"] as const) {
+      const { stdout: smokeOutput } = await execFileAsync(process.execPath, [
+        resolve("scripts", "smoke.mjs"),
+        "--root", smokeRoot,
+        "--server", join(extractedBundle, "tokengraph", "dist", "index.js"),
+        "--surface", surface,
+        "--json"
+      ], { cwd: process.cwd(), env: process.env });
+      const smoke = JSON.parse(smokeOutput) as { status?: string; toolSurface?: string; tools?: string[] };
+      expect(smoke).toMatchObject({ status: "ok", toolSurface: surface });
+      expect(smoke.tools).toHaveLength(surface === "core" ? 8 : 43);
+    }
   });
 
   it.each([

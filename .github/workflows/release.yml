@@ -107,6 +107,24 @@ jobs:
           test ! -e "$plugin_dir/node_modules"
           echo "plugin_dir=$plugin_dir" >> "$GITHUB_OUTPUT"
 
+      - name: Verify packaged release parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${{ steps.artifact.outputs.archive }}"
+          node scripts/verify-package-parity.mjs --release ../../release/tokengraph --archive "$archive"
+
+      - name: Smoke extracted release runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          plugin_dir="${{ steps.extract.outputs.plugin_dir }}"
+          smoke_root="$RUNNER_TEMP/tokengraph-smoke-$GITHUB_RUN_ID"
+          mkdir -p "$smoke_root"
+          printf '%s\n' '# TokenGraph extracted release smoke' > "$smoke_root/README.md"
+          pnpm smoke -- --root "$smoke_root" --server "$plugin_dir/dist/index.js" --json
+          pnpm smoke -- --root "$smoke_root" --server "$plugin_dir/dist/index.js" --surface full --json
+
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
