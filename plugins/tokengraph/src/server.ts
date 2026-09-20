@@ -54,6 +54,7 @@ import { loadHostWorkspaceAttestation } from "./core/hostWorkspace.js";
 import { traceFailure } from "./core/failureTracer.js";
 import { MemoryStore } from "./core/memoryStore.js";
 import { canonicalPersistenceLock } from "./core/lockDomain.js";
+import { KeyedOperationQueue } from "./core/keyedOperationQueue.js";
 import { buildContextPlan } from "./core/planner.js";
 import { CURRENT_INDEX_SCHEMA_VERSION, indexProject, updateProjectIndexIncremental, type ProjectIndexerDependencies, type ProjectIndexOptions } from "./core/projectIndexer.js";
 import { assessChangeRisk } from "./core/regressionRisk.js";
@@ -440,7 +441,7 @@ function okWithResourceLinks<T extends { resourceLinks?: Array<{ label: string; 
   };
 }
 
-const projectWriteChains = new Map<string, Promise<void>>();
+const projectWriteQueue = new KeyedOperationQueue();
 
 function projectIndexOptions(
   config: Awaited<ReturnType<typeof loadTokenGraphConfig>>
@@ -466,17 +467,7 @@ function projectIndexOptions(
 }
 
 async function enqueueProjectWrite<T>(root: string, operation: () => Promise<T>): Promise<T> {
-  const key = resolve(root);
-  const previous = projectWriteChains.get(key) ?? Promise.resolve();
-  const current = previous.then(operation, operation);
-  projectWriteChains.set(
-    key,
-    current.then(
-      () => undefined,
-      () => undefined
-    )
-  );
-  return current;
+  return projectWriteQueue.enqueue(resolve(root), operation);
 }
 
 /** @internal Shared persistence boundary for every server-driven index refresh. */
