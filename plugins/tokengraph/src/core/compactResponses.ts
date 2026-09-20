@@ -67,7 +67,7 @@ function compactReason(reason?: string): string | undefined {
 function compactWarnings(warnings: string[]): string[] {
   return unique(warnings.map((warning) => {
     const count = warning.match(/^(\d+) lower-ranked .* excluded/i)?.[1];
-    if (count) return `${count} lower-ranked item(s) omitted.`;
+    if (count) return `${count} omitted.`;
     if (/^manual review: tenant isolation changed or appears in affected sql/i.test(warning)) return "Review tenant isolation and affected SQL.";
     if (/^manual review: rls policy behavior is involved/i.test(warning)) return "Review RLS behavior.";
     if (/^manual review: audit logging behavior is involved/i.test(warning)) return "Review audit logging.";
@@ -184,13 +184,13 @@ export function compactPrepareEnvelope<T>(input: {
   };
 }) {
   return {
-    mode: input.mode ?? "tokengraph",
+    ...(input.mode === undefined ? {} : { mode: input.mode }),
     taskId: input.taskId,
     plan: input.plan,
     ...(input.routing === undefined ? {} : { routing: input.routing }),
     ...(input.artifact === undefined ? {} : { artifact: input.artifact }),
     ...(input.artifactReference === undefined ? {} : { artifactReference: input.artifactReference }),
-    deliveredArtifacts: input.deliveredArtifacts ?? [],
+    ...(input.deliveredArtifacts?.length ? { deliveredArtifacts: input.deliveredArtifacts } : {}),
     ...(input.unsupportedLanguageCounts && Object.keys(input.unsupportedLanguageCounts).length ? { unsupportedLanguageCounts: input.unsupportedLanguageCounts } : {}),
     ...(input.retrieval ? { retrieval: input.retrieval } : {})
   };
@@ -204,7 +204,7 @@ export function compactPlanResponse(plan: ContextPlan, options: CompactResponseO
     files,
     firstReads: firstReadIndices(files, plan.recommendedFirstReads.map((file) => file.path)),
     tests,
-    commands: tests.map((test) => `pnpm test ${test}`),
+    commands: [],
     confidence: plan.recommendedFirstReads.length ? "high" : files.length ? "medium" : "low",
     warnings: plan.budgetExclusions,
     conflicts: [],

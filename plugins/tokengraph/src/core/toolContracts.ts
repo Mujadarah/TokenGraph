@@ -1,5 +1,7 @@
 import * as z from "zod/v4";
 
+import type { ChangeSource } from "./types.js";
+
 export { compactCompressionEnvelope, compactModeEnvelope, compactPrepareEnvelope } from "./compactResponses.js";
 
 export function compactToolResultEnvelope<T extends object>(structuredContent: T) {
@@ -19,13 +21,30 @@ const compactResponseFields = {
   ...routingFields
 };
 const gitRefSchema = z.string().min(1).max(512).refine((value) => !value.includes("\0"), "Git refs cannot include NUL bytes.");
-const changeSourceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("working-tree") }).strict(),
-  z.object({ kind: z.literal("staged") }).strict(),
-  z.object({ kind: z.literal("commit"), ref: gitRefSchema }).strict(),
-  z.object({ kind: z.literal("range"), base: gitRefSchema, head: gitRefSchema }).strict(),
-  z.object({ kind: z.literal("pull-request"), baseRef: gitRefSchema, headRef: gitRefSchema }).strict()
-]);
+const changeSourceFields = ["ref", "base", "head", "baseRef", "headRef"] as const;
+const changeSourceSchema = z.object({
+  kind: z.enum(["working-tree", "staged", "commit", "range", "pull-request"]),
+  ref: gitRefSchema.optional(),
+  base: gitRefSchema.optional(),
+  head: gitRefSchema.optional(),
+  baseRef: gitRefSchema.optional(),
+  headRef: gitRefSchema.optional()
+}).strict().superRefine((source, context) => {
+  const required = source.kind === "commit" ? ["ref"]
+    : source.kind === "range" ? ["base", "head"]
+      : source.kind === "pull-request" ? ["baseRef", "headRef"]
+        : [];
+  for (const field of changeSourceFields) {
+    if (required.includes(field) !== (source[field] !== undefined)) {
+      context.addIssue({ code: "custom", path: [field], message: `${source.kind} has invalid ${field} input.` });
+    }
+  }
+}).transform((source): ChangeSource => {
+  if (source.kind === "commit") return { kind: source.kind, ref: source.ref! };
+  if (source.kind === "range") return { kind: source.kind, base: source.base!, head: source.head! };
+  if (source.kind === "pull-request") return { kind: source.kind, baseRef: source.baseRef!, headRef: source.headRef! };
+  return { kind: source.kind };
+}).describe("Local change source. commit requires ref; range requires base and head; pull-request requires baseRef and headRef; other source fields are forbidden.");
 
 export const prepareContextInputSchema = z.object({
   root: z.string().optional(), task: z.string().min(3), profile: tokenSavingProfileSchema.optional(),

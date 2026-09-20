@@ -55,6 +55,15 @@ describe("risk change-source contract", () => {
     }).success).toBe(false);
     expect(analyzeInputSchema.safeParse({ mode: "risk" }).success).toBe(false);
     expect(analyzeInputSchema.safeParse({ mode: "risk", changeSource: { kind: "commit", ref: "HEAD\0invalid" } }).success).toBe(false);
+    for (const changeSource of [
+      { kind: "working-tree", ref: "HEAD" },
+      { kind: "commit" },
+      { kind: "commit", ref: "HEAD", base: "main" },
+      { kind: "range", base: "main" },
+      { kind: "pull-request", base: "main", head: "feature" }
+    ]) {
+      expect(analyzeInputSchema.safeParse({ mode: "risk", changeSource }).success).toBe(false);
+    }
   });
 });
 

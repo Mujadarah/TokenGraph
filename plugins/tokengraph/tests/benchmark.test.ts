@@ -336,8 +336,10 @@ describe("evidence benchmark", () => {
       expect(task.accounting.lifecycleCalls.every((call) => call.response.content.length === 1)).toBe(true);
       expect(task.accounting.lifecycleCalls.every((call) => call.response.content[0]?.type === "text")).toBe(true);
       const intentPayload = JSON.parse(task.accounting.lifecycleCalls[intentIndex]!.response.content[0]!.text);
+      const intentWire = task.accounting.lifecycleCalls[intentIndex]!.response as unknown as { structuredContent?: unknown };
       const reportRequest = task.accounting.lifecycleCalls.at(-1)!.request.params.arguments as Record<string, unknown>;
       expect(intentPayload.taskId).toEqual(expect.any(String));
+      expect(intentWire.structuredContent).toEqual({ taskId: intentPayload.taskId });
       expect(reportRequest.taskId).toBe(intentPayload.taskId);
       if (task.flow !== "planner") expect(task.accounting.lifecycleCalls[intentIndex]!.request.params.arguments).not.toHaveProperty("taskId");
       expect(task.accounting.lifecycleCalls[intentIndex]!.request.params.arguments).not.toHaveProperty("root");
