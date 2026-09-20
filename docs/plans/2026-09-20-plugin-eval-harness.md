@@ -12,7 +12,11 @@ Plugin Eval version invokes verifier commands through `/bin/zsh`.
 Plugin Eval 0.1.2 exposes one verifier command list for all scenarios. The
 TokenGraph verifier therefore dispatches from the bounded scenario result
 manifest written by each run. It independently checks required paths, clean or
-exact-patch state, focused or full test commands, and low-write telemetry. Its
+exact-patch state, focused or full test commands, and workspace-level low-write
+telemetry. Scenario success and required-file recall are not accepted from the
+scenario manifest: the verifier requires the current completed task ledger and
+recomputes the privacy-safe event fingerprint for one exact TokenGraph search
+per required path. Its
 single JSON stdout record is retained by Plugin Eval after successful workspace
 cleanup and becomes the stable input to the custom metric pack.
 

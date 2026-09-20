@@ -44,8 +44,8 @@ async function verifierPayloads(benchmark) {
     const lines = (await readFile(outputPath, "utf8")).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     if (!lines.length) continue;
     const payload = JSON.parse(lines.at(-1));
-    if (payload?.schemaVersion !== 1 || payload.scenario !== scenario.id) throw new Error("Verifier output does not match its benchmark scenario.");
-    for (const key of ["requiredFileCount", "recalledFileCount", "passedTestCommands", "lowWriteOperationCount", "lowWriteLogicalBytes", "sampledPeakRssBytes"]) {
+    if (payload?.schemaVersion !== 2 || payload.scenario !== scenario.id) throw new Error("Verifier output does not match its benchmark scenario.");
+    for (const key of ["requiredFileCount", "recalledFileCount", "passedTestCommands", "workspaceWriteOperationCount", "workspaceWriteLogicalBytes", "workspaceSampledPeakRssBytes"]) {
       nonNegativeInteger(payload[key], `Verifier ${scenario.id} ${key}`);
     }
     if (payload.recalledFileCount > payload.requiredFileCount || payload.taskSuccess !== true || ![null, true, false].includes(payload.patchCorrect)) {
@@ -88,9 +88,9 @@ async function main() {
   const passedTestCommands = payloads.reduce((sum, payload) => sum + (payload.passedTestCommands ?? 0), 0);
   const patchPayloads = payloads.filter((payload) => payload.patchCorrect !== null);
   const correctPatches = patchPayloads.filter((payload) => payload.patchCorrect === true).length;
-  const lowWriteOperations = payloads.reduce((sum, payload) => sum + (payload.lowWriteOperationCount ?? 0), 0);
-  const lowWriteLogicalBytes = payloads.reduce((sum, payload) => sum + (payload.lowWriteLogicalBytes ?? 0), 0);
-  const sampledPeakRssBytes = payloads.reduce((maximum, payload) => Math.max(maximum, payload.sampledPeakRssBytes ?? 0), 0);
+  const workspaceWriteOperations = payloads.reduce((sum, payload) => sum + (payload.workspaceWriteOperationCount ?? 0), 0);
+  const workspaceWriteLogicalBytes = payloads.reduce((sum, payload) => sum + (payload.workspaceWriteLogicalBytes ?? 0), 0);
+  const workspaceSampledPeakRssBytes = payloads.reduce((maximum, payload) => Math.max(maximum, payload.workspaceSampledPeakRssBytes ?? 0), 0);
   const durationMs = benchmark.scenarios.reduce((sum, scenario) => sum + (scenario.durationMs ?? 0), 0);
   const workspaceChanges = benchmark.scenarios.reduce((sum, scenario) => sum + (scenario.workspaceSummary?.changedFileCount ?? 0), 0);
   const expected = configuredScenarioCount;
@@ -134,9 +134,9 @@ async function main() {
     metric("tokengraph-verifier-pass-count", benchmark.summary.verifierPassCount ?? 0, "commands", (benchmark.summary.verifierFailCount ?? 0) === 0 ? "good" : "warning"),
     metric("tokengraph-passed-test-commands", passedTestCommands, "commands", passedTestCommands === 5 ? "good" : "warning"),
     metric("tokengraph-patch-correctness-rate", patchPayloads.length ? correctPatches / patchPayloads.length : 0, "ratio", correctPatches === patchPayloads.length && patchPayloads.length > 0 ? "good" : "warning"),
-    metric("tokengraph-low-write-operations", lowWriteOperations, "operations"),
-    metric("tokengraph-low-write-logical-bytes", lowWriteLogicalBytes, "bytes"),
-    metric("tokengraph-sampled-peak-rss", sampledPeakRssBytes, "bytes")
+    metric("tokengraph-workspace-write-operations", workspaceWriteOperations, "operations"),
+    metric("tokengraph-workspace-write-logical-bytes", workspaceWriteLogicalBytes, "bytes"),
+    metric("tokengraph-workspace-sampled-peak-rss", workspaceSampledPeakRssBytes, "bytes")
   );
   if ((benchmark.summary.sampleCount ?? 0) > 0) {
     metrics.push(

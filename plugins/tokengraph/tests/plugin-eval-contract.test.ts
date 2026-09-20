@@ -48,6 +48,9 @@ describe("Plugin Eval benchmark contract", () => {
       expect(scenario.userInput).toContain("Use the installed TokenGraph plugin");
       expect(scenario.userInput).toContain("artifacts/plugin-eval/scenario-result.json");
       expect(scenario.userInput).toContain(`scenario ${scenario.id}`);
+      expect(scenario.userInput).toContain("schemaVersion 2");
+      expect(scenario.userInput).toContain("taskId");
+      expect(scenario.userInput).toContain("query exactly each required file path");
       expect(scenario.userInput).toMatch(/Report the task through TokenGraph/);
       expect(scenario.successChecklist.length).toBeGreaterThanOrEqual(3);
     }
@@ -65,6 +68,9 @@ describe("Plugin Eval benchmark contract", () => {
     expect(verifier).toContain("git\", [\"diff\", \"--check\"");
     expect(verifier).toContain("--untracked-files=no");
     expect(verifier).toContain("write-aggregates.json");
+    expect(verifier).toContain(".tokengraph/tasks/");
+    expect(verifier).toContain("expectedSearchFingerprint");
+    expect(verifier).toContain('ledger.status !== "completed"');
     expect(verifier).toContain("passedTestCommands");
     expect(verifier).toContain("patchCorrect");
 
@@ -105,16 +111,16 @@ describe("TokenGraph Plugin Eval metric pack", () => {
       await mkdir(directory, { recursive: true });
       const stdoutPath = join(directory, "verifier-1.stdout.log");
       await writeFile(stdoutPath, `${JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         scenario: id,
         taskSuccess: true,
         requiredFileCount: 3,
         recalledFileCount: 3,
         patchCorrect: id === "local-change-capsule" ? true : null,
         passedTestCommands: id === "trusted-setup-graph" ? 0 : 1,
-        lowWriteOperationCount: 2,
-        lowWriteLogicalBytes: 20,
-        sampledPeakRssBytes: 100 + index
+        workspaceWriteOperationCount: 2,
+        workspaceWriteLogicalBytes: 20,
+        workspaceSampledPeakRssBytes: 100 + index
       })}\n`);
       scenarios.push({
         id,
@@ -157,9 +163,9 @@ describe("TokenGraph Plugin Eval metric pack", () => {
     ]));
     expect(payload.metrics).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "tokengraph-tool-calls", value: 24 }),
-      expect.objectContaining({ id: "tokengraph-low-write-operations", value: 12 }),
-      expect.objectContaining({ id: "tokengraph-low-write-logical-bytes", value: 120 }),
-      expect.objectContaining({ id: "tokengraph-sampled-peak-rss", value: 105 }),
+      expect.objectContaining({ id: "tokengraph-workspace-write-operations", value: 12 }),
+      expect.objectContaining({ id: "tokengraph-workspace-write-logical-bytes", value: 120 }),
+      expect.objectContaining({ id: "tokengraph-workspace-sampled-peak-rss", value: 105 }),
       expect.objectContaining({ id: "tokengraph-passed-test-commands", value: 5 }),
       expect.objectContaining({ id: "tokengraph-patch-correctness-rate", value: 1 })
     ]));

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
@@ -6,6 +7,8 @@ const RESULT_PATH = "artifacts/plugin-eval/scenario-result.json";
 const TELEMETRY_PATH = ".tokengraph/telemetry/write-aggregates.json";
 const MAX_RESULT_BYTES = 64 * 1024;
 const MAX_TELEMETRY_BYTES = 256 * 1024;
+const MAX_TASK_LEDGER_BYTES = 8 * 1024 * 1024;
+const TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 const scenarios = Object.freeze({
   "trusted-setup-graph": {
@@ -71,6 +74,19 @@ function safeInteger(value) {
   return Number.isSafeInteger(value) && value >= 0;
 }
 
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function expectedSearchFingerprint(taskId, path) {
+  return sha256(JSON.stringify({
+    taskId,
+    toolName: "tokengraph_query_context",
+    category: "query-search",
+    operation: { mode: "search", queryHash: sha256(path), limit: null }
+  }));
+}
+
 function exactStringSet(actual, expected, label) {
   if (!Array.isArray(actual) || actual.some((value) => typeof value !== "string")) fail(`${label} must be a string array.`);
   const normalized = [...new Set(actual)].sort();
@@ -119,6 +135,29 @@ async function verifyRequiredFiles(root, requiredFiles) {
   }
 }
 
+async function verifyCurrentTask(root, manifest, contract) {
+  if (typeof manifest.taskId !== "string" || !TASK_ID_PATTERN.test(manifest.taskId)) fail("scenario result taskId is invalid.");
+  const ledger = await readBoundedJson(
+    root,
+    `.tokengraph/tasks/${manifest.taskId}.json`,
+    MAX_TASK_LEDGER_BYTES,
+    "scenario task ledger"
+  );
+  if (ledger?.schemaId !== "tokengraph-task-ledger" || ledger.schemaVersion !== 3 || ledger.taskId !== manifest.taskId ||
+      ledger.status !== "completed" || ledger.lastDisposition !== "complete" || !ledger.completedReport ||
+      !Array.isArray(ledger.events) || !Array.isArray(ledger.deliveredArtifacts)) {
+    fail("scenario task ledger is not a completed current TokenGraph task.");
+  }
+  const prepareEvents = ledger.events.filter((event) => event?.toolName === "tokengraph_prepare_context" && event.category === "context-routing");
+  if (prepareEvents.length !== 1) fail("scenario task ledger must contain exactly one context preparation event.");
+  const eventFingerprints = new Set(ledger.events.map((event) => event?.fingerprint).filter((value) => typeof value === "string"));
+  const recalledFiles = contract.requiredFiles.filter((path) => eventFingerprints.has(expectedSearchFingerprint(manifest.taskId, path)));
+  if (recalledFiles.length !== contract.requiredFiles.length) {
+    fail("scenario task ledger does not prove an exact TokenGraph search for every required file.");
+  }
+  return recalledFiles.length;
+}
+
 async function readTelemetry(root) {
   const telemetry = await readBoundedJson(root, TELEMETRY_PATH, MAX_TELEMETRY_BYTES, "write telemetry");
   if (telemetry?.schemaVersion !== 1 || !Array.isArray(telemetry.days)) fail("write telemetry has an unsupported schema.");
@@ -135,7 +174,7 @@ async function readTelemetry(root) {
       if (!safeInteger(operationCount) || !safeInteger(logicalBytes)) fail("write telemetry aggregate exceeds safe integer bounds.");
     }
   }
-  if (operationCount < 1 || sampledPeakRssBytes < 1) fail("write telemetry does not prove a reported TokenGraph task.");
+  if (operationCount < 1 || sampledPeakRssBytes < 1) fail("write telemetry does not contain bounded workspace aggregate evidence.");
   return { operationCount, logicalBytes, sampledPeakRssBytes };
 }
 
@@ -143,12 +182,10 @@ async function main() {
   const root = resolve(process.cwd());
   const manifest = await readBoundedJson(root, RESULT_PATH, MAX_RESULT_BYTES, "scenario result");
   const contract = scenarios[manifest?.scenario];
-  if (!contract || manifest.schemaVersion !== 1 || manifest.taskSuccess !== true) fail("scenario result does not identify a successful configured scenario.");
-  if (!Array.isArray(manifest.evidence) || manifest.evidence.length < 1 || manifest.evidence.length > 20 || manifest.evidence.some((value) => typeof value !== "string" || !value.trim() || value.length > 1_000)) {
-    fail("scenario evidence must contain 1 to 20 bounded strings.");
-  }
+  if (!contract || manifest.schemaVersion !== 2) fail("scenario result does not identify a configured scenario.");
   exactStringSet(manifest.requiredFiles, contract.requiredFiles, "requiredFiles");
   await verifyRequiredFiles(root, contract.requiredFiles);
+  const recalledFileCount = await verifyCurrentTask(root, manifest, contract);
 
   run("git", ["diff", "--check"], root);
   const trackedStatus = run("git", ["status", "--porcelain=v1", "--untracked-files=no"], root);
@@ -172,16 +209,16 @@ async function main() {
   }
   const telemetry = await readTelemetry(root);
   process.stdout.write(`${JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     scenario: manifest.scenario,
     taskSuccess: true,
     requiredFileCount: contract.requiredFiles.length,
-    recalledFileCount: manifest.requiredFiles.length,
+    recalledFileCount,
     patchCorrect,
     passedTestCommands,
-    lowWriteOperationCount: telemetry.operationCount,
-    lowWriteLogicalBytes: telemetry.logicalBytes,
-    sampledPeakRssBytes: telemetry.sampledPeakRssBytes
+    workspaceWriteOperationCount: telemetry.operationCount,
+    workspaceWriteLogicalBytes: telemetry.logicalBytes,
+    workspaceSampledPeakRssBytes: telemetry.sampledPeakRssBytes
   })}\n`);
 }
 
