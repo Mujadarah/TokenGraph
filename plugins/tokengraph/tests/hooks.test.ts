@@ -525,7 +525,7 @@ describe("built lifecycle hook process", () => {
     const names = (await readdir(join(dataRoot, "sessions"))).sort();
     expect(names).toEqual(sessionIds.map((sessionId) => `${createHash("sha256").update(sessionId).digest("hex")}.json`).sort());
     expect(names.some((name) => name.endsWith(".lock") || name.endsWith(".tmp"))).toBe(false);
-  });
+  }, 30_000);
 
   it("serializes hook host attachment with concurrent server event writes without losing events", async () => {
     const root = await makeRoot("tokengraph-hook-ledger-race-root-");

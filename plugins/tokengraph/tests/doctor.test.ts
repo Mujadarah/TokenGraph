@@ -131,7 +131,7 @@ describe("TokenGraph doctor", () => {
         config: { ...DEFAULT_TOKEN_GRAPH_CONFIG, storage: { ...DEFAULT_TOKEN_GRAPH_CONFIG.storage, writePolicy: "minimal", maxBytes: 1, runsMaxBytes: 1, cacheMaxBytes: 1, vaultMaxBytes: 1, durableMaxBytes: 1 } }
       })),
       writeFile(join(root, ".tokengraph", ".index-manifest.json"), "{not json"),
-      writeFile(join(root, ".tokengraph", "config.json.lock", "lease.json"), JSON.stringify({ schemaVersion: 1, pid: 999999, nonce: "11111111-1111-4111-8111-111111111111", startedAt: "2026-09-01T00:00:00.000Z", heartbeatAt: "2026-09-01T00:00:00.000Z" })),
+      writeFile(join(root, ".tokengraph", "config.json.lock", "lease.json"), `${JSON.stringify({ schemaVersion: 1, pid: 999999, nonce: "11111111-1111-4111-8111-111111111111", startedAt: "2026-09-01T00:00:00.000Z", heartbeatAt: "2026-09-01T00:00:00.000Z" })}\n`),
       writeFile(join(root, ".tokengraph", "repository", "memory.json.lock", "lease.json"), "not json"),
       writeFile(join(root, ".tokengraph", "tasks", "00000000-0000-4000-8000-000000000000.json"), JSON.stringify({
         schemaId: "tokengraph-task-ledger",

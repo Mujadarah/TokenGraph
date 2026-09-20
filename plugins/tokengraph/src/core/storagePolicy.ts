@@ -179,7 +179,8 @@ export async function enforceStorageQuota(root: string, quota: StorageQuota): Pr
 }
 
 function assertClassQuotas(quotas: StorageClassQuotas): void {
-  for (const [name, value] of Object.entries(quotas)) {
+  for (const name of ["maxBytes", "runsMaxBytes", "cacheMaxBytes", "vaultMaxBytes", "durableMaxBytes"] as const) {
+    const value = quotas[name];
     if (!Number.isInteger(value) || value < (name === "maxBytes" ? 1 : 0)) throw new Error(`Storage ${name} must be a non-negative integer${name === "maxBytes" ? " greater than zero" : ""}.`);
   }
 }

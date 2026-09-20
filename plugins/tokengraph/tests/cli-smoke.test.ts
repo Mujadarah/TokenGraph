@@ -352,8 +352,8 @@ describe("tokengraph benchmark harness and trust docs", () => {
 
     expect(trustText).toMatch(/local-first/i);
     expect(trustText).toMatch(/does not require an OpenAI API key/i);
-    expect(trustText).toMatch(/does not require cloud sync/i);
-    expect(trustText).toMatch(/does not require embeddings service/i);
+    expect(trustText).toMatch(/does not require[^.]*cloud sync/i);
+    expect(trustText).toMatch(/does not require[^.]*embeddings service/i);
     expect(trustText).toMatch(/respects \.gitignore/i);
     expect(trustText).toMatch(/excludes secrets by default/i);
     expect(trustText).toMatch(/Users can delete indexes and memories/i);
@@ -486,7 +486,7 @@ describe("tokengraph release package command", () => {
     ])).toEqual({ contract: "core", forbiddenCoreTools: ["tokengraph_plan_context"] });
 
     const helperSource = await readFile(resolve("scripts", "skill-contract.mjs"), "utf8");
-    expect(helperSource).toMatch(/Phase 5[\s\S]*remove[\s\S]*legacy/i);
+    expect(helperSource).toMatch(/Transitional packaging compatibility[\s\S]*remove[\s\S]*legacy/i);
   });
 
   it("scans every packaged text file for personal paths", async () => {

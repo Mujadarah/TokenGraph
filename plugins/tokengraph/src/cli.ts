@@ -124,7 +124,7 @@ async function main(argv: string[]): Promise<void> {
     }))}\n`);
     return;
   }
-  if (argv[0] !== "run") throw new Error(`Usage: tokengraph doctor [--root <path>] [--json]; tokengraph run [--root <path>] [--task-id <uuid>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] --confirm-no-legacy-processes -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived --confirm-no-legacy-processes; tokengraph evaluate-routing [--root <path>] --manifest <path> --confirm-no-legacy-processes; or tokengraph evaluate-host --protocol <path> [--dry-run]. ${LEGACY_RUNTIME_ROLLOUT}`);
+  if (argv[0] !== "run") throw new Error(`${LEGACY_RUNTIME_ROLLOUT} Usage: tokengraph doctor [--root <path>] [--json]; tokengraph run [--root <path>] [--task-id <uuid>] [--timeout-ms <n>] [--max-bytes <n>] [--test <name>] [--file <path>] [--error-class <name>] --confirm-no-legacy-processes -- <command> [args...]; tokengraph purge [--root <path>] --class runs|cache|outcomes|derived --confirm-no-legacy-processes; tokengraph evaluate-routing [--root <path>] --manifest <path> --confirm-no-legacy-processes; or tokengraph evaluate-host --protocol <path> [--dry-run].`);
   const separator = argv.indexOf("--");
   if (separator < 0 || separator === argv.length - 1) throw new Error("tokengraph run requires `-- <command> [args...]`.");
   const commandArgs = argv.slice(separator + 1);
