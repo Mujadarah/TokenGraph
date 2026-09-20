@@ -344,6 +344,34 @@ describe("transactional index generations", () => {
     }
   });
 
+  it("refreshes a valid publication after HEAD advances on the same branch", async () => {
+    const root = await makeRoot();
+    await execFile("git", ["init", "-q", "-b", "main", root]);
+    await execFile("git", ["-C", root, "config", "user.email", "generation@example.invalid"]);
+    await execFile("git", ["-C", root, "config", "user.name", "Generation Fixture"]);
+    const sourcePath = join(root, "src", "entry.ts");
+    await writeFile(sourcePath, "export const firstRevision = true;\n");
+    await execFile("git", ["-C", root, "add", "."]);
+    await execFile("git", ["-C", root, "commit", "-qm", "revision a"]);
+    const revisionA = await indexProject(root);
+    await saveProjectIndex(root, revisionA);
+
+    await writeFile(sourcePath, "export const secondRevision = true;\n");
+    await execFile("git", ["-C", root, "add", "."]);
+    await execFile("git", ["-C", root, "commit", "-qm", "revision b"]);
+
+    await expect(loadProjectIndex(root)).resolves.toBeUndefined();
+    const refreshed = await refreshProjectIndex(root, undefined, {});
+
+    expect(refreshed.mode).toBe("full");
+    expect(refreshed.index.generation?.id).not.toBe(revisionA.generation?.id);
+    expect(refreshed.index.symbols.map((symbol) => symbol.name)).toContain("secondRevision");
+    await expect(loadProjectIndex(root)).resolves.toMatchObject({
+      generation: { id: refreshed.index.generation!.id },
+      repositoryIdentity: { branch: "main" }
+    });
+  });
+
   it("refuses publication after the repository branch identity changes", async () => {
     const root = await makeRoot();
     await execFile("git", ["init", "-q", "-b", "main", root]);

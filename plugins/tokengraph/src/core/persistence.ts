@@ -170,13 +170,16 @@ function isCanonicalIsoTimestamp(value: unknown): value is string {
 }
 
 function sameRepositoryIdentity(left: ProjectIndex["repositoryIdentity"], right: ProjectIndex["repositoryIdentity"]): boolean {
+  return Boolean(left && right && sameRepositoryLineage(left, right) && left.headCommit === right.headCommit);
+}
+
+function sameRepositoryLineage(left: ProjectIndex["repositoryIdentity"], right: ProjectIndex["repositoryIdentity"]): boolean {
   return Boolean(left && right &&
     left.repositoryId === right.repositoryId &&
     left.repositoryFingerprint === right.repositoryFingerprint &&
     left.workspaceId === right.workspaceId &&
     left.worktreeId === right.worktreeId &&
     left.branch === right.branch &&
-    left.headCommit === right.headCommit &&
     left.remoteIdentity === right.remoteIdentity);
 }
 
@@ -440,10 +443,13 @@ async function assertExistingPublicationSafe(root: string): Promise<void> {
     if (generation.generation?.id !== manifest.generationId || manifest.generationFile !== `.index-generation-${generation.generation.id}.json`) {
       throw new Error("The active TokenGraph index generation identity is inconsistent; refusing to replace its manifest.");
     }
+    const selfValidationFailure = generationValidationFailure(root, generation, generation.repositoryIdentity);
+    if (selfValidationFailure) {
+      throw new Error(`The active TokenGraph index generation is invalid (${selfValidationFailure}); refusing to replace its manifest.`);
+    }
     const currentIdentity = await getRepositoryIdentity(root);
-    const failure = generationValidationFailure(root, generation, currentIdentity);
-    if (failure) {
-      throw new Error(`The active TokenGraph index generation is invalid (${failure}); refusing to replace its manifest.`);
+    if (!sameRepositoryLineage(generation.repositoryIdentity, currentIdentity)) {
+      throw new Error("The active TokenGraph index generation is invalid (repository identity changed before index promotion); refusing to replace its manifest.");
     }
     return;
   }
@@ -661,8 +667,12 @@ async function loadManifestProjectIndex(root: string, currentIdentity: ProjectIn
       if (parsed.generation?.id !== manifest.generationId || basename(manifest.generationFile) !== `.index-generation-${parsed.generation.id}.json`) {
         throw unsafePublication("The active TokenGraph index generation identity is inconsistent.");
       }
-      const validationFailure = generationValidationFailure(root, parsed, currentIdentity);
-      if (validationFailure) throw unsafePublication(`The active TokenGraph index generation is unsafe: ${validationFailure}.`);
+      const selfValidationFailure = generationValidationFailure(root, parsed, parsed.repositoryIdentity);
+      if (selfValidationFailure) throw unsafePublication(`The active TokenGraph index generation is unsafe: ${selfValidationFailure}.`);
+      if (!sameRepositoryIdentity(parsed.repositoryIdentity, currentIdentity)) {
+        if (sameRepositoryLineage(parsed.repositoryIdentity, currentIdentity)) return { manifestPresent: true };
+        throw unsafePublication("The active TokenGraph index generation is unsafe: repository identity changed before index promotion.");
+      }
       return { manifestPresent: true, index: parsed };
     } catch (error) {
       if (readingManifest && (error as NodeJS.ErrnoException).code === "UNSTABLE_INDEX_READ") {
