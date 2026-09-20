@@ -16,6 +16,7 @@ import {
 } from "../scripts/benchmark-lib.js";
 import * as benchmarkLibrary from "../scripts/benchmark-lib.js";
 import { runBenchmarkCli } from "../scripts/benchmark-cli.js";
+import { generatePublishedBenchmarkResults, publishedBenchmarkJson } from "../scripts/published-benchmark.js";
 import { buildTaskReport, TASK_ESTIMATOR_VERSION } from "../src/core/taskEstimator.js";
 import type { TaskLedger } from "../src/core/taskLedger.js";
 import { estimateTokens } from "../src/core/token.js";
@@ -468,6 +469,13 @@ describe("evidence benchmark", () => {
     expect(published.aggregate.medianExecutionInclusiveNetSavings).toBeCloseTo(report.aggregate.medianExecutionInclusiveNetSavings, 6);
     expect(published.aggregate.medianNetSavings).toBeCloseTo(report.aggregate.medianNetSavings, 6);
     expect(published.aggregate.executionInclusiveMedian).toBeCloseTo(report.aggregate.primaryMedianNetSavings, 6);
+  });
+
+  it("canonically regenerates the published benchmark artifact from primary evidence", async () => {
+    const generated = await generatePublishedBenchmarkResults(resolve("..", ".."));
+    const serialized = publishedBenchmarkJson(generated);
+    expect(serialized).toBe(await readFile(publishedResultsPath, "utf8"));
+    expect(serialized).toBe(stableBenchmarkJson(generated));
   });
 
   it("charges inflated compact payloads instead of rewarding them", () => {

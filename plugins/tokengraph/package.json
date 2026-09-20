@@ -21,6 +21,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "smoke": "node scripts/smoke.mjs",
     "benchmark": "node scripts/benchmark.mjs",
+    "benchmark:publish": "node scripts/publish-benchmark-results.mjs",
     "native:build": "node scripts/build-native-lock-addon.mjs",
     "native:manifest": "node scripts/generate-native-lock-manifest.mjs",
     "native:validate": "node scripts/validate-native-lock-addon.mjs",
