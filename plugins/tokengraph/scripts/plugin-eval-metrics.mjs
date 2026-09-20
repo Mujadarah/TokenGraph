@@ -36,7 +36,7 @@ async function verifierPayloads(benchmark) {
   const payloads = [];
   for (const scenario of benchmark.scenarios ?? []) {
     const result = scenario.verifierResults?.[0];
-    if (!result?.stdoutPath) continue;
+    if (result?.status !== "passed" || !result.stdoutPath) continue;
     const originalStats = await lstat(result.stdoutPath);
     if (!originalStats.isFile() || originalStats.isSymbolicLink() || originalStats.size > MAX_VERIFIER_BYTES) throw new Error("Verifier output must be a bounded regular file.");
     const outputPath = await realpath(result.stdoutPath);
@@ -61,7 +61,11 @@ async function main() {
   const targetKind = process.argv[3] ?? process.env.PLUGIN_EVAL_TARGET_KIND;
   if (!targetPath || targetKind !== "plugin") throw new Error("TokenGraph metrics require a plugin target.");
   const config = await readJson(configPath, 256 * 1024, "benchmark config");
-  const configuredScenarioCount = Array.isArray(config.scenarios) ? config.scenarios.length : 0;
+  const configuredScenarios = Array.isArray(config.scenarios) ? config.scenarios : [];
+  const configuredScenarioIds = configuredScenarios
+    .map((scenario) => scenario?.id)
+    .filter((id) => typeof id === "string" && id.length > 0);
+  const configuredScenarioCount = configuredScenarios.length;
   const checks = [];
   const metrics = [metric("tokengraph-configured-scenarios", configuredScenarioCount, "scenarios", configuredScenarioCount === 6 ? "good" : "warning")];
   const benchmarkPath = process.env.TOKENGRAPH_PLUGIN_EVAL_BENCHMARK;
@@ -82,6 +86,26 @@ async function main() {
   for (const scenario of benchmark.scenarios) nonNegativeInteger(scenario.durationMs, `Benchmark ${scenario.id} durationMs`);
   const payloads = await verifierPayloads(benchmark);
   const completed = benchmark.scenarios.filter((scenario) => scenario.status === "completed").length;
+  const failedScenarios = benchmark.scenarios.length - completed;
+  const verifierResults = benchmark.scenarios.flatMap((scenario) => Array.isArray(scenario.verifierResults) ? scenario.verifierResults : []);
+  const verifierPassCount = verifierResults.filter((result) => result?.status === "passed").length;
+  const verifierFailCount = verifierResults.length - verifierPassCount;
+  const summaryFailedScenarios = nonNegativeInteger(benchmark.summary.failedScenarios, "Benchmark summary failedScenarios");
+  const summaryVerifierPassCount = nonNegativeInteger(benchmark.summary.verifierPassCount, "Benchmark summary verifierPassCount");
+  const summaryVerifierFailCount = nonNegativeInteger(benchmark.summary.verifierFailCount, "Benchmark summary verifierFailCount");
+  const configuredScenarioSet = new Set(configuredScenarioIds);
+  const observedScenarioIds = benchmark.scenarios.map((scenario) => scenario.id);
+  const observedScenarioSet = new Set(observedScenarioIds);
+  const scenarioIdentitiesMatch =
+    configuredScenarioSet.size === configuredScenarioCount &&
+    observedScenarioIds.length === configuredScenarioCount &&
+    observedScenarioSet.size === observedScenarioIds.length &&
+    observedScenarioIds.every((id) => configuredScenarioSet.has(id));
+  const verifierRecordsMatch = benchmark.scenarios.every((scenario) => Array.isArray(scenario.verifierResults) && scenario.verifierResults.length === 1);
+  const summaryMatchesRecords =
+    summaryFailedScenarios === failedScenarios &&
+    summaryVerifierPassCount === verifierPassCount &&
+    summaryVerifierFailCount === verifierFailCount;
   const taskSuccesses = payloads.filter((payload) => payload.taskSuccess === true).length;
   const requiredFiles = payloads.reduce((sum, payload) => sum + (payload.requiredFileCount ?? 0), 0);
   const recalledFiles = payloads.reduce((sum, payload) => sum + (payload.recalledFileCount ?? 0), 0);
@@ -94,13 +118,24 @@ async function main() {
   const durationMs = benchmark.scenarios.reduce((sum, scenario) => sum + (scenario.durationMs ?? 0), 0);
   const workspaceChanges = benchmark.scenarios.reduce((sum, scenario) => sum + (scenario.workspaceSummary?.changedFileCount ?? 0), 0);
   const expected = configuredScenarioCount;
+  const benchmarkEvidenceComplete =
+    scenarioIdentitiesMatch &&
+    verifierRecordsMatch &&
+    summaryMatchesRecords &&
+    completed === expected &&
+    payloads.length === expected;
 
   checks.push(check(
     "tokengraph-benchmark-scenarios",
-    completed === expected && payloads.length === expected ? "pass" : "fail",
+    benchmarkEvidenceComplete ? "pass" : "fail",
     `${completed} of ${expected} TokenGraph scenarios completed with ${payloads.length} retained verifier records.`,
-    [`failed scenarios: ${benchmark.summary.failedScenarios ?? expected - completed}`],
-    completed === expected && payloads.length === expected ? [] : ["Inspect failed scenario and verifier logs before using this benchmark as release evidence."]
+    [
+      `scenario identities: ${scenarioIdentitiesMatch ? "exact" : "mismatch"}`,
+      `verifier records: ${verifierRecordsMatch ? "complete" : "mismatch"}`,
+      `summary records: ${summaryMatchesRecords ? "consistent" : "mismatch"}`,
+      `failed scenarios: ${failedScenarios}`
+    ],
+    benchmarkEvidenceComplete ? [] : ["Inspect scenario identities, summary counts, and verifier logs before using this benchmark as release evidence."]
   ));
   checks.push(check(
     "tokengraph-required-file-recall",
@@ -118,20 +153,20 @@ async function main() {
   ));
   checks.push(check(
     "tokengraph-verifier-tests",
-    passedTestCommands === 5 && (benchmark.summary.verifierFailCount ?? 0) === 0 ? "pass" : "fail",
-    `${passedTestCommands} scenario test commands passed; verifier failures: ${benchmark.summary.verifierFailCount ?? 0}.`,
+    passedTestCommands === 5 && verifierFailCount === 0 && summaryMatchesRecords ? "pass" : "fail",
+    `${passedTestCommands} scenario test commands passed; verifier failures: ${verifierFailCount}.`,
     [],
-    passedTestCommands === 5 ? [] : ["Inspect focused and full verifier command logs."]
+    passedTestCommands === 5 && verifierFailCount === 0 && summaryMatchesRecords ? [] : ["Inspect focused and full verifier command logs."]
   ));
 
   metrics.push(
-    metric("tokengraph-scenario-success-rate", expected ? completed / expected : 0, "ratio", completed === expected ? "good" : "warning"),
+    metric("tokengraph-scenario-success-rate", expected ? completed / expected : 0, "ratio", benchmarkEvidenceComplete ? "good" : "warning"),
     metric("tokengraph-task-success-count", taskSuccesses, "tasks", taskSuccesses === expected ? "good" : "warning"),
     metric("tokengraph-required-file-recall-rate", requiredFiles ? recalledFiles / requiredFiles : 0, "ratio", recalledFiles === requiredFiles && requiredFiles > 0 ? "good" : "warning"),
     metric("tokengraph-benchmark-duration", durationMs, "milliseconds"),
     metric("tokengraph-tool-calls", benchmark.summary.toolCallCount ?? 0, "calls"),
     metric("tokengraph-workspace-changes", workspaceChanges, "files"),
-    metric("tokengraph-verifier-pass-count", benchmark.summary.verifierPassCount ?? 0, "commands", (benchmark.summary.verifierFailCount ?? 0) === 0 ? "good" : "warning"),
+    metric("tokengraph-verifier-pass-count", verifierPassCount, "commands", verifierFailCount === 0 && summaryMatchesRecords ? "good" : "warning"),
     metric("tokengraph-passed-test-commands", passedTestCommands, "commands", passedTestCommands === 5 ? "good" : "warning"),
     metric("tokengraph-patch-correctness-rate", patchPayloads.length ? correctPatches / patchPayloads.length : 0, "ratio", correctPatches === patchPayloads.length && patchPayloads.length > 0 ? "good" : "warning"),
     metric("tokengraph-workspace-write-operations", workspaceWriteOperations, "operations"),
