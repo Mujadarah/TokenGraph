@@ -408,22 +408,23 @@ describe("Phase 6 low-write policy", () => {
 
   it("settles an in-flight recall before reporting and discards failed task usage", async () => {
     const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
     const filePath = join(root, ".tokengraph", "repository", "memory.json");
     const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
-    const store = new MemoryStore(filePath, lock, { writePolicy: "minimal", bufferScope: "task-a" });
+    const store = new MemoryStore(filePath, lock, { writePolicy: "minimal", bufferScope: ledger.taskId });
     const memory = await store.add(input("In-flight memory"));
     let release!: () => void;
     const held = new Promise<void>((resolveRelease) => { release = resolveRelease; });
-    const recall = withTaskWriteLifecycle(root, "task-a", async () => { await held; await store.recordUse([memory.id]); });
-    const report = withTaskWriteLifecycle(root, "task-a", () => flushTaskReportWrites(root, "task-a"));
+    const recall = withTaskWriteLifecycle(root, ledger.taskId, async () => { await held; await store.recordUse([memory.id]); });
+    const report = withTaskWriteLifecycle(root, ledger.taskId, () => flushTaskReportWrites(root, ledger.taskId));
     release();
     await recall;
     await expect(report).resolves.toEqual([]);
     expect((await store.list())[0]?.lastUsedAt).toEqual(expect.any(String));
 
     await store.recordUse([memory.id]);
-    await discardTaskMemoryUses(root, "task-a");
-    await expect(flushBufferedMemoryUses(filePath, lock, "task-a")).resolves.toBe(false);
+    await discardTaskMemoryUses(root, ledger.taskId);
+    await expect(flushBufferedMemoryUses(filePath, lock, ledger.taskId)).resolves.toBe(false);
   });
 
   it("settles minimal memory ids recorded by another MCP process", async () => {
@@ -455,11 +456,12 @@ describe("Phase 6 low-write policy", () => {
 
   it("flushes memory before telemetry and preserves bounded task-report warnings", async () => {
     const root = await makeRoot();
+    const ledger = await createTaskLedger(root, { host: "codex" });
     const filePath = join(root, ".tokengraph", "repository", "memory.json");
     const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
     const store = new MemoryStore(filePath, lock, {
       writePolicy: "minimal",
-      bufferScope: "task-a",
+      bufferScope: ledger.taskId,
       telemetry: { root, storageClass: "durable" }
     });
     await store.add(input("Task report flush"));
@@ -467,18 +469,19 @@ describe("Phase 6 low-write policy", () => {
     const before = (await readWriteTelemetry(root)).days.at(-1)?.classes.durable?.operationCount ?? 0;
     await store.recall("task report flush");
 
-    await expect(flushTaskReportWrites(root, "task-a")).resolves.toEqual([]);
+    await expect(flushTaskReportWrites(root, ledger.taskId)).resolves.toEqual([]);
     const after = (await readWriteTelemetry(root)).days.at(-1)?.classes.durable?.operationCount ?? 0;
     expect(after).toBe(before + 1);
 
-    await store.recall("task report flush");
+    const warningMemory = await store.add(input("Task report warning"));
+    await store.recall("task report warning");
     await link(filePath, join(root, "memory-hardlink.json"));
     observeSuccessfulWrite({ root, storageClass: "cache" }, 9);
-    await expect(flushTaskReportWrites(root, "task-a")).resolves.toEqual(["memory-use-flush-failed"]);
+    await expect(flushTaskReportWrites(root, ledger.taskId)).resolves.toEqual(["memory-use-flush-failed"]);
     expect((await readWriteTelemetry(root)).days.at(-1)?.classes.cache?.logicalBytes).toBe(9);
     await rm(join(root, "memory-hardlink.json"));
-    await expect(flushTaskReportWrites(root, "task-a")).resolves.toEqual([]);
-    expect((await store.list())[0]?.lastUsedAt).toEqual(expect.any(String));
+    await expect(flushTaskReportWrites(root, ledger.taskId)).resolves.toEqual([]);
+    expect((await store.list()).find((memory) => memory.id === warningMemory.id)?.lastUsedAt).toEqual(expect.any(String));
   });
 
   it("defines crash loss as pending telemetry only, never the successful durable write", async () => {
