@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { indexProject } from "../src/core/projectIndexer.js";
+import { indexProject, projectIndexFingerprint } from "../src/core/projectIndexer.js";
 import { createTaskOutcome } from "../src/core/memoryCore.js";
 import { estimateTokens } from "../src/core/token.js";
 import { benchmarkMcpInputSchemas } from "../src/core/toolContracts.js";
@@ -16,7 +16,14 @@ import { createTokenGraphServer } from "../src/server.js";
 import { updateTokenGraphConfig } from "../src/core/config.js";
 import { canonicalPersistenceLock } from "../src/core/lockDomain.js";
 import { MemoryStore } from "../src/core/memoryStore.js";
-import { repositoryMemoryPath } from "../src/core/persistence.js";
+import {
+  indexManifestPath,
+  indexPath,
+  loadProjectIndex,
+  repositoryMemoryPath,
+  saveProjectIndex
+} from "../src/core/persistence.js";
+import type { ProjectIndex } from "../src/core/types.js";
 import {
   createExternalPluginMirror,
   externalHooksEntry,
@@ -95,6 +102,13 @@ async function makeRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "tokengraph-mcp-"));
   tempRoots.push(root);
   return root;
+}
+
+async function writeLegacyV4Index(root: string, index: ProjectIndex): Promise<void> {
+  const legacy = { ...index, schemaVersion: 4, fingerprint: projectIndexFingerprint(index) };
+  delete legacy.generation;
+  await mkdir(join(root, ".tokengraph"), { recursive: true });
+  await writeFile(indexPath(root), `${JSON.stringify(legacy, null, 2)}\n`);
 }
 
 async function seedMinimalPolicyMemory(root: string, title: string): Promise<{ id: string; path: string }> {
@@ -699,7 +713,7 @@ describe("TokenGraph MCP stdio server", () => {
     });
     expect(result.structuredContent).not.toHaveProperty("mode", "direct-host");
     await expect(access(join(root, ".tokengraph", "tasks"))).resolves.toBeUndefined();
-    await expect(access(join(root, ".tokengraph", "index.json"))).resolves.toBeUndefined();
+    await expect(access(indexManifestPath(root))).resolves.toBeUndefined();
     const forcedBypass = await request(90302, "tools/call", {
       name: "tokengraph_prepare_context", arguments: { task: "Trace the architecture", routingOverride: "force-bypass" }
     });
@@ -1009,16 +1023,12 @@ describe("TokenGraph MCP stdio server", () => {
   it("honestly reports a refresh when prepare_context replaces an unsafe index with a current scan signature", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
-    await mkdir(join(root, ".tokengraph"), { recursive: true });
     await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
     const current = await indexProject(root);
-    await writeFile(
-      join(root, ".tokengraph", "index.json"),
-      JSON.stringify({
-        ...current,
-        symbols: [{ name: "InjectedOutsideSymbol", kind: "function", filePath: "../../outside-secret.ts", exported: true, startLine: 1, endLine: 1 }]
-      })
-    );
+    await writeLegacyV4Index(root, {
+      ...current,
+      symbols: [{ name: "InjectedOutsideSymbol", kind: "function", filePath: "../../outside-secret.ts", exported: true, startLine: 1, endLine: 1 }]
+    });
     await stopServer();
     startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
     await request(9060, "initialize", {
@@ -1041,7 +1051,8 @@ describe("TokenGraph MCP stdio server", () => {
         changes: { parsedFiles: expect.arrayContaining(["src/real.ts"]) }
       }
     });
-    const persisted = JSON.parse(await readFile(join(root, ".tokengraph", "index.json"), "utf8")) as { symbols: Array<{ name: string }> };
+    const persisted = await loadProjectIndex(root);
+    if (!persisted) throw new Error("Expected prepare_context to publish a current index generation.");
     expect(persisted.symbols.map((symbol) => symbol.name)).toContain("RealSymbol");
     expect(persisted.symbols.map((symbol) => symbol.name)).not.toContain("InjectedOutsideSymbol");
   });
@@ -1603,7 +1614,7 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_analyze",
       arguments: { root, mode: "risk", changeSource: { kind: "working-tree" }, responseMode: "verbose" }
     });
-    await access(join(root, ".tokengraph", "index.json"));
+    await access(indexManifestPath(root));
     const entries = (analyzed.structuredContent as {
       result: { artifact?: { content: { entries: Array<{ path: string; provenance: string }> } } };
     }).result.artifact?.content.entries;
@@ -2651,35 +2662,10 @@ describe("TokenGraph MCP stdio server", () => {
   it("reindexes stale persisted indexes before serving read tools", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
-    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(join(root, "src", "real.ts"), "export function OldSymbol() { return true; }");
+    const current = await indexProject(root);
+    await writeLegacyV4Index(root, current);
     await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
-    await writeFile(
-      join(root, ".tokengraph", "index.json"),
-      JSON.stringify(
-        {
-          root,
-          scannedAt: "2026-07-06T00:00:00.000Z",
-          fingerprint: "stale-fingerprint",
-          frameworks: ["TypeScript"],
-          files: [],
-          symbols: [
-            {
-              name: "InjectedOutsideSymbol",
-              kind: "function",
-              filePath: "../../outside-secret.ts",
-              exported: true,
-              startLine: 1,
-              endLine: 1
-            }
-          ],
-          imports: [],
-          exclusions: [],
-          sql: { tables: [], relations: [], policies: [], indexes: [], triggers: [], functions: [], views: [] }
-        },
-        null,
-        2
-      )
-    );
     await stopServer();
     startServer(root);
 
@@ -2692,7 +2678,7 @@ describe("TokenGraph MCP stdio server", () => {
 
     const explanation = await request(13, "tools/call", {
       name: "tokengraph_explain_symbol",
-      arguments: { target: "InjectedOutsideSymbol" }
+      arguments: { target: "OldSymbol" }
     });
 
     expect(explanation.structuredContent).toMatchObject({
@@ -2704,29 +2690,21 @@ describe("TokenGraph MCP stdio server", () => {
   it("ignores crafted persisted indexes even when they claim the current fingerprint", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
-    await mkdir(join(root, ".tokengraph"), { recursive: true });
     await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
     const current = await indexProject(root);
-    await writeFile(
-      join(root, ".tokengraph", "index.json"),
-      JSON.stringify(
+    await writeLegacyV4Index(root, {
+      ...current,
+      symbols: [
         {
-          ...current,
-          symbols: [
-            {
-              name: "InjectedOutsideSymbol",
-              kind: "function",
-              filePath: "../../outside-secret.ts",
-              exported: true,
-              startLine: 1,
-              endLine: 1
-            }
-          ]
-        },
-        null,
-        2
-      )
-    );
+          name: "InjectedOutsideSymbol",
+          kind: "function",
+          filePath: "../../outside-secret.ts",
+          exported: true,
+          startLine: 1,
+          endLine: 1
+        }
+      ]
+    });
     await stopServer();
     startServer(root);
 
@@ -2751,29 +2729,21 @@ describe("TokenGraph MCP stdio server", () => {
   it("rejects nested traversal paths in crafted persisted indexes", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
-    await mkdir(join(root, ".tokengraph"), { recursive: true });
     await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
     const current = await indexProject(root);
-    await writeFile(
-      join(root, ".tokengraph", "index.json"),
-      JSON.stringify(
+    await writeLegacyV4Index(root, {
+      ...current,
+      symbols: [
         {
-          ...current,
-          symbols: [
-            {
-              name: "NestedInjectedOutsideSymbol",
-              kind: "function",
-              filePath: "src/../../outside-secret.ts",
-              exported: true,
-              startLine: 1,
-              endLine: 1
-            }
-          ]
-        },
-        null,
-        2
-      )
-    );
+          name: "NestedInjectedOutsideSymbol",
+          kind: "function",
+          filePath: "src/../../outside-secret.ts",
+          exported: true,
+          startLine: 1,
+          endLine: 1
+        }
+      ]
+    });
     await stopServer();
     startServer(root);
 
@@ -2800,18 +2770,14 @@ describe("TokenGraph MCP stdio server", () => {
     await mkdir(join(root, "src"), { recursive: true });
     await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
     const current = await indexProject(root);
-    await mkdir(join(root, ".tokengraph"), { recursive: true });
-    await writeFile(
-      join(root, ".tokengraph", "index.json"),
-      JSON.stringify(
-        {
-          ...current,
-          scannedAt: "2000-01-01T00:00:00.000Z"
-        },
-        null,
-        2
-      )
-    );
+    await saveProjectIndex(root, {
+      ...current,
+      scannedAt: "2000-01-01T00:00:00.000Z",
+      generation: {
+        ...current.generation!,
+        createdAt: "2000-01-01T00:00:00.000Z"
+      }
+    });
     await stopServer();
     startServer(root);
 
@@ -2851,10 +2817,8 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_index_project",
       arguments: { root }
     });
-    const before = JSON.parse(await readFile(join(root, ".tokengraph", "index.json"), "utf8")) as {
-      fingerprint: string;
-      scanSignature: string;
-    };
+    const before = await loadProjectIndex(root);
+    if (!before?.scanSignature) throw new Error("Expected the first index publication to include a scan signature.");
 
     const original = await readFile(file, "utf8");
     const touchedAt = new Date(Date.now() + 2_000);
@@ -2864,10 +2828,8 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_project_map",
       arguments: { root }
     });
-    const after = JSON.parse(await readFile(join(root, ".tokengraph", "index.json"), "utf8")) as {
-      fingerprint: string;
-      scanSignature: string;
-    };
+    const after = await loadProjectIndex(root);
+    if (!after?.scanSignature) throw new Error("Expected the refreshed publication to include a scan signature.");
 
     expect(mapped.structuredContent).toMatchObject({ root });
     expect(after.fingerprint).toBe(before.fingerprint);
