@@ -91,6 +91,9 @@ async function makePackageRepositoryCopy(): Promise<{ copiedPlugin: string; repo
   await cp(resolve("node_modules", "fflate"), join(copiedPlugin, "node_modules", "fflate"), { recursive: true });
   await cp(resolve("..", "..", "LICENSE"), join(repoCopy, "LICENSE"));
   await cp(resolve("..", "..", "NOTICE"), join(repoCopy, "NOTICE"));
+  await mkdir(join(repoCopy, "docs", "benchmarks"), { recursive: true });
+  await cp(resolve("..", "..", "docs", "benchmarks", "results-current.json"),
+    join(repoCopy, "docs", "benchmarks", "results-current.json"));
   return { copiedPlugin, repoCopy };
 }
 
@@ -152,7 +155,7 @@ describe("tokengraph CLI smoke command", () => {
     expect(report).toMatchObject({
       status: "ok",
       root,
-      indexStateBeforeMap: "missing",
+      indexStateBeforeMap: "unknown",
       filesIndexed: 1,
       wikiStatus: "missing"
     });
