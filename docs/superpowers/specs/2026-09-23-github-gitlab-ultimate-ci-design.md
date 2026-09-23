@@ -1,7 +1,7 @@
 # GitHub-Canonical GitLab Ultimate CI Design
 
 Date: 2026-09-23
-Status: Proposed for maintainer review; not approved for implementation
+Status: Approved for implementation planning on 2026-09-23; rollout awaits plan review
 
 ## Purpose and authority
 
@@ -57,6 +57,11 @@ eventually consistent, not an instantaneous second primary. Start with
 GitLab's scheduled pull and a deliberate initial `Update now`; a webhook for
 lower latency is a separate access and design decision.
 
+GitLab pull mirroring does not delete branches or tags removed upstream.
+Treat any later GitLab-only ref as stale until reviewed; remove it only after
+a separate, explicit cleanup decision. Equality claims must name the refs
+actually compared rather than imply automatic deletion parity.
+
 ## Pipeline scope
 
 Use a GitHub-tracked `.gitlab-ci.yml` with branch-pipeline rules that avoid
@@ -64,8 +69,9 @@ duplicate branch and external-PR pipelines. Run no deployment or release job.
 The complementary checks are:
 
 1. GitLab's stable SAST template, enabling Advanced SAST where supported by
-   the Ultimate project. Report language coverage honestly; do not claim
-   Rust or other unsupported source is covered merely because the job passes.
+   the Ultimate project. Report language coverage honestly; Rust Advanced
+   SAST is currently beta and runs in a separate analyzer job, so do not
+   claim Rust coverage merely because a TypeScript analyzer passes.
 2. GitLab's supported SBOM-based dependency-scanning template for the pnpm
    and Cargo manifests/lockfiles that its analyzer actually accepts.
 3. GitLab's stable pipeline secret-detection template. Scanner findings are
@@ -81,8 +87,9 @@ locally selected tool images or versions where GitLab permits it, and review
 template behavior before the first pipeline. A scanner job that is skipped
 for missing support is not evidence that the corresponding code was scanned.
 Keep CI job logs and artifacts free of credentials, machine-local paths,
-raw prompts, and private runtime state. No production activation or managed
-runtime installation occurs in GitLab CI.
+raw prompts, and private runtime state. Add no custom CI job secrets;
+GitLab's built-in CI_JOB_TOKEN still exists and must not be exposed.
+No production activation or managed runtime installation occurs in GitLab CI.
 
 GitLab security dashboards derive default-branch findings from a successful
 default-branch pipeline. Phase 12 branch findings can be inspected earlier,
@@ -116,8 +123,8 @@ presented as a pass for a different commit.
   run a pipeline on a stale GitLab SHA and attribute it to the new GitHub SHA.
 - If a scanner cannot analyze a supported expected source or lockfile, fix
   the configuration or document the coverage gap; do not suppress the job.
-- If a pipeline requires credentials in a job, stop and review the threat
-  model. The first rollout has no job-level secrets.
+- If a pipeline requires custom credentials in a job, stop and review the
+  threat model. The first rollout adds no custom job-level secrets.
 - If GitLab's integration emits duplicate pipelines or statuses, narrow the
   workflow rules before making the check required on GitHub.
 - Never use GitLab's mirror or pipeline as authority to merge PR #54, tag,
