@@ -38,15 +38,15 @@ const HOST_EVIDENCE: HostEvidenceDescriptor[] = [
   }
 ];
 
-function sum(values: number[]): number {
+const sum = (values: number[]): number => {
   return values.reduce((total, value) => total + value, 0);
-}
+};
 
-function retainedFailureCount(manifest: PairedEvaluationManifest): number {
+const retainedFailureCount = (manifest: PairedEvaluationManifest): number => {
   return manifest.traces.filter((trace) => trace.failed || trace.timedOut || trace.acceptance?.status === "failed").length;
-}
+};
 
-async function loadHostEvidence(repositoryRoot: string, descriptor: HostEvidenceDescriptor): Promise<LoadedHostEvidence> {
+const loadHostEvidence = async (repositoryRoot: string, descriptor: HostEvidenceDescriptor): Promise<LoadedHostEvidence> => {
   const manifest = parseEvaluationManifest(JSON.parse(await readFile(join(repositoryRoot, descriptor.manifestPath), "utf8")));
   if (manifest.schemaVersion !== 3 || manifest.evidenceSource !== "real-host" || !manifest.reviewed) {
     throw new Error(`Host evidence is not reviewed schema-v3 real-host evidence: ${descriptor.manifestPath}`);
@@ -57,9 +57,9 @@ async function loadHostEvidence(repositoryRoot: string, descriptor: HostEvidence
     throw new Error(`Checked host report does not reproduce from its manifest: ${descriptor.reportPath}`);
   }
   return { ...descriptor, manifest, report };
-}
+};
 
-function realHostEvaluation(evidence: LoadedHostEvidence) {
+const realHostEvaluation = (evidence: LoadedHostEvidence) => {
   const { manifest, report } = evidence;
   const traces = manifest.traces;
   return {
@@ -112,9 +112,9 @@ function realHostEvaluation(evidence: LoadedHostEvidence) {
       failureReasons: report.failures
     }
   };
-}
+};
 
-function multiRepositoryCoverage(evidence: LoadedHostEvidence[]) {
+const multiRepositoryCoverage = (evidence: LoadedHostEvidence[]) => {
   const evaluations = evidence.map(({ repository, category, manifestPath, reportPath, manifest, report }) => ({
     repository,
     category,
@@ -150,9 +150,9 @@ function multiRepositoryCoverage(evidence: LoadedHostEvidence[]) {
       ? "No repository coverage gap; frozen promotion gates still fail."
       : `${targetRepositoryCount - completed.length} repository evaluation(s) remain.`
   };
-}
+};
 
-export async function generatePublishedBenchmarkResults(repositoryRoot: string) {
+export const generatePublishedBenchmarkResults = async (repositoryRoot: string) => {
   const pluginRoot = join(repositoryRoot, "plugins", "tokengraph");
   const corpus = await loadBenchmarkCorpus(join(pluginRoot, "scripts", "benchmark-corpus-v1.json"));
   const report = await evaluateBenchmark(corpus, join(pluginRoot, "tests", "fixtures", "evidence-project"));
@@ -188,13 +188,13 @@ export async function generatePublishedBenchmarkResults(repositoryRoot: string) 
     multiRepositoryRealHostCoverage: multiRepositoryCoverage(hostEvidence),
     releaseGate: report.releaseGate
   };
-}
+};
 
-export function publishedBenchmarkJson(results: unknown): string {
+export const publishedBenchmarkJson = (results: unknown): string => {
   return stableBenchmarkJson(results);
-}
+};
 
-export async function runPublishedBenchmarkCli(argv: string[]): Promise<void> {
+export const runPublishedBenchmarkCli = async (argv: string[]): Promise<void> => {
   const check = argv.filter((argument) => argument !== "--").includes("--check");
   const repositoryRoot = resolve("..", "..");
   const outputPath = join(repositoryRoot, "docs", "benchmarks", "results-current.json");
@@ -207,4 +207,4 @@ export async function runPublishedBenchmarkCli(argv: string[]): Promise<void> {
   }
   await writeFile(outputPath, serialized, "utf8");
   process.stdout.write(`Published benchmark evidence to ${outputPath}.\n`);
-}
+};
