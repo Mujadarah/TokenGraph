@@ -70,6 +70,10 @@ jobs:
       - name: Build release package
         run: pnpm --silent package:plugin -- --release --json > release-package.json
 
+      - name: Confirm committed release is reproducible
+        working-directory: .
+        run: git diff --exit-code -- release/tokengraph
+
       - name: Build standalone release archive
         run: pnpm --silent package:plugin -- --json > bundle-package.json
 
@@ -92,6 +96,13 @@ jobs:
           echo "archive_bundle=$archive_bundle" >> "$GITHUB_OUTPUT"
           echo "sbom_bundle=$sbom_bundle" >> "$GITHUB_OUTPUT"
 
+      - name: Verify packaged release parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${{ steps.artifact.outputs.archive }}"
+          node scripts/verify-package-parity.mjs --release ../../release/tokengraph --archive "$archive"
+
       - name: Extract installable plugin for SBOM
         id: extract
         shell: bash
@@ -106,13 +117,6 @@ jobs:
           test -f "$plugin_dir/package.json"
           test ! -e "$plugin_dir/node_modules"
           echo "plugin_dir=$plugin_dir" >> "$GITHUB_OUTPUT"
-
-      - name: Verify packaged release parity
-        shell: bash
-        run: |
-          set -euo pipefail
-          archive="${{ steps.artifact.outputs.archive }}"
-          node scripts/verify-package-parity.mjs --release ../../release/tokengraph --archive "$archive"
 
       - name: Smoke extracted release runtime
         shell: bash

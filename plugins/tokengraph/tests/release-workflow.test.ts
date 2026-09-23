@@ -33,6 +33,7 @@ describe("tagged release workflow", () => {
     expect(workflow).toContain("version: 10.14.0");
     expect(workflow).toContain("node-version: 22");
     expect(workflow).toContain("pnpm --silent package:plugin -- --release --json");
+    expect(workflow).toContain("git diff --exit-code -- release/tokengraph");
     expect(workflow).toContain("pnpm --silent package:plugin -- --json > bundle-package.json");
     expect(workflow).toContain('fs.readFileSync("bundle-package.json", "utf8")');
     expect(workflow).toContain("sha256sum");
@@ -104,10 +105,12 @@ describe("tagged release workflow", () => {
     }
 
     const orderedSteps = [
+      "Build release package",
+      "Confirm committed release is reproducible",
       "Build standalone release archive",
       "Prepare release assets",
-      "Extract installable plugin for SBOM",
       "Verify packaged release parity",
+      "Extract installable plugin for SBOM",
       "Smoke extracted release runtime",
       "Generate SPDX SBOM",
       "Install Cosign",
@@ -167,7 +170,8 @@ describe("standalone package parity", () => {
   it.each([
     ["mutated bytes", { archiveFiles: { "README.md": "changed\n", "dist/index.js": "index\n" } }],
     ["an extra payload file", { archiveFiles: { "README.md": "same\n", "dist/index.js": "index\n", "extra.txt": "extra\n" } }],
-    ["a missing payload file", { archiveFiles: { "README.md": "same\n" } }]
+    ["a missing payload file", { archiveFiles: { "README.md": "same\n" } }],
+    ["a traversal path", { archiveFiles: { "README.md": "same\n", "dist/index.js": "index\n", "../escape.txt": "escape\n" } }]
   ])("rejects %s", (_label, options) => {
     const result = runPackageParity(options);
 
