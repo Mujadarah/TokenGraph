@@ -274,9 +274,14 @@ async function runSmoke() {
       "tokengraph_propose_knowledge"
     );
     const completed = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_task_report", arguments: { root, taskId: prepared.taskId, disposition: "complete" } }),
+      await client.request("tools/call", { name: "tokengraph_task_report", arguments: { root, taskId: prepared.taskId, disposition: "complete", responseMode: "verbose" } }),
       "tokengraph_task_report"
     );
+    if (completed.status !== "completed" || completed.taskId !== prepared.taskId ||
+        !/^TokenGraph: ~.+ tokens saved \(estimated, (?:low|medium|high) confidence\); quality .+\.$/u.test(completed.footer) ||
+        !Number.isSafeInteger(completed.report?.eventCount) || completed.report.eventCount < 1) {
+      throw new Error("tokengraph_task_report did not return a valid completion report.");
+    }
 
     return {
       status: "ok",
@@ -294,7 +299,7 @@ async function runSmoke() {
       memoriesReviewed: memoryReview.totalMemories ?? memoryReview.result?.totalMemories ?? 0,
       architectureStatus: analysis.status ?? analysis.result?.status ?? "unknown",
       knowledgeSuggestions: knowledge.suggestions?.length ?? 0,
-      taskEventCount: completed.report?.eventCount ?? 0,
+      taskEventCount: completed.report.eventCount,
       wikiPageSlugs: [],
       wikiStatus: prepared.wikiStatus?.state ?? "missing"
     };

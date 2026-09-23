@@ -164,7 +164,12 @@ describe("tokengraph CLI smoke command", () => {
     expect(report).toMatchObject({ toolSurface: "core", taskId: expect.any(String) });
   }, process.platform === "win32" ? 30_000 : 15_000);
 
-  it.each(["direct", "extracted"])("rejects malformed prepare text from a %s MCP runtime", async (location) => {
+  it.each([
+    ["direct", "malformed prepare", /prepare.*text|json/i],
+    ["extracted", "malformed prepare", /prepare.*text|json/i],
+    ["direct", "missing completion", /completion report/i],
+    ["extracted", "missing completion", /completion report/i]
+  ])("rejects %s runtime with %s", async (location, failure, expectedError) => {
     const root = await makeRoot();
     const serverEntry = location === "direct"
       ? join(root, "mock-server.mjs")
@@ -174,15 +179,21 @@ describe("tokengraph CLI smoke command", () => {
 import { createInterface } from "node:readline";
 const tools = ${JSON.stringify(coreToolNames)};
 const taskId = "00000000-0000-4000-8000-000000000001";
+const failure = ${JSON.stringify(failure)};
 for await (const line of createInterface({ input: process.stdin })) {
   const request = JSON.parse(line);
   if (request.id === undefined) continue;
   let result = {};
   if (request.method === "tools/list") result = { tools: tools.map((name) => ({ name })) };
   if (request.method === "tools/call") {
-    result = request.params.name === "tokengraph_prepare_context"
-      ? { structuredContent: { taskId }, content: [{ type: "text", text: "{malformed" }] }
-      : { content: [{ type: "text", text: "{}" }] };
+    if (request.params.name === "tokengraph_prepare_context") {
+      const text = failure === "malformed prepare" ? "{malformed" : JSON.stringify({
+        taskId, index: { previousStatus: "missing" }, plan: { profile: "aggressive", recommendedFirstReads: [] }
+      });
+      result = { structuredContent: { taskId }, content: [{ type: "text", text }] };
+    } else {
+      result = { content: [{ type: "text", text: "{}" }] };
+    }
   }
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
 }
@@ -195,7 +206,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       (error: Error & { stderr?: string }) => ({ status: 1, stderr: error.stderr ?? "" })
     );
     expect(result.status).toBe(1);
-    expect(result.stderr).toMatch(/prepare.*text|json/i);
+    expect(result.stderr).toMatch(expectedError);
   });
 
   it("validates the opt-in full MCP surface", async () => {
