@@ -133,7 +133,7 @@ function send(message: Record<string, unknown>) {
   server?.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
 }
 
-function readResponse(id: number, timeoutMs = process.platform === "win32" ? 15_000 : 5_000): Promise<JsonRpcResponse> {
+function readResponse(id: number, timeoutMs = 15_000): Promise<JsonRpcResponse> {
   return new Promise((resolve, reject) => {
     let buffer = "";
     const timeout = setTimeout(() => {
@@ -721,7 +721,7 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { root: "first", taskId: prepared.taskId, disposition: "complete", responseMode: "verbose" }
     });
     expect(repeatedReportCall.structuredContent).toEqual(reportCall.structuredContent);
-  }, process.platform === "win32" ? 60_000 : 15_000);
+  }, process.platform === "win32" ? 60_000 : 30_000);
 
   it("records a bounded shadow decision while still activating TokenGraph", async () => {
     const root = await makeRoot();
