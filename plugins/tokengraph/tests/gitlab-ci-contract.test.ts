@@ -3,10 +3,10 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const configPath = resolve(process.cwd(), "../..", ".gitlab-ci.yml");
-function config() {
+const config = () => {
   expect(existsSync(configPath)).toBe(true);
   return readFileSync(configPath, "utf8");
-}
+};
 
 describe("GitLab complementary CI", () => {
   it("creates branch pipelines without a dependency-scanning MR duplicate", () => {
