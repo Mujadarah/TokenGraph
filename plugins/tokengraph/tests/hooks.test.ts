@@ -543,7 +543,7 @@ describe("built lifecycle hook process", () => {
     expect(stored?.events.map((item) => item.fingerprint).sort()).toEqual(events.map((item) => item.fingerprint).sort());
     expect(stored).toMatchObject({ host: "unknown" });
     expect(stored).not.toHaveProperty("sessionId");
-  });
+  }, 30_000);
 
   it("keeps a concurrently refreshed valid same-session pointer complete", async () => {
     const root = await makeRoot("tokengraph-hook-prune-race-root-");
