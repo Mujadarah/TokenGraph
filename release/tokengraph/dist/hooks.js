@@ -347,6 +347,7 @@ import { isAbsolute as isAbsolute2, join as join2, parse, resolve as resolve2 } 
 var TASK_LEDGER_SCHEMA_ID = "tokengraph-task-ledger";
 var TASK_LEDGER_SCHEMA_VERSION = 3;
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var SHA256_PATTERN = /^[a-f0-9]{64}$/;
 var MAX_READ_ONLY_LEDGER_BYTES = 8 * 1024 * 1024;
 var CURRENT_LEDGER_KEYS = /* @__PURE__ */ new Set([
   "schemaId",
@@ -545,7 +546,7 @@ function decodeCurrentEvent(value) {
     "confidence",
     "timestamp",
     "qualityChecks"
-  ]) || typeof value.id !== "string" || typeof value.fingerprint !== "string" || typeof value.category !== "string" || typeof value.toolName !== "string" || !finiteNonnegative(value.originalTokens) || !finiteNonnegative(value.compactTokens) || !finiteNonnegative(value.overheadTokens) || !isLiteral(value.confidence, ["low", "medium", "high"]) || !isTimestamp(value.timestamp) || !Array.isArray(value.qualityChecks)) return void 0;
+  ], ["deferredMemoryUseDigests"]) || typeof value.id !== "string" || typeof value.fingerprint !== "string" || typeof value.category !== "string" || typeof value.toolName !== "string" || !finiteNonnegative(value.originalTokens) || !finiteNonnegative(value.compactTokens) || !finiteNonnegative(value.overheadTokens) || !isLiteral(value.confidence, ["low", "medium", "high"]) || !isTimestamp(value.timestamp) || !Array.isArray(value.qualityChecks) || value.deferredMemoryUseDigests !== void 0 && (!Array.isArray(value.deferredMemoryUseDigests) || value.deferredMemoryUseDigests.length > 100 || !value.deferredMemoryUseDigests.every((digest) => typeof digest === "string" && SHA256_PATTERN.test(digest)) || new Set(value.deferredMemoryUseDigests).size !== value.deferredMemoryUseDigests.length)) return void 0;
   const qualityChecks = value.qualityChecks.map(decodeCurrentQualityCheck);
   if (qualityChecks.some((entry) => entry === void 0)) return void 0;
   return {
@@ -558,7 +559,8 @@ function decodeCurrentEvent(value) {
     overheadTokens: value.overheadTokens,
     confidence: value.confidence,
     timestamp: value.timestamp,
-    qualityChecks
+    qualityChecks,
+    ...value.deferredMemoryUseDigests === void 0 ? {} : { deferredMemoryUseDigests: [...value.deferredMemoryUseDigests] }
   };
 }
 function decodeCurrentOutcome(value, expectedTaskId) {

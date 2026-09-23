@@ -7,21 +7,20 @@ description: Use when a diff or proposed change needs evidence-based impact anal
 
 ## When not to use
 
-Do not use when no change set can be identified or as a substitute for running the relevant tests.
+Do not use when no change set can be identified or as a substitute for running relevant tests.
 
-## Workflow
+## Unique tool sequence
 
-Follow the common lifecycle in the general `tokengraph` skill:
+Load the shared `tokengraph` router contract; if unavailable, do not call TokenGraph. Use `tokengraph_analyze` with `mode: "risk"`, then query changed exports and dependents with `mode: "symbol"` and schema or policy impact with `mode: "sql"`.
 
-1. After confirming every TokenGraph v0.23.1 MCP and CLI process is stopped, call `tokengraph_setup({ confirmNoLegacyProcesses: true })` and capture `trustedWorkspace.root` as the trusted root; if that confirmation is not true, stop without activating, and if setup is blocked, follow recovery and do not invent a taskId.
-2. Use `tokengraph_prepare_context({ task })` only when a retrieval plan is needed. Otherwise omit `taskId` from `tokengraph_analyze({ mode: "risk", changedFiles, diffSummary?, task? })` so it can auto-start the ledger and return a taskId; capture the returned taskId.
-3. Reuse that exact taskId with the actual change set. The trusted root may be omitted after ready setup when host workspace resolution is stable; otherwise pass only the captured trusted root.
-4. Call `tokengraph_query_context({ taskId, mode: "symbol", target })` for changed exports and dependents, and `tokengraph_query_context({ taskId, mode: "sql", query })` for schema, policy, auth, or migration impact. Search or overview queries may narrow additional targets.
-5. Recommend tests from direct coverage, inbound dependents, routes, SQL involvement, and risk evidence. Run and verify tests; distinguish verified results from estimated risk.
-6. Only after requested analysis and test verification are complete, call `tokengraph_task_report({ taskId })`; compact reporting is the default. Use `tokengraph_task_report({ taskId, responseMode: "verbose" })` only for report diagnostics, and `tokengraph_task_report({ taskId, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
+## Evidence required
 
-Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state "TokenGraph was not used," use narrow local diff/search/test inspection, and claim no savings or graph-backed evidence.
+Recommend tests from coverage, dependents, routes, SQL, and risk evidence. Distinguish verified tests from estimated risk and record changed paths.
 
-A paused task id is terminal. Start a new task with `tokengraph_prepare_context` or a direct intent call that omits `taskId`; never reuse the paused id.
+## Failure boundaries
 
-A host refresh may require a fresh task or `/reload-plugins`. The lifecycle hook checks reports and exact footers at normal Stop. If hooks are disabled, untrusted, unavailable, or the turn ends by interrupt or API failure, call the report explicitly and manually include its returned status.
+Do not infer a regression from a name-only match or declare safety without running the recommended tests. Stop when the diff is incomplete, untrusted, or outside the workspace.
+
+## Completion criteria
+
+Return affected surfaces, risk reasons, recommended tests, and their verified results. Mark unresolved impact as uncertainty rather than silently narrowing scope.

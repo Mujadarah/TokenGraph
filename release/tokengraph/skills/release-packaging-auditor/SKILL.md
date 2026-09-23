@@ -9,19 +9,18 @@ description: Use when plugin manifests, packaging scripts, generated release fil
 
 Do not use for source-only changes that cannot affect packaging, installation, validation, or host behavior.
 
-## Workflow
+## Unique tool sequence
 
-Follow the common lifecycle in the general `tokengraph` skill:
+Load the shared `tokengraph` router contract; if unavailable, do not call TokenGraph. Use `tokengraph_prepare_context` or `tokengraph_query_context` to locate manifests and boundaries, then `tokengraph_analyze` with `mode: "risk"` and `tokengraph_compress` for oversized gate output.
 
-1. After confirming every TokenGraph v0.23.1 MCP and CLI process is stopped, call `tokengraph_setup({ confirmNoLegacyProcesses: true })` and capture `trustedWorkspace.root` as the trusted root; if that confirmation is not true, stop without activating, and if setup is blocked, follow recovery and do not invent a taskId.
-2. Use `tokengraph_prepare_context({ task })` only when a release retrieval plan is needed; capture the returned taskId. Otherwise omit `taskId` from the first direct intent call so it can auto-start the ledger and return a taskId; capture the returned taskId. Use `tokengraph_query_context` to locate manifests, scripts, validators, source/release boundaries, and install docs.
-3. Call `tokengraph_analyze({ taskId, mode: "risk", changedFiles, diffSummary?, task? })`. Reuse the exact taskId. Compress oversized gate failures with `tokengraph_compress({ taskId, mode: "output", kind, text })`. The trusted root may be omitted after ready setup when host workspace resolution is stable; otherwise pass only the captured trusted root.
-4. Run exact source gates: `pnpm typecheck`, full tests (`pnpm test`), `pnpm build`, core smoke, full smoke, and `pnpm validate:plugin`. Run the package command required by the repository.
-5. Preserve generated-release discipline: edit source only, regenerate the release through `pnpm package:plugin -- --release`, and inspect the diff. Verify direct release startup/smoke, then install and verify an independently extracted ZIP. Confirm actual host registration, exposed surface, trusted workspace behavior, and readiness rather than relying on file presence.
-6. Only when every requested source, generated release, direct release, extracted ZIP, and host verification result is present and passing, call `tokengraph_task_report({ taskId })`; compact reporting is the default. Use `tokengraph_task_report({ taskId, responseMode: "verbose" })` only for report diagnostics, and `tokengraph_task_report({ taskId, disposition: "pause" })` for approval, missing evidence, blocked setup after creation, or unfinished work.
+## Evidence required
 
-Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state "TokenGraph was not used," use targeted local packaging checks, and claim no savings or graph-backed evidence.
+Run exact gates: `pnpm typecheck`, full tests, build, core smoke, full smoke, validation, and packaging. Inspect generated release, direct release startup, extracted ZIP, and host readiness.
 
-A paused task id is terminal. Start a new task with `tokengraph_prepare_context` or a direct intent call that omits `taskId`; never reuse the paused id.
+## Failure boundaries
 
-A host refresh may require a fresh task or `/reload-plugins`. The lifecycle hook checks reports and exact footers at normal Stop. If hooks are disabled, untrusted, unavailable, or the turn ends by interrupt or API failure, call the report explicitly and manually include its returned status.
+Edit source only; never hand-edit generated release files. Stop when source and release differ, an extracted ZIP is not independently verified, a host check is unavailable, or a path leaves the trusted workspace.
+
+## Completion criteria
+
+Return source-gate, generated-release, direct-release, extracted-ZIP, and host evidence separately. File presence alone is not installability or readiness.
