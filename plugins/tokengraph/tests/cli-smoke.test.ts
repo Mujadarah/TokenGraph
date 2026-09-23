@@ -155,7 +155,7 @@ describe("tokengraph CLI smoke command", () => {
     expect(report).toMatchObject({
       status: "ok",
       root,
-      indexStateBeforeMap: "unknown",
+      indexStateBeforeMap: "missing",
       filesIndexed: 1,
       wikiStatus: "missing"
     });
@@ -163,6 +163,40 @@ describe("tokengraph CLI smoke command", () => {
     expect(report.tools).toEqual(coreToolNames);
     expect(report).toMatchObject({ toolSurface: "core", taskId: expect.any(String) });
   }, process.platform === "win32" ? 30_000 : 15_000);
+
+  it.each(["direct", "extracted"])("rejects malformed prepare text from a %s MCP runtime", async (location) => {
+    const root = await makeRoot();
+    const serverEntry = location === "direct"
+      ? join(root, "mock-server.mjs")
+      : join(root, "extracted", "tokengraph", "dist", "index.mjs");
+    await mkdir(dirname(serverEntry), { recursive: true });
+    await writeFile(serverEntry, `
+import { createInterface } from "node:readline";
+const tools = ${JSON.stringify(coreToolNames)};
+const taskId = "00000000-0000-4000-8000-000000000001";
+for await (const line of createInterface({ input: process.stdin })) {
+  const request = JSON.parse(line);
+  if (request.id === undefined) continue;
+  let result = {};
+  if (request.method === "tools/list") result = { tools: tools.map((name) => ({ name })) };
+  if (request.method === "tools/call") {
+    result = request.params.name === "tokengraph_prepare_context"
+      ? { structuredContent: { taskId }, content: [{ type: "text", text: "{malformed" }] }
+      : { content: [{ type: "text", text: "{}" }] };
+  }
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+}
+`);
+
+    const result = await execFileAsync(process.execPath, [
+      resolve("scripts", "smoke.mjs"), "--root", root, "--server", serverEntry, "--json"
+    ], { cwd: process.cwd() }).then(
+      () => ({ status: 0, stderr: "" }),
+      (error: Error & { stderr?: string }) => ({ status: 1, stderr: error.stderr ?? "" })
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/prepare.*text|json/i);
+  });
 
   it("validates the opt-in full MCP surface", async () => {
     const root = await makeRoot();

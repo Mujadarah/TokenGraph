@@ -177,9 +177,24 @@ function assertToolResult(result, toolName) {
   if (result?.isError) {
     throw new Error(`${toolName} returned an MCP tool error: ${compactJson(result)}`);
   }
-  if (result?.structuredContent) return result.structuredContent;
-  const text = result?.content?.find((item) => item?.type === "text")?.text;
-  return text ? JSON.parse(text) : {};
+  const texts = result?.content?.filter((item) => item?.type === "text") ?? [];
+  if (texts.length !== 1 || typeof texts[0].text !== "string") {
+    throw new Error(`${toolName} must return one JSON text result.`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(texts[0].text);
+  } catch {
+    throw new Error(`${toolName} returned invalid JSON text.`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${toolName} returned a non-object JSON text result.`);
+  }
+  if (result.structuredContent &&
+      (typeof result.structuredContent.taskId !== "string" || result.structuredContent.taskId !== parsed.taskId)) {
+    throw new Error(`${toolName} structured task authority disagrees with JSON text.`);
+  }
+  return parsed;
 }
 
 async function runSmoke() {
@@ -226,6 +241,12 @@ async function runSmoke() {
       }),
       "tokengraph_prepare_context"
     );
+    if (typeof prepared.taskId !== "string" || !prepared.taskId ||
+        typeof prepared.index?.previousStatus !== "string" ||
+        typeof prepared.plan?.profile !== "string" ||
+        !Array.isArray(prepared.plan?.recommendedFirstReads)) {
+      throw new Error("tokengraph_prepare_context returned an incomplete JSON text plan.");
+    }
     const overview = assertToolResult(
       await client.request("tools/call", { name: "tokengraph_query_context", arguments: { root, taskId: prepared.taskId, mode: "overview" } }),
       "tokengraph_query_context"
