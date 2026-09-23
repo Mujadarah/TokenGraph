@@ -10,6 +10,7 @@ import {
   listRegularTree
 } from "./installable-plugin-contract.mjs";
 import { validateNativeLockAssets } from "./validate-native-lock-addon.mjs";
+import { buildClaudeMarketplace, buildCodexMarketplace, marketplaceBytes } from "./marketplace-contract.mjs";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(pluginRoot, "..", "..");
@@ -230,40 +231,9 @@ async function listFiles(root, base = root) {
   return listRegularTree(root, "Generated package tree", base);
 }
 
-function buildCodexMarketplace(pluginPath) {
-  return {
-    name: "tokengraph",
-    interface: { displayName: "TokenGraph" },
-    plugins: [{
-      name: "tokengraph",
-      source: { source: "local", path: pluginPath },
-      policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
-      category: "Developer Tools"
-    }]
-  };
-}
-
-function buildClaudeMarketplace(version, pluginPath) {
-  return {
-    name: "tokengraph",
-    owner: { name: "Mujadarah" },
-    metadata: {
-      description: "Local-first project context routing for Codex and Claude Code."
-    },
-    plugins: [{
-      name: "tokengraph",
-      source: pluginPath,
-      version,
-      description: "Route coding agents through compact local code, SQL, memory, wiki, and log context.",
-      category: "Developer Tools",
-      tags: ["mcp", "code-intelligence", "local-first", "context"]
-    }]
-  };
-}
-
 async function writeMarketplace(path, value) {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+  await writeFile(path, marketplaceBytes(value));
 }
 
 async function writeDeterministicArchive(bundleDir, archivePath) {

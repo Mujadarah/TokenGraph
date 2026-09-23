@@ -129,11 +129,13 @@ describe("tagged release workflow", () => {
 function runPackageParity(options: {
   releaseFiles?: Record<string, string>;
   archiveFiles?: Record<string, string>;
+  wrapperFiles?: Record<string, string>;
+  archiveExtras?: Record<string, string>;
 }) {
   const root = mkdtempSync(join(tmpdir(), "tokengraph-parity-"));
   try {
     const releaseRoot = join(root, "release");
-    const releaseFiles = options.releaseFiles ?? { "README.md": "same\n", "dist/index.js": "index\n" };
+    const releaseFiles = options.releaseFiles ?? { "README.md": "same\n", "dist/index.js": "index\n", "package.json": "{\"version\":\"0.25.0\"}\n" };
     const archiveFiles = options.archiveFiles ?? releaseFiles;
     for (const [path, text] of Object.entries(releaseFiles)) {
       const output = join(releaseRoot, ...path.split("/"));
@@ -141,9 +143,21 @@ function runPackageParity(options: {
       writeFileSync(output, text);
     }
     const archivePath = join(root, "bundle.zip");
-    const entries: Record<string, Uint8Array> = {
-      ".agents/plugins/marketplace.json": Buffer.from("{}\n")
+    const wrappers = options.wrapperFiles ?? {
+      ".agents/plugins/marketplace.json": `${JSON.stringify({
+        name: "tokengraph",
+        interface: { displayName: "TokenGraph" },
+        plugins: [{ name: "tokengraph", source: { source: "local", path: "./tokengraph" }, policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" }, category: "Developer Tools" }]
+      }, null, 2)}\n`,
+      ".claude-plugin/marketplace.json": `${JSON.stringify({
+        name: "tokengraph", owner: { name: "Mujadarah" },
+        metadata: { description: "Local-first project context routing for Codex and Claude Code." },
+        plugins: [{ name: "tokengraph", source: "./tokengraph", version: "0.25.0", description: "Route coding agents through compact local code, SQL, memory, wiki, and log context.", category: "Developer Tools", tags: ["mcp", "code-intelligence", "local-first", "context"] }]
+      }, null, 2)}\n`
     };
+    const entries: Record<string, Uint8Array> = Object.fromEntries(
+      Object.entries({ ...wrappers, ...options.archiveExtras }).map(([path, text]) => [path, Buffer.from(text)])
+    );
     for (const [path, text] of Object.entries(archiveFiles)) {
       entries[`tokengraph/${path}`] = Buffer.from(text);
     }
@@ -159,7 +173,7 @@ function runPackageParity(options: {
 }
 
 describe("standalone package parity", () => {
-  it("accepts an exact installable payload while ignoring marketplace wrappers", () => {
+  it("accepts an exact installable payload and marketplace wrappers", () => {
     const result = runPackageParity({});
 
     expect(result.error).toBeUndefined();
@@ -171,7 +185,15 @@ describe("standalone package parity", () => {
     ["mutated bytes", { archiveFiles: { "README.md": "changed\n", "dist/index.js": "index\n" } }],
     ["an extra payload file", { archiveFiles: { "README.md": "same\n", "dist/index.js": "index\n", "extra.txt": "extra\n" } }],
     ["a missing payload file", { archiveFiles: { "README.md": "same\n" } }],
-    ["a traversal path", { archiveFiles: { "README.md": "same\n", "dist/index.js": "index\n", "../escape.txt": "escape\n" } }]
+    ["a traversal path", { archiveFiles: { "README.md": "same\n", "dist/index.js": "index\n", "../escape.txt": "escape\n" } }],
+    ["a mutated marketplace source", { wrapperFiles: {
+      ".agents/plugins/marketplace.json": "{\"plugins\":[{\"source\":{\"source\":\"local\",\"path\":\"../other\"}}]}\n",
+      ".claude-plugin/marketplace.json": "{}\n"
+    } }],
+    ["a missing marketplace wrapper", { wrapperFiles: {
+      ".agents/plugins/marketplace.json": "{}\n"
+    } }],
+    ["an extra safe archive entry", { archiveExtras: { "other/readme.txt": "unverified\n" } }]
   ])("rejects %s", (_label, options) => {
     const result = runPackageParity(options);
 

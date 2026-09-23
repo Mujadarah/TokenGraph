@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { unzipSync } from "fflate";
 import { listRegularTree } from "./installable-plugin-contract.mjs";
+import { buildClaudeMarketplace, buildCodexMarketplace, CLAUDE_MARKETPLACE_PATH, CODEX_MARKETPLACE_PATH, marketplaceBytes } from "./marketplace-contract.mjs";
 
 function usage() {
   return "Usage: node scripts/verify-package-parity.mjs --release <release/tokengraph> --archive <bundle.zip>";
@@ -41,10 +42,17 @@ export async function verifyPackageParity({ releaseRoot, archivePath }) {
   const releaseFiles = (await listRegularTree(releaseRoot, "Committed release plugin")).sort();
   const archive = unzipSync(await readFile(archivePath));
   const payload = new Map();
+  const wrappers = new Map();
 
   for (const [path, bytes] of Object.entries(archive)) {
     assertSafeArchivePath(path);
-    if (!path.startsWith("tokengraph/")) continue;
+    if (path === CODEX_MARKETPLACE_PATH || path === CLAUDE_MARKETPLACE_PATH) {
+      wrappers.set(path, bytes);
+      continue;
+    }
+    if (!path.startsWith("tokengraph/")) {
+      throw new Error(`Archive contains an unlisted entry: ${path}.`);
+    }
     const relativePath = path.slice("tokengraph/".length);
     if (!relativePath || relativePath.endsWith("/")) {
       throw new Error(`Archive plugin payload contains a non-file entry: ${path}.`);
@@ -68,6 +76,21 @@ export async function verifyPackageParity({ releaseRoot, archivePath }) {
     const releaseBytes = await readFile(resolve(releaseRoot, path));
     if (!releaseBytes.equals(Buffer.from(payload.get(path)))) {
       throw new Error(`Archive plugin payload differs from the committed release: ${path}.`);
+    }
+  }
+
+  const packageJson = JSON.parse(await readFile(resolve(releaseRoot, "package.json"), "utf8"));
+  if (typeof packageJson.version !== "string" || !/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u.test(packageJson.version)) {
+    throw new Error("Committed release package version is invalid.");
+  }
+  const expectedWrappers = new Map([
+    [CODEX_MARKETPLACE_PATH, marketplaceBytes(buildCodexMarketplace("./tokengraph"))],
+    [CLAUDE_MARKETPLACE_PATH, marketplaceBytes(buildClaudeMarketplace(packageJson.version, "./tokengraph"))]
+  ]);
+  for (const [path, expected] of expectedWrappers) {
+    const actual = wrappers.get(path);
+    if (!actual || !Buffer.from(actual).equals(expected)) {
+      throw new Error(`Archive marketplace wrapper is missing or differs from the canonical source: ${path}.`);
     }
   }
 
