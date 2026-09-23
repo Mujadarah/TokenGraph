@@ -540,6 +540,27 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { root: "first", taskId: prepared.taskId, mode: "search", query: "patient summary", limit: 5 }
     });
     expect(searchCall.structuredContent).toMatchObject({ mode: "search", result: { query: "patient summary", results: expect.any(Array) } });
+    const exactFilePath = "src/patientSummary.ts";
+    const exactFileSearch = await request(90351, "tools/call", {
+      name: "tokengraph_query_context",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "search", query: exactFilePath }
+    });
+    expect(exactFileSearch.structuredContent).toMatchObject({
+      result: { results: expect.arrayContaining([expect.objectContaining({ kind: "file", path: exactFilePath })]) }
+    });
+    const absentFilePath = "zzzxunfindableunique";
+    const absentFileSearch = await request(90352, "tools/call", {
+      name: "tokengraph_query_context",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "search", query: absentFilePath }
+    });
+    expect(absentFileSearch.structuredContent).toMatchObject({ result: { results: [] } });
+    const searchEvents = (await loadTaskLedger(firstRoot, prepared.taskId))?.events.filter((event) => event.category === "query-search") ?? [];
+    expect(searchEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ qualityChecks: expect.arrayContaining([{
+        name: `search-result-file:${createHash("sha256").update(exactFilePath).digest("hex")}`, passed: true
+      }]) })
+    ]));
+    expect(searchEvents.some((event) => event.qualityChecks.some((check) => check.name === `search-result-file:${createHash("sha256").update(absentFilePath).digest("hex")}`))).toBe(false);
     const invalidSymbol = await request(9036, "tools/call", {
       name: "tokengraph_query_context",
       arguments: { root: "first", taskId: prepared.taskId, mode: "symbol" }
@@ -692,7 +713,7 @@ describe("TokenGraph MCP stdio server", () => {
     });
     expect(completedMutation).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/completed.*terminal/i) }] });
     expect(await listKnowledgeSuggestions(firstRoot)).toEqual(suggestionsBeforeTerminalRetry);
-    expect(report.report.eventCount).toBe(15);
+    expect(report.report.eventCount).toBe(17);
     expect(report.report.estimate.overhead).toBeGreaterThan(0);
 
     const repeatedReportCall = await request(9046, "tools/call", {

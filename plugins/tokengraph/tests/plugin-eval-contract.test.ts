@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -89,6 +90,62 @@ function runMetrics(resultPath: string) {
 }
 
 describe("Plugin Eval benchmark contract", () => {
+  it("rejects exact search attempts without result-backed required-file evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-plugin-eval-recall-"));
+    temporaryRoots.push(root);
+    const requiredFiles = [
+      "plugins/tokengraph/src/server.ts",
+      "plugins/tokengraph/src/core/toolContracts.ts",
+      "plugins/tokengraph/tests/mcp-smoke.test.ts"
+    ];
+    const taskId = "00000000-0000-4000-8000-000000000001";
+    const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+    for (const path of requiredFiles) {
+      const file = join(root, ...path.split("/"));
+      await mkdir(resolve(file, ".."), { recursive: true });
+      await writeFile(file, "fixture\n");
+    }
+    const resultPath = join(root, "artifacts", "plugin-eval", "scenario-result.json");
+    await mkdir(resolve(resultPath, ".."), { recursive: true });
+    await writeFile(resultPath, JSON.stringify({ schemaVersion: 2, scenario: "trusted-setup-graph", taskId, requiredFiles }));
+    const ledgerPath = join(root, ".tokengraph", "tasks", `${taskId}.json`);
+    await mkdir(resolve(ledgerPath, ".."), { recursive: true });
+    await writeFile(ledgerPath, JSON.stringify({
+      schemaId: "tokengraph-task-ledger", schemaVersion: 3, taskId, status: "completed", lastDisposition: "complete",
+      completedReport: {}, deliveredArtifacts: [],
+      events: [
+        { toolName: "tokengraph_prepare_context", category: "context-routing" },
+        ...requiredFiles.map((path) => ({
+          toolName: "tokengraph_query_context", category: "query-search",
+          fingerprint: hash(JSON.stringify({
+            taskId, toolName: "tokengraph_query_context", category: "query-search",
+            operation: { mode: "search", queryHash: hash(path), limit: null }
+          })),
+          qualityChecks: [{ name: "compact-output-produced", passed: true }]
+        }))
+      ]
+    }));
+    const telemetryPath = join(root, ".tokengraph", "telemetry", "write-aggregates.json");
+    await mkdir(resolve(telemetryPath, ".."), { recursive: true });
+    await writeFile(telemetryPath, JSON.stringify({ schemaVersion: 1, days: [{ sampledPeakRssBytes: 1, classes: { task: { operationCount: 1, logicalBytes: 1 } } }] }));
+    expect(spawnSync("git", ["init", "-q"], { cwd: root }).status).toBe(0);
+
+    const result = spawnSync(process.execPath, [verifierScriptPath], { cwd: root, encoding: "utf8" });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/result-backed.*required file/i);
+
+    const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as {
+      events: Array<{ qualityChecks?: Array<{ name: string; passed: boolean }> }>;
+    };
+    for (const [index, path] of requiredFiles.entries()) {
+      ledger.events[index + 1]!.qualityChecks!.push({ name: `search-result-file:${hash(path)}`, passed: true });
+    }
+    await writeFile(ledgerPath, JSON.stringify(ledger));
+    const accepted = spawnSync(process.execPath, [verifierScriptPath], { cwd: root, encoding: "utf8" });
+    expect(accepted.status, accepted.stderr).toBe(0);
+    expect(JSON.parse(accepted.stdout)).toMatchObject({ recalledFileCount: requiredFiles.length, taskSuccess: true });
+  });
+
   it("tracks the CLI-only six-scenario Linux harness without machine-local paths", async () => {
     const benchmarkText = await readFile(benchmarkPath, "utf8");
     const benchmark = JSON.parse(benchmarkText) as {

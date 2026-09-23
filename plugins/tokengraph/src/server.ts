@@ -158,6 +158,7 @@ async function recordCoreEvent(input: {
   compactTokens: number;
   overheadTokens?: number;
   deferredMemoryUseDigests?: string[];
+  qualityChecks?: Array<{ name: string; passed: boolean }>;
 }): Promise<number> {
   const overheadTokens = input.overheadTokens ?? coreEventOverheadTokens(input.taskId, input.toolName, input.category);
   await recordTaskEvent(input.root, input.taskId, {
@@ -170,7 +171,7 @@ async function recordCoreEvent(input: {
     overheadTokens,
     confidence: "low",
     timestamp: new Date().toISOString(),
-    qualityChecks: [{ name: "compact-output-produced", passed: true }],
+    qualityChecks: [{ name: "compact-output-produced", passed: true }, ...(input.qualityChecks ?? [])],
     ...(input.deferredMemoryUseDigests?.length ? { deferredMemoryUseDigests: input.deferredMemoryUseDigests } : {})
   });
   return overheadTokens;
@@ -1115,11 +1116,14 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       const resolvedRoot = task.root;
       const project = ["wiki", "artifact", "run"].includes(mode) ? undefined : await ensureProject(resolvedRoot);
       let result: object;
+      let exactSearchFileHit = false;
       if (mode === "overview") {
         result = projectMap(project!);
       } else if (mode === "search") {
         const { query, limit } = input;
-        result = { query, results: searchProject(project!, query!, limit ?? 10) };
+        const results = searchProject(project!, query!, limit ?? 10);
+        exactSearchFileHit = results.some((row) => row.kind === "file" && row.path === query);
+        result = { query, results };
       } else if (mode === "symbol") {
         const { target } = input;
         result = explain(project!, target!);
@@ -1184,7 +1188,10 @@ export function createTokenGraphServer(options: { trustedWorkspace?: TrustedWork
       await recordCoreEvent({
         root: resolvedRoot, taskId: task.taskId, toolName: "tokengraph_query_context", category: `query-${mode}`,
         operation: { mode, queryHash: createHash("sha256").update(input.query ?? input.target ?? input.slug ?? mode).digest("hex"), limit: input.limit ?? null },
-        originalTokens, compactTokens
+        originalTokens, compactTokens,
+        qualityChecks: exactSearchFileHit
+          ? [{ name: `search-result-file:${createHash("sha256").update(input.query!).digest("hex")}`, passed: true }]
+          : []
       });
       return task.autoStarted
         ? okWithTaskAuthority({ ...response, taskId: task.taskId }, task.taskId)

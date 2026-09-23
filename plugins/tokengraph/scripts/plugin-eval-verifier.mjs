@@ -150,10 +150,15 @@ async function verifyCurrentTask(root, manifest, contract) {
   }
   const prepareEvents = ledger.events.filter((event) => event?.toolName === "tokengraph_prepare_context" && event.category === "context-routing");
   if (prepareEvents.length !== 1) fail("scenario task ledger must contain exactly one context preparation event.");
-  const eventFingerprints = new Set(ledger.events.map((event) => event?.fingerprint).filter((value) => typeof value === "string"));
-  const recalledFiles = contract.requiredFiles.filter((path) => eventFingerprints.has(expectedSearchFingerprint(manifest.taskId, path)));
+  const recalledFiles = contract.requiredFiles.filter((path) => ledger.events.some((event) =>
+    event?.toolName === "tokengraph_query_context" && event.category === "query-search" &&
+    event.fingerprint === expectedSearchFingerprint(manifest.taskId, path) &&
+    Array.isArray(event.qualityChecks) && event.qualityChecks.some((check) =>
+      check?.name === `search-result-file:${sha256(path)}` && check.passed === true
+    )
+  ));
   if (recalledFiles.length !== contract.requiredFiles.length) {
-    fail("scenario task ledger does not prove an exact TokenGraph search for every required file.");
+    fail("scenario task ledger lacks result-backed exact TokenGraph search evidence for a required file.");
   }
   return recalledFiles.length;
 }
