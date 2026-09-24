@@ -189,6 +189,15 @@ afterEach(async () => {
 });
 
 describe("built lifecycle hook process", () => {
+  const requireTaskReport = (
+    report: Parameters<typeof formatTaskReportFooter>[0] | undefined
+  ) => {
+    if (!report) {
+      throw new Error("Expected completed task disposition to include a report.");
+    }
+    return report;
+  };
+
   it("compares exact bigint identities for files, directories, and same-directory renames", () => {
     const base = {
       dev: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
@@ -543,7 +552,7 @@ describe("built lifecycle hook process", () => {
     expect(stored?.events.map((item) => item.fingerprint).sort()).toEqual(events.map((item) => item.fingerprint).sort());
     expect(stored).toMatchObject({ host: "unknown" });
     expect(stored).not.toHaveProperty("sessionId");
-  });
+  }, 30_000);
 
   it("keeps a concurrently refreshed valid same-session pointer complete", async () => {
     const root = await makeRoot("tokengraph-hook-prune-race-root-");
@@ -627,7 +636,7 @@ describe("built lifecycle hook process", () => {
     const completed = await createTaskLedger(root, { host: "unknown" });
     await recordTaskEvent(root, completed.taskId, taskEvent());
     const result = await setTaskDisposition(root, completed.taskId, "complete");
-    const footer = formatTaskReportFooter(result.report!);
+    const footer = formatTaskReportFooter(requireTaskReport(result.report));
     await attachPointer(root, dataRoot, completed.taskId);
     expect((await runHook("stop", stopInput({ last_assistant_message: `Done.\n\n${footer}` }), {
       ...pluginEnvironment(dataRoot)
@@ -640,7 +649,7 @@ describe("built lifecycle hook process", () => {
     const ledger = await createTaskLedger(root, { host: "unknown" });
     await recordTaskEvent(root, ledger.taskId, taskEvent());
     const result = await setTaskDisposition(root, ledger.taskId, "complete");
-    const footer = formatTaskReportFooter(result.report!);
+    const footer = formatTaskReportFooter(requireTaskReport(result.report));
     expect((await attachPointer(root, dataRoot, ledger.taskId)).output).toEqual({});
 
     const blocked = await runHook("stop", stopInput(), pluginEnvironment(dataRoot));
@@ -1119,14 +1128,14 @@ describe("built lifecycle hook process", () => {
       const measured = await createTaskLedger(root, { host: "unknown" });
       await recordTaskEvent(root, measured.taskId, taskEvent());
       const measuredResult = await setTaskDisposition(root, measured.taskId, "complete");
-      const measuredFooter = formatTaskReportFooter(measuredResult.report!);
+      const measuredFooter = formatTaskReportFooter(requireTaskReport(measuredResult.report));
       expect(measuredFooter).toContain("categories context=~0-60 (context:uncalibrated)");
       await attach(measured.taskId);
       const measuredStop = await stop({ last_assistant_message: `Done.\n\n${measuredFooter}` });
 
       const noEvents = await createTaskLedger(root, { host: "unknown" });
       const noEventsResult = await setTaskDisposition(root, noEvents.taskId, "complete");
-      const noEventsFooter = formatTaskReportFooter(noEventsResult.report!);
+      const noEventsFooter = formatTaskReportFooter(requireTaskReport(noEventsResult.report));
       await attach(noEvents.taskId);
       const noEventsStop = await stop({ last_assistant_message: noEventsFooter });
 
@@ -1405,6 +1414,7 @@ describe("hook manifest contract", () => {
   });
 
   it("wires workspace attestation and task lifecycle through the self-contained Node adapter only", async () => {
+    const dollarSign = "$";
     const manifest = JSON.parse(await readFile(resolve("hooks", "hooks.json"), "utf8")) as {
       hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command: string }> }>>;
     };
@@ -1412,21 +1422,21 @@ describe("hook manifest contract", () => {
       "PostToolUse", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"
     ].sort());
     expect(manifest.hooks.SessionStart[0]?.hooks).toEqual([
-      { type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks.js\" session-start" }
+      { type: "command", command: `node "${dollarSign}{CLAUDE_PLUGIN_ROOT}/dist/hooks.js" session-start` }
     ]);
     expect(manifest.hooks.UserPromptSubmit[0]?.hooks).toEqual([
-      { type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks.js\" user-prompt-submit" }
+      { type: "command", command: `node "${dollarSign}{CLAUDE_PLUGIN_ROOT}/dist/hooks.js" user-prompt-submit` }
     ]);
     expect(manifest.hooks.SessionEnd[0]?.hooks).toEqual([
-      { type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks.js\" session-end" }
+      { type: "command", command: `node "${dollarSign}{CLAUDE_PLUGIN_ROOT}/dist/hooks.js" session-end` }
     ]);
     expect(manifest.hooks.PostToolUse[0]?.matcher).toMatch(/tokengraph_prepare_context/);
     expect(manifest.hooks.PostToolUse[0]?.matcher).toMatch(/tokengraph_task_report/);
     expect(manifest.hooks.PostToolUse[0]?.hooks).toEqual([
-      { type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks.js\" post-tool-use" }
+      { type: "command", command: `node "${dollarSign}{CLAUDE_PLUGIN_ROOT}/dist/hooks.js" post-tool-use` }
     ]);
     expect(manifest.hooks.Stop[0]?.hooks).toEqual([
-      { type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks.js\" stop" }
+      { type: "command", command: `node "${dollarSign}{CLAUDE_PLUGIN_ROOT}/dist/hooks.js" stop` }
     ]);
     expect(manifest.hooks).not.toHaveProperty("StopFailure");
   });

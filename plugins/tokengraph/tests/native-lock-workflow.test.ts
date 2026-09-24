@@ -93,8 +93,10 @@ describe("native lock six-target workflow", () => {
     expect(workflow).toContain("if-no-files-found: error");
     expect(workflow).toContain("include-hidden-files: false");
     expect(workflow).toContain("path: |");
-    expect(workflow).toContain("native-output/${{ matrix.id }}/${{ matrix.file }}");
-    expect(workflow).toContain("native-output/${{ matrix.id }}/build-receipt.json");
+    const matrixId = "$" + "{{ matrix.id }}";
+    const matrixFile = "$" + "{{ matrix.file }}";
+    expect(workflow).toContain(`native-output/${matrixId}/${matrixFile}`);
+    expect(workflow).toContain(`native-output/${matrixId}/build-receipt.json`);
     expect(workflow).not.toMatch(/path:\s+(?:\.\.\/|\/|[A-Za-z]:\\)/u);
   });
 
@@ -114,7 +116,8 @@ describe("native lock six-target workflow", () => {
     expect(workflow).toContain('if (archivePath.startsWith("/") || /^[A-Za-z]:/u.test(archivePath) || archivePath.includes("\\\\"))');
     expect(workflow).toContain('parts.includes("..")');
     expect(workflow).toContain('relative(extractionRoot, outputPath)');
-    expect(workflow).toContain('if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath))');
+    const separatorExpression = "$" + "{sep}";
+    expect(workflow).toContain(`if (relativePath === ".." || relativePath.startsWith(\`..${separatorExpression}\`) || isAbsolute(relativePath))`);
     expect(workflow).toContain('writeFile(outputPath, bytes, { flag: "wx", mode: 0o600 })');
     expect(workflow).toContain('test ! -e native-archive-validation/tokengraph/node_modules');
   });

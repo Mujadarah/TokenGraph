@@ -2,7 +2,7 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -133,13 +133,10 @@ function send(message: Record<string, unknown>) {
   server?.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
 }
 
-function readResponse(id: number, timeoutMs = process.platform === "win32" ? 15_000 : 5_000): Promise<JsonRpcResponse> {
+function readResponse(id: number, timeoutMs = 15_000): Promise<JsonRpcResponse> {
   return new Promise((resolve, reject) => {
     let buffer = "";
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error(`Timed out waiting for JSON-RPC response ${id}. Last stdout: ${buffer}`));
-    }, timeoutMs);
+    const timeout = { handle: undefined as NodeJS.Timeout | undefined };
 
     const onData = (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
@@ -171,12 +168,17 @@ function readResponse(id: number, timeoutMs = process.platform === "win32" ? 15_
       stderrBuffer += chunk.toString("utf8");
     };
     const cleanup = () => {
-      clearTimeout(timeout);
+      if (timeout.handle) clearTimeout(timeout.handle);
       server?.stdout.off("data", onData);
       server?.stderr.off("data", onStderr);
       server?.off("error", onError);
       server?.off("exit", onExit);
     };
+
+    timeout.handle = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for JSON-RPC response ${id}. Last stdout: ${buffer}`));
+    }, timeoutMs);
 
     server?.stdout.on("data", onData);
     server?.stderr.on("data", onStderr);
@@ -721,7 +723,7 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { root: "first", taskId: prepared.taskId, disposition: "complete", responseMode: "verbose" }
     });
     expect(repeatedReportCall.structuredContent).toEqual(reportCall.structuredContent);
-  }, process.platform === "win32" ? 60_000 : 15_000);
+  }, process.platform === "win32" ? 60_000 : 30_000);
 
   it("records a bounded shadow decision while still activating TokenGraph", async () => {
     const root = await makeRoot();

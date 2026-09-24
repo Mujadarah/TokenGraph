@@ -352,7 +352,7 @@ async function readVerifiedFile(
       try {
         await handle.close();
       } catch {
-        throw new NativeLockError("ADDON_INTEGRITY");
+        fail("ADDON_INTEGRITY");
       }
     }
   }
@@ -1085,7 +1085,7 @@ function isExpectedWindowsSharingFailure(result: CleanupResult): boolean {
   return result.phase === "addon" && ["EPERM", "EACCES", "EBUSY"].includes(result.code ?? "");
 }
 
-function inspectProductionRetention(runtime: NativeLockAddonRuntime, loadedModule: ProductionLoadedNativeModule): void {
+function inspectProductionRetention(runtime: NativeLockAddonRuntime): void {
   if (runtime.inspectProductionRetention === undefined) return;
   try {
     runtime.inspectProductionRetention((candidate) =>
@@ -1107,7 +1107,7 @@ function preserveWindowsMappedStaging(
   if (!poisonStagingSlot(runtime, lifecycle.root)) return false;
   if (retainFailure) {
     retainedFailedModules.push({ loadedModule, lifecycle });
-    inspectProductionRetention(runtime, loadedModule);
+    inspectProductionRetention(runtime);
   }
   process.once("exit", () => {
     void loadedModule.holder;
@@ -1171,7 +1171,7 @@ async function performStagedLoad(
         staged,
         lifecycle
       });
-      if (loadedModule.provenance === "production") inspectProductionRetention(runtime, loadedModule);
+      if (loadedModule.provenance === "production") inspectProductionRetention(runtime);
       return addon;
     } catch (error) {
       const cleanup = await cleanupOwnedStaging(lifecycle, runtime.stagingIo);
