@@ -18,6 +18,7 @@ import {
 } from "./legacyRuntimeActivation.js";
 import {
   type CanonicalPersistenceLock,
+  hasAsciiControl,
   isCanonicalPersistenceLock,
   relativeLegacyName
 } from "./lockDomain.js";
@@ -557,7 +558,8 @@ function pathForJournal(lock: CanonicalPersistenceLock, journal: ActiveLockRecov
     journal.relativeLegacyName.includes("/") || journal.relativeLegacyName.includes("\\") ||
     journal.relativeLegacyName === NATIVE_ANCHOR || journal.relativeLegacyName === NATIVE_JOURNAL ||
     dataName.length === 0 || dataName === "." || dataName === ".." ||
-    /[<>:"|?*\u0000-\u001f]/u.test(dataName) || /[. ]$/u.test(dataName) ||
+    /[<>:"|?*]/u.test(dataName) || hasAsciiControl(dataName) ||
+    /[. ]$/u.test(dataName) ||
     Buffer.byteLength(dataName, "utf8") > 240 ||
     keyHash(journal.relativeLegacyName) !== journal.keyHash) {
     fail("LOCK_JOURNAL_UNSAFE");

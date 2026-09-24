@@ -22,9 +22,22 @@ function optionValue(args: string[], name: string): string | undefined {
 }
 
 function boundedCliErrorMessage(error: unknown): string {
-  const clean = (value: unknown) => (value instanceof Error ? value.message : String(value))
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
-    .slice(0, 512);
+  const clean = (value: unknown) => {
+    const message = value instanceof Error ? value.message : String(value);
+    let sanitized = "";
+    let inControlRun = false;
+    for (const char of message) {
+      const code = char.charCodeAt(0);
+      if (code < 32 || code === 127) {
+        if (!inControlRun) sanitized += " ";
+        inControlRun = true;
+      } else {
+        sanitized += char;
+        inControlRun = false;
+      }
+    }
+    return sanitized.slice(0, 512);
+  };
   if (!(error instanceof AggregateError)) return clean(error);
   const causes = [...error.errors].slice(0, 8).map((cause, index) => `cause ${index + 1}: ${clean(cause)}`);
   return [clean(error), ...causes].join("\n");

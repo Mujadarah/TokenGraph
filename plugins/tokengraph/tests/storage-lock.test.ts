@@ -442,6 +442,8 @@ describe("closed lock-domain registry", () => {
       .rejects.toMatchObject({ code: "INVALID_LOCK_DOMAIN" });
     await expect(canonicalPersistenceLock(root, "runs", "stream:name"))
       .rejects.toMatchObject({ code: "INVALID_LOCK_DOMAIN" });
+    await expect(canonicalPersistenceLock(root, "runs", "control\u001fname"))
+      .rejects.toMatchObject({ code: "INVALID_LOCK_DOMAIN" });
     await expect(canonicalPersistenceLock(root, "unknown" as "runs", "file"))
       .rejects.toMatchObject({ code: "INVALID_LOCK_DOMAIN" });
 
@@ -1503,8 +1505,6 @@ describe("closed journal recovery table", () => {
       });
       runtime.liveness.set(77, "dead");
       if (mutation === "replaced") {
-        let waits = 0;
-        runtime.waitHook = () => { waits += 1; };
         const originalWait = runtime.wait.bind(runtime);
         runtime.wait = async (milliseconds, signal) => {
           await originalWait(milliseconds, signal);

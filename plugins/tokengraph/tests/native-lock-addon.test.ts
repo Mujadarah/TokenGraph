@@ -582,7 +582,7 @@ describe("private native addon staging and provenance", () => {
     await queuedSourceRead.promise;
     let stagedWhileRetryBlocked = false;
     void queuedReachedStage.promise.then(() => { stagedWhileRetryBlocked = true; });
-    for (let turn = 0; turn < 100 && !stagedWhileRetryBlocked; turn += 1) {
+    for (let turn = 0; turn < 100; turn += 1) {
       await new Promise<void>((resolveTurn) => { setImmediate(resolveTurn); });
     }
     const reachedStageWhileRetryBlocked = stagedWhileRetryBlocked;

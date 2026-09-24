@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, type BigIntStats } from "node:fs";
 import { link, lstat, mkdir, open, readdir, realpath, rename, unlink } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 
 import { formatTaskReportFooter } from "./core/taskEstimator.js";
 import {

@@ -40,6 +40,13 @@ export const NATIVE_LOCK_JOURNAL_TEMP_NAME = ".tokengraph-native-journal-v2.lock
 const MAX_SEGMENT_BYTES = 240;
 const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
 
+export const hasAsciiControl = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) < 32) return true;
+  }
+  return false;
+};
+
 function fail(): never {
   throw new LockDomainError();
 }
@@ -47,7 +54,7 @@ function fail(): never {
 function isSafeSingleSegment(value: string): boolean {
   if (value.length === 0 || value === "." || value === "..") return false;
   if (value.includes("/") || value.includes("\\") || value.includes("\0")) return false;
-  if (/[<>:"|?*\u0000-\u001f]/u.test(value) || /[. ]$/u.test(value)) return false;
+  if (/[<>:"|?*]/u.test(value) || hasAsciiControl(value) || /[. ]$/u.test(value)) return false;
   if (WINDOWS_DEVICE_NAME.test(value)) return false;
   if (Buffer.byteLength(value, "utf8") > MAX_SEGMENT_BYTES) return false;
   const compatibilityName = `${value}.lock`;
