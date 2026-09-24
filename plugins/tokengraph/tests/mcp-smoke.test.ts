@@ -136,10 +136,7 @@ function send(message: Record<string, unknown>) {
 function readResponse(id: number, timeoutMs = 15_000): Promise<JsonRpcResponse> {
   return new Promise((resolve, reject) => {
     let buffer = "";
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error(`Timed out waiting for JSON-RPC response ${id}. Last stdout: ${buffer}`));
-    }, timeoutMs);
+    let timeout: NodeJS.Timeout;
 
     const onData = (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
@@ -177,6 +174,11 @@ function readResponse(id: number, timeoutMs = 15_000): Promise<JsonRpcResponse> 
       server?.off("error", onError);
       server?.off("exit", onExit);
     };
+
+    timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for JSON-RPC response ${id}. Last stdout: ${buffer}`));
+    }, timeoutMs);
 
     server?.stdout.on("data", onData);
     server?.stderr.on("data", onStderr);
