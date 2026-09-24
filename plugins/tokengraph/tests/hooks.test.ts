@@ -189,6 +189,15 @@ afterEach(async () => {
 });
 
 describe("built lifecycle hook process", () => {
+  const requireTaskReport = (
+    report: Parameters<typeof formatTaskReportFooter>[0] | undefined
+  ) => {
+    if (!report) {
+      throw new Error("Expected completed task disposition to include a report.");
+    }
+    return report;
+  };
+
   it("compares exact bigint identities for files, directories, and same-directory renames", () => {
     const base = {
       dev: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
@@ -627,10 +636,7 @@ describe("built lifecycle hook process", () => {
     const completed = await createTaskLedger(root, { host: "unknown" });
     await recordTaskEvent(root, completed.taskId, taskEvent());
     const result = await setTaskDisposition(root, completed.taskId, "complete");
-    if (!result.report) {
-      throw new Error("Expected completed task disposition to include a report.");
-    }
-    const footer = formatTaskReportFooter(result.report);
+    const footer = formatTaskReportFooter(requireTaskReport(result.report));
     await attachPointer(root, dataRoot, completed.taskId);
     expect((await runHook("stop", stopInput({ last_assistant_message: `Done.\n\n${footer}` }), {
       ...pluginEnvironment(dataRoot)
@@ -643,10 +649,7 @@ describe("built lifecycle hook process", () => {
     const ledger = await createTaskLedger(root, { host: "unknown" });
     await recordTaskEvent(root, ledger.taskId, taskEvent());
     const result = await setTaskDisposition(root, ledger.taskId, "complete");
-    if (!result.report) {
-      throw new Error("Expected completed task disposition to include a report.");
-    }
-    const footer = formatTaskReportFooter(result.report);
+    const footer = formatTaskReportFooter(requireTaskReport(result.report));
     expect((await attachPointer(root, dataRoot, ledger.taskId)).output).toEqual({});
 
     const blocked = await runHook("stop", stopInput(), pluginEnvironment(dataRoot));
@@ -1125,20 +1128,14 @@ describe("built lifecycle hook process", () => {
       const measured = await createTaskLedger(root, { host: "unknown" });
       await recordTaskEvent(root, measured.taskId, taskEvent());
       const measuredResult = await setTaskDisposition(root, measured.taskId, "complete");
-      if (!measuredResult.report) {
-        throw new Error("Expected completed task disposition to include a report.");
-      }
-      const measuredFooter = formatTaskReportFooter(measuredResult.report);
+      const measuredFooter = formatTaskReportFooter(requireTaskReport(measuredResult.report));
       expect(measuredFooter).toContain("categories context=~0-60 (context:uncalibrated)");
       await attach(measured.taskId);
       const measuredStop = await stop({ last_assistant_message: `Done.\n\n${measuredFooter}` });
 
       const noEvents = await createTaskLedger(root, { host: "unknown" });
       const noEventsResult = await setTaskDisposition(root, noEvents.taskId, "complete");
-      if (!noEventsResult.report) {
-        throw new Error("Expected completed task disposition to include a report.");
-      }
-      const noEventsFooter = formatTaskReportFooter(noEventsResult.report);
+      const noEventsFooter = formatTaskReportFooter(requireTaskReport(noEventsResult.report));
       await attach(noEvents.taskId);
       const noEventsStop = await stop({ last_assistant_message: noEventsFooter });
 
