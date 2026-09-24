@@ -215,7 +215,7 @@ async function readOpenedBounded(path: string, parentBefore: Identity, entryBefo
     const chunks: Buffer[] = [];
     let bytesRead = 0;
     for (;;) {
-      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, HOST_WORKSPACE_MAX_BYTES + 1 - bytesRead));
+      const chunk = Buffer.alloc(Math.min(64 * 1024, HOST_WORKSPACE_MAX_BYTES + 1 - bytesRead));
       const result = await handle.read(chunk, 0, chunk.length, null);
       if (result.bytesRead === 0) break;
       bytesRead += result.bytesRead;
