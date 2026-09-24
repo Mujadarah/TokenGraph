@@ -36,7 +36,7 @@ release/tokengraph/dist/index.js
 
 ## Output Contract
 
-- The eight core tools and other JSON-only tools return one JSON `TextContent` item containing serialized JSON. Parse that text as the tool result; these tools do not duplicate it in `structuredContent`.
+- The eight core tools and other JSON-only tools return one JSON `TextContent` item containing serialized JSON. Parse that text as the full tool result. Task-creating core calls additionally return minimal `structuredContent` containing only `taskId` for lifecycle authority; they do not duplicate the full result.
 - `tokengraph_export_project_map` is the resource-link exception: it returns JSON text, optional `resource_link` content items, and matching `structuredContent` with `content`, `resourceLinks`, and `markdownFallback`.
 - `tokengraph_compress_context` returns preserved constraints, referenced memories, wiki references, recommended first reads, omissions, confidence, and estimated tokens.
 - Optional image content should only be added by a future host-aware enhancement when the host explicitly supports it; text, JSON, and Markdown must remain sufficient.

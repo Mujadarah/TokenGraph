@@ -1,11 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile, rename } from "node:fs/promises";
-import { resolve } from "node:path";
 
 import { filterUntrustedSourceText } from "./storagePolicy.js";
+import type { CanonicalPersistenceLock } from "./lockDomain.js";
 import { tokenize } from "./token.js";
-import { withFileLock, writeJsonAtomic } from "./storage.js";
-import type { MemoryConflict, MemoryEntry, MemoryInput, MemoryRecall, MemoryStatus, MemoryUpdateInput } from "./types.js";
+import { withFileLock, writeJsonAtomic, type WriteTelemetryContext } from "./storage.js";
+import type { MemoryConflict, MemoryEntry, MemoryInput, MemoryRecall, MemoryStatus, MemoryUpdateInput, StorageWritePolicy } from "./types.js";
 
 interface MemoryListOptions {
   includeDeprecated?: boolean;
@@ -19,9 +19,28 @@ interface MemoryRecallOptions extends MemoryListOptions {
 
 const DEFAULT_SOURCE = "manual";
 const CURRENT_MEMORY_SCHEMA_VERSION = 1;
+const memoryStoreWriteChains = new Map<string, Promise<void>>();
+const bufferedMemoryUseIds = new Map<string, Set<string>>();
+
+export interface MemoryStoreOptions {
+  writePolicy?: StorageWritePolicy;
+  telemetry?: WriteTelemetryContext;
+  /** Task identity that owns deferred minimal-policy recall writes. */
+  bufferScope?: string;
+}
+
+function bufferedUseKey(lock: CanonicalPersistenceLock, bufferScope: string): string {
+  return `${lock.compatibilityPath}\u0000${bufferScope}`;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function utcDay(timestamp: string | undefined): string | undefined {
+  if (!timestamp) return undefined;
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString().slice(0, 10);
 }
 
 function unique(values: string[] | undefined): string[] {
@@ -150,17 +169,47 @@ function filterByStatus(memories: MemoryEntry[], options: MemoryListOptions): Me
 }
 
 export class MemoryStore {
-  private static readonly writeChains = new Map<string, Promise<void>>();
+  constructor(
+    private readonly filePath: string,
+    private readonly lock: CanonicalPersistenceLock,
+    private readonly options: MemoryStoreOptions = {}
+  ) {}
 
-  constructor(private readonly filePath: string) {}
+  static async flushBufferedUses(
+    filePath: string,
+    lock: CanonicalPersistenceLock,
+    bufferScope: string,
+    options: Pick<MemoryStoreOptions, "telemetry"> & { additionalDigests?: readonly string[]; settledAfter?: string } = {}
+  ): Promise<boolean> {
+    const key = bufferedUseKey(lock, bufferScope);
+    const buffered = bufferedMemoryUseIds.get(key);
+    const ids = new Set(buffered ?? []);
+    const digests = new Set(options.additionalDigests ?? []);
+    if (!ids.size && !digests.size) return false;
+    bufferedMemoryUseIds.delete(key);
+    try {
+      const store = new MemoryStore(filePath, lock, {
+        writePolicy: "durable",
+        ...(options.telemetry ? { telemetry: options.telemetry } : {})
+      });
+      if (options.settledAfter) await store.persistUsedAfter([...ids], digests, options.settledAfter);
+      else await store.persistUsed([...ids], "durable");
+      return true;
+    } catch (error) {
+      const pending = bufferedMemoryUseIds.get(key) ?? new Set<string>();
+      for (const id of ids) pending.add(id);
+      bufferedMemoryUseIds.set(key, pending);
+      throw error;
+    }
+  }
 
   async list(options: MemoryListOptions = {}): Promise<MemoryEntry[]> {
-    return filterByStatus(await this.readAll(), options);
+    return filterByStatus(await this.readAll(false), options);
   }
 
   async add(input: MemoryInput): Promise<MemoryEntry> {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const entry = createMemory(input);
       memories.push(entry);
       await this.writeAtomic(memories);
@@ -170,7 +219,7 @@ export class MemoryStore {
 
   async update(id: string, update: MemoryUpdateInput): Promise<MemoryEntry | undefined> {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const index = memories.findIndex((memory) => memory.id === id);
       if (index === -1) return undefined;
       const next = mergeMemory(memories[index], update);
@@ -192,7 +241,7 @@ export class MemoryStore {
 
   async delete(id: string, options: { hard?: boolean } = {}): Promise<boolean> {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const index = memories.findIndex((memory) => memory.id === id);
       if (index === -1) return false;
       if (options.hard) {
@@ -258,6 +307,10 @@ export class MemoryStore {
     };
   }
 
+  async recordUse(ids: string[]): Promise<void> {
+    await this.markUsed(ids);
+  }
+
   async findConflicts(input: { id?: string; candidate?: MemoryInput; query?: string; limit?: number }): Promise<MemoryConflict[]> {
     const memories = await this.list();
     const baseMemory = input.id ? memories.find((memory) => memory.id === input.id) : undefined;
@@ -309,26 +362,67 @@ export class MemoryStore {
 
   private async markUsed(ids: string[]): Promise<void> {
     if (!ids.length) return;
-    await this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+    const writePolicy = this.options.writePolicy ?? "balanced";
+    if (writePolicy === "minimal") {
+      // Only a task-owned lifecycle can defer this correctness-neutral write.
+      // Surfaces without a task boundary persist at the call boundary so the
+      // observation cannot become ownerless or be flushed by another task.
+      if (!this.options.bufferScope) {
+        await this.persistUsed(ids, "balanced");
+        return;
+      }
+      const key = bufferedUseKey(this.lock, this.options.bufferScope);
+      const buffered = bufferedMemoryUseIds.get(key) ?? new Set<string>();
+      for (const id of ids) buffered.add(id);
+      bufferedMemoryUseIds.set(key, buffered);
+      return;
+    }
+    await this.persistUsed(ids, writePolicy);
+  }
+
+  private async persistUsed(ids: string[], writePolicy: Exclude<StorageWritePolicy, "minimal">): Promise<boolean> {
+    const idsToMark = new Set(ids);
+    return this.enqueueWrite(async () => {
+      const memories = await this.readAll(true);
       const timestamp = nowIso();
+      const today = utcDay(timestamp);
       let changed = false;
       for (const memory of memories) {
-        if (ids.includes(memory.id)) {
-          memory.lastUsedAt = timestamp;
-          memory.updatedAt = timestamp;
-          changed = true;
-        }
+        if (!idsToMark.has(memory.id) || (writePolicy === "balanced" && utcDay(memory.lastUsedAt) === today)) continue;
+        memory.lastUsedAt = timestamp;
+        memory.updatedAt = timestamp;
+        changed = true;
       }
       if (changed) {
         await this.writeAtomic(memories);
       }
+      return changed;
+    });
+  }
+
+  private async persistUsedAfter(ids: string[], digests: ReadonlySet<string>, settledAfter: string): Promise<boolean> {
+    const idsToMark = new Set(ids);
+    const cutoff = Date.parse(settledAfter);
+    if (!Number.isFinite(cutoff)) throw new Error("TokenGraph task settlement timestamp is invalid.");
+    return this.enqueueWrite(async () => {
+      const memories = await this.readAll(true);
+      const timestamp = nowIso();
+      let changed = false;
+      for (const memory of memories) {
+        const selected = idsToMark.has(memory.id) || digests.has(createHash("sha256").update(memory.id).digest("hex"));
+        if (!selected || (memory.lastUsedAt && Date.parse(memory.lastUsedAt) >= cutoff)) continue;
+        memory.lastUsedAt = timestamp;
+        memory.updatedAt = timestamp;
+        changed = true;
+      }
+      if (changed) await this.writeAtomic(memories);
+      return changed;
     });
   }
 
   private async mutate(id: string, transform: (memory: MemoryEntry) => MemoryEntry): Promise<MemoryEntry | undefined> {
     return this.enqueueWrite(async () => {
-      const memories = await this.readAll();
+      const memories = await this.readAll(true);
       const index = memories.findIndex((memory) => memory.id === id);
       if (index === -1) return undefined;
       const next = transform(memories[index]);
@@ -338,7 +432,11 @@ export class MemoryStore {
     });
   }
 
-  private async readAll(): Promise<MemoryEntry[]> {
+  // `repairInsideLock` is set only by write operations, which already own the
+  // store's canonical domain lock (repository-state in production, see the
+  // server wiring); quarantining a corrupt file is a mutation and must never
+  // happen from an unlocked pure read (`list`/`search`/`recall`/`findConflicts`).
+  private async readAll(repairInsideLock: boolean): Promise<MemoryEntry[]> {
     try {
       const raw = await readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as unknown;
@@ -353,7 +451,7 @@ export class MemoryStore {
         return [];
       }
       if (error instanceof SyntaxError) {
-        await this.quarantineCorruptFile();
+        if (repairInsideLock) await this.quarantineCorruptFile();
         return [];
       }
       throw error;
@@ -361,19 +459,18 @@ export class MemoryStore {
   }
 
   private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
-    const key = resolve(this.filePath);
-    const previous = MemoryStore.writeChains.get(key) ?? Promise.resolve();
+    const key = this.lock.compatibilityPath;
+    const previous = memoryStoreWriteChains.get(key) ?? Promise.resolve();
     const current = previous.then(
-      () => withFileLock(`${key}.lock`, operation),
-      () => withFileLock(`${key}.lock`, operation)
+      () => withFileLock(this.lock, operation),
+      () => withFileLock(this.lock, operation)
     );
-    MemoryStore.writeChains.set(
-      key,
-      current.then(
-        () => undefined,
-        () => undefined
-      )
-    );
+    let settled: Promise<void>;
+    const cleanUp = (): void => {
+      if (memoryStoreWriteChains.get(key) === settled) memoryStoreWriteChains.delete(key);
+    };
+    settled = current.then(cleanUp, cleanUp);
+    memoryStoreWriteChains.set(key, settled);
     return current;
   }
 
@@ -381,7 +478,7 @@ export class MemoryStore {
     await writeJsonAtomic(this.filePath, {
       schemaVersion: CURRENT_MEMORY_SCHEMA_VERSION,
       memories
-    });
+    }, this.options.telemetry ? { telemetry: this.options.telemetry } : {});
   }
 
   private async quarantineCorruptFile(): Promise<void> {
@@ -394,4 +491,22 @@ export class MemoryStore {
       }
     }
   }
+}
+
+export async function flushBufferedMemoryUses(
+  filePath: string,
+  lock: CanonicalPersistenceLock,
+  bufferScope: string,
+  options: Pick<MemoryStoreOptions, "telemetry"> & { additionalDigests?: readonly string[]; settledAfter?: string } = {}
+): Promise<boolean> {
+  return MemoryStore.flushBufferedUses(filePath, lock, bufferScope, options);
+}
+
+export function discardBufferedMemoryUses(lock: CanonicalPersistenceLock, bufferScope: string): void {
+  bufferedMemoryUseIds.delete(bufferedUseKey(lock, bufferScope));
+}
+
+/** @internal Test-only diagnostic; not part of the public memory-store contract. */
+export function __getMemoryStoreWriteQueueSizeForTests(): number {
+  return memoryStoreWriteChains.size;
 }

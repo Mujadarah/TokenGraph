@@ -1,0 +1,6 @@
+{
+  "name": "tokengraph-evidence",
+  "version": "1.0.0",
+  "supportedTargetKinds": ["plugin"],
+  "command": ["node", "../scripts/plugin-eval-metrics.mjs"]
+}

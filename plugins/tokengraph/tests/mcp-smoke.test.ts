@@ -1,17 +1,37 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { indexProject } from "../src/core/projectIndexer.js";
+import { indexProject, projectIndexFingerprint } from "../src/core/projectIndexer.js";
 import { createTaskOutcome } from "../src/core/memoryCore.js";
 import { estimateTokens } from "../src/core/token.js";
 import { benchmarkMcpInputSchemas } from "../src/core/toolContracts.js";
 import { loadTaskLedger, recordTaskOutcome } from "../src/core/taskLedger.js";
 import { listKnowledgeSuggestions } from "../src/core/knowledgeReviewQueue.js";
 import { createTokenGraphServer } from "../src/server.js";
+import { updateTokenGraphConfig } from "../src/core/config.js";
+import { canonicalPersistenceLock } from "../src/core/lockDomain.js";
+import { MemoryStore } from "../src/core/memoryStore.js";
+import {
+  indexManifestPath,
+  indexPath,
+  loadProjectIndex,
+  repositoryMemoryPath,
+  saveProjectIndex
+} from "../src/core/persistence.js";
+import type { ProjectIndex } from "../src/core/types.js";
+import {
+  createExternalPluginMirror,
+  externalHooksEntry,
+  externalRuntimeEnvironment,
+  externalRuntimeRoot,
+  externalServerEntry,
+  verifyExternalRuntimeTrees
+} from "./support/externalRuntime.js";
 
 interface JsonRpcResponse {
   id?: number | string;
@@ -21,10 +41,15 @@ interface JsonRpcResponse {
 }
 
 const tempRoots: string[] = [];
+const execFileAsync = promisify(execFile);
 let server: ChildProcessWithoutNullStreams | undefined;
 let advertisedRoots: Array<{ uri: string; name?: string }> | undefined;
-const serverEntry = resolve("dist/index.js");
-const hookEntry = resolve("dist/hooks.js");
+let automaticServerActivation = true;
+let serverActivated = false;
+let activationRequestId = -1;
+let hookDataRoot: string | undefined;
+const serverEntry = externalServerEntry;
+const hookEntry = externalHooksEntry;
 const coreToolNames = [
   "tokengraph_analyze",
   "tokengraph_compress",
@@ -45,6 +70,7 @@ const legacyToolNames = [
   "tokengraph_delete_memory",
   "tokengraph_delete_rule",
   "tokengraph_deprecate_memory",
+  "tokengraph_doctor",
   "tokengraph_explain_symbol",
   "tokengraph_export_project_map",
   "tokengraph_find_memory_conflicts",
@@ -78,17 +104,39 @@ async function makeRoot(): Promise<string> {
   return root;
 }
 
+async function writeLegacyV4Index(root: string, index: ProjectIndex): Promise<void> {
+  const legacy = { ...index, schemaVersion: 4, fingerprint: projectIndexFingerprint(index) };
+  delete legacy.generation;
+  await mkdir(join(root, ".tokengraph"), { recursive: true });
+  await writeFile(indexPath(root), `${JSON.stringify(legacy, null, 2)}\n`);
+}
+
+async function seedMinimalPolicyMemory(root: string, title: string): Promise<{ id: string; path: string }> {
+  await updateTokenGraphConfig(root, { storage: { writePolicy: "minimal" } });
+  const path = await repositoryMemoryPath(root);
+  const lock = await canonicalPersistenceLock(root, "repository-state", "memory.json");
+  const memory = await new MemoryStore(path, lock, { writePolicy: "durable" }).add({
+    type: "architecture",
+    title,
+    body: `${title} body`,
+    tags: ["phase6"]
+  });
+  return { id: memory.id, path };
+}
+
+async function git(root: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", args, { cwd: root });
+  return stdout.trim();
+}
+
 function send(message: Record<string, unknown>) {
   server?.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
 }
 
-function readResponse(id: number, timeoutMs = 5000): Promise<JsonRpcResponse> {
+function readResponse(id: number, timeoutMs = 15_000): Promise<JsonRpcResponse> {
   return new Promise((resolve, reject) => {
     let buffer = "";
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error(`Timed out waiting for JSON-RPC response ${id}. Last stdout: ${buffer}`));
-    }, timeoutMs);
+    const timeout = { handle: undefined as NodeJS.Timeout | undefined };
 
     const onData = (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
@@ -120,12 +168,17 @@ function readResponse(id: number, timeoutMs = 5000): Promise<JsonRpcResponse> {
       stderrBuffer += chunk.toString("utf8");
     };
     const cleanup = () => {
-      clearTimeout(timeout);
+      if (timeout.handle) clearTimeout(timeout.handle);
       server?.stdout.off("data", onData);
       server?.stderr.off("data", onStderr);
       server?.off("error", onError);
       server?.off("exit", onExit);
     };
+
+    timeout.handle = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for JSON-RPC response ${id}. Last stdout: ${buffer}`));
+    }, timeoutMs);
 
     server?.stdout.on("data", onData);
     server?.stderr.on("data", onStderr);
@@ -134,7 +187,7 @@ function readResponse(id: number, timeoutMs = 5000): Promise<JsonRpcResponse> {
   });
 }
 
-async function request(id: number, method: string, params?: Record<string, unknown>) {
+async function requestRaw(id: number, method: string, params?: Record<string, unknown>, synthesizeStructuredContent = true) {
   const pending = readResponse(id);
   send({ id, method, ...(params ? { params } : {}) });
   const response = await pending;
@@ -142,27 +195,57 @@ async function request(id: number, method: string, params?: Record<string, unkno
     throw new Error(`${method} failed: ${response.error.message}`);
   }
   const result = response.result as Record<string, unknown>;
-  if (method === "tools/call" && result && !result.isError && !("structuredContent" in result)) {
+  if (synthesizeStructuredContent && method === "tools/call" && result && !result.isError) {
     const content = result.content as Array<{ type?: string; text?: string }> | undefined;
     const text = content?.find((item) => item.type === "text")?.text;
-    if (text) Object.defineProperty(result, "structuredContent", { value: JSON.parse(text), enumerable: false });
+    if (text) {
+      if ("structuredContent" in result) {
+        Object.defineProperty(result, "wireStructuredContent", { value: result.structuredContent, enumerable: false });
+      }
+      Object.defineProperty(result, "structuredContent", { value: JSON.parse(text), enumerable: false });
+    }
   }
   return result;
 }
 
-function startServer(cwd: string = process.cwd(), env: NodeJS.ProcessEnv = {}) {
-  const childEnv = { ...process.env, ...env };
+async function request(id: number, method: string, params?: Record<string, unknown>, synthesizeStructuredContent = true) {
+  const toolName = method === "tools/call" ? params?.name : undefined;
+  if (automaticServerActivation && !serverActivated && toolName !== undefined &&
+      toolName !== "tokengraph_setup" && toolName !== "tokengraph_setup_status") {
+    const activation = await requestRaw(activationRequestId--, "tools/call", {
+      name: "tokengraph_setup",
+      arguments: { confirmNoLegacyProcesses: true },
+      ...(params?._meta === undefined ? {} : { _meta: params._meta })
+    });
+    if (activation.isError) throw new Error(`Automatic MCP test activation failed: ${JSON.stringify(activation)}`);
+    serverActivated = true;
+  }
+  const result = await requestRaw(id, method, params, synthesizeStructuredContent);
+  if (toolName === "tokengraph_setup" && !result.isError) serverActivated = true;
+  return result;
+}
+
+function startServer(
+  cwd: string = process.cwd(),
+  env: NodeJS.ProcessEnv = {},
+  activateOnFirstTool = true,
+  entry = serverEntry
+) {
+  const childEnv = externalRuntimeEnvironment(env);
   if (!Object.prototype.hasOwnProperty.call(env, "TOKENGRAPH_TOOL_SURFACE")) {
     childEnv.TOKENGRAPH_TOOL_SURFACE = "full";
   }
-  if (!env.TOKENGRAPH_WORKSPACE_ROOT && !env.CLAUDE_PROJECT_DIR && cwd !== process.cwd()) {
+  if (!Object.prototype.hasOwnProperty.call(env, "TOKENGRAPH_WORKSPACE_ROOT") &&
+      !Object.prototype.hasOwnProperty.call(env, "CLAUDE_PROJECT_DIR") && cwd !== process.cwd()) {
     childEnv.TOKENGRAPH_WORKSPACE_ROOT = cwd;
   }
-  server = spawn(process.execPath, [serverEntry], {
+  server = spawn(process.execPath, [entry], {
     cwd,
     env: childEnv,
     stdio: ["pipe", "pipe", "pipe"]
   });
+  automaticServerActivation = activateOnFirstTool;
+  serverActivated = false;
 }
 
 async function stopServer() {
@@ -171,13 +254,16 @@ async function stopServer() {
   }
   const current = server;
   server = undefined;
-  await new Promise<void>((resolve) => {
-    const timeout = setTimeout(resolve, 1000);
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const timeout = setTimeout(() => rejectPromise(new Error("MCP test server did not confirm exit after termination.")), 5000);
     current.once("exit", () => {
       clearTimeout(timeout);
-      resolve();
+      resolvePromise();
     });
-    current.kill();
+    if (!current.kill()) {
+      clearTimeout(timeout);
+      rejectPromise(new Error("MCP test server termination could not be requested."));
+    }
   });
 }
 
@@ -185,18 +271,20 @@ async function runWorkspaceHook(
   event: "session-end" | "session-start" | "user-prompt-submit",
   sessionId: string,
   cwd: string,
-  turnId = "turn-host-workspace"
+  turnId = "turn-host-workspace",
+  expectedOutput: Record<string, unknown> = {},
+  runtime: { pluginRoot: string; hookEntry: string } = { pluginRoot: externalRuntimeRoot, hookEntry }
 ): Promise<void> {
+  hookDataRoot ??= await makeRoot();
   await new Promise<void>((resolvePromise, rejectPromise) => {
-    const child = spawn(process.execPath, [hookEntry, event], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        PLUGIN_ROOT: process.cwd(),
-        PLUGIN_DATA: undefined,
+    const child = spawn(process.execPath, [runtime.hookEntry, event], {
+      cwd: runtime.pluginRoot,
+      env: externalRuntimeEnvironment({
+        PLUGIN_ROOT: runtime.pluginRoot,
+        PLUGIN_DATA: hookDataRoot,
         CLAUDE_PLUGIN_ROOT: undefined,
         CLAUDE_PLUGIN_DATA: undefined
-      },
+      }),
       stdio: ["pipe", "pipe", "pipe"]
     });
     let stdout = "";
@@ -212,7 +300,7 @@ async function runWorkspaceHook(
         return;
       }
       try {
-        expect(JSON.parse(stdout)).toEqual({});
+        expect(JSON.parse(stdout)).toEqual(expectedOutput);
         resolvePromise();
       } catch (error) {
         rejectPromise(error);
@@ -228,20 +316,25 @@ async function runWorkspaceHook(
   });
 }
 
-async function workspaceAttestationPath(sessionId: string): Promise<string> {
-  const pluginHash = createHash("sha256").update(await realpath(process.cwd())).digest("hex");
+async function workspaceAttestationPath(sessionId: string, pluginRoot = externalRuntimeRoot): Promise<string> {
+  const pluginHash = createHash("sha256").update(await realpath(pluginRoot)).digest("hex");
   const sessionHash = createHash("sha256").update(sessionId).digest("hex");
   return join(tmpdir(), "tokengraph-host-workspaces", pluginHash, `${sessionHash}.json`);
 }
 
 beforeEach(() => {
   advertisedRoots = undefined;
+  hookDataRoot = undefined;
   startServer();
 });
 
 afterEach(async () => {
   await stopServer();
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+afterAll(async () => {
+  await verifyExternalRuntimeTrees();
 });
 
 describe("TokenGraph MCP stdio server", () => {
@@ -268,6 +361,9 @@ describe("TokenGraph MCP stdio server", () => {
     expect(JSON.stringify(initialized.instructions)).toMatch(/tokengraph_setup[\s\S]*tokengraph_prepare_context/);
     expect(tools.every((tool) => tool.annotations?.destructiveHint === false)).toBe(true);
     expect(tools.find((tool) => tool.name === "tokengraph_setup")?.annotations?.readOnlyHint).toBe(true);
+    expect(JSON.stringify(tools.find((tool) => tool.name === "tokengraph_setup")?.inputSchema)).toMatch(
+      /v0\.23\.1[\s\S]{0,480}stopped[\s\S]{0,480}must not be restarted/iu
+    );
     expect(tools.find((tool) => tool.name === "tokengraph_recall")?.annotations?.readOnlyHint).toBe(false);
     expect(tools.find((tool) => tool.name === "tokengraph_propose_knowledge")?.annotations?.readOnlyHint).toBe(false);
     expect(tools.find((tool) => tool.name === "tokengraph_task_report")?.annotations?.readOnlyHint).toBe(false);
@@ -295,7 +391,7 @@ describe("TokenGraph MCP stdio server", () => {
     const names = tools.map((tool) => tool.name).sort();
 
     expect(names).toEqual([...coreToolNames, ...legacyToolNames].sort());
-    expect(new Set(names).size).toBe(42);
+    expect(new Set(names).size).toBe(43);
     expect(tools.filter((tool) => legacyToolNames.includes(tool.name)).every((tool) => /legacy|deprecated/i.test(tool.description ?? ""))).toBe(true);
     const coreSchemaTokens = Math.ceil(JSON.stringify(tools.filter((tool) => coreToolNames.includes(tool.name)).map((tool) => tool.inputSchema)).length / 4);
     const legacySchemaTokens = Math.ceil(JSON.stringify(tools.filter((tool) => legacyToolNames.includes(tool.name)).map((tool) => tool.inputSchema)).length / 4);
@@ -316,6 +412,46 @@ describe("TokenGraph MCP stdio server", () => {
     }
   });
 
+  it("activates native locking only in the MCP process that receives literal setup confirmation", async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "value.ts"), "export const value = true;\n");
+
+    const initializeUnactivatedServer = async (id: number) => {
+      await stopServer();
+      startServer(root, { TOKENGRAPH_TOOL_SURFACE: "full" }, false);
+      await request(id, "initialize", {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "tokengraph-process-activation-test", version: "0.23.2" }
+      });
+      send({ method: "notifications/initialized" });
+    };
+    const indexWithoutSetup = (id: number) => request(id, "tools/call", {
+      name: "tokengraph_index_project",
+      arguments: { root }
+    });
+
+    await initializeUnactivatedServer(9020);
+    const firstRefusal = await indexWithoutSetup(9021);
+    expect(firstRefusal).toMatchObject({ isError: true });
+    expect(JSON.stringify(firstRefusal)).toMatch(/Legacy TokenGraph runtime shutdown has not been confirmed/i);
+    await expect(access(join(root, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    const setup = await request(9022, "tools/call", {
+      name: "tokengraph_setup",
+      arguments: { confirmNoLegacyProcesses: true }
+    });
+    expect(setup).not.toMatchObject({ isError: true });
+    const indexed = await indexWithoutSetup(9023);
+    expect(indexed).not.toMatchObject({ isError: true });
+
+    await initializeUnactivatedServer(9024);
+    const secondRefusal = await indexWithoutSetup(9025);
+    expect(secondRefusal).toMatchObject({ isError: true });
+    expect(JSON.stringify(secondRefusal)).toMatch(/Legacy TokenGraph runtime shutdown has not been confirmed/i);
+  });
+
   it("routes a task through all eight core tools without merging ledgers or storing duplicate retry events", async () => {
     const trustedRoot = await makeRoot();
     const firstRoot = join(trustedRoot, "first");
@@ -332,7 +468,13 @@ describe("TokenGraph MCP stdio server", () => {
     });
     send({ method: "notifications/initialized" });
 
-    const setupCall = await request(9031, "tools/call", { name: "tokengraph_setup", arguments: {} });
+    const refusedSetup = await request(9031, "tools/call", { name: "tokengraph_setup", arguments: {} });
+    expect(refusedSetup).toMatchObject({ isError: true });
+    expect(JSON.stringify(refusedSetup)).toMatch(/confirmNoLegacyProcesses/i);
+    const setupCall = await request(9033, "tools/call", {
+      name: "tokengraph_setup",
+      arguments: { confirmNoLegacyProcesses: true }
+    });
     expect(Object.keys(setupCall)).not.toContain("structuredContent");
     const setupText = (setupCall.content as Array<{ type: string; text: string }>)[0]?.text;
     expect(JSON.parse(setupText!)).toEqual(setupCall.structuredContent);
@@ -340,8 +482,9 @@ describe("TokenGraph MCP stdio server", () => {
     const preparedCall = await request(9032, "tools/call", {
       name: "tokengraph_prepare_context",
       arguments: { root: "first", task: "Debug patient summary", constraints: ["  Must preserve patient privacy.  "], profile: "balanced", maxTokens: 4000, host: "codex" }
-    });
-    const prepared = preparedCall.structuredContent as { taskId: string; plan: unknown };
+    }, false);
+    const prepared = JSON.parse((preparedCall.content as Array<{ type: string; text: string }>)[0]!.text) as { taskId: string; plan: unknown };
+    expect(preparedCall.structuredContent).toEqual({ taskId: prepared.taskId });
     expect(prepared).toMatchObject({ taskId: expect.any(String), plan: expect.any(Object) });
     expect(prepared).not.toHaveProperty("root");
     expect(prepared).not.toHaveProperty("index");
@@ -399,6 +542,27 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { root: "first", taskId: prepared.taskId, mode: "search", query: "patient summary", limit: 5 }
     });
     expect(searchCall.structuredContent).toMatchObject({ mode: "search", result: { query: "patient summary", results: expect.any(Array) } });
+    const exactFilePath = "src/patientSummary.ts";
+    const exactFileSearch = await request(90351, "tools/call", {
+      name: "tokengraph_query_context",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "search", query: exactFilePath }
+    });
+    expect(exactFileSearch.structuredContent).toMatchObject({
+      result: { results: expect.arrayContaining([expect.objectContaining({ kind: "file", path: exactFilePath })]) }
+    });
+    const absentFilePath = "zzzxunfindableunique";
+    const absentFileSearch = await request(90352, "tools/call", {
+      name: "tokengraph_query_context",
+      arguments: { root: "first", taskId: prepared.taskId, mode: "search", query: absentFilePath }
+    });
+    expect(absentFileSearch.structuredContent).toMatchObject({ result: { results: [] } });
+    const searchEvents = (await loadTaskLedger(firstRoot, prepared.taskId))?.events.filter((event) => event.category === "query-search") ?? [];
+    expect(searchEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ qualityChecks: expect.arrayContaining([{
+        name: `search-result-file:${createHash("sha256").update(exactFilePath).digest("hex")}`, passed: true
+      }]) })
+    ]));
+    expect(searchEvents.some((event) => event.qualityChecks.some((check) => check.name === `search-result-file:${createHash("sha256").update(absentFilePath).digest("hex")}`))).toBe(false);
     const invalidSymbol = await request(9036, "tools/call", {
       name: "tokengraph_query_context",
       arguments: { root: "first", taskId: prepared.taskId, mode: "symbol" }
@@ -551,7 +715,7 @@ describe("TokenGraph MCP stdio server", () => {
     });
     expect(completedMutation).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/completed.*terminal/i) }] });
     expect(await listKnowledgeSuggestions(firstRoot)).toEqual(suggestionsBeforeTerminalRetry);
-    expect(report.report.eventCount).toBe(15);
+    expect(report.report.eventCount).toBe(17);
     expect(report.report.estimate.overhead).toBeGreaterThan(0);
 
     const repeatedReportCall = await request(9046, "tools/call", {
@@ -559,7 +723,7 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { root: "first", taskId: prepared.taskId, disposition: "complete", responseMode: "verbose" }
     });
     expect(repeatedReportCall.structuredContent).toEqual(reportCall.structuredContent);
-  }, 15000);
+  }, process.platform === "win32" ? 60_000 : 30_000);
 
   it("records a bounded shadow decision while still activating TokenGraph", async () => {
     const root = await makeRoot();
@@ -578,7 +742,7 @@ describe("TokenGraph MCP stdio server", () => {
     });
     expect(result.structuredContent).not.toHaveProperty("mode", "direct-host");
     await expect(access(join(root, ".tokengraph", "tasks"))).resolves.toBeUndefined();
-    await expect(access(join(root, ".tokengraph", "index.json"))).resolves.toBeUndefined();
+    await expect(access(indexManifestPath(root))).resolves.toBeUndefined();
     const forcedBypass = await request(90302, "tools/call", {
       name: "tokengraph_prepare_context", arguments: { task: "Trace the architecture", routingOverride: "force-bypass" }
     });
@@ -741,8 +905,9 @@ describe("TokenGraph MCP stdio server", () => {
     const taskIds = new Set<string>();
 
     for (const [index, intent] of intents.entries()) {
-      const called = await request(90591 + index * 2, "tools/call", intent);
-      const result = called.structuredContent as { taskId?: string };
+      const called = await request(90591 + index * 2, "tools/call", intent, false);
+      const result = JSON.parse((called.content as Array<{ type: string; text: string }>)[0]!.text) as { taskId?: string };
+      expect(called.structuredContent).toEqual({ taskId: result.taskId });
       expect(called.content).toEqual([{ type: "text", text: JSON.stringify(result) }]);
       expect(result.taskId).toEqual(expect.any(String));
       taskIds.add(result.taskId!);
@@ -789,6 +954,7 @@ describe("TokenGraph MCP stdio server", () => {
 
   it("returns the pause reporting status without a footer", async () => {
     const root = await makeRoot();
+    const seeded = await seedMinimalPolicyMemory(root, "Pause flush memory");
     await stopServer();
     startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
     await request(9051, "initialize", {
@@ -802,6 +968,16 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { task: "Pause this task" }
     });
     const prepared = preparedCall.structuredContent as { taskId: string };
+    await request(90520, "tools/call", {
+      name: "tokengraph_recall",
+      arguments: { taskId: prepared.taskId, mode: "review", query: "pause flush memory" }
+    });
+    expect(JSON.parse(await readFile(seeded.path, "utf8")).memories.find((memory: { id: string }) => memory.id === seeded.id)?.lastUsedAt).toBeUndefined();
+    await request(90521, "tools/call", {
+      name: "tokengraph_recall",
+      arguments: { taskId: prepared.taskId, mode: "recall", query: "pause flush memory" }
+    });
+    expect(JSON.parse(await readFile(seeded.path, "utf8")).memories.find((memory: { id: string }) => memory.id === seeded.id)?.lastUsedAt).toBeUndefined();
 
     const pauseCall = await request(9053, "tools/call", {
       name: "tokengraph_task_report",
@@ -812,10 +988,16 @@ describe("TokenGraph MCP stdio server", () => {
       taskId: prepared.taskId,
       reportingStatus: "paused"
     });
+    expect(JSON.parse(await readFile(seeded.path, "utf8")).memories.find((memory: { id: string }) => memory.id === seeded.id)?.lastUsedAt).toEqual(expect.any(String));
+
+    const retryPause = await request(90532, "tools/call", {
+      name: "tokengraph_task_report",
+      arguments: { taskId: prepared.taskId, disposition: "pause" }
+    });
+    expect(retryPause.structuredContent).toEqual(pauseCall.structuredContent);
 
     for (const call of [
       { id: 90531, name: "tokengraph_query_context", arguments: { taskId: prepared.taskId, mode: "overview" } },
-      { id: 90532, name: "tokengraph_task_report", arguments: { taskId: prepared.taskId, disposition: "pause" } },
       { id: 90533, name: "tokengraph_task_report", arguments: { taskId: prepared.taskId, disposition: "complete" } }
     ]) {
       const rejected = await request(call.id, "tools/call", { name: call.name, arguments: call.arguments });
@@ -828,6 +1010,7 @@ describe("TokenGraph MCP stdio server", () => {
 
   it("rejects pause after canonical completion and preserves the repeated completion response", async () => {
     const root = await makeRoot();
+    const seeded = await seedMinimalPolicyMemory(root, "Complete flush memory");
     await stopServer();
     startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
     await request(9054, "initialize", {
@@ -841,10 +1024,15 @@ describe("TokenGraph MCP stdio server", () => {
       arguments: { task: "Complete, then reject pause" }
     });
     const prepared = preparedCall.structuredContent as { taskId: string };
+    await request(90551, "tools/call", {
+      name: "tokengraph_recall",
+      arguments: { taskId: prepared.taskId, mode: "recall", query: "complete flush memory" }
+    });
     const completedCall = await request(9056, "tools/call", {
       name: "tokengraph_task_report",
       arguments: { taskId: prepared.taskId, disposition: "complete" }
     });
+    expect(JSON.parse(await readFile(seeded.path, "utf8")).memories.find((memory: { id: string }) => memory.id === seeded.id)?.lastUsedAt).toEqual(expect.any(String));
 
     const pauseCall = await request(9057, "tools/call", {
       name: "tokengraph_task_report",
@@ -865,16 +1053,12 @@ describe("TokenGraph MCP stdio server", () => {
   it("honestly reports a refresh when prepare_context replaces an unsafe index with a current scan signature", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
-    await mkdir(join(root, ".tokengraph"), { recursive: true });
     await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
     const current = await indexProject(root);
-    await writeFile(
-      join(root, ".tokengraph", "index.json"),
-      JSON.stringify({
-        ...current,
-        symbols: [{ name: "InjectedOutsideSymbol", kind: "function", filePath: "../../outside-secret.ts", exported: true, startLine: 1, endLine: 1 }]
-      })
-    );
+    await writeLegacyV4Index(root, {
+      ...current,
+      symbols: [{ name: "InjectedOutsideSymbol", kind: "function", filePath: "../../outside-secret.ts", exported: true, startLine: 1, endLine: 1 }]
+    });
     await stopServer();
     startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
     await request(9060, "initialize", {
@@ -897,7 +1081,8 @@ describe("TokenGraph MCP stdio server", () => {
         changes: { parsedFiles: expect.arrayContaining(["src/real.ts"]) }
       }
     });
-    const persisted = JSON.parse(await readFile(join(root, ".tokengraph", "index.json"), "utf8")) as { symbols: Array<{ name: string }> };
+    const persisted = await loadProjectIndex(root);
+    if (!persisted) throw new Error("Expected prepare_context to publish a current index generation.");
     expect(persisted.symbols.map((symbol) => symbol.name)).toContain("RealSymbol");
     expect(persisted.symbols.map((symbol) => symbol.name)).not.toContain("InjectedOutsideSymbol");
   });
@@ -962,6 +1147,7 @@ describe("TokenGraph MCP stdio server", () => {
       ])
     );
     expect(listedTools.find((tool) => tool.name === "tokengraph_setup_status")?.annotations?.readOnlyHint).toBe(true);
+    expect(listedTools.find((tool) => tool.name === "tokengraph_doctor")?.annotations?.readOnlyHint).toBe(true);
     const indexWritingTools = [
       "tokengraph_check_architecture",
       "tokengraph_trace_failure",
@@ -1055,9 +1241,21 @@ describe("TokenGraph MCP stdio server", () => {
       outboundReferences: []
     });
 
-    const reset = await request(7, "tools/call", {
+    const refusedReset = await request(56, "tools/call", {
       name: "tokengraph_reset_project",
       arguments: { root, mode: "index" }
+    });
+    expect(refusedReset).toMatchObject({ isError: true });
+    expect(JSON.stringify(refusedReset)).toMatch(/confirmNoLegacyProcesses/i);
+    const preservedStatus = await request(57, "tools/call", {
+      name: "tokengraph_index_status",
+      arguments: { root }
+    });
+    expect(preservedStatus.structuredContent).toMatchObject({ state: "fresh", hasIndex: true });
+
+    const reset = await request(7, "tools/call", {
+      name: "tokengraph_reset_project",
+      arguments: { root, mode: "index", confirmNoLegacyProcesses: true }
     });
     expect(reset.structuredContent).toMatchObject({
       status: "reset",
@@ -1359,6 +1557,99 @@ describe("TokenGraph MCP stdio server", () => {
     });
     expect((assessed.structuredContent as { riskScore: number }).riskScore).toBeGreaterThanOrEqual(70);
     expect(JSON.stringify((assessed.structuredContent as { manualReviewWarnings: string[] }).manualReviewWarnings)).toMatch(/RLS|tenant|audit/i);
+  });
+
+  it("derives and delivers a local change capsule through tokengraph_analyze risk mode", async () => {
+    const root = await makeRoot();
+    await git(root, ["init", "-q", "-b", "main"]);
+    await git(root, ["config", "user.email", "test@example.invalid"]);
+    await git(root, ["config", "user.name", "TokenGraph test"]);
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "patient.ts"), "export function beforePatient() { return 'before'; }\n");
+    await git(root, ["add", "--all"]);
+    await git(root, ["commit", "-qm", "base"]);
+    await writeFile(join(root, "src", "patient.ts"), "export function afterPatient() { return 'after'; }\n");
+    await git(root, ["add", "--all"]);
+    await git(root, ["commit", "-qm", "change"]);
+    const targetCommit = await git(root, ["rev-parse", "HEAD"]);
+
+    await stopServer();
+    startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
+    await request(17200, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-change-capsule-test", version: "0.25.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const analyzed = await request(17201, "tools/call", {
+      name: "tokengraph_analyze",
+      arguments: { root, mode: "risk", changeSource: { kind: "commit", ref: targetCommit }, responseMode: "verbose" }
+    });
+    expect(analyzed.isError).not.toBe(true);
+    const structured = analyzed.structuredContent as {
+      mode: string;
+      result: { artifact?: { id: string; hash: string; content: { source: { targetCommit: string }; symbols: Array<{ name: string }> } }; deliveredArtifacts?: string[] };
+    };
+    expect(structured).toMatchObject({
+      mode: "risk",
+      result: {
+        artifact: {
+          id: "capsule/change",
+          hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          content: { source: { targetCommit }, symbols: expect.arrayContaining([expect.objectContaining({ name: "afterPatient" })]) }
+        }
+      }
+    });
+    const artifact = structured.result.artifact!;
+    expect(structured.result.deliveredArtifacts).toEqual([`${artifact.id}@${artifact.hash}`]);
+
+    const repeated = await request(17202, "tools/call", {
+      name: "tokengraph_analyze",
+      arguments: {
+        root,
+        mode: "risk",
+        changeSource: { kind: "commit", ref: targetCommit },
+        responseMode: "verbose",
+        knownArtifacts: [`${artifact.id}@${artifact.hash}`]
+      }
+    });
+    expect((repeated.structuredContent as { result: { artifactReference?: { id: string; hash: string }; deliveredArtifacts?: string[] } }).result).toMatchObject({
+      artifactReference: { id: artifact.id, hash: artifact.hash },
+      deliveredArtifacts: []
+    });
+  });
+
+  it("does not surface TokenGraph state as a working-tree change", async () => {
+    const root = await makeRoot();
+    await git(root, ["init", "-q", "-b", "main"]);
+    await git(root, ["config", "user.email", "test@example.invalid"]);
+    await git(root, ["config", "user.name", "TokenGraph test"]);
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "tracked.ts"), "export const tracked = true;\n");
+    await git(root, ["add", "--all"]);
+    await git(root, ["commit", "-qm", "base"]);
+    await writeFile(join(root, "src", "draft.ts"), "export const draft = true;\n");
+
+    await stopServer();
+    startServer(root, { TOKENGRAPH_TOOL_SURFACE: "core" });
+    await request(17203, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-working-tree-capsule-test", version: "0.25.0" }
+    });
+    send({ method: "notifications/initialized" });
+
+    const analyzed = await request(17204, "tools/call", {
+      name: "tokengraph_analyze",
+      arguments: { root, mode: "risk", changeSource: { kind: "working-tree" }, responseMode: "verbose" }
+    });
+    await access(indexManifestPath(root));
+    const entries = (analyzed.structuredContent as {
+      result: { artifact?: { content: { entries: Array<{ path: string; provenance: string }> } } };
+    }).result.artifact?.content.entries;
+    expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({ path: "src/draft.ts", provenance: "untracked" })]));
+    expect(entries?.map((entry) => entry.path)).not.toEqual(expect.arrayContaining([expect.stringMatching(/^\.tokengraph(?:\/|$)/)]));
   });
 
   it("manages memory lifecycle metadata over JSON-RPC stdio", async () => {
@@ -1874,7 +2165,7 @@ describe("TokenGraph MCP stdio server", () => {
     const outsideRoot = await makeRoot();
     await writeFile(join(outsideRoot, "outside.ts"), "export const outsideValue = true;");
     await stopServer();
-    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: root, CLAUDE_PROJECT_DIR: "" });
+    startServer(externalRuntimeRoot, { TOKENGRAPH_WORKSPACE_ROOT: root, CLAUDE_PROJECT_DIR: "" });
 
     await request(60, "initialize", {
       protocolVersion: "2025-06-18",
@@ -1893,16 +2184,19 @@ describe("TokenGraph MCP stdio server", () => {
     await expect(access(join(outsideRoot, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("keeps the Codex CLI host blocked without a workspace override or lifecycle attestation", async () => {
+  it("classifies the complete external plugin mirror while requiring a separately attested workspace", async () => {
     const root = await makeRoot();
+    const sessionId = randomUUID();
+    const mirror = await createExternalPluginMirror(process.cwd());
+    tempRoots.push(mirror.root);
     await mkdir(join(root, "src"), { recursive: true });
     await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
     await stopServer();
-    startServer(process.cwd(), {
+    startServer(mirror.root, {
       TOKENGRAPH_WORKSPACE_ROOT: "",
       CLAUDE_PROJECT_DIR: "",
-      CODEX_THREAD_ID: randomUUID()
-    });
+      CODEX_THREAD_ID: sessionId
+    }, true, mirror.serverEntry);
 
     await request(40, "initialize", {
       protocolVersion: "2025-06-18",
@@ -1932,14 +2226,52 @@ describe("TokenGraph MCP stdio server", () => {
     });
     expect(JSON.stringify(setup)).toMatch(/TOKENGRAPH_WORKSPACE_ROOT/);
 
+    const doctor = await request(43, "tools/call", {
+      name: "tokengraph_doctor",
+      arguments: {}
+    });
+    expect(doctor.structuredContent).toMatchObject({
+      status: "blocked",
+      workspace: { status: "blocked", blockingReason: "missing-trusted-workspace" },
+      lifecycle: { attestation: "missing" },
+      recommendations: ["missing-trusted-workspace"]
+    });
+    await expect(access(join(root, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    await runWorkspaceHook("session-start", sessionId, root, "turn-full-mirror", {}, {
+      pluginRoot: mirror.root,
+      hookEntry: mirror.hooksEntry
+    });
+    await stopServer();
+    startServer(mirror.root, {
+      TOKENGRAPH_WORKSPACE_ROOT: "",
+      CLAUDE_PROJECT_DIR: "",
+      CODEX_THREAD_ID: sessionId
+    }, true, mirror.serverEntry);
+    await request(43, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "codex-cli-attested-plugin-mirror", version: "0.23.0" }
+    });
+    send({ method: "notifications/initialized" });
+    const attested = await request(44, "tools/call", { name: "tokengraph_setup_status", arguments: {} });
+    expect(attested.structuredContent).toMatchObject({
+      status: "ready",
+      trustedWorkspace: { source: "codex-session-hook", root },
+      blockingReason: null,
+      pluginRootLaunch: true
+    });
+
     const mapped = await request(41, "tools/call", {
       name: "tokengraph_project_map",
       arguments: { root }
     });
-    expect(mapped.isError).toBe(true);
-    expect(JSON.stringify(mapped)).toMatch(/trusted workspace root/i);
+    expect(mapped.structuredContent).toMatchObject({ root });
 
-    await expect(access(join(root, ".tokengraph"))).rejects.toMatchObject({ code: "ENOENT" });
+    await runWorkspaceHook("session-end", sessionId, root, "turn-full-mirror-end", {}, {
+      pluginRoot: mirror.root,
+      hookEntry: mirror.hooksEntry
+    });
   });
 
   it("uses only the Codex host workspace attested for the current thread", async () => {
@@ -1954,7 +2286,7 @@ describe("TokenGraph MCP stdio server", () => {
     await runWorkspaceHook("session-start", firstSession, firstRoot);
     await runWorkspaceHook("session-start", secondSession, secondRoot);
     await stopServer();
-    startServer(process.cwd(), {
+    startServer(externalRuntimeRoot, {
       TOKENGRAPH_WORKSPACE_ROOT: "",
       CLAUDE_PROJECT_DIR: "",
       CODEX_THREAD_ID: firstSession
@@ -1975,7 +2307,7 @@ describe("TokenGraph MCP stdio server", () => {
       status: "ready",
       trustedWorkspace: { source: "codex-session-hook", root: firstRoot },
       blockingReason: null,
-      pluginRootLaunch: true
+      pluginRootLaunch: false
     });
 
     const mapped = await request(422, "tools/call", {
@@ -2010,7 +2342,7 @@ describe("TokenGraph MCP stdio server", () => {
     expect(afterPrompt.updatedAt).not.toBe("2000-01-01T00:00:00.000Z");
     await runWorkspaceHook("session-start", secondSessionId, secondRoot, "turn-second-session-start");
     await stopServer();
-    startServer(process.cwd(), {
+    startServer(externalRuntimeRoot, {
       TOKENGRAPH_WORKSPACE_ROOT: "",
       CLAUDE_PROJECT_DIR: "",
       CODEX_THREAD_ID: ""
@@ -2043,7 +2375,7 @@ describe("TokenGraph MCP stdio server", () => {
       host: "codex",
       trustedWorkspace: { source: "codex-request-metadata", root },
       blockingReason: null,
-      pluginRootLaunch: true,
+      pluginRootLaunch: false,
       message: "TokenGraph has a safe host-provided workspace boundary.",
       nextSteps: []
     });
@@ -2074,12 +2406,12 @@ describe("TokenGraph MCP stdio server", () => {
     ]);
     expect(firstConcurrent.structuredContent).toEqual({
       status: "ready", host: "codex", trustedWorkspace: { source: "codex-request-metadata", root },
-      blockingReason: null, pluginRootLaunch: true,
+      blockingReason: null, pluginRootLaunch: false,
       message: "TokenGraph has a safe host-provided workspace boundary.", nextSteps: []
     });
     expect(secondConcurrent.structuredContent).toEqual({
       status: "ready", host: "codex", trustedWorkspace: { source: "codex-request-metadata", root: secondRoot },
-      blockingReason: null, pluginRootLaunch: true,
+      blockingReason: null, pluginRootLaunch: false,
       message: "TokenGraph has a safe host-provided workspace boundary.", nextSteps: []
     });
 
@@ -2188,7 +2520,7 @@ describe("TokenGraph MCP stdio server", () => {
     const stored = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
     await writeFile(path, `${JSON.stringify({ ...stored, updatedAt: "2000-01-01T00:00:00.000Z" }, null, 2)}\n`);
     await stopServer();
-    startServer(process.cwd(), {
+    startServer(externalRuntimeRoot, {
       TOKENGRAPH_WORKSPACE_ROOT: "",
       CLAUDE_PROJECT_DIR: "",
       CODEX_THREAD_ID: sessionId
@@ -2202,7 +2534,14 @@ describe("TokenGraph MCP stdio server", () => {
     send({ method: "notifications/initialized" });
     const setup = await request(424, "tools/call", {
       name: "tokengraph_setup_status",
-      arguments: {}
+      arguments: {},
+      _meta: {
+        "x-codex-turn-metadata": {
+          workspace_kind: "project",
+          thread_id: sessionId,
+          workspaces: { [root]: {} }
+        }
+      }
     });
     expect(setup.structuredContent).toMatchObject({
       status: "blocked",
@@ -2210,15 +2549,16 @@ describe("TokenGraph MCP stdio server", () => {
       blockingReason: "missing-trusted-workspace"
     });
 
-    await runWorkspaceHook("session-end", sessionId, root);
+    await runWorkspaceHook("session-end", sessionId, root, "turn-host-workspace", {});
+    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("accepts a root inside the host-provided workspace when launched from the plugin root", async () => {
+  it("accepts a root inside the host-provided workspace from the external runtime", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
     await writeFile(join(root, "src", "patientSummary.ts"), "export function loadPatientSummary() { return null; }");
     await stopServer();
-    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: root, CLAUDE_PROJECT_DIR: "" });
+    startServer(externalRuntimeRoot, { TOKENGRAPH_WORKSPACE_ROOT: root, CLAUDE_PROJECT_DIR: "" });
 
     await request(43, "initialize", {
       protocolVersion: "2025-06-18",
@@ -2235,7 +2575,7 @@ describe("TokenGraph MCP stdio server", () => {
       status: "ready",
       trustedWorkspace: { source: "TOKENGRAPH_WORKSPACE_ROOT", root },
       blockingReason: null,
-      pluginRootLaunch: true
+      pluginRootLaunch: false
     });
 
     const mapped = await request(44, "tools/call", {
@@ -2249,7 +2589,7 @@ describe("TokenGraph MCP stdio server", () => {
     const root = await makeRoot();
     const outsideRoot = await makeRoot();
     await stopServer();
-    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: "", CLAUDE_PROJECT_DIR: root });
+    startServer(externalRuntimeRoot, { TOKENGRAPH_WORKSPACE_ROOT: "", CLAUDE_PROJECT_DIR: root });
 
     await request(46, "initialize", {
       protocolVersion: "2025-06-18",
@@ -2277,7 +2617,7 @@ describe("TokenGraph MCP stdio server", () => {
     const root = await makeRoot();
     advertisedRoots = [{ uri: new URL(`file:///${root.replace(/\\/g, "/")}`).href, name: "workspace" }];
     await stopServer();
-    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: "", CLAUDE_PROJECT_DIR: "" });
+    startServer(externalRuntimeRoot, { TOKENGRAPH_WORKSPACE_ROOT: "", CLAUDE_PROJECT_DIR: "" });
 
     await request(49, "initialize", {
       protocolVersion: "2025-06-18",
@@ -2296,7 +2636,7 @@ describe("TokenGraph MCP stdio server", () => {
   it("reports unsafe host roots as blocked", async () => {
     const unsafeRoot = homedir();
     await stopServer();
-    startServer(process.cwd(), { TOKENGRAPH_WORKSPACE_ROOT: unsafeRoot, CLAUDE_PROJECT_DIR: "" });
+    startServer(externalRuntimeRoot, { TOKENGRAPH_WORKSPACE_ROOT: unsafeRoot, CLAUDE_PROJECT_DIR: "" });
 
     await request(51, "initialize", {
       protocolVersion: "2025-06-18",
@@ -2352,35 +2692,10 @@ describe("TokenGraph MCP stdio server", () => {
   it("reindexes stale persisted indexes before serving read tools", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
-    await mkdir(join(root, ".tokengraph"), { recursive: true });
+    await writeFile(join(root, "src", "real.ts"), "export function OldSymbol() { return true; }");
+    const current = await indexProject(root);
+    await writeLegacyV4Index(root, current);
     await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
-    await writeFile(
-      join(root, ".tokengraph", "index.json"),
-      JSON.stringify(
-        {
-          root,
-          scannedAt: "2026-07-06T00:00:00.000Z",
-          fingerprint: "stale-fingerprint",
-          frameworks: ["TypeScript"],
-          files: [],
-          symbols: [
-            {
-              name: "InjectedOutsideSymbol",
-              kind: "function",
-              filePath: "../../outside-secret.ts",
-              exported: true,
-              startLine: 1,
-              endLine: 1
-            }
-          ],
-          imports: [],
-          exclusions: [],
-          sql: { tables: [], relations: [], policies: [], indexes: [], triggers: [], functions: [], views: [] }
-        },
-        null,
-        2
-      )
-    );
     await stopServer();
     startServer(root);
 
@@ -2393,7 +2708,7 @@ describe("TokenGraph MCP stdio server", () => {
 
     const explanation = await request(13, "tools/call", {
       name: "tokengraph_explain_symbol",
-      arguments: { target: "InjectedOutsideSymbol" }
+      arguments: { target: "OldSymbol" }
     });
 
     expect(explanation.structuredContent).toMatchObject({
@@ -2405,29 +2720,21 @@ describe("TokenGraph MCP stdio server", () => {
   it("ignores crafted persisted indexes even when they claim the current fingerprint", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
-    await mkdir(join(root, ".tokengraph"), { recursive: true });
     await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
     const current = await indexProject(root);
-    await writeFile(
-      join(root, ".tokengraph", "index.json"),
-      JSON.stringify(
+    await writeLegacyV4Index(root, {
+      ...current,
+      symbols: [
         {
-          ...current,
-          symbols: [
-            {
-              name: "InjectedOutsideSymbol",
-              kind: "function",
-              filePath: "../../outside-secret.ts",
-              exported: true,
-              startLine: 1,
-              endLine: 1
-            }
-          ]
-        },
-        null,
-        2
-      )
-    );
+          name: "InjectedOutsideSymbol",
+          kind: "function",
+          filePath: "../../outside-secret.ts",
+          exported: true,
+          startLine: 1,
+          endLine: 1
+        }
+      ]
+    });
     await stopServer();
     startServer(root);
 
@@ -2452,29 +2759,21 @@ describe("TokenGraph MCP stdio server", () => {
   it("rejects nested traversal paths in crafted persisted indexes", async () => {
     const root = await makeRoot();
     await mkdir(join(root, "src"), { recursive: true });
-    await mkdir(join(root, ".tokengraph"), { recursive: true });
     await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
     const current = await indexProject(root);
-    await writeFile(
-      join(root, ".tokengraph", "index.json"),
-      JSON.stringify(
+    await writeLegacyV4Index(root, {
+      ...current,
+      symbols: [
         {
-          ...current,
-          symbols: [
-            {
-              name: "NestedInjectedOutsideSymbol",
-              kind: "function",
-              filePath: "src/../../outside-secret.ts",
-              exported: true,
-              startLine: 1,
-              endLine: 1
-            }
-          ]
-        },
-        null,
-        2
-      )
-    );
+          name: "NestedInjectedOutsideSymbol",
+          kind: "function",
+          filePath: "src/../../outside-secret.ts",
+          exported: true,
+          startLine: 1,
+          endLine: 1
+        }
+      ]
+    });
     await stopServer();
     startServer(root);
 
@@ -2501,18 +2800,14 @@ describe("TokenGraph MCP stdio server", () => {
     await mkdir(join(root, "src"), { recursive: true });
     await writeFile(join(root, "src", "real.ts"), "export function RealSymbol() { return true; }");
     const current = await indexProject(root);
-    await mkdir(join(root, ".tokengraph"), { recursive: true });
-    await writeFile(
-      join(root, ".tokengraph", "index.json"),
-      JSON.stringify(
-        {
-          ...current,
-          scannedAt: "2000-01-01T00:00:00.000Z"
-        },
-        null,
-        2
-      )
-    );
+    await saveProjectIndex(root, {
+      ...current,
+      scannedAt: "2000-01-01T00:00:00.000Z",
+      generation: {
+        ...current.generation!,
+        createdAt: "2000-01-01T00:00:00.000Z"
+      }
+    });
     await stopServer();
     startServer(root);
 
@@ -2552,10 +2847,8 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_index_project",
       arguments: { root }
     });
-    const before = JSON.parse(await readFile(join(root, ".tokengraph", "index.json"), "utf8")) as {
-      fingerprint: string;
-      scanSignature: string;
-    };
+    const before = await loadProjectIndex(root);
+    if (!before?.scanSignature) throw new Error("Expected the first index publication to include a scan signature.");
 
     const original = await readFile(file, "utf8");
     const touchedAt = new Date(Date.now() + 2_000);
@@ -2565,10 +2858,8 @@ describe("TokenGraph MCP stdio server", () => {
       name: "tokengraph_project_map",
       arguments: { root }
     });
-    const after = JSON.parse(await readFile(join(root, ".tokengraph", "index.json"), "utf8")) as {
-      fingerprint: string;
-      scanSignature: string;
-    };
+    const after = await loadProjectIndex(root);
+    if (!after?.scanSignature) throw new Error("Expected the refreshed publication to include a scan signature.");
 
     expect(mapped.structuredContent).toMatchObject({ root });
     expect(after.fingerprint).toBe(before.fingerprint);

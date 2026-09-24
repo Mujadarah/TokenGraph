@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, win32 } from "node:path";
 
-import { canonicalPersistenceLockKey, quarantineCorruptJson, resolveConfinedPath, SAFE_WIKI_SLUG_PATTERN, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
+import { canonicalPersistenceLock } from "./lockDomain.js";
+import { quarantineCorruptJson, resolveConfinedPath, SAFE_WIKI_SLUG_PATTERN, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
 
 export type KnowledgeSuggestionType = "wiki" | "memory" | "skill";
 export type KnowledgeSuggestionStatus = "proposed" | "approved" | "rejected" | "expired";
@@ -314,7 +315,10 @@ function reconstructSuggestion(value: unknown, schemaVersion: number): Knowledge
   };
 }
 
-async function readQueue(root: string): Promise<KnowledgeSuggestion[]> {
+// `repairInsideLock` is set only by callers running inside the workspace-state
+// domain lock (`enqueueQueueOperation`); quarantining is a mutation and must
+// not happen from an unlocked pure read such as `listAppliedKnowledge`.
+async function readQueue(root: string, repairInsideLock: boolean): Promise<KnowledgeSuggestion[]> {
   const path = queuePath(root);
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -326,13 +330,13 @@ async function readQueue(root: string): Promise<KnowledgeSuggestion[]> {
     return queue.suggestions.map((suggestion) => reconstructSuggestion(suggestion, queue.schemaVersion as number));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    await quarantineCorruptJson(path);
+    if (repairInsideLock) await quarantineCorruptJson(path);
     return [];
   }
 }
 
 async function writeQueue(root: string, suggestions: KnowledgeSuggestion[]): Promise<void> {
-  await writeJsonAtomic(queuePath(root), { schemaVersion: REVIEW_QUEUE_SCHEMA_VERSION, suggestions });
+  await writeJsonAtomic(queuePath(root), { schemaVersion: REVIEW_QUEUE_SCHEMA_VERSION, suggestions }, { telemetry: { root, storageClass: "durable" } });
 }
 
 function applicationProvenanceStatus(sources: KnowledgeSourceReference[]): AppliedKnowledge["provenanceStatus"] {
@@ -383,7 +387,7 @@ function reconstructApplication(value: unknown, schemaVersion: number): AppliedK
   };
 }
 
-async function readApplications(root: string): Promise<AppliedKnowledge[]> {
+async function readApplications(root: string, repairInsideLock: boolean): Promise<AppliedKnowledge[]> {
   const path = applicationPath(root);
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -399,7 +403,7 @@ async function readApplications(root: string): Promise<AppliedKnowledge[]> {
     return applications;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    await quarantineCorruptJson(path);
+    if (repairInsideLock) await quarantineCorruptJson(path);
     return [];
   }
 }
@@ -428,7 +432,7 @@ function applicationMarkdown(application: AppliedKnowledge): string {
 
 async function writeApplication(root: string, applications: AppliedKnowledge[], application: AppliedKnowledge): Promise<void> {
   await ensureApplicationTargets(root, application);
-  await writeJsonAtomic(applicationPath(root), { schemaVersion: APPLICATION_SCHEMA_VERSION, applications: [...applications, application] });
+  await writeJsonAtomic(applicationPath(root), { schemaVersion: APPLICATION_SCHEMA_VERSION, applications: [...applications, application] }, { telemetry: { root, storageClass: "durable" } });
 }
 
 async function ensureApplicationTargets(root: string, application: AppliedKnowledge): Promise<void> {
@@ -441,7 +445,7 @@ async function ensureApplicationTargets(root: string, application: AppliedKnowle
       if (existing !== expected) throw new Error("Applied knowledge target differs from its reviewed payload.");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      await writeTextAtomic(path, expected);
+      await writeTextAtomic(path, expected, { telemetry: { root, storageClass: "durable" } });
     }
   }
 }
@@ -484,11 +488,12 @@ async function assertFreshForApproval(root: string, suggestion: KnowledgeSuggest
 }
 
 async function enqueueQueueOperation<T>(root: string, operation: () => Promise<T>): Promise<T> {
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "review-queue.json");
+  const lock = await canonicalPersistenceLock(root, "workspace-state", "review-queue.json");
+  const key = lock.compatibilityPath;
   const previous = queueWriteChains.get(key) ?? Promise.resolve();
   const current = previous.then(
-    () => withFileLock(`${key}.lock`, operation),
-    () => withFileLock(`${key}.lock`, operation)
+    () => withFileLock(lock, operation),
+    () => withFileLock(lock, operation)
   );
   let settled: Promise<void>;
   const cleanUp = (): void => {
@@ -503,7 +508,7 @@ export async function proposeKnowledgeChange(root: string, input: KnowledgePropo
   const proposal = sanitizeProposal(input);
   const fingerprint = suggestionFingerprint(proposal);
   return enqueueQueueOperation(root, async () => {
-    const suggestions = await readQueue(root);
+    const suggestions = await readQueue(root, true);
     const duplicate = suggestions.find((suggestion) => suggestion.status === "proposed" && suggestion.fingerprint === fingerprint);
     if (duplicate) return duplicate;
     const timestamp = new Date().toISOString();
@@ -528,7 +533,7 @@ export async function listKnowledgeSuggestions(root: string, options: KnowledgeS
   types?.forEach(validateType);
   statuses?.forEach(validateStatus);
   return enqueueQueueOperation(root, async () => {
-    const suggestions = await readQueue(root);
+    const suggestions = await readQueue(root, true);
     const now = Date.now();
     let changed = false;
     const normalized = suggestions.map((suggestion) => {
@@ -544,7 +549,7 @@ export async function listKnowledgeSuggestions(root: string, options: KnowledgeS
 }
 
 export async function listAppliedKnowledge(root: string): Promise<AppliedKnowledge[]> {
-  const [applications, suggestions] = await Promise.all([readApplications(root), readQueue(root)]);
+  const [applications, suggestions] = await Promise.all([readApplications(root, false), readQueue(root, false)]);
   return applications.filter((application) => {
     const suggestion = suggestions.find((candidate) => candidate.id === application.suggestionId && candidate.status === "approved");
     return Boolean(suggestion && applicationMatchesSuggestion(application, suggestion));
@@ -561,11 +566,11 @@ export async function reviewKnowledgeSuggestion(
   if (!REVIEW_DECISIONS.has(decision)) throw new Error("Unknown review decision.");
   const nextStatus: KnowledgeSuggestionStatus = decision === "approve" ? "approved" : "rejected";
   return enqueueQueueOperation(root, async () => {
-    const suggestions = await readQueue(root);
+    const suggestions = await readQueue(root, true);
     const index = suggestions.findIndex((suggestion) => suggestion.id === id);
     if (index < 0) throw new Error(`Knowledge suggestion ${id} was not found.`);
     const current = suggestions[index]!;
-    const applications = await readApplications(root);
+    const applications = await readApplications(root, true);
     const existingApplication = applications.find((application) => application.suggestionId === id);
     if (decision === "approve" && existingApplication && !applicationMatchesSuggestion(existingApplication, current)) {
       throw new Error("Durable application does not match the reviewed proposal payload.");

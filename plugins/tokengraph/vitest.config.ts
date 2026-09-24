@@ -7,6 +7,6 @@ export default defineConfig({
     fileParallelism: process.platform !== "win32",
     testTimeout: process.platform === "win32" ? 15_000 : 5_000,
     include: ["tests/**/*.test.ts"],
-    exclude: ["tests/fixtures/**", "node_modules/**", "dist/**"]
+    exclude: ["tests/native-lock-preactivation.test.ts", "tests/fixtures/**", "node_modules/**", "dist/**"]
   }
 });

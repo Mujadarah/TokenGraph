@@ -3,7 +3,9 @@ import { join } from "node:path";
 
 import { canonicalHash, canonicalize } from "./canonical.js";
 import { repositoryDir } from "./persistence.js";
-import { canonicalPersistenceLockKey, quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
+import { canonicalPersistenceLock } from "./lockDomain.js";
+import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
+import { quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
 
 export const CURRENT_ARTIFACT_SCHEMA_VERSION = 5;
 export type ExpectedBenefit = "none" | "low" | "medium" | "high";
@@ -71,8 +73,8 @@ export async function saveStableArtifact<T>(root: string, artifact: StableArtifa
   if (!/^[a-f0-9]{64}$/.test(artifact.hash)) throw new Error("Stable artifact hash is invalid.");
   const directory = await repositoryDir(root);
   const path = artifactPath(directory, artifact.hash);
-  const key = await canonicalPersistenceLockKey(directory, "artifacts", `${artifact.hash}.json`);
-  await withFileLock(`${key}.lock`, () => writeJsonAtomic(path, artifact));
+  const lock = await canonicalPersistenceLock(root, "artifacts", `${artifact.hash}.json`);
+  await withFileLock(lock, () => writeJsonAtomic(path, artifact, { telemetry: { root, storageClass: "cache" } }));
 }
 
 export async function loadStableArtifact<T = unknown>(root: string, hash: string): Promise<StableArtifact<T> | undefined> {
@@ -87,7 +89,12 @@ export async function loadStableArtifact<T = unknown>(root: string, hash: string
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     if (error instanceof SyntaxError) {
-      await quarantineCorruptJson(path);
+      // Quarantine mutates project state: only after activation and while owning
+      // the artifacts domain. An unactivated pure read returns undefined.
+      if (getLegacyRuntimeActivationStatus().activated) {
+        const lock = await canonicalPersistenceLock(root, "artifacts", `${hash}.json`);
+        await withFileLock(lock, () => quarantineCorruptJson(path));
+      }
       return undefined;
     }
     throw error;

@@ -2,10 +2,13 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { access, lstat, readFile, readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import type { RepositoryIdentity, RetrievalSignals } from "./types.js";
-import { canonicalPersistenceLockKey, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
+import { canonicalPersistenceLock } from "./lockDomain.js";
+import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
+import { withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
+import { DiagnosticReader } from "./diagnosticRead.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -62,8 +65,8 @@ async function ensureLocalExclude(root: string): Promise<void> {
   if (!exclude) return;
   const path = resolve(root, exclude);
   try {
-    const lockKey = await canonicalPersistenceLockKey(path);
-    await withFileLock(`${lockKey}.lock`, async () => {
+    const lock = await canonicalPersistenceLock(root, "git-info", "exclude");
+    await withFileLock(lock, async () => {
       let existing = "";
       try {
         existing = await readFile(path, "utf8");
@@ -112,7 +115,9 @@ interface PersistedIdentity {
   repositoryId: string;
 }
 
-async function loadOrCreateRepositoryId(directory: string): Promise<string> {
+const repositoryIdLoads = new Map<string, Promise<string>>();
+
+async function loadOrCreateRepositoryIdUnqueued(workspaceRoot: string, directory: string): Promise<string> {
   const path = join(directory, "identity.json");
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<PersistedIdentity>;
@@ -121,15 +126,15 @@ async function loadOrCreateRepositoryId(directory: string): Promise<string> {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
   }
   const repositoryId = digest(`${directory}\n${Date.now()}\n${Math.random()}`);
-  const lockKey = await canonicalPersistenceLockKey(directory, "identity.json");
-  await withFileLock(`${lockKey}.lock`, async () => {
+  const lock = await canonicalPersistenceLock(workspaceRoot, "repository-state", "identity.json");
+  await withFileLock(lock, async () => {
     try {
       const existing = JSON.parse(await readFile(path, "utf8")) as Partial<PersistedIdentity>;
       if (existing.schemaVersion === 1 && typeof existing.repositoryId === "string" && existing.repositoryId.length >= 16) return;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
     }
-    await writeJsonAtomic(path, { schemaVersion: 1, repositoryId });
+    await writeJsonAtomic(path, { schemaVersion: 1, repositoryId }, { telemetry: { root: workspaceRoot, storageClass: "durable" } });
   });
   try {
     const persisted = JSON.parse(await readFile(path, "utf8")) as Partial<PersistedIdentity>;
@@ -139,12 +144,75 @@ async function loadOrCreateRepositoryId(directory: string): Promise<string> {
   }
 }
 
+async function loadOrCreateRepositoryId(workspaceRoot: string, directory: string): Promise<string> {
+  const key = process.platform === "win32" ? resolve(directory).toLowerCase() : resolve(directory);
+  const existing = repositoryIdLoads.get(key);
+  if (existing) return existing;
+  const current = loadOrCreateRepositoryIdUnqueued(workspaceRoot, directory);
+  repositoryIdLoads.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (repositoryIdLoads.get(key) === current) repositoryIdLoads.delete(key);
+  }
+}
+
 export async function getRepositoryIdentity(root: string): Promise<RepositoryIdentity> {
   const workspaceRoot = resolve(root);
   // Branch and HEAD are intentionally refreshed on every call. Repository-id
   // persistence is cheap, while caching this full value silently cross-applies
   // branch-specific state after a checkout or commit.
   return getRepositoryIdentityUncached(workspaceRoot);
+}
+
+/**
+ * Resolves the current repository identity without creating state, updating
+ * Git excludes, or running legacy migrations. Diagnostics have read authority
+ * only, so an absent persisted repository id is reported as unavailable.
+ */
+export async function getRepositoryIdentityReadOnly(root: string): Promise<RepositoryIdentity | undefined> {
+  const workspaceRoot = resolve(root);
+  const reader = new DiagnosticReader(workspaceRoot);
+  await reader.inspect(join(workspaceRoot, ".tokengraph"));
+  const dotGit = await reader.inspect(join(workspaceRoot, ".git"));
+  // Refuse parent-repository discovery and linked-worktree indirection: neither
+  // grants Doctor authority to inspect Git state outside the trusted root.
+  if (!dotGit?.isDirectory()) return undefined;
+  const [topLevel, gitDir, branch, headCommit, firstCommits, remote] = await Promise.all([
+    git(workspaceRoot, "rev-parse", "--show-toplevel"),
+    git(workspaceRoot, "rev-parse", "--git-dir"),
+    git(workspaceRoot, "symbolic-ref", "--quiet", "--short", "HEAD"),
+    git(workspaceRoot, "rev-parse", "HEAD"),
+    git(workspaceRoot, "rev-list", "--max-parents=0", "HEAD"),
+    remoteIdentity(workspaceRoot)
+  ]);
+  const normalizedRoot = resolve(topLevel ?? workspaceRoot);
+  const within = relative(workspaceRoot, normalizedRoot);
+  // A nested diagnostic request does not authorize reading its parent's state.
+  if (isAbsolute(within) || within === ".." || within.startsWith("..\\") || within.startsWith("../")) return undefined;
+  const normalizedGitDir = gitDir ? resolve(workspaceRoot, gitDir) : undefined;
+  let repositoryId: string | undefined;
+  try {
+    const text = await reader.text(join(repositoryStateDirectory(normalizedRoot), "identity.json"), 64 * 1024);
+    if (text === undefined) return undefined;
+    const persisted = JSON.parse(text) as Partial<PersistedIdentity>;
+    if (persisted.schemaVersion === 1 && typeof persisted.repositoryId === "string" && persisted.repositoryId.length >= 16) {
+      repositoryId = persisted.repositoryId;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+  }
+  if (!repositoryId) return undefined;
+  const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
+  return {
+    repositoryId,
+    repositoryFingerprint: digest(`${repositoryId}\n${firstCommit}`),
+    workspaceId: digest(normalizedRoot),
+    worktreeId: digest(normalizedGitDir ?? normalizedRoot),
+    branch: branch ?? "detached",
+    headCommit: headCommit ?? "unborn",
+    ...(remote ? { remoteIdentity: remote } : {})
+  };
 }
 
 async function getRepositoryIdentityUncached(workspaceRoot: string): Promise<RepositoryIdentity> {
@@ -161,7 +229,7 @@ async function getRepositoryIdentityUncached(workspaceRoot: string): Promise<Rep
   const normalizedGitDir = gitDir ? resolve(workspaceRoot, gitDir) : undefined;
   if (topLevel && commonDir) await ensureLocalExclude(workspaceRoot);
   const repositoryState = await resolveRepositoryStateDirectory(normalizedRoot);
-  const repositoryId = await loadOrCreateRepositoryId(repositoryState);
+  const repositoryId = await loadOrCreateRepositoryId(workspaceRoot, repositoryState);
   const firstCommit = firstCommits?.split(/\r?\n/).filter(Boolean).sort()[0] ?? "unborn";
   const repositoryFingerprint = digest(`${repositoryId}\n${firstCommit}`);
   return {
@@ -201,8 +269,12 @@ export async function isGitWorkspace(root: string): Promise<boolean> {
 export async function resolveRepositoryStateDirectory(root: string): Promise<string> {
   const normalizedRoot = resolve(root);
   const target = repositoryStateDirectory(normalizedRoot);
+  // Legacy migration mutates repository state under the repository-state lock,
+  // so an unactivated process resolves the target purely and defers migration
+  // to the first activated caller instead of throwing from a nominal read.
+  if (!getLegacyRuntimeActivationStatus().activated) return target;
   const commonDirectory = await gitCommonDirectory(normalizedRoot);
-  if (commonDirectory) await migrateLegacyRepositoryState(join(commonDirectory, "tokengraph"), target);
+  if (commonDirectory) await migrateLegacyRepositoryState(normalizedRoot, join(commonDirectory, "tokengraph"), target);
   return target;
 }
 
@@ -217,7 +289,7 @@ interface LegacyMigrationReport {
   skippedSymlink: string[];
 }
 
-async function migrateLegacyRepositoryState(source: string, target: string): Promise<void> {
+async function migrateLegacyRepositoryState(workspaceRoot: string, source: string, target: string): Promise<void> {
   try {
     await lstat(join(target, "migration.json"));
     return;
@@ -233,8 +305,8 @@ async function migrateLegacyRepositoryState(source: string, target: string): Pro
   }
   if (!sourceStats.isDirectory()) return;
 
-  const lockKey = await canonicalPersistenceLockKey(target, "migration.json");
-  await withFileLock(`${lockKey}.lock`, async () => {
+  const lock = await canonicalPersistenceLock(workspaceRoot, "repository-state", "migration.json");
+  await withFileLock(lock, async () => {
     try {
       await lstat(join(target, "migration.json"));
       return;
@@ -251,12 +323,12 @@ async function migrateLegacyRepositoryState(source: string, target: string): Pro
       skippedUnsupported: [],
       skippedSymlink: []
     };
-    await migrateLegacyEntries(source, target, "", report);
-    await writeJsonAtomic(join(target, "migration.json"), report);
+    await migrateLegacyEntries(workspaceRoot, source, target, "", report);
+    await writeJsonAtomic(join(target, "migration.json"), report, { telemetry: { root: workspaceRoot, storageClass: "durable" } });
   });
 }
 
-async function migrateLegacyEntries(sourceRoot: string, targetRoot: string, relativePath: string, report: LegacyMigrationReport): Promise<void> {
+async function migrateLegacyEntries(workspaceRoot: string, sourceRoot: string, targetRoot: string, relativePath: string, report: LegacyMigrationReport): Promise<void> {
   const sourceDirectory = join(sourceRoot, relativePath);
   for (const entry of await readdir(sourceDirectory, { withFileTypes: true })) {
     const entryRelativePath = relativePath ? join(relativePath, entry.name) : entry.name;
@@ -271,7 +343,7 @@ async function migrateLegacyEntries(sourceRoot: string, targetRoot: string, rela
       continue;
     }
     if (stats.isDirectory()) {
-      await migrateLegacyEntries(sourceRoot, targetRoot, entryRelativePath, report);
+      await migrateLegacyEntries(workspaceRoot, sourceRoot, targetRoot, entryRelativePath, report);
       continue;
     }
     if (!stats.isFile() || !entry.name.endsWith(".json")) {
@@ -297,7 +369,7 @@ async function migrateLegacyEntries(sourceRoot: string, targetRoot: string, rela
       }
       throw error;
     }
-    await writeTextAtomic(targetPath, contents);
+    await writeTextAtomic(targetPath, contents, { telemetry: { root: workspaceRoot, storageClass: "durable" } });
     report.migrated.push(entryRelativePath);
   }
 }

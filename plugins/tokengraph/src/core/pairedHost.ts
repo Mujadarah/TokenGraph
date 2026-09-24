@@ -704,8 +704,8 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
         host: { exitCode: null, timedOut: false, outputLimitExceeded: false, durationMs: 0, finalStatus: "failed", failureClass: "worktree-create-failed" },
         acceptance: { status: "failed", commandHash: verifier.commandHash }
       };
-      await writeTextAtomic(rawPath, "");
-      await writeJsonAtomic(normalizedPath, normalized);
+      await writeTextAtomic(rawPath, "", { telemetry: { root, storageClass: "runs" } });
+      await writeJsonAtomic(normalizedPath, normalized, { telemetry: { root, storageClass: "runs" } });
       throw new Error(`${runName} worktree creation failed.`);
     }
     let durable = false;
@@ -720,7 +720,7 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
           taskId: run.taskId,
           repeat: run.repeat,
           condition: run.condition
-        });
+        }, { telemetry: { root, storageClass: "runs" } });
       } catch {
         phaseFailure = "evidence-provisioning-failed";
       }
@@ -811,8 +811,8 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
         host: { exitCode: host.exitCode, timedOut: host.timedOut, outputLimitExceeded: host.outputLimitExceeded, durationMs: host.durationMs, finalStatus: parsed?.finalStatus ?? "failed", failureClass },
         acceptance: { status: parsed?.acceptance?.status ?? "failed", commandHash: verifier.commandHash }
       };
-      await writeTextAtomic(rawPath, host.stdout);
-      await writeJsonAtomic(normalizedPath, normalized);
+      await writeTextAtomic(rawPath, host.stdout, { telemetry: { root, storageClass: "runs" } });
+      await writeJsonAtomic(normalizedPath, normalized, { telemetry: { root, storageClass: "runs" } });
       durable = await durableRunArtifacts(rawPath, normalizedPath, worktree, run, runIdentity);
       if (!durable) throw new Error(`${runName} evidence artifacts are not durable.`);
       if (phaseFailure === "evidence-provisioning-failed") throw new Error(`${runName} evidence provisioning failed.`);
@@ -847,6 +847,6 @@ export async function runPairedHostEvaluation(options: RunPairedHostOptions): Pr
     traces
   });
   await mkdir(dirname(outputManifest), { recursive: true });
-  await writeJsonAtomic(outputManifest, manifest);
+  await writeJsonAtomic(outputManifest, manifest, { telemetry: { root, storageClass: "durable" } });
   return { manifest, plan, hostVersion };
 }

@@ -1,11 +1,7 @@
 {
-  "schemaId": "tokengraph-published-benchmark-results",
-  "schemaVersion": 1,
-  "corpusVersion": "evidence-v1",
-  "evidenceVersion": "fixture-evidence-v2",
   "aggregate": {
-    "taskCount": 30,
     "activatedTaskCount": 27,
+    "baselineLabel": "category-appropriate",
     "bypassedTaskCount": 3,
     "categoryCounts": {
       "change-risk": 4,
@@ -16,21 +12,36 @@
       "release-packaging": 4,
       "sql-security": 5
     },
-    "medianNetSavings": 182.53333333333333,
-    "medianExecutionInclusiveNetSavings": 174.53333333333333,
-    "primarySavingsMetric": "execution-inclusive",
-    "primaryMedianNetSavings": 174.53333333333333,
-    "executionInclusiveMedian": 174.53333333333333,
-    "executionInclusiveP25": 40.53333333333333,
-    "nonNegativeActivatedRate": 0.8148148148148148,
     "criticalConstraintPreservationRate": 1,
+    "executionInclusiveMedian": 162.26666666666665,
+    "executionInclusiveP25": 39.266666666666666,
+    "medianExecutionInclusiveNetSavings": 162.26666666666665,
+    "medianNetSavings": 170.26666666666665,
+    "nonNegativeActivatedRate": 0.8148148148148148,
+    "primaryMedianNetSavings": 162.26666666666665,
+    "primarySavingsMetric": "execution-inclusive",
     "requiredFileRecall": 1,
-    "baselineLabel": "category-appropriate"
+    "taskCount": 30
   },
+  "corpusVersion": "evidence-v1",
+  "deltaDelivery": {
+    "defaultAssumption": "no-handshake",
+    "handshake": {
+      "deliveredTokens": 846,
+      "knownArtifactsProvided": true,
+      "savedTokens": 5132
+    },
+    "noHandshake": {
+      "deliveredTokens": 5978,
+      "knownArtifactsProvided": false,
+      "savedTokens": 0
+    }
+  },
+  "evidenceVersion": "fixture-evidence-v2",
   "exactSliceAccounting": {
-    "taskCount": 4,
     "targetedReadCallCount": 4,
     "targetedReadTokens": 711,
+    "taskCount": 4,
     "taskIds": [
       "code-routing-02",
       "debugging-01",
@@ -38,161 +49,207 @@
       "debugging-04"
     ]
   },
-  "routerShadow": {
-    "observationCount": 30,
-    "beneficialTaskCount": 27,
-    "boundedTaskCount": 3,
-    "falseBypassCount": 0,
-    "falseActivationCount": 0,
-    "falseBypassRate": 0,
-    "falseActivationRate": 0,
-    "categoryCounts": {
-      "change-risk": { "observations": 4, "beneficial": 4, "bounded": 0, "activated": 4, "bypassed": 0 },
-      "code-routing": { "observations": 5, "beneficial": 3, "bounded": 2, "activated": 3, "bypassed": 2 },
-      "compression": { "observations": 4, "beneficial": 4, "bounded": 0, "activated": 4, "bypassed": 0 },
-      "debugging": { "observations": 4, "beneficial": 3, "bounded": 1, "activated": 3, "bypassed": 1 },
-      "memory-wiki": { "observations": 4, "beneficial": 4, "bounded": 0, "activated": 4, "bypassed": 0 },
-      "release-packaging": { "observations": 4, "beneficial": 4, "bounded": 0, "activated": 4, "bypassed": 0 },
-      "sql-security": { "observations": 5, "beneficial": 5, "bounded": 0, "activated": 5, "bypassed": 0 }
-    }
-  },
-  "deltaDelivery": {
-    "defaultAssumption": "no-handshake",
-    "noHandshake": {
-      "knownArtifactsProvided": false,
-      "deliveredTokens": 6288,
-      "savedTokens": 0
+  "multiRepositoryRealHostCoverage": {
+    "completedCategoryCount": 3,
+    "completedPairCount": 15,
+    "completedRepositoryCount": 3,
+    "completedTraceCount": 30,
+    "coverageComplete": true,
+    "evaluations": [
+      {
+        "acceptanceFailed": 0,
+        "acceptancePassed": 10,
+        "category": "code",
+        "enforcementEnabled": false,
+        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json",
+        "pairCount": 5,
+        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.json",
+        "repository": "Mujadarah/TokenGraph",
+        "traceCount": 10
+      },
+      {
+        "acceptanceFailed": 0,
+        "acceptancePassed": 10,
+        "category": "type-system",
+        "enforcementEnabled": false,
+        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-manifest.json",
+        "pairCount": 5,
+        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.json",
+        "repository": "mattpocock/ts-reset",
+        "traceCount": 10
+      },
+      {
+        "acceptanceFailed": 0,
+        "acceptancePassed": 10,
+        "category": "frontend",
+        "enforcementEnabled": false,
+        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-manifest.json",
+        "pairCount": 5,
+        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-report.json",
+        "repository": "imbhargav5/nextbase-nextjs-supabase-starter",
+        "traceCount": 10
+      }
+    ],
+    "finalDecision": {
+      "b7PolyglotIndexing": "active-by-default",
+      "reason": "The three-repository coverage target is met, but the frozen promotion gates do not all pass.",
+      "routingMode": "shadow"
     },
-    "handshake": {
-      "knownArtifactsProvided": true,
-      "deliveredTokens": 846,
-      "savedTokens": 5442
-    }
+    "promotionComplete": false,
+    "remaining": "No repository coverage gap; frozen promotion gates still fail.",
+    "targetRepositoryCount": 3
   },
   "realHostEvaluation": {
-    "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json",
-    "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.json",
-    "schemaVersion": 3,
     "evidenceSource": "real-host",
-    "reviewed": true,
-    "scope": {
-      "repositoryCount": 1,
-      "categoryCount": 1,
-      "taskCount": 1,
-      "pairCount": 5,
-      "traceCount": 10,
-      "retainedFailureCount": 0
-    },
-    "model": {
-      "identifier": "gpt-5.6-sol",
-      "versionOrDate": "2026-07-22"
-    },
     "host": {
       "name": "codex",
       "version": "codex-cli 0.145.0-alpha.30"
     },
-    "plugin": {
-      "version": "0.21.1",
-      "commit": "934c5c1114668e4d5161f2314f67f593e294044d"
-    },
-    "repositoryCommit": "11129c2b262e5bdd282c153e9940a0c7d3620262",
     "hostUsage": {
-      "inputTokens": 26183135,
       "cachedInputTokens": 25191424,
-      "outputTokens": 168284,
-      "reasoningOutputTokens": 78105,
+      "inputTokens": 26183135,
+      "offTokens": 15294052,
       "onTokens": 11057367,
-      "offTokens": 15294052
+      "outputTokens": 168284,
+      "reasoningOutputTokens": 78105
     },
-    "routerRates": {
-      "falseBypassRate": 0,
-      "falseActivationRate": null,
-      "beneficialCount": 5,
-      "boundedCount": 0,
-      "stage0LatencyMs": 0.017499999841675162,
-      "activationLatencyMs": 1713.5563000002876,
-      "stage0LatencyMaximumMs": 5,
-      "stage0WithinBudget": true
+    "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json",
+    "model": {
+      "identifier": "gpt-5.6-sol",
+      "versionOrDate": "2026-07-22"
     },
     "pairedIntervals": {
-      "tokenDifference": { "estimate": -847337, "lower": -2200080.8, "upper": 244224.4, "samples": 5 },
-      "qualityDifference": { "estimate": 0, "lower": 0, "upper": 0, "samples": 5 },
-      "executionInclusiveSavings": { "estimate": 847337, "lower": -244224.4, "upper": 2199729.6, "samples": 5 }
+      "executionInclusiveSavings": {
+        "estimate": 847337,
+        "lower": -244224.4,
+        "samples": 5,
+        "upper": 2199729.6
+      },
+      "qualityDifference": {
+        "estimate": 0,
+        "lower": 0,
+        "samples": 5,
+        "upper": 0
+      },
+      "tokenDifference": {
+        "estimate": -847337,
+        "lower": -2200080.8,
+        "samples": 5,
+        "upper": 244224.4
+      }
+    },
+    "plugin": {
+      "commit": "934c5c1114668e4d5161f2314f67f593e294044d",
+      "version": "0.21.1"
     },
     "promotion": {
       "enforcementEnabled": false,
-      "gates": {
-        "minimumSamples": false,
-        "realHostEvidence": true,
-        "qualityNonInferiority": true,
-        "tokenSuperiority": false,
-        "resources": false,
-        "routerRates": false,
-        "routerLatency": true,
-        "executionMedian": false,
-        "executionP25": false,
-        "nonNegativeActivated": false
-      },
       "executionInclusiveMedian": -52798,
       "executionInclusiveP25": -291203,
-      "nonNegativeActivatedRate": 0.4,
       "failureReasons": [
         "router-shadow-sample-incomplete"
-      ]
+      ],
+      "gates": {
+        "executionMedian": false,
+        "executionP25": false,
+        "minimumSamples": false,
+        "nonNegativeActivated": false,
+        "qualityNonInferiority": true,
+        "realHostEvidence": true,
+        "resources": false,
+        "routerLatency": true,
+        "routerRates": false,
+        "tokenSuperiority": false
+      },
+      "nonNegativeActivatedRate": 0.4
+    },
+    "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.json",
+    "repositoryCommit": "11129c2b262e5bdd282c153e9940a0c7d3620262",
+    "reviewed": true,
+    "routerRates": {
+      "activationLatencyMs": 1713.5563000002876,
+      "beneficialCount": 5,
+      "boundedCount": 0,
+      "falseActivationRate": null,
+      "falseBypassRate": 0,
+      "stage0LatencyMaximumMs": 5,
+      "stage0LatencyMs": 0.017499999841675162,
+      "stage0WithinBudget": true
+    },
+    "schemaVersion": 3,
+    "scope": {
+      "categoryCount": 1,
+      "pairCount": 5,
+      "repositoryCount": 1,
+      "retainedFailureCount": 0,
+      "taskCount": 1,
+      "traceCount": 10
     }
   },
-  "multiRepositoryRealHostCoverage": {
-    "targetRepositoryCount": 3,
-    "completedRepositoryCount": 3,
-    "completedCategoryCount": 3,
-    "completedPairCount": 15,
-    "completedTraceCount": 30,
-    "coverageComplete": true,
-    "promotionComplete": false,
-    "evaluations": [
-      {
-        "repository": "Mujadarah/TokenGraph",
-        "category": "code",
-        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json",
-        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.json",
-        "pairCount": 5,
-        "traceCount": 10,
-        "acceptancePassed": 10,
-        "acceptanceFailed": 0,
-        "enforcementEnabled": false
-      },
-      {
-        "repository": "mattpocock/ts-reset",
-        "category": "type-system",
-        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-manifest.json",
-        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.json",
-        "pairCount": 5,
-        "traceCount": 10,
-        "acceptancePassed": 10,
-        "acceptanceFailed": 0,
-        "enforcementEnabled": false
-      },
-      {
-        "repository": "imbhargav5/nextbase-nextjs-supabase-starter",
-        "category": "frontend",
-        "manifestPath": "docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-manifest.json",
-        "reportPath": "docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-report.json",
-        "pairCount": 5,
-        "traceCount": 10,
-        "acceptancePassed": 10,
-        "acceptanceFailed": 0,
-        "enforcementEnabled": false
-      }
-    ],
-    "finalDecision": {
-      "routingMode": "shadow",
-      "b7PolyglotIndexing": "dark",
-      "reason": "The three-repository coverage target is met, but the frozen promotion gates do not all pass."
-    },
-    "remaining": "No repository coverage gap; frozen promotion gates still fail."
-  },
   "releaseGate": {
-    "passed": true,
-    "failureReasons": []
-  }
+    "failureReasons": [],
+    "passed": true
+  },
+  "routerShadow": {
+    "beneficialTaskCount": 27,
+    "boundedTaskCount": 3,
+    "categoryCounts": {
+      "change-risk": {
+        "activated": 4,
+        "beneficial": 4,
+        "bounded": 0,
+        "bypassed": 0,
+        "observations": 4
+      },
+      "code-routing": {
+        "activated": 3,
+        "beneficial": 3,
+        "bounded": 2,
+        "bypassed": 2,
+        "observations": 5
+      },
+      "compression": {
+        "activated": 4,
+        "beneficial": 4,
+        "bounded": 0,
+        "bypassed": 0,
+        "observations": 4
+      },
+      "debugging": {
+        "activated": 3,
+        "beneficial": 3,
+        "bounded": 1,
+        "bypassed": 1,
+        "observations": 4
+      },
+      "memory-wiki": {
+        "activated": 4,
+        "beneficial": 4,
+        "bounded": 0,
+        "bypassed": 0,
+        "observations": 4
+      },
+      "release-packaging": {
+        "activated": 4,
+        "beneficial": 4,
+        "bounded": 0,
+        "bypassed": 0,
+        "observations": 4
+      },
+      "sql-security": {
+        "activated": 5,
+        "beneficial": 5,
+        "bounded": 0,
+        "bypassed": 0,
+        "observations": 5
+      }
+    },
+    "falseActivationCount": 0,
+    "falseActivationRate": 0,
+    "falseBypassCount": 0,
+    "falseBypassRate": 0,
+    "observationCount": 30
+  },
+  "schemaId": "tokengraph-published-benchmark-results",
+  "schemaVersion": 1
 }

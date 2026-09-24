@@ -1,13 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { readFile, rename } from "node:fs/promises";
+import { join } from "node:path";
 
 import type { ArchitectureCheckReport, ArchitectureFinding, ArchitectureRule, ArchitectureRuleInput, ArchitectureRuleSeverity, ProjectIndex } from "./types.js";
 import { assertSafeArchitectureRulePatterns } from "./patternSafety.js";
-import { withFileLock } from "./storage.js";
+import type { CanonicalPersistenceLock } from "./lockDomain.js";
+import { withFileLock, writeJsonAtomic, type WriteTelemetryContext } from "./storage.js";
 
 const DEFAULT_SEVERITY: ArchitectureRuleSeverity = "warning";
 const CURRENT_RULES_SCHEMA_VERSION = 1;
+
+export interface ArchitectureRuleStoreOptions {
+  telemetry?: WriteTelemetryContext;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -50,9 +55,20 @@ function importTarget(edge: ProjectIndex["imports"][number]): string {
 export class ArchitectureRuleStore {
   private static readonly writeChains = new Map<string, Promise<void>>();
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly lock: CanonicalPersistenceLock,
+    private readonly options: ArchitectureRuleStoreOptions = {}
+  ) {}
 
   async list(): Promise<ArchitectureRule[]> {
+    return this.readAll(false);
+  }
+
+  // `repairInsideLock` is set only by write operations, which already own the
+  // repository-state domain lock; quarantining a corrupt file is a mutation and
+  // must never happen from an unlocked pure `list` read.
+  private async readAll(repairInsideLock: boolean): Promise<ArchitectureRule[]> {
     try {
       const parsed = JSON.parse(await readFile(this.filePath, "utf8")) as unknown;
       const records = Array.isArray(parsed)
@@ -66,7 +82,7 @@ export class ArchitectureRuleStore {
         return [];
       }
       if (error instanceof SyntaxError) {
-        await this.quarantineCorruptFile();
+        if (repairInsideLock) await this.quarantineCorruptFile();
         return [];
       }
       throw error;
@@ -75,7 +91,7 @@ export class ArchitectureRuleStore {
 
   async add(input: ArchitectureRuleInput): Promise<ArchitectureRule> {
     return this.enqueueWrite(async () => {
-      const rules = await this.list();
+      const rules = await this.readAll(true);
       await assertSafeArchitectureRulePatterns(input);
       const rule = normalizeRule(input);
       rules.push(rule);
@@ -86,7 +102,7 @@ export class ArchitectureRuleStore {
 
   async update(id: string, update: Partial<ArchitectureRuleInput>): Promise<ArchitectureRule | undefined> {
     return this.enqueueWrite(async () => {
-      const rules = await this.list();
+      const rules = await this.readAll(true);
       const index = rules.findIndex((rule) => rule.id === id);
       if (index === -1) return undefined;
       const current = rules[index];
@@ -108,7 +124,7 @@ export class ArchitectureRuleStore {
 
   async delete(id: string): Promise<boolean> {
     return this.enqueueWrite(async () => {
-      const rules = await this.list();
+      const rules = await this.readAll(true);
       const next = rules.filter((rule) => rule.id !== id);
       await this.writeAtomic(next);
       return next.length !== rules.length;
@@ -116,45 +132,26 @@ export class ArchitectureRuleStore {
   }
 
   private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
-    const key = resolve(this.filePath);
+    const key = this.lock.compatibilityPath;
     const previous = ArchitectureRuleStore.writeChains.get(key) ?? Promise.resolve();
     const current = previous.then(
-      () => withFileLock(`${key}.lock`, operation),
-      () => withFileLock(`${key}.lock`, operation)
+      () => withFileLock(this.lock, operation),
+      () => withFileLock(this.lock, operation)
     );
-    ArchitectureRuleStore.writeChains.set(
-      key,
-      current.then(
-        () => undefined,
-        () => undefined
-      )
-    );
+    let settled: Promise<void>;
+    const cleanUp = (): void => {
+      if (ArchitectureRuleStore.writeChains.get(key) === settled) ArchitectureRuleStore.writeChains.delete(key);
+    };
+    settled = current.then(cleanUp, cleanUp);
+    ArchitectureRuleStore.writeChains.set(key, settled);
     return current;
   }
 
   private async writeAtomic(rules: ArchitectureRule[]): Promise<void> {
-    const directory = dirname(this.filePath);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    if (process.platform !== "win32") await chmod(directory, 0o700);
-    const tempPath = join(directory, `.rules-${process.pid}-${Date.now()}-${randomUUID()}.tmp`);
-    try {
-      await writeFile(
-        tempPath,
-        `${JSON.stringify(
-          {
-            schemaVersion: CURRENT_RULES_SCHEMA_VERSION,
-            rules
-          },
-          null,
-          2
-        )}\n`,
-        { mode: 0o600 }
-      );
-      await rename(tempPath, this.filePath);
-      if (process.platform !== "win32") await chmod(this.filePath, 0o600);
-    } finally {
-      await rm(tempPath, { force: true });
-    }
+    await writeJsonAtomic(this.filePath, {
+      schemaVersion: CURRENT_RULES_SCHEMA_VERSION,
+      rules
+    }, this.options.telemetry ? { telemetry: this.options.telemetry } : {});
   }
 
   private async quarantineCorruptFile(): Promise<void> {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { BigIntStats, Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, normalize, relative, sep } from "node:path";
 
@@ -45,6 +46,13 @@ export interface ScanBudget {
   wholeIndexTimeoutMs?: number;
   polyglotEnabled?: boolean;
   onFileContent?: (file: { path: string; language: string; content: string }) => void;
+}
+
+/** Optional bounded reader used by non-mutating diagnostics. */
+export interface ScanReadProvider {
+  directory(path: string): Promise<Dirent[] | undefined>;
+  inspect(path: string): Promise<BigIntStats | undefined>;
+  text(path: string, maximumBytes: number): Promise<string | undefined>;
 }
 
 interface WalkState {
@@ -105,16 +113,22 @@ function exclusionForName(name: string): Exclusion["reason"] | undefined {
   return undefined;
 }
 
-async function loadIgnoreScopes(base: string, inherited: IgnoreScope[] = []): Promise<IgnoreScope[]> {
+async function loadIgnoreScopes(base: string, inherited: IgnoreScope[] = [], reader?: ScanReadProvider): Promise<IgnoreScope[]> {
   let content: string;
-  try {
-    content = await readFile(join(base, ".gitignore"), "utf8");
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT" && code !== "ENOTDIR") {
-      throw error;
+  if (reader) {
+    const inspected = await reader.text(join(base, ".gitignore"), MAX_INDEXED_BYTES);
+    if (inspected === undefined) return inherited;
+    content = inspected;
+  } else {
+    try {
+      content = await readFile(join(base, ".gitignore"), "utf8");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
+        throw error;
+      }
+      return inherited;
     }
-    return inherited;
   }
   const matcher = createIgnore();
   matcher.add(content);
@@ -122,10 +136,15 @@ async function loadIgnoreScopes(base: string, inherited: IgnoreScope[] = []): Pr
 }
 
 function isIgnored(scopes: IgnoreScope[], absolutePath: string, isDirectory: boolean): boolean {
-  return scopes.some(({ base, matcher }) => {
+  let ignored = false;
+  for (const { base, matcher } of scopes) {
     const path = normalizePath(relative(base, absolutePath));
-    return Boolean(path) && matcher.ignores(isDirectory ? `${path}/` : path);
-  });
+    if (!path) continue;
+    const decision = matcher.test(isDirectory ? `${path}/` : path);
+    if (decision.ignored) ignored = true;
+    if (decision.unignored) ignored = false;
+  }
+  return ignored;
 }
 
 function languageForExtension(extension: string): string {
@@ -635,9 +654,14 @@ export async function scanProject(root: string, options?: ScanBudget): Promise<C
   return (await scanProjectContent(root, options, false)).graph;
 }
 
-async function configurationSignatureRows(root: string): Promise<Array<{ path: string; contentHash: string }>> {
+async function configurationSignatureRows(root: string, reader?: ScanReadProvider): Promise<Array<{ path: string; contentHash: string }>> {
   const configurationRows: Array<{ path: string; contentHash: string }> = [];
   for (const path of CONFIGURATION_FILES) {
+    if (reader) {
+      const content = await reader.text(join(root, path), MAX_INDEXED_BYTES);
+      if (content !== undefined) configurationRows.push({ path, contentHash: hashText(content) });
+      continue;
+    }
     try {
       configurationRows.push({ path, contentHash: hashText(await readFile(join(root, path), "utf8")) });
     } catch (error) {
@@ -660,12 +684,12 @@ export async function scanProjectGeneration(root: string, options?: ScanBudget):
   };
 }
 
-export async function scanProjectSignature(root: string, options?: ScanBudget): Promise<string> {
-  return (await scanProjectFileMetadata(root, options)).scanSignature;
+export async function scanProjectSignature(root: string, options?: ScanBudget, reader?: ScanReadProvider): Promise<string> {
+  return (await scanProjectFileMetadata(root, options, reader)).scanSignature;
 }
 
-export async function scanProjectFileMetadata(root: string, options?: ScanBudget): Promise<ProjectFileMetadataScan> {
-  const ignoreScopes = await loadIgnoreScopes(root);
+export async function scanProjectFileMetadata(root: string, options?: ScanBudget, reader?: ScanReadProvider): Promise<ProjectFileMetadataScan> {
+  const ignoreScopes = await loadIgnoreScopes(root, [], reader);
   const rows: Array<Record<string, unknown>> = [];
   const files: FileScanMetadata[] = [];
   const exclusions: Exclusion[] = [];
@@ -677,11 +701,13 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
   let generatedFiles = 0;
 
   async function walkSignature(current: string, depth: number, inheritedScopes: IgnoreScope[]): Promise<void> {
-    const currentScopes = current === root ? inheritedScopes : await loadIgnoreScopes(current, inheritedScopes);
+    const currentScopes = current === root ? inheritedScopes : await loadIgnoreScopes(current, inheritedScopes, reader);
     let entries;
     try {
-      entries = await readdir(current, { withFileTypes: true });
-    } catch {
+      entries = reader ? await reader.directory(current) : await readdir(current, { withFileTypes: true });
+      if (entries === undefined) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    } catch (error) {
+      if (reader) throw error;
       const path = normalizePath(relative(root, current)) || ".";
       rows.push({ path, reason: "unreadable" });
       exclusions.push({ path, reason: "unreadable" });
@@ -737,8 +763,10 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
       }
       let fileStat;
       try {
-        fileStat = await stat(absolute, { bigint: true });
-      } catch {
+        fileStat = reader ? await reader.inspect(absolute) : await stat(absolute, { bigint: true });
+        if (!fileStat) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      } catch (error) {
+        if (reader) throw error;
         rows.push({ path: relativePath, reason: "unreadable" });
         exclusions.push({ path: relativePath, reason: "unreadable" });
         continue;
@@ -756,8 +784,10 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
       }
       let content;
       try {
-        content = await readFile(absolute, "utf8");
-      } catch {
+        content = reader ? await reader.text(absolute, budget.maxFileBytes) : await readFile(absolute, "utf8");
+        if (content === undefined) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      } catch (error) {
+        if (reader) throw error;
         rows.push({ path: relativePath, reason: "unreadable" });
         exclusions.push({ path: relativePath, reason: "unreadable" });
         continue;
@@ -796,8 +826,43 @@ export async function scanProjectFileMetadata(root: string, options?: ScanBudget
   await walkSignature(root, 0, ignoreScopes);
   files.sort((a, b) => a.path.localeCompare(b.path));
   exclusions.sort((a, b) => a.path.localeCompare(b.path));
-  const configurationRows = await configurationSignatureRows(root);
+  const configurationRows = await configurationSignatureRows(root, reader);
   return { files, exclusions, scanSignature: hashText(JSON.stringify({ rows, configurationRows })) };
+}
+
+export async function parseProjectFileText(path: string, content: string, options: ScanBudget = {}): Promise<ParsedProjectFile | undefined> {
+  const normalizedPath = path.replace(/\\/g, "/");
+  const extension = extname(normalizedPath).toLowerCase();
+  if (!SUPPORTED_EXTENSIONS.has(extension)) return undefined;
+  if (content.includes("\u0000")) {
+    return undefined;
+  }
+  const file: CodeFile = {
+    path: normalizedPath,
+    kind: detectFileKind(normalizedPath, extension, content),
+    language: languageForExtension(extension),
+    size: normalizedTextSize(content),
+    estimatedTokens: estimateTokens(normalizedText(content)),
+    contentHash: hashText(content),
+    route: nextRouteForPath(normalizedPath),
+    isTest: isTestPath(normalizedPath)
+  };
+  const limits = budgetFromOptions(options);
+  const parsed = TYPESCRIPT_EXTENSIONS.has(extension)
+    ? await extractTypeScriptSymbols(normalizedPath, content, limits)
+    : options.polyglotEnabled
+      ? await extractPolyglotSymbols(normalizedPath, extension, content, options)
+      : { symbols: [] as CodeSymbol[] };
+  const selectedSymbols = parsed.symbols.slice(0, limits.maxSymbols);
+  return {
+    file,
+    imports: CODE_EXTENSIONS.has(extension) ? extractImports(normalizedPath, content) : [],
+    symbols: selectedSymbols,
+    content,
+    ...((parsed.degradedReason || parsed.symbols.length > limits.maxSymbols)
+      ? { degradedReason: parsed.degradedReason ?? "symbol limit exceeded" }
+      : {})
+  };
 }
 
 export async function scanProjectFile(root: string, metadata: FileScanMetadata, options: ScanBudget = {}): Promise<ParsedProjectFile | undefined> {
@@ -807,35 +872,7 @@ export async function scanProjectFile(root: string, metadata: FileScanMetadata, 
   } catch {
     return undefined;
   }
-  if (content.includes("\u0000")) {
-    return undefined;
-  }
-  const file: CodeFile = {
-    path: metadata.path,
-    kind: detectFileKind(metadata.path, metadata.extension, content),
-    language: metadata.language,
-    size: normalizedTextSize(content),
-    estimatedTokens: estimateTokens(normalizedText(content)),
-    contentHash: hashText(content),
-    route: metadata.route,
-    isTest: metadata.isTest
-  };
-  const limits = budgetFromOptions(options);
-  const parsed = TYPESCRIPT_EXTENSIONS.has(metadata.extension)
-    ? await extractTypeScriptSymbols(metadata.path, content, limits)
-    : options.polyglotEnabled
-      ? await extractPolyglotSymbols(metadata.path, metadata.extension, content, options)
-      : { symbols: [] as CodeSymbol[] };
-  const selectedSymbols = parsed.symbols.slice(0, limits.maxSymbols);
-  return {
-    file,
-    imports: CODE_EXTENSIONS.has(metadata.extension) ? extractImports(metadata.path, content) : [],
-    symbols: selectedSymbols,
-    content,
-    ...((parsed.degradedReason || parsed.symbols.length > limits.maxSymbols)
-      ? { degradedReason: parsed.degradedReason ?? "symbol limit exceeded" }
-      : {})
-  };
+  return parseProjectFileText(metadata.path, content, options);
 }
 
 export function isSupportedCodeFile(path: string): boolean {

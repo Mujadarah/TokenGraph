@@ -1,6 +1,6 @@
 # TokenGraph Source Plugin
 
-This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.23.1. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
+This directory contains the TypeScript implementation, tests, validation, and packaging source for TokenGraph v0.25.0. Normal users install from the GitHub marketplace or release ZIP documented in the repository root README; they do not install this directory directly.
 
 ## Development
 
@@ -16,6 +16,14 @@ pnpm package:plugin -- --release --json
 ```
 
 `pnpm build` produces self-contained Node.js 22 entries at `dist/index.js` for MCP, `dist/typescript-worker.cjs` and `dist/polyglot-worker.js` for isolated bundled parsing, `dist/cli.js` for bounded saved-run capture, and `dist/hooks.js` for lifecycle hooks. Run `node ./dist/cli.js run -- <command> [args...]` to capture a redacted, bounded command result. `pnpm package:plugin` creates a standalone Codex/Claude marketplace directory and deterministic ZIP under the repository `artifacts/` directory. `pnpm package:plugin -- --release` regenerates the committed `release/tokengraph/` plugin.
+
+## Native lock runtime
+
+The installable plugin contains exactly six prebuilt native lock addons: Windows x64/arm64, glibc Linux x64/arm64, and macOS x64/arm64. Loading them requires no native compiler, runtime download, package installation, network lookup, sidecar, or JavaScript lock fallback. Package validation checks the selected addon's target, ABI, byte length, SHA-256, and locked dependency notices before it is staged in a private operating-system temporary directory.
+
+Before native locking is activated, ensure every v0.23.1 TokenGraph MCP and CLI process is stopped. Those processes must not be restarted while v2 runs. Activate one MCP server with `tokengraph_setup({ confirmNoLegacyProcesses: true })`; each lock-taking CLI invocation separately requires `--confirm-no-legacy-processes`. If an old runtime is started later, stop it and restart or reactivate v2. Mixed-runtime operation is unsupported. Doctor may report the read-only activation state but never grants activation.
+
+Managed lifecycle hooks remain permanently unactivated and project-read-only. Host attestation and plugin-data hook state authorize only strict lifecycle reads for the matching workspace; neither grants native-lock activation.
 
 Draft GitHub release notes are rendered by `scripts/render-release-notes.mjs` and validated by `scripts/validate-release-notes.mjs`; both use the canonical contract in `scripts/release-note-contract.mjs`. Do not add free-form historical context to that draft. Historical corrections remain dated, append-only entries in the root `CHANGELOG.md`.
 
@@ -47,11 +55,13 @@ The default `TOKENGRAPH_TOOL_SURFACE=core` surface exposes exactly eight intent-
 - `tokengraph_propose_knowledge`
 - `tokengraph_task_report`
 
-Set `TOKENGRAPH_TOOL_SURFACE=full` before starting the MCP host to add the 34 deprecated compatibility tools below. Their names, schemas, and behavior remain available during migration; prefer the core tools for new tasks.
+Set `TOKENGRAPH_TOOL_SURFACE=full` before starting the MCP host to add the 35 deprecated compatibility tools below. Their names, schemas, and behavior remain available during migration; prefer the core tools for new tasks.
 
-JSON-only successful tool calls return one serialized JSON `TextContent` item. `tokengraph_export_project_map` is the resource-link exception and also returns matching structured content. Compact mode is the default; explicit `responseMode: "verbose"` is for diagnostics. Diagnostic token estimates always name their baseline and expose `baselineTokens`, `compactTokens`, `avoidedVsBaseline`, and the `estimated-tokens` unit.
+JSON-only successful tool calls return one serialized JSON `TextContent` item. Task-creating core calls additionally return minimal structured task authority containing only `taskId`, without duplicating the full result. `tokengraph_export_project_map` is the resource-link exception and also returns matching structured content. Compact mode is the default; explicit `responseMode: "verbose"` is for diagnostics. Diagnostic token estimates always name their baseline and expose `baselineTokens`, `compactTokens`, `avoidedVsBaseline`, and the `estimated-tokens` unit.
 
 Use `tokengraph_prepare_context` only when planning is needed. The direct query, compress, recall, and analyze tools accept an omitted `taskId`, atomically start a task ledger, and return the new id. Reuse that id for later calls. After ready setup, `root` may be omitted when host workspace resolution is stable. `tokengraph_task_report({ taskId })` defaults to complete and returns the compact `status`, `taskId`, canonical `footer`, and `reportingStatus`; request verbose mode only for report diagnostics or explicitly pause unfinished work.
+
+For local change analysis, `tokengraph_analyze` risk mode accepts either explicit `changedFiles` or a `changeSource`. Sources may be the working tree, staged index, one local commit, a local ref range, or pull-request-shaped local base/head refs. TokenGraph does not fetch a pull request or contact a forge. It resolves the refs already present in the repository, reads target revision bytes, and returns a stable bounded capsule with changed entries, symbols, exact slices, affected graph entities, risks, and recommended tests.
 
 ### Reviewed local knowledge
 
@@ -64,6 +74,7 @@ Generated wiki Markdown uses deterministic Obsidian-compatible YAML frontmatter 
 Legacy setup and indexing:
 
 - `tokengraph_setup_status`
+- `tokengraph_doctor` - read-only health report; use `tokengraph doctor --root <path> [--json]` outside MCP.
 - `tokengraph_index_project`
 - `tokengraph_index_status`
 - `tokengraph_reset_project`
@@ -120,7 +131,7 @@ reviewed real-host promotion gate passes.
 
 Deterministic fixture economics and real-host evidence are distinct. The
 30-task fixture benchmark has 27 activated tasks and three unbooked Stage 0
-bypasses, with a +174.5-token execution-inclusive median and +40.5-token p25.
+bypasses, with a +162.3-token execution-inclusive median and +39.3-token p25.
 Four edit/debug tasks charge one hash-validated exact source slice each, for
 711 estimated tokens total. These are fixture estimates, not provider billing.
 
@@ -147,7 +158,7 @@ The default `hooks/hooks.json` is auto-discovered by Codex and Claude Code. Sess
 
 Pause is terminal for that task id. Stop remains allowed for a paused task, but later task-aware calls are rejected. Start a new task through `tokengraph_prepare_context` or a direct intent call that omits `taskId`.
 
-The adapter reads documented hook fields and strictly parses only the single JSON `TextContent` result needed to capture a returned task id. The workspace bridge stores schema/version, SHA-256 plugin and session hashes, the host-provided root, and a timestamp under the operating-system temporary directory for up to 24 hours. The lifecycle adapter stores a separate minimal 30-day task pointer in the host-provided plugin data directory: schema/version, a SHA-256 session hash, task id, trusted root, turn id, and timestamp. It does not store raw session ids, prompts, transcripts, tool inputs, tool responses, or raw response text. Missing, corrupt, expired, or mismatched workspace attestations do not grant trust; missing or corrupt lifecycle state fails open with an honest warning and never fabricates savings.
+The adapter reads documented hook fields and accepts initial task authority only from a successful, unambiguous `structuredContent` or `structured_content` object. Task-creating core tools provide only `{ taskId }` through that channel; the hook never derives authority by parsing JSON-looking response text. The workspace bridge stores schema/version, SHA-256 plugin and session hashes, the host-provided root, and a timestamp under the operating-system temporary directory for up to 24 hours. The lifecycle adapter stores a separate minimal 30-day task pointer in the host-provided plugin data directory: schema/version, a SHA-256 session hash, task id, turn id, and timestamp. It does not store the trusted root, raw session ids, prompts, transcripts, tool inputs, tool responses, or raw response text. Missing, corrupt, expired, or mismatched workspace attestations do not grant trust; missing or corrupt lifecycle state fails open with an honest warning and never fabricates savings.
 
 Codex users must review and trust plugin hooks before they run. Hooks can be disabled globally with `[features] hooks = false`; Claude Code users can inspect them with `/hooks` and disable all hooks with `"disableAllHooks": true`. When hooks are off or unavailable, call `tokengraph_task_report` explicitly.
 
@@ -155,4 +166,4 @@ Do not edit `release/tokengraph/` by hand. Change source or the package generato
 
 ## Privacy and license
 
-TokenGraph is local-first and does not require an OpenAI API key, cloud sync, embeddings service, telemetry, or paid external API. Token savings are estimates. TokenGraph is licensed under Apache License 2.0; see the repository `LICENSE` and `NOTICE`.
+TokenGraph is local-first and does not require an OpenAI API key, cloud sync, embeddings service, cloud telemetry, or a paid external API. It keeps at most 14 days of local write-amplification aggregates under `.tokengraph/telemetry/`; those records contain only dates, storage classes, logical persistence-operation counts, logical payload bytes, optional measured physical-write bytes, and sampled process RSS, never paths, prompts, commands, or file contents. Local change capsules may contain bounded target-revision source slices and hashes; they remain in stable artifacts under the trusted workspace and are never uploaded by TokenGraph. A generation plus manifest is one logical publication operation, and physical-write bytes are omitted when the runtime cannot measure them. Token savings are estimates. TokenGraph is licensed under Apache License 2.0; see the repository `LICENSE` and `NOTICE`.

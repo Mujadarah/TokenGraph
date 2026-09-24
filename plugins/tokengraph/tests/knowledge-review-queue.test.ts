@@ -203,7 +203,11 @@ describe("knowledge review queue", () => {
       appliedAt: suggested.updatedAt
     };
     await writeFile(join(root, ".tokengraph", "knowledge-applications.json"), `${JSON.stringify({ schemaVersion: 1, applications: [application, application] })}\n`);
+    // A pure read never renders the duplicates and never mutates: no quarantine.
     expect(await listAppliedKnowledge(root)).toEqual([]);
+    expect((await readdir(join(root, ".tokengraph"))).some((file) => file.startsWith("knowledge-applications.json.corrupt-"))).toBe(false);
+    // A review runs inside the workspace-state lock and quarantines the store.
+    await reviewKnowledgeSuggestion(root, suggested.id, "approve").catch(() => undefined);
     expect((await readdir(join(root, ".tokengraph"))).some((file) => file.startsWith("knowledge-applications.json.corrupt-"))).toBe(true);
   });
 
@@ -258,7 +262,7 @@ describe("knowledge review queue", () => {
   });
 
   it("does not silently migrate an approved schema-v1 proposal with bare fingerprints", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-07-02T12:00:00.000Z"));
     try {
       const root = await makeRoot();

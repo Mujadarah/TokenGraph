@@ -3,6 +3,12 @@ import { access, readFile, readdir } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifySkillContract } from "./skill-contract.mjs";
+import { TARGETS, readLockedCargoMetadata } from "./generate-native-lock-manifest.mjs";
+import {
+  assertExactInstallablePlugin,
+  assertExactInstallableSourceInputs
+} from "./installable-plugin-contract.mjs";
+import { validateNativeLockAssets } from "./validate-native-lock-addon.mjs";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(pluginRoot, "..", "..");
@@ -114,11 +120,9 @@ async function assertRequiredFocusedSkills(skillsRoot, label, coreLifecycle = fa
     assert(/^---[\s\S]*\nname:\s*\S+[\s\S]*\ndescription:\s*\S+[\s\S]*\n---/.test(skill), `${label} skill ${skillDir} must include name and description frontmatter`);
     if (coreLifecycle) {
       assert(/When not to use/i.test(skill), `${label} skill ${skillDir} must define a negative trigger boundary`);
-      assert(/tokengraph_setup\(\{\}\)/.test(skill), `${label} skill ${skillDir} must begin with core setup`);
-      assert(/tokengraph_prepare_context/.test(skill), `${label} skill ${skillDir} must create a task`);
-      assert(/tokengraph_task_report/.test(skill), `${label} skill ${skillDir} must report its disposition`);
-      assert(/disposition: "pause"/.test(skill) && /tokengraph_task_report\(\{ taskId \}\)/.test(skill) && /compact reporting is the default/i.test(skill), `${label} skill ${skillDir} must define pause and default compact completion behavior`);
-      assert(/TokenGraph was not used/.test(skill) && /unavailable/i.test(skill), `${label} skill ${skillDir} must define honest unavailable fallback`);
+      assert(/shared `tokengraph` router contract/i.test(skill), `${label} skill ${skillDir} must reference the canonical router contract`);
+      assert(/Unique tool sequence/i.test(skill) && /Evidence required/i.test(skill) && /Failure boundaries/i.test(skill) && /Completion criteria/i.test(skill), `${label} skill ${skillDir} must define its compact role contract`);
+      assert(!/tokengraph_setup\(/.test(skill) && !/tokengraph_task_report/.test(skill), `${label} specialized skill ${skillDir} must not duplicate router lifecycle calls`);
     } else {
       assert(/Use this skill when/i.test(skill), `${label} skill ${skillDir} must tell Codex when to use it`);
       assert(/MCP tools to call/i.test(skill), `${label} skill ${skillDir} must list TokenGraph MCP tools to call`);
@@ -128,6 +132,16 @@ async function assertRequiredFocusedSkills(skillsRoot, label, coreLifecycle = fa
       assert(/unavailable/i.test(skill), `${label} skill ${skillDir} must state how to handle unavailable MCP tools`);
     }
   }
+}
+
+async function assertCanonicalRouter(skillsRoot, label) {
+  const routerPath = resolve(skillsRoot, "tokengraph", "SKILL.md");
+  const router = await readFile(routerPath, "utf8").catch((error) =>
+    fail(`${label} canonical tokengraph router is missing or unreadable: ${error.message}`)
+  );
+  assert(/tokengraph_setup\(\{ confirmNoLegacyProcesses: true \}\).*trustedWorkspace\.root.*trusted root/is.test(router), `${label} router must own trusted setup and native-lock confirmation`);
+  assert(/tokengraph_task_report\(\{ taskId \}\)/.test(router), `${label} router must own task reporting`);
+  assert(/disposition: "pause"/.test(router) && /TokenGraph was not used/.test(router), `${label} router must own pause and fallback guidance`);
 }
 
 const packageJsonPath = resolve(pluginRoot, "package.json");
@@ -161,6 +175,8 @@ const licensePath = resolve(repoRoot, "LICENSE");
 const noticePath = resolve(repoRoot, "NOTICE");
 const releaseLicensePath = resolve(releaseRoot, "LICENSE");
 const releaseNoticePath = resolve(releaseRoot, "NOTICE");
+const sourceNativeAssetsPath = resolve(pluginRoot, "assets", "native-lock");
+const releaseNativeAssetsPath = resolve(releaseRoot, "assets", "native-lock");
 const grammarAssets = ["web-tree-sitter.wasm", "tree-sitter-python.wasm", "tree-sitter-go.wasm", "tree-sitter-rust.wasm", "tree-sitter-java.wasm"];
 const rootReadmePath = resolve(repoRoot, "README.md");
 const sourceReadmePath = resolve(pluginRoot, "README.md");
@@ -182,6 +198,7 @@ const mcp = await readJson(mcpPath);
 const claudeManifest = await readJson(claudeManifestPath);
 const claudeMcp = await readJson(claudeMcpPath);
 const distServer = await readFile(distServerPath, "utf8").catch((error) => fail(`cannot read bundled MCP entry: ${error.message}`));
+const distHooksBytes = await readFile(distHooksPath).catch((error) => fail(`cannot read bundled lifecycle hook entry: ${error.message}`));
 const distHooks = await readFile(distHooksPath, "utf8").catch((error) => fail(`cannot read bundled lifecycle hook entry: ${error.message}`));
 const hooksManifest = await readJson(hooksManifestPath);
 const distReview = await readFile(distReviewPath, "utf8").catch((error) => fail(`cannot read built review helpers: ${error.message}`));
@@ -263,6 +280,7 @@ const sourceSkillContract = await inspectSkillContract(skillsPath, "source plugi
 assert(sourceSkillContract.contract === "core", "source plugin skills must use the core contract");
 assert(sourceSkillContract.forbiddenCoreTools.length === 0, `source plugin core skills reference non-core tools: ${sourceSkillContract.forbiddenCoreTools.join(", ")}`);
 await assertSkillFrontmatter(skillsPath, "source plugin", true);
+await assertCanonicalRouter(skillsPath, "source plugin");
 await assertRequiredFocusedSkills(skillsPath, "source plugin", true);
 assert(distServer.includes("tokengraph_index_status"), "built MCP server must register tokengraph_index_status");
 assert(distServer.includes("tokengraph_reset_project"), "built MCP server must register tokengraph_reset_project");
@@ -280,7 +298,7 @@ assert(distServer.includes("tokengraph_update_config"), "built MCP server must r
 assert(distServer.includes("fullReindex"), "built MCP server must expose v0.8 full reindex option");
 assert(distServer.includes("indexingMode"), "built MCP server must report v0.8 indexing mode");
 assert(distServer.includes("maxEstimatedTokens"), "built MCP server must expose v0.8 planner token budget input");
-assert(packageJson.version === "0.23.1", "package version must be 0.23.1 for this release");
+assert(packageJson.version === "0.25.0", "package version must be 0.25.0 for this release");
 assert(distServer.includes("tokengraph_setup_status"), "built MCP server must register setup diagnostics");
 assert(distServer.includes("tokengraph_generate_wiki"), "built MCP server must register v0.9 wiki generator");
 assert(distServer.includes("tokengraph_show_wiki_page"), "built MCP server must register v0.9 wiki page reader");
@@ -288,6 +306,7 @@ assert(distServer.includes("wikiRefreshed"), "built MCP server must report v0.9 
 assert(distServer.includes("tokengraph_list_rules"), "built MCP server must register architecture rule listing");
 assert(distServer.includes("tokengraph_add_rule"), "built MCP server must register architecture rule creation");
 assert(distServer.includes("tokengraph_update_rule"), "built MCP server must register architecture rule updates");
+assert(distServer.includes("tokengraph_doctor"), "built MCP server must register the read-only doctor diagnostic");
 assert(distServer.includes("tokengraph_delete_rule"), "built MCP server must register architecture rule deletion");
 assert(distServer.includes("tokengraph_check_architecture"), "built MCP server must register architecture checks");
 assert(distServer.includes("tokengraph_trace_failure"), "built MCP server must register failure tracing");
@@ -350,10 +369,28 @@ await assertFile(licensePath, "repository license");
 await assertFile(noticePath, "repository notice");
 await assertFile(releaseLicensePath, "release license");
 await assertFile(releaseNoticePath, "release notice");
+let nativeMetadata;
+try {
+  nativeMetadata = await readLockedCargoMetadata();
+  await validateNativeLockAssets({ assetsDir: sourceNativeAssetsPath, metadata: nativeMetadata, loadCurrent: true });
+  await validateNativeLockAssets({ assetsDir: releaseNativeAssetsPath, metadata: nativeMetadata, loadCurrent: true });
+} catch (error) {
+  fail(`native lock assets failed validation: ${error instanceof Error ? error.message : String(error)}`);
+}
+for (const relativePath of [
+  "manifest.json",
+  "THIRD_PARTY_NOTICES.txt",
+  ...TARGETS.map((target) => `${target.id}/${target.file}`)
+]) {
+  const sourceBytes = await readFile(resolve(sourceNativeAssetsPath, relativePath)).catch((error) => fail(`cannot read source native asset ${relativePath}: ${error.message}`));
+  const releaseBytes = await readFile(resolve(releaseNativeAssetsPath, relativePath)).catch((error) => fail(`cannot read release native asset ${relativePath}: ${error.message}`));
+  assert(sourceBytes.equals(releaseBytes), `release native asset ${relativePath} must match source byte-for-byte`);
+}
 const releaseSkillContract = await inspectSkillContract(releaseSkillsPath, "release plugin skills");
 assert(releaseSkillContract.forbiddenCoreTools.length === 0, `release plugin core skills reference non-core tools: ${releaseSkillContract.forbiddenCoreTools.join(", ")}`);
 const releaseUsesCoreLifecycle = releaseSkillContract.contract === "core";
 await assertSkillFrontmatter(releaseSkillsPath, "release plugin", releaseUsesCoreLifecycle);
+if (releaseUsesCoreLifecycle) await assertCanonicalRouter(releaseSkillsPath, "release plugin");
 await assertRequiredFocusedSkills(releaseSkillsPath, "release plugin", releaseUsesCoreLifecycle);
 const sourceSkillFiles = await collectSkillFiles(skillsPath);
 const releaseSkillFiles = await collectSkillFiles(releaseSkillsPath);
@@ -378,20 +415,27 @@ const releaseClaudeManifest = await readJson(resolve(releaseRoot, ".claude-plugi
 const releaseClaudeMcp = await readJson(resolve(releaseRoot, ".mcp.claude.json"));
 const releasePackageJson = await readJson(releasePackageJsonPath);
 const releaseReadme = await readFile(releaseReadmePath, "utf8").catch((error) => fail(`cannot read release README: ${error.message}`));
+const releaseDistHooks = await readFile(releaseDistHooksPath).catch((error) => fail(`cannot read release lifecycle hook entry: ${error.message}`));
 const license = await readFile(licensePath).catch((error) => fail(`cannot read repository license: ${error.message}`));
 const notice = await readFile(noticePath).catch((error) => fail(`cannot read repository notice: ${error.message}`));
 const releaseLicense = await readFile(releaseLicensePath).catch((error) => fail(`cannot read release license: ${error.message}`));
 const releaseNotice = await readFile(releaseNoticePath).catch((error) => fail(`cannot read release notice: ${error.message}`));
 const rootReadme = await readFile(rootReadmePath, "utf8").catch((error) => fail(`cannot read root README: ${error.message}`));
 const sourceReadme = await readFile(sourceReadmePath, "utf8").catch((error) => fail(`cannot read source plugin README: ${error.message}`));
+assert(distHooksBytes.equals(releaseDistHooks), "release lifecycle hook dist/hooks.js must match the built source hook byte-for-byte");
 const codexHostGuide = await readFile(resolve(hostDocsPath, "codex.md"), "utf8").catch((error) => fail(`cannot read Codex host guide: ${error.message}`));
 const claudeHostGuide = await readFile(resolve(hostDocsPath, "claude-code.md"), "utf8").catch((error) => fail(`cannot read Claude Code host guide: ${error.message}`));
 const securityGuide = await readFile(resolve(trustDocsPath, "security.md"), "utf8").catch((error) => fail(`cannot read security guide: ${error.message}`));
+const privacyGuide = await readFile(resolve(trustDocsPath, "privacy.md"), "utf8").catch((error) => fail(`cannot read privacy guide: ${error.message}`));
 const limitationsGuide = await readFile(resolve(trustDocsPath, "limitations.md"), "utf8").catch((error) => fail(`cannot read limitations guide: ${error.message}`));
+const releaseInstallGuide = await readFile(resolve(trustDocsPath, "release-install.md"), "utf8").catch((error) => fail(`cannot read release install guide: ${error.message}`));
 const releaseDeclaresHooks = releaseReadme.includes("dist/hooks.js");
 assert(releaseDeclaresHooks, "release with lifecycle hooks must document dist/hooks.js");
-const releaseHooksManifest = await readJson(releaseHooksManifestPath);
-assert(JSON.stringify(releaseHooksManifest) === JSON.stringify(hooksManifest), "release lifecycle hook manifest must match source");
+const sourceHooksManifestBytes = await readFile(hooksManifestPath).catch((error) => fail(`cannot read source lifecycle hook manifest: ${error.message}`));
+const releaseHooksManifestBytes = await readFile(releaseHooksManifestPath).catch((error) => fail(`cannot read release lifecycle hook manifest: ${error.message}`));
+assert(sourceHooksManifestBytes.equals(releaseHooksManifestBytes), "release lifecycle hook manifest must match source byte-for-byte");
+const serializedHooksManifest = sourceHooksManifestBytes.toString("utf8");
+assert(!/confirmNoLegacyProcesses|confirm-no-legacy-processes|activate/i.test(serializedHooksManifest), "lifecycle hook manifest must not grant native activation or confirm legacy shutdown");
 assert(Array.isArray(mcp.mcpServers.tokengraph.env_vars) && mcp.mcpServers.tokengraph.env_vars.includes("TOKENGRAPH_WORKSPACE_ROOT"), "tokengraph MCP config must forward TOKENGRAPH_WORKSPACE_ROOT");
 assert(codexHostGuide.includes("CODEX_THREAD_ID") && /SessionStart/.test(codexHostGuide), "Codex host guide must document session-bound automatic workspace attestation");
 assert(sourceReadme.includes("TOKENGRAPH_WORKSPACE_ROOT"), "plugin README must document trusted workspace configuration");
@@ -402,6 +446,22 @@ assert(claudeHostGuide.includes("disableAllHooks") && /interrupt|API failure/i.t
 assert(/disabled|untrusted/i.test(limitationsGuide) && /interrupt|API failure/i.test(limitationsGuide), "limitations must document hook trust and abnormal-stop limits");
 assert(sourceReadme.includes("dist/hooks.js") && /session hash/i.test(sourceReadme), "plugin README must document hook packaging and pointer privacy");
 assert(/trusted workspace|workspace trust boundary/i.test(securityGuide), "security guide must document the trusted workspace boundary");
+assert(/six prebuilt|prebuilt.*six/i.test(sourceReadme), "plugin README must document the six prebuilt native addons");
+assert(/no[^.\n]*(?:native )?compiler/i.test(sourceReadme) && /no[^.\n]*runtime download/i.test(sourceReadme), "plugin README must document that native loading needs no compiler or runtime download");
+assert(/glibc 2\.28/i.test(limitationsGuide) && /musl[^\n]*(?:unsupported|refus|fail)/i.test(limitationsGuide), "limitations must document native OS/libc floors and musl refusal");
+assert(/local filesystem/i.test(securityGuide) && /integrity/i.test(securityGuide), "security guide must document native local-filesystem and integrity boundaries");
+assert(/private[^\n]*(?:OS|operating-system)[^\n]*temp/i.test(privacyGuide), "privacy guide must document private OS-temp addon staging");
+assert(/dead PID|dead process/i.test(limitationsGuide) && /bounded/i.test(limitationsGuide), "limitations must document bounded dead-process staging cleanup");
+assert(/Windows[^\n]*(?:one|single)[^\n]*(?:root|residue)|(?:one|single)[^\n]*Windows[^\n]*(?:root|residue)/i.test(limitationsGuide), "limitations must document possible single-root Windows crash residue");
+assert(/v0\.23\.1[^\n]*(?:must be|is) stopped/i.test(releaseInstallGuide), "release install guide must require every v0.23.1 process to be stopped");
+assert(/v0\.23\.1[^\n]*stopped[^\n]*must not be restarted/i.test(releaseInstallGuide), "release install guide must prohibit restarting v0.23.1 while v2 runs");
+assert(/tokengraph_setup\(\{\s*confirmNoLegacyProcesses:\s*true\s*\}\)/.test(releaseInstallGuide), "release install guide must document confirmed MCP activation");
+assert(/--confirm-no-legacy-processes/.test(releaseInstallGuide), "release install guide must document per-invocation CLI activation");
+assert(/restart|reactivate/i.test(releaseInstallGuide) && /mixed[- ]runtime|mixed[- ]version/i.test(releaseInstallGuide), "release install guide must document old-runtime restart/reactivation and the mixed-runtime boundary");
+assert(/Doctor[^\n]*never grants|never grants[^\n]*Doctor/i.test(releaseInstallGuide), "release install guide must state that Doctor never grants activation");
+for (const [label, document] of [["Codex", codexHostGuide], ["Claude Code", claudeHostGuide], ["privacy", privacyGuide], ["limitations", limitationsGuide]]) {
+  assert(/attestation|plugin data|hook state/i.test(document) && /does not grant|never grants|not[^\n]*activation/i.test(document), `${label} documentation must not imply that lifecycle state grants native activation`);
+}
 const registeredToolNames = Array.from(distServer.matchAll(/registerTool\(\s*["'](tokengraph_[a-z0-9_]+)["']/g), (match) => match[1]);
 const documentedToolNames = new Set(Array.from(sourceReadme.matchAll(/`(tokengraph_[a-z0-9_]+)`/g), (match) => match[1]));
 for (const toolName of registeredToolNames) {
@@ -421,12 +481,15 @@ async function collectFiles(root) {
   }
   return files;
 }
+await assertExactInstallableSourceInputs(pluginRoot, repoRoot).catch((error) => fail(error.message));
+await assertExactInstallablePlugin(releaseRoot, "Release plugin").catch((error) => fail(error.message));
 const personalWindowsProfilePathPattern = /C:\\Users\\(?!example(?:\\|$))[^\\\s]+/i;
 const packagedFiles = [
-  ...await collectFiles(pluginRoot),
+  ...(await collectFiles(pluginRoot)).filter((path) => !path.includes(`${sep}native${sep}lock-addon${sep}target${sep}`)),
   ...await collectFiles(releaseRoot)
 ].filter((path) => !path.includes(`${sep}node_modules${sep}`));
 for (const filePath of packagedFiles) {
+  if (filePath.endsWith(".node")) continue;
   const content = await readFile(filePath, "utf8").catch(() => undefined);
   if (content !== undefined) {
     assert(!personalWindowsProfilePathPattern.test(content), `packaged file ${filePath} must not contain personal Windows profile paths`);

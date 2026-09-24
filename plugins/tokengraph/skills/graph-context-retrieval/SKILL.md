@@ -7,26 +7,20 @@ description: Use when project structure, symbols, SQL objects, routes, or wiki o
 
 ## When not to use
 
-Do not use for a known one-file lookup or when the user explicitly wants raw source only.
+Do not use for a known one-file lookup or an explicit raw-source request.
 
-## Workflow
+## Unique tool sequence
 
-Follow the common lifecycle in the general `tokengraph` skill:
+Load the shared `tokengraph` router contract; if unavailable, do not call TokenGraph. Use `tokengraph_query_context` with `mode: "overview"`, `mode: "search"`, `mode: "symbol"`, `mode: "sql"`, or `mode: "wiki"`. Omit `knownArtifacts`; use `["id@hash"]` only from a prior response, otherwise resend required evidence.
 
-1. Call `tokengraph_setup({})` and capture `trustedWorkspace.root` as the trusted root. If blocked, follow recovery and do not invent a taskId.
-2. Use `tokengraph_prepare_context({ task })` only when a retrieval plan is needed. Otherwise omit `taskId` from the first `tokengraph_query_context` call so it can auto-start the ledger and return a taskId; capture the returned taskId.
-3. Reuse that exact taskId for queries. The trusted root may be omitted after ready setup when host workspace resolution is stable; otherwise pass only the captured trusted root:
-   - `tokengraph_query_context({ taskId, mode: "overview" })` for project shape.
-   - `tokengraph_query_context({ taskId, mode: "search", query })` for paths or identifiers.
-   - `tokengraph_query_context({ taskId, mode: "symbol", target })` for references.
-   - `tokengraph_query_context({ taskId, mode: "sql", query })` for schema, policy, or migration context.
-   - `tokengraph_query_context({ taskId, mode: "wiki", slug })` for a known page.
-4. Use targeted raw reads only when recommended by the plan or when confidence is insufficient. State which exact evidence requires the read.
-5. Pass `knownArtifacts: ["id@hash"]` only for exact artifact keys retained from a prior response. Otherwise omit `knownArtifacts`; TokenGraph resends required evidence by default.
-6. Only after the requested orientation is delivered and checked, call `tokengraph_task_report({ taskId })`; compact reporting is the default. Use `tokengraph_task_report({ taskId, responseMode: "verbose" })` only for report diagnostics, and `tokengraph_task_report({ taskId, disposition: "pause" })` for missing evidence, approval, blocked setup after creation, or unfinished work.
+## Evidence required
 
-Never merge tasks or workspaces, invent or reuse completed ids, or change the trusted root. If core tools are unavailable, state "TokenGraph was not used," use narrow local `rg` and targeted file reads, and claim no graph-backed evidence or savings.
+State the mode, target or query, confidence, and targeted raw reads needed. Keep paths inside the trusted workspace.
 
-A paused task id is terminal. Start a new task with `tokengraph_prepare_context` or a direct intent call that omits `taskId`; never reuse the paused id.
+## Failure boundaries
 
-A host refresh may require a fresh task or `/reload-plugins`. The lifecycle hook checks reports and exact footers at normal Stop. If hooks are disabled, untrusted, unavailable, or the turn ends by interrupt or API failure, call the report explicitly and manually include its returned status.
+Do not turn orientation into a claim about uninspected source. Stop on cross-workspace paths, missing confidence, or an unavailable query surface; use narrow local search as a stated fallback.
+
+## Completion criteria
+
+Return the map, identifiers, or references with uncertainty and exact artifact keys. The caller decides if raw evidence is required.

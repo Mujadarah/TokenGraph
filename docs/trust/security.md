@@ -6,6 +6,12 @@ It excludes secrets by default, respects `.gitignore`, and excludes dependency f
 
 TokenGraph does not guarantee correctness and does not replace code review.
 
+## Native lock boundary
+
+Release packages contain six prebuilt native lock addons and never download or compile code at runtime. Validation checks the exact target, ABI, byte length, SHA-256, binary format, build-path policy, and locked dependency notices before loading. The verified bytes are copied to a fresh private operating-system temporary directory and loaded without `node_modules`, a compiler, network access, a sidecar, or a JavaScript lock fallback.
+
+The kernel lock is authoritative only on a cooperative local filesystem. Network filesystems and active same-account path replacement are best effort and are not a distributed-lock or hostile-local-process security claim. Existing legacy lock files, malformed state, unsafe links, integrity mismatch, unsupported targets, and indeterminate cleanup fail closed.
+
 ## Workspace boundary
 
 TokenGraph never treats a caller-supplied `root` as the workspace trust boundary. It resolves the trusted workspace from the first available source in this order:
@@ -26,3 +32,5 @@ Architecture-rule patterns are validated in a bounded worker before they are per
 Runner secret redaction is best effort and not a guarantee. Saved captures are JSON under `.tokengraph/runs/` in the active worktree and are stored as plaintext. TokenGraph does not perform always-on process capture. To avoid runner capture entirely, do not invoke `tokengraph run`; use normal host execution instead.
 
 Do not send regulated or highly sensitive output through the runner. Storage is not encrypted today. The isolated storage interfaces and write boundaries preserve the option to add future optional local encryption, but no encryption feature is currently claimed.
+
+Local write-amplification telemetry is bounded to 14 daily aggregates and is never transmitted. Its schema records only UTC dates, storage classes, logical persistence-operation counts, logical payload bytes, optional measured physical-write bytes, and sampled process RSS; it excludes paths, prompts, commands, secrets, file contents, and per-file events. Index generation plus manifest publication counts as one logical operation. Filesystem allocation is not mislabeled as physical I/O, so physical-write bytes remain absent when the runtime cannot measure them. The telemetry directory is storage infrastructure and does not consume user-configured content quotas.
