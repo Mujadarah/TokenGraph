@@ -1417,6 +1417,7 @@ describe("hook manifest contract", () => {
   });
 
   it("wires workspace attestation and task lifecycle through the self-contained Node adapter only", async () => {
+    const dollarSign = "$";
     const manifest = JSON.parse(await readFile(resolve("hooks", "hooks.json"), "utf8")) as {
       hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command: string }> }>>;
     };
@@ -1424,21 +1425,21 @@ describe("hook manifest contract", () => {
       "PostToolUse", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"
     ].sort());
     expect(manifest.hooks.SessionStart[0]?.hooks).toEqual([
-      { type: "command", command: `node "\${CLAUDE_PLUGIN_ROOT}/dist/hooks.js" session-start` }
+      { type: "command", command: `node "${dollarSign}{CLAUDE_PLUGIN_ROOT}/dist/hooks.js" session-start` }
     ]);
     expect(manifest.hooks.UserPromptSubmit[0]?.hooks).toEqual([
-      { type: "command", command: `node "\${CLAUDE_PLUGIN_ROOT}/dist/hooks.js" user-prompt-submit` }
+      { type: "command", command: `node "${dollarSign}{CLAUDE_PLUGIN_ROOT}/dist/hooks.js" user-prompt-submit` }
     ]);
     expect(manifest.hooks.SessionEnd[0]?.hooks).toEqual([
-      { type: "command", command: `node "\${CLAUDE_PLUGIN_ROOT}/dist/hooks.js" session-end` }
+      { type: "command", command: `node "${dollarSign}{CLAUDE_PLUGIN_ROOT}/dist/hooks.js" session-end` }
     ]);
     expect(manifest.hooks.PostToolUse[0]?.matcher).toMatch(/tokengraph_prepare_context/);
     expect(manifest.hooks.PostToolUse[0]?.matcher).toMatch(/tokengraph_task_report/);
     expect(manifest.hooks.PostToolUse[0]?.hooks).toEqual([
-      { type: "command", command: `node "\${CLAUDE_PLUGIN_ROOT}/dist/hooks.js" post-tool-use` }
+      { type: "command", command: `node "${dollarSign}{CLAUDE_PLUGIN_ROOT}/dist/hooks.js" post-tool-use` }
     ]);
     expect(manifest.hooks.Stop[0]?.hooks).toEqual([
-      { type: "command", command: `node "\${CLAUDE_PLUGIN_ROOT}/dist/hooks.js" stop` }
+      { type: "command", command: `node "${dollarSign}{CLAUDE_PLUGIN_ROOT}/dist/hooks.js" stop` }
     ]);
     expect(manifest.hooks).not.toHaveProperty("StopFailure");
   });
