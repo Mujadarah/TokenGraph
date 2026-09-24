@@ -86,6 +86,7 @@ __export(lockDomain_exports, {
   NATIVE_LOCK_JOURNAL_NAME: () => NATIVE_LOCK_JOURNAL_NAME,
   NATIVE_LOCK_JOURNAL_TEMP_NAME: () => NATIVE_LOCK_JOURNAL_TEMP_NAME,
   canonicalPersistenceLock: () => canonicalPersistenceLock,
+  hasAsciiControl: () => hasAsciiControl,
   isCanonicalPersistenceLock: () => isCanonicalPersistenceLock,
   relativeLegacyName: () => relativeLegacyName,
   resolveLockDomainRootReadOnly: () => resolveLockDomainRootReadOnly
@@ -99,7 +100,7 @@ function fail() {
 function isSafeSingleSegment(value) {
   if (value.length === 0 || value === "." || value === "..") return false;
   if (value.includes("/") || value.includes("\\") || value.includes("\0")) return false;
-  if (/[<>:"|?*\u0000-\u001f]/u.test(value) || /[. ]$/u.test(value)) return false;
+  if (/[<>:"|?*]/u.test(value) || hasAsciiControl(value) || /[. ]$/u.test(value)) return false;
   if (WINDOWS_DEVICE_NAME.test(value)) return false;
   if (Buffer.byteLength(value, "utf8") > MAX_SEGMENT_BYTES) return false;
   const compatibilityName = `${value}.lock`;
@@ -224,7 +225,7 @@ function relativeLegacyName(lock) {
   if (!confinedDirectChild(lock.domainRoot, lock.compatibilityPath)) fail();
   return value;
 }
-var LOCK_DOMAINS, LockDomainError, lockBrand, domainSet, NATIVE_LOCK_ANCHOR_NAME, NATIVE_LOCK_JOURNAL_NAME, NATIVE_LOCK_JOURNAL_TEMP_NAME, MAX_SEGMENT_BYTES, WINDOWS_DEVICE_NAME;
+var LOCK_DOMAINS, LockDomainError, lockBrand, domainSet, NATIVE_LOCK_ANCHOR_NAME, NATIVE_LOCK_JOURNAL_NAME, NATIVE_LOCK_JOURNAL_TEMP_NAME, MAX_SEGMENT_BYTES, WINDOWS_DEVICE_NAME, hasAsciiControl;
 var init_lockDomain = __esm({
   "src/core/lockDomain.ts"() {
     "use strict";
@@ -252,6 +253,12 @@ var init_lockDomain = __esm({
     NATIVE_LOCK_JOURNAL_TEMP_NAME = ".tokengraph-native-journal-v2.lock.tokengraph-write-v2.tmp";
     MAX_SEGMENT_BYTES = 240;
     WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
+    hasAsciiControl = (value) => {
+      for (let index = 0; index < value.length; index += 1) {
+        if (value.charCodeAt(index) < 32) return true;
+      }
+      return false;
+    };
   }
 });
 
@@ -361,7 +368,7 @@ async function readVerifiedFile(path, maxBytes, missingCode, afterRead) {
       try {
         await handle.close();
       } catch {
-        throw new NativeLockError("ADDON_INTEGRITY");
+        fail2("ADDON_INTEGRITY");
       }
     }
   }
@@ -998,7 +1005,7 @@ function loaderStateFor(runtime) {
 function isExpectedWindowsSharingFailure(result) {
   return result.phase === "addon" && ["EPERM", "EACCES", "EBUSY"].includes(result.code ?? "");
 }
-function inspectProductionRetention(runtime, loadedModule) {
+function inspectProductionRetention(runtime) {
   if (runtime.inspectProductionRetention === void 0) return;
   try {
     runtime.inspectProductionRetention((candidate) => retainedFailedModules.some((record2) => record2.loadedModule.holder === candidate) || retainedLoads.some((record2) => record2.loadedModule.provenance === "production" && record2.loadedModule.holder === candidate));
@@ -1011,7 +1018,7 @@ function preserveWindowsMappedStaging(runtime, target, lifecycle, loadedModule, 
   if (!poisonStagingSlot(runtime, lifecycle.root)) return false;
   if (retainFailure) {
     retainedFailedModules.push({ loadedModule, lifecycle });
-    inspectProductionRetention(runtime, loadedModule);
+    inspectProductionRetention(runtime);
   }
   process.once("exit", () => {
     void loadedModule.holder;
@@ -1068,7 +1075,7 @@ async function performStagedLoad(runtime, target, sourcePath, source, sha2563) {
         staged,
         lifecycle
       });
-      if (loadedModule.provenance === "production") inspectProductionRetention(runtime, loadedModule);
+      if (loadedModule.provenance === "production") inspectProductionRetention(runtime);
       return addon;
     } catch (error2) {
       const cleanup = await cleanupOwnedStaging(lifecycle, runtime.stagingIo);
@@ -1440,7 +1447,7 @@ async function confirmedDead(pid, heartbeatAt, runtime, policy) {
 function pathForJournal(lock, journal) {
   const candidate = resolve3(lock.domainRoot, journal.relativeLegacyName);
   const dataName = journal.relativeLegacyName.endsWith(".lock") ? journal.relativeLegacyName.slice(0, -".lock".length) : "";
-  if (relative2(lock.domainRoot, candidate) !== journal.relativeLegacyName || dirname3(candidate) !== lock.domainRoot || journal.relativeLegacyName.includes("/") || journal.relativeLegacyName.includes("\\") || journal.relativeLegacyName === NATIVE_ANCHOR || journal.relativeLegacyName === NATIVE_JOURNAL || dataName.length === 0 || dataName === "." || dataName === ".." || /[<>:"|?*\u0000-\u001f]/u.test(dataName) || /[. ]$/u.test(dataName) || Buffer.byteLength(dataName, "utf8") > 240 || keyHash(journal.relativeLegacyName) !== journal.keyHash) {
+  if (relative2(lock.domainRoot, candidate) !== journal.relativeLegacyName || dirname3(candidate) !== lock.domainRoot || journal.relativeLegacyName.includes("/") || journal.relativeLegacyName.includes("\\") || journal.relativeLegacyName === NATIVE_ANCHOR || journal.relativeLegacyName === NATIVE_JOURNAL || dataName.length === 0 || dataName === "." || dataName === ".." || /[<>:"|?*]/u.test(dataName) || hasAsciiControl(dataName) || /[. ]$/u.test(dataName) || Buffer.byteLength(dataName, "utf8") > 240 || keyHash(journal.relativeLegacyName) !== journal.keyHash) {
     fail3("LOCK_JOURNAL_UNSAFE");
   }
   return candidate;
@@ -30401,7 +30408,7 @@ async function readOpenedBounded(path, parentBefore, entryBefore) {
     const chunks = [];
     let bytesRead = 0;
     for (; ; ) {
-      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, HOST_WORKSPACE_MAX_BYTES + 1 - bytesRead));
+      const chunk = Buffer.alloc(Math.min(64 * 1024, HOST_WORKSPACE_MAX_BYTES + 1 - bytesRead));
       const result = await handle.read(chunk, 0, chunk.length, null);
       if (result.bytesRead === 0) break;
       bytesRead += result.bytesRead;

@@ -162,7 +162,7 @@ async function readOpenedBounded(path, parentBefore, entryBefore) {
     const chunks = [];
     let bytesRead = 0;
     for (; ; ) {
-      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, HOST_WORKSPACE_MAX_BYTES + 1 - bytesRead));
+      const chunk = Buffer.alloc(Math.min(64 * 1024, HOST_WORKSPACE_MAX_BYTES + 1 - bytesRead));
       const result = await handle.read(chunk, 0, chunk.length, null);
       if (result.bytesRead === 0) break;
       bytesRead += result.bytesRead;
@@ -448,7 +448,7 @@ async function readOpenedTaskLedger(path, before, entryBefore) {
     const chunks = [];
     let bytesRead = 0;
     for (; ; ) {
-      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, MAX_READ_ONLY_LEDGER_BYTES + 1 - bytesRead));
+      const chunk = Buffer.alloc(Math.min(64 * 1024, MAX_READ_ONLY_LEDGER_BYTES + 1 - bytesRead));
       const result = await handle.read(chunk, 0, chunk.length, null);
       if (result.bytesRead === 0) break;
       bytesRead += result.bytesRead;
@@ -899,7 +899,7 @@ async function readPointer(storage, expectedHash, now = /* @__PURE__ */ new Date
       const chunks = [];
       let bytesRead = 0;
       for (; ; ) {
-        const chunk = Buffer.allocUnsafe(Math.min(16 * 1024, POINTER_MAX_BYTES + 1 - bytesRead));
+        const chunk = Buffer.alloc(Math.min(16 * 1024, POINTER_MAX_BYTES + 1 - bytesRead));
         const result = await handle.read(chunk, 0, chunk.length, null);
         if (result.bytesRead === 0) break;
         bytesRead += result.bytesRead;
