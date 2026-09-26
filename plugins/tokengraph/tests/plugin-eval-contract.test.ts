@@ -146,6 +146,121 @@ describe("Plugin Eval benchmark contract", () => {
     expect(JSON.parse(accepted.stdout)).toMatchObject({ recalledFileCount: requiredFiles.length, taskSuccess: true });
   });
 
+  it("accepts exact Plugin Eval provisioning changes but still rejects agent edits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokengraph-plugin-eval-provisioning-"));
+    temporaryRoots.push(root);
+    const requiredFiles = [
+      "plugins/tokengraph/src/server.ts",
+      "plugins/tokengraph/src/core/toolContracts.ts",
+      "plugins/tokengraph/tests/mcp-smoke.test.ts"
+    ];
+    const taskId = "00000000-0000-4000-8000-000000000001";
+    const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+    const serverPath = "plugins/tokengraph/src/server.ts";
+    const serverBaseline = "export const server = \"source\";\n";
+    const sourcePackage = JSON.stringify({ name: "tokengraph", version: "0.25.0", build: "source" }, null, 2) + "\n";
+    const releasePackage = JSON.stringify({ name: "tokengraph", version: "0.25.0", build: "release" }, null, 2) + "\n";
+    const sourceReadme = "# Source plugin\n";
+    const releaseReadme = "# Generated plugin\n";
+    const sourceMarketplace = JSON.stringify({ name: "source-marketplace", plugins: [] }, null, 2) + "\n";
+    const pluginEvalMarketplace = {
+      name: "plugin-eval-benchmark",
+      interface: { displayName: "Plugin Eval Benchmark" },
+      plugins: [{
+        name: "tokengraph",
+        source: { source: "local", path: "./plugins/tokengraph" },
+        policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+        category: "Developer Tools"
+      }]
+    };
+    const files = new Map<string, string>([
+      [serverPath, serverBaseline],
+      ["plugins/tokengraph/src/core/toolContracts.ts", "export const contract = true;\n"],
+      ["plugins/tokengraph/tests/mcp-smoke.test.ts", "test(\"fixture\", () => {});\n"],
+      ["plugins/tokengraph/src/agent-change.ts", "export const agentChange = false;\n"],
+      ["plugins/tokengraph/README.md", sourceReadme],
+      ["plugins/tokengraph/package.json", sourcePackage],
+      ["release/tokengraph/README.md", releaseReadme],
+      ["release/tokengraph/package.json", releasePackage],
+      [".agents/plugins/marketplace.json", sourceMarketplace]
+    ]);
+    for (const [path, contents] of files) {
+      const file = join(root, ...path.split("/"));
+      await mkdir(resolve(file, ".."), { recursive: true });
+      await writeFile(file, contents);
+    }
+
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "fixture@example.invalid"],
+      ["config", "user.name", "TokenGraph fixture"],
+      ["add", "--all"],
+      ["commit", "-qm", "fixture baseline"]
+    ]) {
+      const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+    }
+
+    await writeFile(join(root, "plugins", "tokengraph", "README.md"), releaseReadme);
+    await writeFile(join(root, "plugins", "tokengraph", "package.json"), releasePackage);
+    await writeFile(
+      join(root, ".agents", "plugins", "marketplace.json"),
+      JSON.stringify(pluginEvalMarketplace, null, 2) + "\n"
+    );
+
+    const resultPath = join(root, "artifacts", "plugin-eval", "scenario-result.json");
+    await mkdir(resolve(resultPath, ".."), { recursive: true });
+    await writeFile(resultPath, JSON.stringify({ schemaVersion: 2, scenario: "trusted-setup-graph", taskId, requiredFiles }));
+    const ledgerPath = join(root, ".tokengraph", "tasks", taskId + ".json");
+    await mkdir(resolve(ledgerPath, ".."), { recursive: true });
+    await writeFile(ledgerPath, JSON.stringify({
+      schemaId: "tokengraph-task-ledger",
+      schemaVersion: 3,
+      taskId,
+      status: "completed",
+      lastDisposition: "complete",
+      completedReport: {},
+      deliveredArtifacts: [],
+      events: [
+        { toolName: "tokengraph_prepare_context", category: "context-routing" },
+        ...requiredFiles.map((path) => ({
+          toolName: "tokengraph_query_context",
+          category: "query-search",
+          fingerprint: hash(JSON.stringify({
+            taskId,
+            toolName: "tokengraph_query_context",
+            category: "query-search",
+            operation: { mode: "search", queryHash: hash(path), limit: null }
+          })),
+          qualityChecks: [{ name: "search-result-file:" + hash(path), passed: true }]
+        }))
+      ]
+    }));
+    const telemetryPath = join(root, ".tokengraph", "telemetry", "write-aggregates.json");
+    await mkdir(resolve(telemetryPath, ".."), { recursive: true });
+    await writeFile(telemetryPath, JSON.stringify({
+      schemaVersion: 1,
+      days: [{ sampledPeakRssBytes: 32, classes: { fixture: { operationCount: 1, logicalBytes: 4 } } }]
+    }));
+
+    const provisioned = spawnSync(process.execPath, [verifierScriptPath], { cwd: root, encoding: "utf8" });
+    expect(provisioned.status, provisioned.stderr).toBe(0);
+    expect(JSON.parse(provisioned.stdout)).toMatchObject({ recalledFileCount: requiredFiles.length, taskSuccess: true });
+
+    const serverFile = join(root, ...serverPath.split("/"));
+    await writeFile(serverFile, serverBaseline + "export const agentWrite = true;\n");
+    const agentEdit = spawnSync(process.execPath, [verifierScriptPath], { cwd: root, encoding: "utf8" });
+    expect(agentEdit.status).toBe(1);
+    expect(agentEdit.stderr).toMatch(/read-only scenario modified tracked files/i);
+
+    await writeFile(serverFile, serverBaseline);
+    const packageFile = join(root, "plugins", "tokengraph", "package.json");
+    await writeFile(packageFile, JSON.stringify({ name: "tokengraph", version: "0.25.0", build: "agent-edit" }, null, 2) + "\n");
+    const provisionedFileEdit = spawnSync(process.execPath, [verifierScriptPath], { cwd: root, encoding: "utf8" });
+    expect(provisionedFileEdit.status).toBe(1);
+    expect(provisionedFileEdit.stderr).toMatch(/read-only scenario modified tracked files/i);
+  });
+
   it("tracks the CLI-only six-scenario Linux harness without machine-local paths", async () => {
     const benchmarkText = await readFile(benchmarkPath, "utf8");
     const benchmark = JSON.parse(benchmarkText) as {

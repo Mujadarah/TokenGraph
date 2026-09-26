@@ -639,10 +639,17 @@ function searchProject(project: ProjectIndex, query: string, limit: number) {
       score: score(view.name)
     }))
   ];
-  return [...fileRows, ...symbolRows, ...sqlRows, ...v05SqlRows]
+  const exactFileRow = fileRows.find((row) => row.path === query);
+  const rankedRows = [...fileRows, ...symbolRows, ...sqlRows, ...v05SqlRows]
     .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-    .slice(0, limit);
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  if (!exactFileRow) return rankedRows.slice(0, limit);
+  return [
+    exactFileRow,
+    ...rankedRows
+      .filter((row) => row.kind !== "file" || row.path !== query)
+      .slice(0, Math.max(0, limit - 1))
+  ];
 }
 
 function explain(project: ProjectIndex, target: string) {

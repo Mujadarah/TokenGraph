@@ -9,6 +9,22 @@ const MAX_RESULT_BYTES = 64 * 1024;
 const MAX_TELEMETRY_BYTES = 256 * 1024;
 const MAX_TASK_LEDGER_BYTES = 8 * 1024 * 1024;
 const TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const PLUGIN_EVAL_MARKETPLACE_PATH = ".agents/plugins/marketplace.json";
+const PLUGIN_EVAL_MARKETPLACE = {
+  name: "plugin-eval-benchmark",
+  interface: { displayName: "Plugin Eval Benchmark" },
+  plugins: [{
+    name: "tokengraph",
+    source: { source: "local", path: "./plugins/tokengraph" },
+    policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+    category: "Developer Tools"
+  }]
+};
+// These were the only tracked source-plugin files changed by provisioning in the retained run.
+const PLUGIN_EVAL_RELEASE_COPIES = new Map([
+  ["plugins/tokengraph/README.md", "release/tokengraph/README.md"],
+  ["plugins/tokengraph/package.json", "release/tokengraph/package.json"]
+]);
 
 const scenarios = Object.freeze({
   "trusted-setup-graph": {
@@ -135,6 +151,36 @@ async function verifyRequiredFiles(root, requiredFiles) {
   }
 }
 
+async function readConfinedRegularFile(root, path) {
+  const target = confinedPath(root, path);
+  const stats = await lstat(target).catch(() => undefined);
+  if (!stats?.isFile() || stats.isSymbolicLink() || stats.size > 1024 * 1024) return undefined;
+  const physicalRoot = await realpath(root);
+  const physicalTarget = await realpath(target);
+  const rel = relative(physicalRoot, physicalTarget);
+  if (!rel || rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(rel)) return undefined;
+  return readFile(target);
+}
+
+async function pluginEvalProvisionedPaths(root, changedPaths) {
+  const expectedContents = new Map([
+    [PLUGIN_EVAL_MARKETPLACE_PATH, Buffer.from(`${JSON.stringify(PLUGIN_EVAL_MARKETPLACE, null, 2)}\n`)]
+  ]);
+  for (const [path, releasePath] of PLUGIN_EVAL_RELEASE_COPIES) {
+    const releaseContents = await readConfinedRegularFile(root, releasePath);
+    if (releaseContents) expectedContents.set(path, releaseContents);
+  }
+
+  const provisioned = new Set();
+  for (const path of changedPaths) {
+    const expected = expectedContents.get(path);
+    if (!expected) continue;
+    const actual = await readConfinedRegularFile(root, path);
+    if (actual?.equals(expected)) provisioned.add(path);
+  }
+  return provisioned;
+}
+
 async function verifyCurrentTask(root, manifest, contract) {
   if (typeof manifest.taskId !== "string" || !TASK_ID_PATTERN.test(manifest.taskId)) fail("scenario result taskId is invalid.");
   const ledger = await readBoundedJson(
@@ -194,15 +240,23 @@ async function main() {
 
   run("git", ["diff", "--check"], root);
   const trackedStatus = run("git", ["status", "--porcelain=v1", "--untracked-files=no"], root);
+  const changedTrackedPaths = trackedStatus
+    ? run("git", ["diff", "--name-only", "--no-renames", "HEAD", "--"], root)
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((path) => path.replaceAll("\\", "/"))
+    : [];
+  if (trackedStatus && changedTrackedPaths.length === 0) fail("tracked changes could not be classified.");
+  const provisionedPaths = await pluginEvalProvisionedPaths(root, changedTrackedPaths);
+  const scenarioChangedPaths = changedTrackedPaths.filter((path) => !provisionedPaths.has(path));
   let patchCorrect = null;
   if (contract.patchPath) {
     if (manifest.patchCorrect !== true) fail("the patch scenario did not claim patch correctness.");
-    const changed = run("git", ["diff", "--name-only", "--"], root).split(/\r?\n/).filter(Boolean);
-    exactStringSet(changed, [contract.patchPath], "changed tracked paths");
+    exactStringSet(scenarioChangedPaths, [contract.patchPath], "changed tracked paths");
     const text = (await readFile(confinedPath(root, contract.patchPath), "utf8")).replace(/\r\n/g, "\n");
     if (text !== contract.patchText) fail("the patch scenario did not produce the exact expected fixture content.");
     patchCorrect = true;
-  } else if (trackedStatus) {
+  } else if (scenarioChangedPaths.length > 0) {
     fail("a read-only scenario modified tracked files.");
   }
 

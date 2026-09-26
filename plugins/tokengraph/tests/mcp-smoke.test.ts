@@ -338,6 +338,45 @@ afterAll(async () => {
 });
 
 describe("TokenGraph MCP stdio server", () => {
+  it("returns an exact file row when symbols from that file fill the default search limit", async () => {
+    const trustedRoot = await makeRoot();
+    const exactFilePath = "plugins/tokengraph/src/server.ts";
+    const exactFile = join(trustedRoot, ...exactFilePath.split("/"));
+    await mkdir(join(trustedRoot, "plugins", "tokengraph", "src"), { recursive: true });
+    await writeFile(exactFile, Array.from({ length: 24 }, (_, index) =>
+      `export function tokenGraphServerSymbol${index}() { return ${index}; }`
+    ).join("\n"));
+
+    await stopServer();
+    startServer(trustedRoot, { TOKENGRAPH_TOOL_SURFACE: "core" }, false);
+    await request(9055, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "tokengraph-exact-file-search-test", version: "0.21.0" }
+    });
+    send({ method: "notifications/initialized" });
+    await request(9056, "tools/call", {
+      name: "tokengraph_setup",
+      arguments: { confirmNoLegacyProcesses: true }
+    });
+    const preparedCall = await request(9057, "tools/call", {
+      name: "tokengraph_prepare_context",
+      arguments: { task: "Inspect the exact file search result row", refreshIndex: true }
+    });
+    const prepared = preparedCall.structuredContent as { taskId: string };
+    const searchCall = await request(9058, "tools/call", {
+      name: "tokengraph_query_context",
+      arguments: { taskId: prepared.taskId, mode: "search", query: exactFilePath }
+    });
+    const rows = (searchCall.structuredContent as { result: { results: Array<{ kind: string; path: string }> } }).result.results;
+    expect(rows).toHaveLength(10);
+    expect(rows[0]).toMatchObject({ kind: "file", path: exactFilePath });
+    const ledger = await loadTaskLedger(trustedRoot, prepared.taskId);
+    expect(ledger?.events.some((event) => event.category === "query-search" && event.qualityChecks.some((check) =>
+      check.name === `search-result-file:${createHash("sha256").update(exactFilePath).digest("hex")}` && check.passed
+    ))).toBe(true);
+  });
+
   it("advertises exactly eight intent-level tools by default with compact schemas and discovery instructions", async () => {
     await stopServer();
     startServer(process.cwd(), { TOKENGRAPH_TOOL_SURFACE: undefined });
