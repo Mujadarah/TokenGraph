@@ -2,6 +2,7 @@ import { execFile as execFileCallback, spawn, type ChildProcessWithoutNullStream
 import { access, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +10,7 @@ import { externalRuntimeEnvironment } from "./support/externalRuntime.js";
 import { canonicalPersistenceLock, type LockDomain } from "../src/core/lockDomain.js";
 import { getRepositoryIdentity, getRepositorySetupWarnings, LOCAL_EXCLUDE_WARNING } from "../src/core/repositoryIdentity.js";
 import { withFileLock } from "../src/core/storage.js";
+import { captureProbeDiagnostic, probeFailure, waitForProbeExists, waitForProbeStatus, type ProbeDiagnosticContext } from "./support/nativeLockProbeDiagnostics.js";
 
 interface ProbeRecord {
   status: string;
@@ -78,6 +80,15 @@ const exhaustiveRecovery = exhaustiveRecoveryValue === "1";
 const CARDINALITY_PROBE_TIMEOUT_MS = exhaustiveRecovery ? 240_000 : 180_000;
 const roots: string[] = [];
 const children = new Set<ChildProcessWithoutNullStreams>();
+const probeContexts = new Map<ChildProcessWithoutNullStreams, ProbeDiagnosticContext>();
+const resultContexts = new WeakMap<object, ProbeDiagnosticContext>();
+
+async function probeResultMessage(results: readonly { code: number | null }[]): Promise<string> {
+  if (results.every((result) => result.code === 0)) return "";
+  try {
+    return JSON.stringify(await Promise.all(results.map((result) => captureProbeDiagnostic(resultContexts.get(result)!))));
+  } catch { return "Native lock probe diagnostics unavailable."; }
+}
 
 async function temporaryRoot(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
@@ -86,17 +97,8 @@ async function temporaryRoot(prefix: string): Promise<string> {
 }
 
 async function waitForExists(path: string, timeoutMs = 2_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    try {
-      await access(path);
-      return;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    if (Date.now() >= deadline) throw new Error("Timed out waiting for native lock probe state.");
-    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
-  }
+  return waitForProbeExists(path, timeoutMs, () => [...probeContexts.values()].filter((context) =>
+    resolve(path).startsWith(`${resolve(context.request.workspaceRoot)}${process.platform === "win32" ? "\\" : "/"}`)));
 }
 
 async function expectRenameRefused(source: string, destination: string): Promise<void> {
@@ -109,11 +111,12 @@ async function expectRenameRefused(source: string, destination: string): Promise
   throw new Error("A live native lock allowed its anchor or domain root to be renamed.");
 }
 
-function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<number | null> {
+function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number, context?: ProbeDiagnosticContext): Promise<number | null> {
   return new Promise((resolveExit, rejectExit) => {
     const timer = setTimeout(() => {
       cleanup();
-      rejectExit(new Error("Native lock probe did not exit before its deadline."));
+      if (context === undefined) rejectExit(new Error("Native lock probe did not exit before its deadline."));
+      else void probeFailure("Native lock probe did not exit before its deadline.", [context]).then(rejectExit);
     }, timeoutMs);
     timer.unref?.();
     const cleanup = (): void => {
@@ -123,7 +126,8 @@ function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): 
     };
     const onError = (error: Error): void => {
       cleanup();
-      rejectExit(error);
+      if (context === undefined) rejectExit(error);
+      else void probeFailure("Native lock probe child wait failed.", [context]).then(rejectExit);
     };
     const onExit = (code: number | null): void => {
       cleanup();
@@ -180,7 +184,8 @@ function appendBoundedOutput(
   return current + bounded;
 }
 
-async function runProbe(request: ProbeRequest): Promise<{ records: ProbeRecord[]; code: number | null; stderr: string }> {
+async function runProbe(request: ProbeRequest, cut?: ProbeDiagnosticContext["cut"]): Promise<{ records: ProbeRecord[]; code: number | null; stderr: string }> {
+  const startedAt = performance.now();
   const child = spawn(process.execPath, [probePath], {
     cwd: process.cwd(),
     env: externalRuntimeEnvironment(),
@@ -193,6 +198,13 @@ async function runProbe(request: ProbeRequest): Promise<{ records: ProbeRecord[]
   child.stderr.setEncoding("utf8");
   let stdout = "";
   let stderr = "";
+  const context: ProbeDiagnosticContext = { child, request, startedAt, cut, stderr: () => stderr, records: () => {
+    // Diagnostic parsing cannot replace the existing strict result parsing below.
+    return stdout.trim().split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line) as ProbeRecord]; } catch { return []; }
+    });
+  } };
+  probeContexts.set(child, context);
   child.stdout.on("data", (chunk: string) => {
     stdout = appendBoundedOutput(stdout, chunk, child);
   });
@@ -201,21 +213,24 @@ async function runProbe(request: ProbeRequest): Promise<{ records: ProbeRecord[]
   });
   child.stdin.end(`${JSON.stringify(request)}\n`);
   try {
-    const code = await waitForExit(child, request.timeoutMs + 5_000);
+    const code = await waitForExit(child, request.timeoutMs + 5_000, context);
     const records = stdout.trim().split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as ProbeRecord);
-    return { records, code, stderr };
+    const result = { records, code, stderr };
+    resultContexts.set(result, context);
+    return result;
   } finally {
     if (!childHasExited(child)) await terminateAndWait(child);
     children.delete(child);
   }
 }
 
-function startKillableProbe(request: ProbeRequest): {
+function startKillableProbe(request: ProbeRequest, cut?: ProbeDiagnosticContext["cut"]): {
   child: ChildProcessWithoutNullStreams;
   records: ProbeRecord[];
   waitForStatus(status: string, timeoutMs?: number): Promise<void>;
   completion: Promise<{ code: number | null; stderr: string }>;
 } {
+  const startedAt = performance.now();
   const child = spawn(process.execPath, [probePath], {
     cwd: process.cwd(),
     env: externalRuntimeEnvironment(),
@@ -229,6 +244,8 @@ function startKillableProbe(request: ProbeRequest): {
   const records: ProbeRecord[] = [];
   let stdout = "";
   let stderr = "";
+  const context: ProbeDiagnosticContext = { child, request, startedAt, cut, records: () => records, stderr: () => stderr };
+  probeContexts.set(child, context);
   child.stdout.on("data", (chunk: string) => {
     stdout = appendBoundedOutput(stdout, chunk, child);
     const lines = stdout.split(/\r?\n/u);
@@ -241,7 +258,7 @@ function startKillableProbe(request: ProbeRequest): {
   child.stdin.end(`${JSON.stringify(request)}\n`);
   const completion = (async () => {
     try {
-      return { code: await waitForExit(child, request.timeoutMs + 5_000), stderr };
+      return { code: await waitForExit(child, request.timeoutMs + 5_000, context), stderr };
     } finally {
       if (!childHasExited(child)) await terminateAndWait(child);
       children.delete(child);
@@ -252,11 +269,7 @@ function startKillableProbe(request: ProbeRequest): {
     child,
     records,
     async waitForStatus(status: string, timeoutMs = CHILD_STATUS_TIMEOUT_MS): Promise<void> {
-      const deadline = Date.now() + timeoutMs;
-      while (!records.some((record) => record.status === status)) {
-        if (Date.now() >= deadline) throw new Error(`Timed out waiting for probe status ${status}.`);
-        await new Promise((resolveWait) => setTimeout(resolveWait, 10));
-      }
+      return waitForProbeStatus(records, status, timeoutMs, context);
     },
     completion
   };
@@ -302,6 +315,7 @@ async function runLegacyWorker(request: {
 afterEach(async () => {
   await Promise.all([...children].map((child) => terminateAndWait(child)));
   children.clear();
+  probeContexts.clear();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -321,7 +335,7 @@ describe("native lock process integration", () => {
         activate: true
       })));
       const records = runs.flatMap((run) => run.records);
-      expect(runs.every((run) => run.code === 0), `repetition ${repetition}: ${JSON.stringify(runs)}`).toBe(true);
+      expect(runs.every((run) => run.code === 0), `repetition ${repetition}: ${await probeResultMessage(runs)}`).toBe(true);
       expect(Math.max(...records.map((record) => record.maxOwners))).toBe(1);
       expect(records.filter((record) => record.status === "acquired")).toHaveLength(6);
     }
@@ -353,7 +367,7 @@ describe("native lock process integration", () => {
       activate: true
     });
     expect(Date.now() - startedAt).toBeLessThan(2_000);
-    expect(recovered.code, recovered.stderr).toBe(0);
+    expect(recovered.code, await probeResultMessage([recovered])).toBe(0);
     expect(recovered.records).toContainEqual(expect.objectContaining({ status: "acquired" }));
   }, 30_000);
 
@@ -463,7 +477,7 @@ describe("native lock process integration", () => {
         operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
         coordinationRoot: await temporaryRoot("tg-lock-cut-counter-"), timeoutMs: exhaustiveRecovery ? 30_000 : 15_000,
         clockOffsetMs: -31_000, ...pause, activate: true
-      });
+      }, { index, stage: "pause", pause });
       await killed.waitForStatus("paused", exhaustiveRecovery ? 20_000 : 5_000);
       expect(killed.child.kill("SIGKILL"), `cut ${index}: ${JSON.stringify(pause)}`).toBe(true);
       await killed.completion;
@@ -472,8 +486,8 @@ describe("native lock process integration", () => {
         coordinationRoot: await temporaryRoot("tg-lock-cut-recovery-"),
         timeoutMs: exhaustiveRecovery ? EXHAUSTIVE_RECOVERY_PROBE_TIMEOUT_MS : 5_000,
         activate: true
-      });
-      expect(recovered.code, `cut ${index}: ${JSON.stringify(pause)} ${recovered.stderr}`).toBe(0);
+      }, { index, stage: "recovery", pause });
+      expect(recovered.code, `cut ${index}: ${JSON.stringify(pause)} ${await probeResultMessage([recovered])}`).toBe(0);
       expect(recovered.records).toContainEqual(expect.objectContaining({ status: "acquired" }));
       await expect(access(lock.compatibilityPath)).rejects.toThrow();
       const entries = await readdir(lock.domainRoot);
@@ -491,7 +505,7 @@ describe("native lock process integration", () => {
       coordinationRoot: await temporaryRoot("tg-lock-cardinality-counter-"), timeoutMs: CARDINALITY_PROBE_TIMEOUT_MS,
       exerciseKeyCount: 1_000, activate: true
     });
-    expect(exercised.code, exercised.stderr).toBe(0);
+    expect(exercised.code, await probeResultMessage([exercised])).toBe(0);
     expect(exercised.records.map((record) => record.status)).toEqual(["acquired", "released"]);
     for (const domain of ["runs", "tasks", "artifacts"] as const) {
       const example = await canonicalPersistenceLock(workspaceRoot, domain, "example.json");
@@ -531,7 +545,7 @@ describe("native lock process integration", () => {
     expect(canceledElapsed).toBeLessThan(2_000);
     expect(canceled.code).toBe(1);
     expect(canceled.records).toContainEqual(expect.objectContaining({ status: "LOCK_ABORTED" }));
-    expect(held.code, held.stderr).toBe(0);
+    expect(held.code, await probeResultMessage([held])).toBe(0);
   }, 30_000);
 
   it("cleans the real barrier and lease after a child operation throws", async () => {
@@ -582,7 +596,7 @@ describe("native lock process integration", () => {
       holdMs: 400,
       activate: true
     })));
-    expect(sameDomain.every((run) => run.code === 0), JSON.stringify(sameDomain)).toBe(true);
+    expect(sameDomain.every((run) => run.code === 0), await probeResultMessage(sameDomain)).toBe(true);
     expect(Math.max(...sameDomain.flatMap((run) => run.records).map((record) => record.maxOwners))).toBe(1);
 
     const differentCounter = await temporaryRoot("tg-lock-different-counter-");
@@ -590,7 +604,7 @@ describe("native lock process integration", () => {
       runProbe({ operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json", coordinationRoot: differentCounter, timeoutMs: 5_000, holdMs: 400, activate: true }),
       runProbe({ operation: "try", workspaceRoot, domain: "runs", key: "run.json", coordinationRoot: differentCounter, timeoutMs: 5_000, holdMs: 400, activate: true })
     ]);
-    expect(differentDomains.every((run) => run.code === 0), JSON.stringify(differentDomains)).toBe(true);
+    expect(differentDomains.every((run) => run.code === 0), await probeResultMessage(differentDomains)).toBe(true);
     expect(Math.max(...differentDomains.flatMap((run) => run.records).map((record) => record.maxOwners))).toBe(2);
   }, 30_000);
 
@@ -621,7 +635,7 @@ describe("native lock process integration", () => {
     const held = await holder;
     expect(timedOut.code).toBe(1);
     expect(timedOut.records).toContainEqual(expect.objectContaining({ status: "LOCK_TIMEOUT" }));
-    expect(held.code, held.stderr).toBe(0);
+    expect(held.code, await probeResultMessage([held])).toBe(0);
     await expect(access(lock.compatibilityPath)).rejects.toThrow();
   }, 30_000);
 
@@ -724,7 +738,7 @@ describe("native lock process integration", () => {
       timeoutMs: 2_000,
       activate: true
     });
-    expect(recovered.code, recovered.stderr).toBe(0);
+    expect(recovered.code, await probeResultMessage([recovered])).toBe(0);
     expect(recovered.records).toContainEqual(expect.objectContaining({ status: "acquired" }));
     await expect(access(lock.compatibilityPath)).rejects.toThrow();
   }, 30_000);
@@ -790,7 +804,7 @@ describe("native lock process integration", () => {
       operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
       coordinationRoot: await temporaryRoot("tg-lock-adoption-next-"), timeoutMs: 2_000, activate: true
     });
-    expect(next.code, next.stderr).toBe(0);
+    expect(next.code, await probeResultMessage([next])).toBe(0);
     expect(next.records).toContainEqual(expect.objectContaining({ status: "acquired" }));
   }, 30_000);
 
@@ -810,7 +824,7 @@ describe("native lock process integration", () => {
       operation: "try", workspaceRoot, domain: "workspace-state", key: "config.json",
       coordinationRoot: await temporaryRoot("tg-lock-lease-recovered-"), timeoutMs: 2_000, activate: true
     });
-    expect(recovered.code, recovered.stderr).toBe(0);
+    expect(recovered.code, await probeResultMessage([recovered])).toBe(0);
     expect(recovered.records.filter((record) => record.status === "acquired")).toHaveLength(1);
   }, 30_000);
 
@@ -837,8 +851,8 @@ describe("native lock process integration", () => {
       coordinationRoot: await temporaryRoot("tg-lock-protocol-release-"), timeoutMs: 5_000, activate: true
     });
     const held = await holder;
-    expect(held.code, held.stderr).toBe(0);
-    expect(released.code, released.stderr).toBe(0);
+    expect(held.code, await probeResultMessage([held])).toBe(0);
+    expect(released.code, await probeResultMessage([released])).toBe(0);
     expect(held.records.map((record) => record.status)).toEqual(["acquired", "released"]);
     expect(released.records.map((record) => record.status)).toEqual(["acquired", "released"]);
   }, 30_000);
