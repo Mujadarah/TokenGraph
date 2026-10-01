@@ -1,8 +1,8 @@
 # TokenGraph Release Plugin
 
-This folder is the installable TokenGraph 0.23.1 plugin for Codex and Claude Code users.
+This folder is the installable TokenGraph 0.25.0 plugin for Codex and Claude Code users.
 
-It includes the self-contained Node.js 22 MCP runtime at `dist/index.js`, bundled parser workers at `dist/typescript-worker.cjs` and `dist/polyglot-worker.js`, the bounded command runner at `dist/cli.js`, the cross-host lifecycle adapter at `dist/hooks.js`, hook and host manifests, MCP configs, skills, package metadata, and Apache-2.0 license and notice files. It requires no dependency installation, TypeScript build, API key, cloud index, or embeddings service.
+It includes the self-contained Node.js 22 MCP runtime at `dist/index.js`, bundled parser workers at `dist/typescript-worker.cjs` and `dist/polyglot-worker.js`, the bounded command runner at `dist/cli.js`, the cross-host lifecycle adapter at `dist/hooks.js`, six prebuilt native lock addons, hook and host manifests, MCP configs, skills, package metadata, and Apache-2.0 license and notice files. It requires no dependency installation, TypeScript build, native compiler, runtime download, API key, cloud index, or embeddings service.
 
 ## Install
 
@@ -16,7 +16,7 @@ codex plugin add tokengraph@tokengraph
 For an extracted release ZIP, add the bundle directory that contains this `tokengraph/` folder, not this plugin folder itself:
 
 ```powershell
-codex plugin marketplace add C:\path\to\tokengraph-0.23.1
+codex plugin marketplace add C:\path\to\tokengraph-0.25.0
 codex plugin add tokengraph@tokengraph
 ```
 
@@ -45,17 +45,19 @@ The server is local-first. It indexes the selected workspace locally and stores 
 
 TokenGraph stores project state under `.tokengraph/` inside the trusted workspace. Token savings are estimates.
 
-The default surface exposes eight compact tools; the opt-in full surface exposes 42. JSON-only successes return one serialized JSON text item, with project-map resource links as the documented exception. Wiki and memory changes use source-linked review-before-apply proposals.
+Native locking supports Windows x64/arm64, glibc Linux x64/arm64 with kernel 4.18 and glibc 2.28 or newer, and macOS x64/arm64 11 or newer. Linux musl and unlisted targets fail closed. Before activation, ensure every v0.23.1 TokenGraph MCP and CLI process is stopped. Those processes must not be restarted while v2 runs. Activate an MCP server only with `tokengraph_setup({ confirmNoLegacyProcesses: true })`, or a CLI invocation with `--confirm-no-legacy-processes`. If any old runtime starts later, stop it and restart/reactivate v2. Mixed-runtime operation is unsupported. Doctor reports activation and native integrity status but never grants activation.
+
+The default surface exposes eight compact tools; the opt-in full surface exposes 43. JSON-only successes return one serialized JSON text item, with project-map resource links as the documented exception. Task-creating core calls additionally return minimal structured task authority containing only the task id; they do not duplicate the full result. Wiki and memory changes use source-linked review-before-apply proposals.
 
 Use `tokengraph_prepare_context` when planning is needed. Direct query, compress, recall, and analyze calls may omit `taskId`; they start a ledger and return the new id. Reuse that id, then end verified work with compact `tokengraph_task_report({ taskId })`. Explicit pause is for unfinished work, and verbose reporting is diagnostic only.
 
 Routing publishes the frozen expectedBenefit enum none | low | medium | high: bypass paths use none, Stage 0 activation uses the recommended medium, Stage 1 indexed activation uses high, and low remains reserved.
 
-The checked-in deterministic fixture benchmark preserves 100% of critical constraints and recall with zero critical false negatives. Its 27 activated tasks have a +174.5-token execution-inclusive median, +40.5-token p25, and 81.5% non-negative rate; three bounded Stage-0 bypasses are not booked as savings. Four edit/debug tasks charge four exact source slices totaling 711 estimated tokens. Every category remains low-confidence, and these fixture estimates are not provider billing counts or autonomous-agent quality proof. JSON remains the default response format because the tabular experiment did not improve both token usage and quality.
+The checked-in deterministic fixture benchmark preserves 100% of critical constraints and recall with zero critical false negatives. Its 27 activated tasks have a +162.3-token execution-inclusive median, +39.3-token p25, and 81.5% non-negative rate; three bounded Stage-0 bypasses are not booked as savings. Four edit/debug tasks charge four exact source slices totaling 711 estimated tokens. Every category remains low-confidence, and these fixture estimates are not provider billing counts or autonomous-agent quality proof. JSON remains the default response format because the tabular experiment did not improve both token usage and quality.
 
 Real-host evidence is reported separately from fixture economics. Reviewed schema-v3 campaigns cover TokenGraph, mattpocock/ts-reset, and imbhargav5/nextbase-nextjs-supabase-starter: fifteen counterbalanced ON/OFF pairs and thirty accepted traces across three repositories and three categories. The multi-repository B6 coverage target is met, but promotion and enforcement remain disabled because not all frozen gates passed. Only eligible reviewed schema-v3 evidence may promote routing. Routing stays in shadow mode; B7 polyglot indexing is an independent local parser capability enabled by default, with a per-project configuration kill switch. See the TokenGraph [report](https://github.com/Mujadarah/TokenGraph/blob/main/docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.md), the ts-reset [report](https://github.com/Mujadarah/TokenGraph/blob/main/docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.md), and the Nextbase [report](https://github.com/Mujadarah/TokenGraph/blob/main/docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-report.md).
 
-The SessionStart/UserPromptSubmit bridge stores only schema/version, plugin and session hashes, trusted root, and timestamp under the operating-system temporary directory for up to 24 hours; SessionEnd removes it. The PostToolUse/Stop lifecycle pointer separately stores only a schema-versioned session hash, task id, trusted root, turn id, and timestamp in the host-provided plugin data directory. Neither stores raw session ids, prompts, transcripts, or tool payloads. Normal Stop can request one pause-or-complete report or the exact canonical footer; interrupts and API failures are not completion events. Review and trust the hook definition before enabling it, or disable host hooks and call `tokengraph_task_report` explicitly.
+The SessionStart/UserPromptSubmit bridge stores only schema/version, plugin and session hashes, trusted root, and timestamp under the operating-system temporary directory for up to 24 hours; SessionEnd removes it. The PostToolUse/Stop lifecycle pointer separately stores only a schema-versioned session hash, task id, turn id, and timestamp in the host-provided plugin data directory. Neither stores raw session ids, prompts, transcripts, tool payloads, or the trusted root in the lifecycle pointer. Normal Stop can request one pause-or-complete report or the exact canonical footer; interrupts and API failures are not completion events. Review and trust the hook definition before enabling it, or disable host hooks and call `tokengraph_task_report` explicitly.
 
 ## Maintainers
 
@@ -68,6 +70,6 @@ pnpm package:plugin -- --release
 pnpm validate:plugin
 ```
 
-Version: 0.23.1
+Version: 0.25.0
 
 License: Apache-2.0

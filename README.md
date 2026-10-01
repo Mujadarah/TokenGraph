@@ -7,12 +7,12 @@ TokenGraph is a local-first MCP plugin for Codex and Claude Code that helps codi
 
 ## Why TokenGraph
 
-- **Local and self-contained:** no cloud index, embeddings service, telemetry, paid external service, or OpenAI/Anthropic API key.
+- **Local and self-contained:** no cloud index, embeddings service, cloud telemetry, paid external service, or OpenAI/Anthropic API key.
 - **Task-scoped:** agents retrieve focused project maps, plans, summaries, failure traces, and exact source slices instead of dumping an entire index into context.
 - **Trust-bounded:** the host must identify the workspace; installed plugin launches fail closed instead of trusting an arbitrary path.
 - **Evidence-led:** deterministic benchmarks and reviewed real-host traces are checked into the repository, while automatic routing stays in shadow mode until every promotion gate passes.
 
-Current source version: `0.23.1` | Runtime: Node.js 22 or newer | Open source under the [Apache License 2.0](LICENSE). The downloadable version is the one shown by the GitHub Latest release badge; a source version is not a published release asset.
+Current source version: `0.25.0` | Runtime: Node.js 22 or newer | Open source under the [Apache License 2.0](LICENSE). The downloadable version is the one shown by the GitHub Latest release badge; a source version is not a published release asset.
 
 ## Install from GitHub
 
@@ -93,13 +93,14 @@ The setup diagnostic never grants filesystem trust. If it reports `blocked`, fol
 
 ## What agents can use
 
-TokenGraph exposes eight compact intent-level tools by default and 42 tools on the opt-in full compatibility surface. Nine focused skills cover:
+TokenGraph exposes eight compact intent-level tools by default and 43 tools on the opt-in full compatibility surface. Nine focused skills cover:
 
 - setup diagnosis and workspace-safe indexing;
 - project maps, symbol/import search, and context planning;
 - PostgreSQL and Supabase migration/RLS summaries;
 - local wiki and memory lifecycle workflows;
 - architecture rules, failure tracing, and regression risk;
+- read-only runtime diagnostics and bounded local Git change capsules;
 - context, logs, builds, tests, diffs, and SQL compression;
 - token-saving profiles and release-package auditing.
 
@@ -109,11 +110,11 @@ TokenGraph indexes TypeScript, JavaScript, SQL, Markdown, Python, Go, Rust, and 
 
 ## Current behavior and evidence
 
-Every measured task has one canonical completion footer backed by a task ledger. JSON-only MCP successes return one serialized JSON `TextContent` item; `tokengraph_export_project_map` remains the documented resource-link exception. Diagnostic token estimates identify their baseline in the response: `full-index-dump`, `task-files-and-memories`, `provided-context`, or `provided-output`. They are not substitutes for the execution-inclusive benchmark. Wiki and memory updates use source-linked review-before-apply proposals: listing and proposing do not mutate derived knowledge. Approval requires at least one workspace-relative path whose canonical LF-normalized SHA-256 fingerprint is revalidated; stable logical ids remain expiring, attested/unverifiable snapshots and never become current or high-confidence. ID-only and legacy bare-fingerprint proposals cannot be approved, and stale or expired proposals fail.
+Every measured task has one canonical completion footer backed by a task ledger. JSON-only MCP successes return one serialized JSON `TextContent` item. Task-creating core calls also expose minimal structured task authority containing only `taskId`, without duplicating the full result; `tokengraph_export_project_map` remains the documented resource-link exception with matching structured content. Diagnostic token estimates identify their baseline in the response: `full-index-dump`, `task-files-and-memories`, `provided-context`, or `provided-output`. They are not substitutes for the execution-inclusive benchmark. Wiki and memory updates use source-linked review-before-apply proposals: listing and proposing do not mutate derived knowledge. Approval requires at least one workspace-relative path whose canonical LF-normalized SHA-256 fingerprint is revalidated; stable logical ids remain expiring, attested/unverifiable snapshots and never become current or high-confidence. ID-only and legacy bare-fingerprint proposals cannot be approved, and stale or expired proposals fail.
 
 Routing decisions expose the frozen `expectedBenefit` enum `none | low | medium | high`: bypass and fail-open paths use `none`, Stage 0 activation uses the recommended `medium`, Stage 1 indexed activation uses `high`, and `low` remains reserved. Routing stays in shadow mode unless reviewed real-host evidence passes every promotion gate.
 
-The checked-in deterministic fixture benchmark preserves 100% of critical constraints, has zero critical false negatives, and reaches 100% required-file recall. Three bounded tasks bypass at Stage 0 and are not booked as savings. Across the 27 activated tasks, the primary execution-inclusive median is +174.5 estimated tokens, the nearest-rank p25 is +40.5, and 22 tasks (81.5%) are non-negative, so the frozen deterministic release gate passes. Four edit/debug tasks charge one hash-validated exact source slice each, totaling 711 estimated tokens. The baseline is category-appropriate: minimal expert raw reads for code, SQL, risk, memory, and release tasks, and real noisy runner captures for debugging and compression. Memory/wiki remains negative in three of four fixtures and change risk in two of four; negative tails are not hidden. Every fixture category still has fewer than 10 observations, so calibration confidence remains low. These fixture estimates are not provider billing counts, autonomous-agent patch-quality evidence, or universal Codex/Claude proof.
+The checked-in deterministic fixture benchmark preserves 100% of critical constraints, has zero critical false negatives, and reaches 100% required-file recall. Three bounded tasks bypass at Stage 0 and are not booked as savings. Across the 27 activated tasks, the primary execution-inclusive median is +162.3 estimated tokens, the nearest-rank p25 is +39.3, and 22 tasks (81.5%) are non-negative, so the frozen deterministic release gate passes. The median before execution overhead is +170.3 estimated tokens. Four edit/debug tasks charge one hash-validated exact source slice each, totaling 711 estimated tokens. The baseline is category-appropriate: minimal expert raw reads for code, SQL, risk, memory, and release tasks, and real noisy runner captures for debugging and compression. Memory/wiki remains negative in three of four fixtures and change risk in two of four; negative tails are not hidden. Every fixture category still has fewer than 10 observations, so calibration confidence remains low. These fixture estimates are not provider billing counts, autonomous-agent patch-quality evidence, or universal Codex/Claude proof.
 
 Real-host evidence is reported separately from fixture economics. Reviewed schema-v3 campaigns cover TokenGraph, `mattpocock/ts-reset`, and `imbhargav5/nextbase-nextjs-supabase-starter`: fifteen counterbalanced ON/OFF pairs and thirty accepted traces across three repositories and three categories. The multi-repository B6 coverage target is met, but routing promotion and enforcement remain disabled because not all frozen sample, performance, resource, and router gates passed. Routing stays in shadow mode; B7 polyglot indexing is an independent local parser capability and is active by default. See the TokenGraph [manifest](docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-manifest.json) and [report](docs/benchmarks/host-evaluations/2026-07-22-tokengraph-codex-report.md), the `ts-reset` [manifest](docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-manifest.json) and [report](docs/benchmarks/host-evaluations/2026-07-22-ts-reset-codex-report.md), and the Nextbase [manifest](docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-manifest.json) and [report](docs/benchmarks/host-evaluations/2026-07-22-nextbase-codex-report.md).
 
@@ -161,7 +162,7 @@ The default package command creates `artifacts/tokengraph-<version>/` and a dete
 
 ## Privacy
 
-Indexes, configuration, wiki pages, token events, rules, and memories stay under `.tokengraph/` in the trusted workspace. Token savings are estimates, and TokenGraph does not replace code review or guarantee correctness.
+Indexes, configuration, wiki pages, token events, rules, memories, local write aggregates, and stable change-capsule artifacts stay under `.tokengraph/` in the trusted workspace. Token savings are estimates, and TokenGraph does not replace code review or guarantee correctness.
 
 ## License
 

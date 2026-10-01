@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import {
@@ -12,13 +12,13 @@ import {
   type ScanBudget
 } from "./fileScanner.js";
 import { mergeSqlGraphs, parsePostgresMigration } from "./sqlParser.js";
-import type { CodeGraph, FileScanMetadata, ProjectIndex, ProjectScanMetadata, SqlGraph } from "./types.js";
+import type { CodeGraph, Exclusion, FileScanMetadata, IndexGenerationMetadata, ProjectIndex, ProjectScanMetadata, SqlGraph } from "./types.js";
 import { buildSymbolChunks } from "./symbolChunks.js";
 import { parseConfigurationDataBounded, type ConfigurationLimits } from "./configData.js";
 import { getGitFileRecency, getRepositoryIdentity } from "./repositoryIdentity.js";
 import { resolveConfinedPath } from "./storage.js";
 
-export const CURRENT_INDEX_SCHEMA_VERSION = 4;
+export const CURRENT_INDEX_SCHEMA_VERSION = 5;
 
 export interface IndexUpdateResult {
   index: ProjectIndex;
@@ -41,6 +41,8 @@ export interface ProjectIndexOptions {
   parserLimits?: ParserResourceLimits;
   /** B7 polyglot parsing is active by default and can be disabled per project. */
   polyglotEnabled?: boolean;
+  /** Candidate generations must fit without removing the active publication. */
+  storageQuotas?: import("./storagePolicy.js").StorageClassQuotas;
 }
 
 interface ProjectIndexerScanner {
@@ -76,6 +78,40 @@ function fingerprintPayload(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function terminalExclusions(scanMetadata: ProjectScanMetadata, exclusions: Exclusion[]): Exclusion[] {
+  const indexedPaths = new Set(Object.keys(scanMetadata.files));
+  return exclusions
+    .filter((exclusion) => !indexedPaths.has(exclusion.path))
+    .sort((left, right) => left.path.localeCompare(right.path) || left.reason.localeCompare(right.reason));
+}
+
+export function validatedContentSetHash(scanMetadata: ProjectScanMetadata, exclusions: Exclusion[]): string {
+  const files = Object.values(scanMetadata.files)
+    .map(({ path, contentHash }) => ({ path, contentHash }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  return fingerprintPayload({ files, terminalExclusions: terminalExclusions(scanMetadata, exclusions) });
+}
+
+function terminalExclusionsHash(scanMetadata: ProjectScanMetadata): string {
+  return fingerprintPayload(terminalExclusions(scanMetadata, scanMetadata.exclusions));
+}
+
+function buildGenerationMetadata(
+  scanSignature: string,
+  scanMetadata: ProjectScanMetadata,
+  createdAt: string
+): IndexGenerationMetadata {
+  const terminal = terminalExclusions(scanMetadata, scanMetadata.exclusions);
+  return {
+    id: randomUUID(),
+    createdAt,
+    sourceScanSignature: scanSignature,
+    intendedFileCount: Object.keys(scanMetadata.files).length + new Set(terminal.map((entry) => entry.path)).size,
+    terminalExclusionsHash: terminalExclusionsHash(scanMetadata),
+    validatedContentSetHash: validatedContentSetHash(scanMetadata, scanMetadata.exclusions)
+  };
+}
+
 function detectFrameworks(files: { path: string }[]): string[] {
   const frameworks = new Set<string>();
   if (files.some((file) => file.path.startsWith("app/") || file.path.startsWith("pages/"))) {
@@ -93,7 +129,7 @@ function detectFrameworks(files: { path: string }[]): string[] {
   return Array.from(frameworks).sort();
 }
 
-function unsupportedLanguageCounts(graph: CodeGraph): Record<string, number> {
+function unsupportedLanguageCounts(graph: Pick<CodeGraph, "exclusions">): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const exclusion of graph.exclusions) {
     if (exclusion.reason !== "unsupported") continue;
@@ -103,9 +139,26 @@ function unsupportedLanguageCounts(graph: CodeGraph): Record<string, number> {
   return Object.fromEntries(Object.entries(counts).sort(([left], [right]) => left.localeCompare(right)));
 }
 
-function scanMetadataFromFiles(files: FileScanMetadata[]): ProjectScanMetadata {
+export function projectIndexFingerprint(
+  index: Pick<ProjectIndex, "files" | "symbols" | "imports" | "exclusions" | "sql"> &
+    Partial<Pick<ProjectIndex, "configuration" | "unsupportedLanguageCounts" | "retrievalSignals">>
+): string {
+  return fingerprintPayload({
+    files: index.files,
+    symbols: index.symbols,
+    imports: index.imports,
+    exclusions: index.exclusions,
+    sql: index.sql,
+    configuration: index.configuration ?? [],
+    unsupportedLanguageCounts: index.unsupportedLanguageCounts ?? unsupportedLanguageCounts(index),
+    retrievalSignals: index.retrievalSignals
+  });
+}
+
+function scanMetadataFromFiles(files: FileScanMetadata[], exclusions: Exclusion[] = []): ProjectScanMetadata {
   return {
-    files: Object.fromEntries(files.map((file) => [file.path, file]))
+    files: Object.fromEntries(files.map((file) => [file.path, file])),
+    exclusions: [...exclusions]
   };
 }
 
@@ -140,7 +193,11 @@ function assertConsistentScan(metadata: ProjectFileMetadataScan, graph: CodeGrap
 }
 
 function isCompatibleIndex(index: ProjectIndex): boolean {
-  return index.schemaVersion === CURRENT_INDEX_SCHEMA_VERSION && Boolean(index.scanMetadata?.files);
+  return index.schemaVersion === CURRENT_INDEX_SCHEMA_VERSION && Boolean(
+    index.scanMetadata?.files &&
+    Array.isArray(index.scanMetadata.exclusions) &&
+    index.generation?.terminalExclusionsHash
+  );
 }
 
 function emptySqlGraph(): SqlGraph {
@@ -269,29 +326,29 @@ async function buildProjectIndex(root: string, graph: CodeGraph, sql: SqlGraph, 
     getRepositoryIdentity(root),
     getGitFileRecency(root, graph.files.map((file) => file.path), 50)
   ]);
-  const fingerprint = fingerprintPayload({
-    files: graph.files,
-    symbols: graph.symbols,
-    imports: graph.imports,
-    exclusions: graph.exclusions,
+  const counts = unsupportedLanguageCounts(graph);
+  const fingerprint = projectIndexFingerprint({
+    ...graph,
     sql,
     configuration,
-    unsupportedLanguageCounts: unsupportedLanguageCounts(graph),
+    unsupportedLanguageCounts: counts,
     retrievalSignals
   });
+  const scannedAt = new Date().toISOString();
 
   return {
     ...graph,
     schemaVersion: CURRENT_INDEX_SCHEMA_VERSION,
     repositoryIdentity,
-    scannedAt: new Date().toISOString(),
+    generation: buildGenerationMetadata(scanSignature, scanMetadata, scannedAt),
+    scannedAt,
     fingerprint,
     scanSignature,
     scanMetadata,
     frameworks: detectFrameworks(graph.files),
     sql,
     symbolChunks: buildSymbolChunks(graph),
-    unsupportedLanguageCounts: unsupportedLanguageCounts(graph),
+    unsupportedLanguageCounts: counts,
     retrievalSignals,
     ...(configuration.length ? { configuration } : {})
   };
@@ -330,7 +387,7 @@ async function indexProjectWithScanner(root: string, options: ProjectIndexOption
     sqlGraphs.push(parsePostgresMigration(file.path, sql));
   }
 
-  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), metadata.scanSignature, scanMetadataFromFiles(metadata.files), options.parserLimits);
+  return buildProjectIndex(root, graph, mergeSqlGraphs(sqlGraphs), metadata.scanSignature, scanMetadataFromFiles(metadata.files, metadata.exclusions), options.parserLimits);
 }
 
 export async function indexProject(root: string, options: ProjectIndexOptions = {}, dependencies: ProjectIndexerDependencies = {}): Promise<ProjectIndex> {
@@ -468,7 +525,7 @@ export async function updateProjectIndexIncremental(
       graph,
       sql,
       validationMetadata.scanSignature,
-      scanMetadataFromFiles(validationMetadata.files),
+      scanMetadataFromFiles(validationMetadata.files, validationMetadata.exclusions),
       options.parserLimits
     ),
     mode: "incremental",
