@@ -5,6 +5,10 @@ import { dirname, join, parse, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { canonicalPersistenceLock, LOCK_DOMAINS, type LockDomain } from "../../src/core/lockDomain.js";
 
+export function legacyWorkerFailureMessage(stderr: string): string {
+  return JSON.stringify({ stderr: { bytes: Buffer.byteLength(stderr), content: "omitted" } });
+}
+
 export interface ProbeDiagnosticRequest {
   workspaceRoot: string;
   coordinationRoot: string;
@@ -54,7 +58,7 @@ function pauseSummary(request: Pick<ProbeDiagnosticRequest, "pauseAt" | "pauseSt
 
 // Only numeric/boolean fields and fixed protocol labels reach public CI output.
 // Neither stderr text, filesystem identities, paths, nor journal payloads are printed.
-function metadata(context: ProbeDiagnosticContext): object {
+export function probeDiagnosticMetadata(context: ProbeDiagnosticContext): object {
   const { child, request } = context;
   const records = context.records();
   return {
@@ -146,7 +150,7 @@ interface Snapshot { journal: StateSummary; journalTemporary: StateSummary; leas
 
 export async function captureProbeDiagnostic(context: ProbeDiagnosticContext): Promise<object> {
   // Freeze lifecycle/time at the failure decision, before any diagnostic I/O.
-  const details = metadata(context);
+  const details = probeDiagnosticMetadata(context);
   let active = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const unavailable: Snapshot = { journal: { state: "capture-deadline" }, journalTemporary: { state: "capture-deadline" },

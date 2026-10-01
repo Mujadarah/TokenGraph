@@ -10,7 +10,8 @@ import { externalRuntimeEnvironment } from "./support/externalRuntime.js";
 import { canonicalPersistenceLock, type LockDomain } from "../src/core/lockDomain.js";
 import { getRepositoryIdentity, getRepositorySetupWarnings, LOCAL_EXCLUDE_WARNING } from "../src/core/repositoryIdentity.js";
 import { withFileLock } from "../src/core/storage.js";
-import { captureProbeDiagnostic, probeFailure, waitForProbeExists, waitForProbeStatus, type ProbeDiagnosticContext } from "./support/nativeLockProbeDiagnostics.js";
+import { captureProbeDiagnostic, legacyWorkerFailureMessage, waitForProbeExists, waitForProbeStatus, type ProbeDiagnosticContext } from "./support/nativeLockProbeDiagnostics.js";
+import { finishProbeExitDiagnostic, waitForProbeExit as waitForExit } from "./support/nativeLockProbeExit.js";
 
 interface ProbeRecord {
   status: string;
@@ -111,33 +112,6 @@ async function expectRenameRefused(source: string, destination: string): Promise
   throw new Error("A live native lock allowed its anchor or domain root to be renamed.");
 }
 
-function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number, context?: ProbeDiagnosticContext): Promise<number | null> {
-  return new Promise((resolveExit, rejectExit) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      if (context === undefined) rejectExit(new Error("Native lock probe did not exit before its deadline."));
-      else void probeFailure("Native lock probe did not exit before its deadline.", [context]).then(rejectExit);
-    }, timeoutMs);
-    timer.unref?.();
-    const cleanup = (): void => {
-      clearTimeout(timer);
-      child.off("error", onError);
-      child.off("exit", onExit);
-    };
-    const onError = (error: Error): void => {
-      cleanup();
-      if (context === undefined) rejectExit(error);
-      else void probeFailure("Native lock probe child wait failed.", [context]).then(rejectExit);
-    };
-    const onExit = (code: number | null): void => {
-      cleanup();
-      resolveExit(code);
-    };
-    child.once("error", onError);
-    child.once("exit", onExit);
-  });
-}
-
 function childHasExited(child: ChildProcessWithoutNullStreams): boolean {
   return child.exitCode !== null || child.signalCode !== null;
 }
@@ -212,15 +186,20 @@ async function runProbe(request: ProbeRequest, cut?: ProbeDiagnosticContext["cut
     stderr = appendBoundedOutput(stderr, chunk, child);
   });
   child.stdin.end(`${JSON.stringify(request)}\n`);
+  let failure: unknown;
   try {
     const code = await waitForExit(child, request.timeoutMs + 5_000, context);
     const records = stdout.trim().split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as ProbeRecord);
     const result = { records, code, stderr };
     resultContexts.set(result, context);
     return result;
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
     if (!childHasExited(child)) await terminateAndWait(child);
     children.delete(child);
+    if (failure !== undefined) await finishProbeExitDiagnostic(failure);
   }
 }
 
@@ -257,11 +236,16 @@ function startKillableProbe(request: ProbeRequest, cut?: ProbeDiagnosticContext[
   });
   child.stdin.end(`${JSON.stringify(request)}\n`);
   const completion = (async () => {
+    let failure: unknown;
     try {
       return { code: await waitForExit(child, request.timeoutMs + 5_000, context), stderr };
+    } catch (error) {
+      failure = error;
+      throw error;
     } finally {
       if (!childHasExited(child)) await terminateAndWait(child);
       children.delete(child);
+      if (failure !== undefined) await finishProbeExitDiagnostic(failure);
     }
   })();
   void completion.catch(() => undefined);
@@ -703,7 +687,7 @@ describe("native lock process integration", () => {
     const after = await lstat(lock.compatibilityPath, { bigint: true });
     expect(`${after.dev}:${after.ino}:${after.birthtimeNs}`).toBe(`${before.dev}:${before.ino}:${before.birthtimeNs}`);
     const legacyResult = await legacy;
-    expect(legacyResult.code, legacyResult.stderr).toBe(0);
+    expect(legacyResult.code, legacyWorkerFailureMessage(legacyResult.stderr)).toBe(0);
     expect(JSON.parse(legacyResult.stdout)).toEqual({ status: "acquired" });
     await expect(access(lock.compatibilityPath)).rejects.toThrow();
   }, 30_000);
