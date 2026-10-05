@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, type BigIntStats } from "node:fs";
 import { link, lstat, mkdir, open, readdir, realpath, rename, unlink } from "node:fs/promises";
-import { isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 
 import { formatTaskReportFooter } from "./core/taskEstimator.js";
 import {
@@ -94,6 +94,32 @@ async function ordinaryDirectory(path: string): Promise<FileIdentity> {
 
 function warning(message: string): HookOutput { return { systemMessage: message.slice(0, 512) }; }
 
+type DiagnosticStage = "arguments" | "input-read" | "input-validation" | "host-storage" | "lifecycle" | "workspace-attestation";
+const DIAGNOSTIC_REASONS = new Set([
+  "invalid-arguments", "input-too-large", "invalid-event", "invalid-input-object", "event-mismatch", "invalid-session-id", "confirmation-field",
+  "invalid-host-storage", "missing-host-storage", "conflicting-host-storage", "unsafe-directory", "substituted-host-storage", "overlapping-host-storage",
+  "invalid-host-binding", "unstable-host-parent", "unstable-host-entry", "invalid-host-size", "unsafe-host-attestation", "unstable-host-temporary", "unstable-host-replacement"
+]);
+const DIAGNOSTIC_ERRNOS = new Set(["ENOENT", "ENOTDIR", "EACCES", "EPERM", "EINVAL", "ELOOP", "EIO", "ENOSPC", "EROFS", "EBUSY", "EEXIST", "ENOTSUP", "EBADF", "EMFILE", "ENFILE"]);
+
+function storagePairPresence(rootKey: string, dataKey: string): "absent" | "partial" | "present" {
+  const rootPresent = process.env[rootKey] !== undefined;
+  const dataPresent = process.env[dataKey] !== undefined;
+  return rootPresent && dataPresent ? "present" : rootPresent || dataPresent ? "partial" : "absent";
+}
+
+function diagnosticWarning(message: string, stage: DiagnosticStage, error: unknown): HookOutput {
+  // Only fixed allowlisted labels leave this boundary. Never reflect input,
+  // environment values, identifiers, paths, stack traces, or raw error text.
+  const errno = (error as NodeJS.ErrnoException | null)?.code;
+  const code = error instanceof Error && DIAGNOSTIC_REASONS.has(error.message) ? error.message
+    : stage === "input-read" && error instanceof SyntaxError ? "invalid-json"
+    : typeof errno === "string" && DIAGNOSTIC_ERRNOS.has(errno) ? errno : "unexpected-error";
+  const codex = storagePairPresence("PLUGIN_ROOT", "PLUGIN_DATA");
+  const claude = storagePairPresence("CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA");
+  return warning(`${message} [stage=${stage}; code=${code}; codex-storage=${codex}; claude-storage=${claude}]`);
+}
+
 function containsConfirmationLikeField(input: Record<string, unknown>): boolean {
   const pending: unknown[] = [input];
   for (let index = 0; index < pending.length; index += 1) {
@@ -111,19 +137,55 @@ function containsConfirmationLikeField(input: Record<string, unknown>): boolean 
   return false;
 }
 
-async function resolvePair(rootKey: string, dataKey: string): Promise<HookStorage | undefined> {
+// Codex passes PLUGIN_DATA as <home>/plugins/data/<plugin>-<marketplace> without
+// creating it for hooks, so the first lifecycle event of a plugin identity sees
+// a missing leaf. Create exactly that one leaf beneath an existing ordinary
+// parent. Resolve and bind that parent before creation, then use its canonical
+// path so a lexical ancestor alias cannot redirect the write. Every later
+// storage and attestation check still runs on the resulting directory.
+async function ensureDataDirectory(path: string, workspaceRoot: string): Promise<void> {
+  try { await lstat(path); return; } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const parent = dirname(path);
+  const parentBefore = await ordinaryDirectory(parent);
+  const canonicalParent = await realpath(parent);
+  const validateParent = async (): Promise<void> => {
+    const identities = await Promise.all([ordinaryDirectory(parent), ordinaryDirectory(canonicalParent)]);
+    if (identities.some((identity) => !sameObject(parentBefore, identity))) throw new Error("unstable-host-parent");
+  };
+  await validateParent();
+  const canonicalLeaf = join(canonicalParent, basename(path));
+  if (overlaps(canonicalLeaf, workspaceRoot)) throw new Error("overlapping-host-storage");
+  try { await mkdir(canonicalLeaf, { mode: 0o700 }); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  await validateParent();
+}
+
+async function resolvePair(rootKey: string, dataKey: string, creationRoot: string | undefined): Promise<HookStorage | undefined> {
   const rootValue = process.env[rootKey];
   const dataValue = process.env[dataKey];
   if (rootValue === undefined && dataValue === undefined) return undefined;
   if (!isIdentifier(rootValue) || !isIdentifier(dataValue) || !isAbsolute(rootValue) || !isAbsolute(dataValue)) throw new Error("invalid-host-storage");
+  await ordinaryDirectory(rootValue);
+  if (creationRoot !== undefined) await ensureDataDirectory(dataValue, creationRoot);
   await Promise.all([ordinaryDirectory(rootValue), ordinaryDirectory(dataValue)]);
   const [pluginRoot, dataRoot] = await Promise.all([realpath(rootValue), realpath(dataValue)]);
   const [pluginStats, dataStats] = await Promise.all([ordinaryDirectory(pluginRoot), ordinaryDirectory(dataRoot)]);
   return { pluginRoot, pluginIdentity: pluginStats, dataRoot, dataIdentity: dataStats };
 }
 
-async function resolveHookStorage(): Promise<HookStorage> {
-  const [codex, claude] = await Promise.all([resolvePair("PLUGIN_ROOT", "PLUGIN_DATA"), resolvePair("CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA")]);
+// Only attestation events with a resolvable workspace may create the data leaf,
+// and only when the pairs are unambiguous: a single pair, or two pairs spelled
+// identically. Differently spelled pairs are never created before they are
+// proven to name the same objects.
+async function resolveHookStorage(creationRoot: string | undefined): Promise<HookStorage> {
+  const [codexKeys, claudeKeys] = [["PLUGIN_ROOT", "PLUGIN_DATA"], ["CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA"]] as const;
+  const bothPairs = codexKeys.some((key) => process.env[key] !== undefined) && claudeKeys.some((key) => process.env[key] !== undefined);
+  const spelledAlike = codexKeys.every((key, index) => process.env[key] === process.env[claudeKeys[index]!]);
+  const create = bothPairs && !spelledAlike ? undefined : creationRoot;
+  const [codex, claude] = await Promise.all([resolvePair(...codexKeys, create), resolvePair(...claudeKeys, create)]);
   if (!codex && !claude) throw new Error("missing-host-storage");
   if (codex && claude && (codex.pluginRoot !== claude.pluginRoot || !sameObject(codex.pluginIdentity, claude.pluginIdentity) ||
       codex.dataRoot !== claude.dataRoot || !sameObject(codex.dataIdentity, claude.dataIdentity))) {
@@ -147,7 +209,8 @@ function overlaps(left: string, right: string): boolean {
   const b = normalize(right);
   const aToB = relative(a, b);
   const bToA = relative(b, a);
-  return a === b || (!aToB.startsWith("..") && !isAbsolute(aToB)) || (!bToA.startsWith("..") && !isAbsolute(bToA));
+  const contained = (path: string): boolean => path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+  return a === b || contained(aToB) || contained(bToA);
 }
 
 async function validateNonOverlap(storage: HookStorage, workspaceRoot: string): Promise<void> {
@@ -506,7 +569,7 @@ async function attestSession(input: Record<string, unknown>, storage: HookStorag
     await validateNonOverlap(storage, root);
     await attestHostWorkspace(storage.pluginRoot, input.session_id as string, root);
     return {};
-  } catch { return warning("TokenGraph could not establish a safe host workspace attestation; setup was skipped."); }
+  } catch (error) { return diagnosticWarning("TokenGraph could not establish a safe host workspace attestation; setup was skipped.", "workspace-attestation", error); }
 }
 
 async function postToolUse(input: Record<string, unknown>, storage: HookStorage): Promise<HookOutput> {
@@ -627,21 +690,41 @@ async function readStdin(): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as unknown;
 }
 
+async function creationWorkspace(event: string, input: Record<string, unknown>): Promise<string | undefined> {
+  if (event !== "session-start" && event !== "user-prompt-submit") return undefined;
+  if (typeof input.cwd !== "string" || !isAbsolute(input.cwd)) return undefined;
+  // The workspace must be an ordinary directory before anything is created; a
+  // regular file is rejected later by attestation, which is too late.
+  try {
+    const root = await realpath(input.cwd);
+    await ordinaryDirectory(root);
+    return root;
+  } catch { return undefined; }
+}
+
 async function main(): Promise<void> {
   let output: HookOutput;
+  let stage: DiagnosticStage = "arguments";
   try {
     if (process.argv.length !== 3) throw new Error("invalid-arguments");
     const event = process.argv[2]!;
     const expectedEvent = EVENT_PAIRS.get(event);
+    stage = "input-read";
     const input = await readStdin();
-    if (!expectedEvent || !isRecord(input) || input.hook_event_name !== expectedEvent ||
-        !isIdentifier(input.session_id) || containsConfirmationLikeField(input)) throw new Error("invalid-input");
-    const storage = await resolveHookStorage();
+    stage = "input-validation";
+    if (!expectedEvent) throw new Error("invalid-event");
+    if (!isRecord(input)) throw new Error("invalid-input-object");
+    if (input.hook_event_name !== expectedEvent) throw new Error("event-mismatch");
+    if (!isIdentifier(input.session_id)) throw new Error("invalid-session-id");
+    if (containsConfirmationLikeField(input)) throw new Error("confirmation-field");
+    stage = "host-storage";
+    const storage = await resolveHookStorage(await creationWorkspace(event, input));
+    stage = "lifecycle";
     output = event === "session-start" || event === "user-prompt-submit" ? await attestSession(input, storage)
       : event === "session-end" ? await endSession(input, storage)
       : event === "post-tool-use" ? await postToolUse(input, storage)
       : await stop(input, storage);
-  } catch { output = warning("TokenGraph hook state could not be safely processed; lifecycle enforcement was skipped."); }
+  } catch (error) { output = diagnosticWarning("TokenGraph hook state could not be safely processed; lifecycle enforcement was skipped.", stage, error); }
   // Every string value in hook output is bounded at the boundary, so no
   // current or future output key can carry unbounded ledger-sourced content.
   const bounded = Object.fromEntries(Object.entries(output).map(([key, value]) =>

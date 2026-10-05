@@ -10,6 +10,7 @@
 - Added bounded local Git change capsules for working-tree, staged, commit, range, and locally resolved pull-request inputs, including target-blob symbols, exact slices, affected graph entities, risks, and recommended tests.
 - Added six tracked Plugin Eval scenarios, a deterministic verifier, and a TokenGraph metric pack for tool use, duration, workspace changes, and task-specific correctness signals.
 - Routing remains shadow-only and B7 polyglot parsing remains independently activated. The v0.25 source integration is not a publication claim; full release, generated-package, live Plugin Eval, managed-runtime, ZIP, signature, and attestation gates remain required before merge, tag, or publication.
+- Fixed Codex desktop lifecycle hooks failing on a plugin identity's first session: Codex passes a plugin data directory it does not create for hooks, so SessionStart and Stop skipped enforcement and setup reported a missing trusted workspace. The hook now creates only that single missing leaf during SessionStart or UserPromptSubmit, after input validation, never creating ancestors and never beneath a link, an unresolvable or non-directory working directory, or the workspace itself. Hook warnings now carry a bounded fixed-label stage and reason, and a workspace-overlap check no longer treats a child whose name begins with two dots as outside the workspace.
 
 ## 0.23.1 - 2026-07-30
 

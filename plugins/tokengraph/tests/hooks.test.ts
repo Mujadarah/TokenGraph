@@ -749,6 +749,154 @@ describe("built lifecycle hook process", () => {
     await expect(readdir(dataRoot)).resolves.toEqual([]);
   });
 
+  it("distinguishes hook input and storage failures with bounded private diagnostics", async () => {
+    const root = await makeRoot("tokengraph-hook-diagnostic-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-diagnostic-data-");
+    const missingData = join(dataRoot, "private-missing-parent", "private-missing-directory");
+    const input = { hook_event_name: "SessionStart", session_id: "private-session", cwd: root, prompt: "private-prompt-secret" };
+    const cases = [
+      { input, env: {}, options: { extraArgs: ["private-argument"] }, stage: "arguments", code: "invalid-arguments", pairs: "absent" },
+      { input, env: {}, options: { rawInput: '{"private-prompt-secret": broken}' }, stage: "input-read", code: "invalid-json", pairs: "absent" },
+      { input, env: {}, options: { rawInput: JSON.stringify({ prompt: "x".repeat(1024 * 1024) }) }, stage: "input-read", code: "input-too-large", pairs: "absent" },
+      { input: { ...input, hook_event_name: "Stop" }, env: {}, stage: "input-validation", code: "event-mismatch", pairs: "absent" },
+      { input: { ...input, session_id: "" }, env: {}, stage: "input-validation", code: "invalid-session-id", pairs: "absent" },
+      { input: { ...input, confirmNoLegacyProcesses: true }, env: {}, stage: "input-validation", code: "confirmation-field", pairs: "absent" },
+      { input, env: {}, stage: "host-storage", code: "missing-host-storage", pairs: "absent" },
+      { input, env: { PLUGIN_ROOT: hookPluginRoot }, stage: "host-storage", code: "invalid-host-storage", pairs: "partial" },
+      { input, env: { PLUGIN_ROOT: hookPluginRoot, PLUGIN_DATA: missingData }, stage: "host-storage", code: "ENOENT", pairs: "present" }
+    ];
+    for (const candidate of cases) {
+      const run = await runHook("session-start", candidate.input, candidate.env, candidate.options);
+      expect(run.code).toBe(0);
+      expect(run.stderr).toBe("");
+      expect(run.output).toEqual({ systemMessage: expect.stringContaining(`stage=${candidate.stage}; code=${candidate.code}; codex-storage=${candidate.pairs}; claude-storage=absent`) });
+      expect(String(run.output.systemMessage).length).toBeLessThanOrEqual(512);
+      for (const privateValue of [root, dataRoot, missingData, "private-prompt-secret", "private-session", "private-argument"]) {
+        expect(run.stdout).not.toContain(privateValue);
+      }
+    }
+    await expect(readdir(dataRoot)).resolves.toEqual([]);
+  });
+
+  // Codex 0.160.0 passes PLUGIN_DATA as <home>/plugins/data/<plugin>-<marketplace>
+  // and never creates it for hooks, so the first SessionStart of a plugin
+  // identity sees a missing leaf beneath an existing ordinary directory.
+  it("creates a missing host data leaf for the first attestation event and then attests and enforces normally", async () => {
+    const root = await makeRoot("tokengraph-hook-first-run-root-");
+    const store = await makeRoot("tokengraph-hook-first-run-store-");
+    const sessionId = `first-run-${randomUUID()}`;
+    const variants: Array<{ name: string; env: (data: string) => Record<string, string> }> = [
+      { name: "codex", env: (data) => pluginEnvironment(data) },
+      { name: "claude", env: (data) => ({ CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: data }) },
+      { name: "dual", env: (data) => ({ PLUGIN_ROOT: hookPluginRoot, PLUGIN_DATA: data, CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: data }) }
+    ];
+    for (const variant of variants) {
+      const data = join(store, `tokengraph-${variant.name}`);
+      const id = `${sessionId}-${variant.name}`;
+      const env = variant.env(data);
+      await expect(lstat(data)).rejects.toMatchObject({ code: "ENOENT" });
+      const started = await attestWorkspace(root, data, id, env);
+      expect(started.output).toEqual({});
+      expect(started.stderr).toBe("");
+      expect((await lstat(data)).isDirectory()).toBe(true);
+      await expect(readdir(data)).resolves.toEqual([]);
+      await expect(loadHostWorkspaceAttestation(hookPluginRoot, id)).resolves.toEqual({ status: "valid", root: await realpath(root) });
+      const stopped = await runHook("stop", { hook_event_name: "Stop", session_id: id, cwd: root }, env);
+      expect(stopped.output).toEqual({ systemMessage: expect.stringContaining("session pointer is missing") });
+      expect(stopped.stdout).not.toContain("stage=host-storage");
+    }
+  });
+
+  it("never creates the host data leaf outside a validated attestation event or beneath unsafe or overlapping paths", async () => {
+    const root = await makeRoot("tokengraph-hook-no-create-root-");
+    const store = await makeRoot("tokengraph-hook-no-create-store-");
+    const input = (event: string, hookEvent: string, cwd = root): [string, Record<string, unknown>] => [event, { hook_event_name: hookEvent, session_id: "no-create-session", cwd }];
+    const absent = async (path: string): Promise<void> => { await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" }); };
+
+    // Non-attestation events never mutate host storage.
+    for (const [event, hookEvent] of [["stop", "Stop"], ["session-end", "SessionEnd"], ["post-tool-use", "PostToolUse"]] as const) {
+      const data = join(store, `event-${event}`);
+      const run = await runHook(...input(event, hookEvent), pluginEnvironment(data));
+      expect(run.output).toEqual({ systemMessage: expect.stringContaining("stage=host-storage; code=ENOENT") });
+      await absent(data);
+    }
+    // Input validation and workspace resolution precede any creation. A cwd that
+    // resolves to a regular file is not a workspace directory and must not create anything.
+    const fileCwdParent = await makeRoot("tokengraph-hook-no-create-file-cwd-");
+    const fileCwd = join(fileCwdParent, "cwd-is-a-file");
+    await writeFile(fileCwd, "not a directory");
+    for (const [index, candidate] of [
+      { hook_event_name: "Stop", session_id: "no-create-session", cwd: root },
+      { hook_event_name: "SessionStart", session_id: " ", cwd: root },
+      { hook_event_name: "SessionStart", session_id: "no-create-session", cwd: root, confirmNoLegacyProcesses: true },
+      { hook_event_name: "SessionStart", session_id: "no-create-session", cwd: "relative" },
+      { hook_event_name: "SessionStart", session_id: "no-create-session", cwd: join(root, "missing-workspace") },
+      { hook_event_name: "SessionStart", session_id: "no-create-session", cwd: fileCwd },
+      { hook_event_name: "SessionStart", session_id: "no-create-session" }
+    ].entries()) {
+      const data = join(store, `input-${index}`);
+      await runHook("session-start", candidate, pluginEnvironment(data));
+      await absent(data);
+    }
+    // The plugin root must already be an ordinary directory.
+    const missingRootData = join(store, "missing-root");
+    const missingRoot = await runHook(...input("session-start", "SessionStart"), { PLUGIN_ROOT: join(store, "no-such-plugin-root"), PLUGIN_DATA: missingRootData });
+    expect(missingRoot.output).toEqual({ systemMessage: expect.stringContaining("stage=host-storage; code=ENOENT") });
+    await absent(missingRootData);
+    // Only one leaf is created; a missing parent fails closed without creating ancestors.
+    const missingParent = join(store, "no-such-parent");
+    const parentRun = await runHook(...input("session-start", "SessionStart"), pluginEnvironment(join(missingParent, "data")));
+    expect(parentRun.output).toEqual({ systemMessage: expect.stringContaining("stage=host-storage; code=ENOENT") });
+    await absent(missingParent);
+    // A data leaf inside the workspace overlaps it and must not be created.
+    const overlapping = join(root, "plugin-data-inside-workspace");
+    const overlapRun = await runHook(...input("session-start", "SessionStart"), pluginEnvironment(overlapping));
+    expect(overlapRun.output).toEqual({ systemMessage: expect.stringContaining("stage=host-storage; code=overlapping-host-storage") });
+    await absent(overlapping);
+    await expect(readdir(root)).resolves.toEqual([]);
+    // Differently spelled dual pairs are never created.
+    const left = join(store, "dual-left");
+    const right = join(store, "dual-right");
+    const dual = await runHook(...input("session-start", "SessionStart"), { ...pluginEnvironment(left), CLAUDE_PLUGIN_ROOT: hookPluginRoot, CLAUDE_PLUGIN_DATA: right });
+    expect(dual.output).toEqual({ systemMessage: expect.stringContaining("stage=host-storage; code=ENOENT") });
+    await absent(left);
+    await absent(right);
+    // A link at the leaf (even a dangling one) is never followed, replaced, or created through.
+    const linkTarget = await makeRoot("tokengraph-hook-no-create-target-");
+    const linked = join(store, "linked-leaf");
+    await symlink(linkTarget, linked, process.platform === "win32" ? "junction" : "dir");
+    await rm(linkTarget, { recursive: true, force: true });
+    const linkedRun = await runHook(...input("session-start", "SessionStart"), pluginEnvironment(linked));
+    expect(linkedRun.output).toEqual({ systemMessage: expect.stringContaining("stage=host-storage") });
+    await absent(linkTarget);
+    expect((await lstat(linked)).isSymbolicLink()).toBe(true);
+    // An existing file at the leaf is rejected, never replaced.
+    const fileLeaf = join(store, "file-leaf");
+    await writeFile(fileLeaf, "not a directory");
+    const fileRun = await runHook(...input("session-start", "SessionStart"), pluginEnvironment(fileLeaf));
+    expect(fileRun.output).toEqual({ systemMessage: expect.stringContaining("stage=host-storage; code=unsafe-directory") });
+    await expect(readFile(fileLeaf, "utf8")).resolves.toBe("not a directory");
+  });
+
+  it("identifies attestation failures without granting workspace trust or exposing paths", async () => {
+    const root = await makeRoot("tokengraph-hook-attestation-diagnostic-");
+    const dataRoot = await makeRoot("tokengraph-hook-attestation-diagnostic-data-");
+    const input = { hook_event_name: "SessionStart", session_id: "private-session", cwd: join(root, "private-missing-workspace") };
+    const missing = await runHook("session-start", input, pluginEnvironment(dataRoot));
+    expect(missing.output).toEqual({ systemMessage: expect.stringContaining("stage=workspace-attestation; code=ENOENT") });
+    const overlap = await runHook("session-start", { ...input, cwd: root }, pluginEnvironment(root));
+    expect(overlap.output).toEqual({ systemMessage: expect.stringContaining("stage=workspace-attestation; code=overlapping-host-storage") });
+    for (const run of [missing, overlap]) {
+      expect(run.code).toBe(0);
+      expect(run.stderr).toBe("");
+      expect(run.stdout).not.toContain(root);
+      expect(run.stdout).not.toContain(dataRoot);
+      expect(run.stdout).not.toContain(input.session_id);
+    }
+    await expect(readdir(dataRoot)).resolves.toEqual([]);
+    await expect(readdir(root)).resolves.toEqual([]);
+  });
+
   it("accepts only complete matching host storage pairs and rejects overlap or linked data roots before mutation", async () => {
     const root = await makeRoot("tokengraph-hook-env-root-");
     const dataRoot = await makeRoot("tokengraph-hook-env-data-");
@@ -1184,6 +1332,59 @@ describe("built lifecycle hook process", () => {
   });
 });
 
+describe("directory creation security", () => {
+  it("rejects dot-dot-prefixed workspace children both before creation and when already present", async () => {
+    const root = await makeRoot("tokengraph-hook-dotdot-root-");
+    for (const existing of [false, true]) {
+      const data = join(root, existing ? "..existing-data" : "..missing-data");
+      if (existing) await mkdir(data);
+      const started = await attestWorkspace(root, data, `dotdot-${randomUUID()}`);
+      expect(started.output).toEqual({ systemMessage: expect.stringContaining("overlapping-host-storage") });
+      if (!existing) await expect(lstat(data)).rejects.toMatchObject({ code: "ENOENT" });
+      else await expect(readdir(data)).resolves.toEqual([]);
+    }
+  });
+
+  it("does not create through an ancestor junction retargeted during parent resolution", async () => {
+    const root = await makeRoot("tokengraph-hook-junction-race-root-");
+    const store = await makeRoot("tokengraph-hook-junction-race-store-");
+    const aliases = await makeRoot("tokengraph-hook-junction-race-alias-");
+    const safe = join(store, "ordinary-parent");
+    const unsafe = join(root, "ordinary-parent");
+    await mkdir(safe);
+    await mkdir(unsafe);
+    const alias = join(aliases, "ancestor");
+    await symlink(store, alias, process.platform === "win32" ? "junction" : "dir");
+    const parent = join(alias, "ordinary-parent");
+    const data = join(parent, "plugin-data");
+    const injection = join(aliases, "retarget.mjs");
+    await writeFile(injection, `
+import { createRequire } from "node:module";
+const fs = createRequire(import.meta.url)("node:fs/promises");
+const original = fs.realpath;
+let retargeted = false;
+fs.realpath = async (path, ...options) => {
+  const result = await original(path, ...options);
+  if (!retargeted && String(path) === process.env.TG_TEST_PARENT) {
+    retargeted = true;
+    await fs.unlink(process.env.TG_TEST_ALIAS);
+    await fs.symlink(process.env.TG_TEST_WORKSPACE, process.env.TG_TEST_ALIAS, process.platform === "win32" ? "junction" : "dir");
+  }
+  return result;
+};
+`);
+    const id = `junction-race-${randomUUID()}`;
+    const started = await attestWorkspace(root, data, id, {
+      ...pluginEnvironment(data), NODE_OPTIONS: `--import=${pathToFileURL(injection).href}`,
+      TG_TEST_PARENT: parent, TG_TEST_ALIAS: alias, TG_TEST_WORKSPACE: root
+    });
+    expect(started.output).toEqual({ systemMessage: expect.stringContaining("stage=host-storage; code=unstable-host-parent") });
+    await expect(readdir(unsafe)).resolves.toEqual([]);
+    await expect(readdir(safe)).resolves.toEqual([]);
+    await expect(loadHostWorkspaceAttestation(hookPluginRoot, id)).resolves.toEqual({ status: "missing" });
+  });
+});
+
 describe("audited lifecycle hook boundaries", () => {
   async function injector(script: string): Promise<string> {
     const directory = await makeRoot("tokengraph-hook-inject-");
@@ -1191,6 +1392,28 @@ describe("audited lifecycle hook boundaries", () => {
     await writeFile(path, script);
     return `--import ${pathToFileURL(path).href}`;
   }
+
+  it("never reflects arbitrary exception messages or codes into hook diagnostics", async () => {
+    const nodeOptions = await injector(`
+import { createRequire } from "node:module";
+const promises = createRequire(import.meta.url)("node:fs/promises");
+promises.lstat = async () => {
+  const error = new Error("private-exception-prompt-secret");
+  error.code = process.env.TG_TEST_ERROR_CODE;
+  throw error;
+};
+`);
+    const dataRoot = await makeRoot("tokengraph-hook-private-error-");
+    for (const [errorCode, diagnosticCode] of [["private-exception-code-secret", "unexpected-error"], ["EACCES", "EACCES"]]) {
+      const run = await runHook("stop", stopInput(), { ...pluginEnvironment(dataRoot), NODE_OPTIONS: nodeOptions, TG_TEST_ERROR_CODE: errorCode });
+      expect(run.code).toBe(0);
+      expect(run.stderr).toBe("");
+      expect(run.output).toEqual({ systemMessage: expect.stringContaining(`stage=host-storage; code=${diagnosticCode}; codex-storage=present; claude-storage=absent`) });
+      expect(run.stdout).not.toContain("private-exception");
+      expect(run.stdout).not.toContain(dataRoot);
+    }
+    await expect(readdir(dataRoot)).resolves.toEqual([]);
+  });
 
   const unlinkAtLstat = `
 import { createRequire } from "node:module";

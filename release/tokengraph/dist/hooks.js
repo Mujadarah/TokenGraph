@@ -4,7 +4,7 @@
 import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
 import { constants as fsConstants3 } from "node:fs";
 import { link as link2, lstat as lstat3, mkdir as mkdir2, open as open3, readdir as readdir2, realpath as realpath2, rename as rename3, unlink as unlink2 } from "node:fs/promises";
-import { isAbsolute as isAbsolute3, join as join3, relative } from "node:path";
+import { basename, dirname, isAbsolute as isAbsolute3, join as join3, relative, sep } from "node:path";
 
 // src/core/taskEstimator.ts
 var TASK_ESTIMATOR_VERSION = "task-estimator-v2";
@@ -773,6 +773,41 @@ async function ordinaryDirectory2(path) {
 function warning(message) {
   return { systemMessage: message.slice(0, 512) };
 }
+var DIAGNOSTIC_REASONS = /* @__PURE__ */ new Set([
+  "invalid-arguments",
+  "input-too-large",
+  "invalid-event",
+  "invalid-input-object",
+  "event-mismatch",
+  "invalid-session-id",
+  "confirmation-field",
+  "invalid-host-storage",
+  "missing-host-storage",
+  "conflicting-host-storage",
+  "unsafe-directory",
+  "substituted-host-storage",
+  "overlapping-host-storage",
+  "invalid-host-binding",
+  "unstable-host-parent",
+  "unstable-host-entry",
+  "invalid-host-size",
+  "unsafe-host-attestation",
+  "unstable-host-temporary",
+  "unstable-host-replacement"
+]);
+var DIAGNOSTIC_ERRNOS = /* @__PURE__ */ new Set(["ENOENT", "ENOTDIR", "EACCES", "EPERM", "EINVAL", "ELOOP", "EIO", "ENOSPC", "EROFS", "EBUSY", "EEXIST", "ENOTSUP", "EBADF", "EMFILE", "ENFILE"]);
+function storagePairPresence(rootKey, dataKey) {
+  const rootPresent = process.env[rootKey] !== void 0;
+  const dataPresent = process.env[dataKey] !== void 0;
+  return rootPresent && dataPresent ? "present" : rootPresent || dataPresent ? "partial" : "absent";
+}
+function diagnosticWarning(message, stage, error) {
+  const errno = error?.code;
+  const code = error instanceof Error && DIAGNOSTIC_REASONS.has(error.message) ? error.message : stage === "input-read" && error instanceof SyntaxError ? "invalid-json" : typeof errno === "string" && DIAGNOSTIC_ERRNOS.has(errno) ? errno : "unexpected-error";
+  const codex = storagePairPresence("PLUGIN_ROOT", "PLUGIN_DATA");
+  const claude = storagePairPresence("CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA");
+  return warning(`${message} [stage=${stage}; code=${code}; codex-storage=${codex}; claude-storage=${claude}]`);
+}
 function containsConfirmationLikeField(input) {
   const pending = [input];
   for (let index = 0; index < pending.length; index += 1) {
@@ -789,18 +824,48 @@ function containsConfirmationLikeField(input) {
   }
   return false;
 }
-async function resolvePair(rootKey, dataKey) {
+async function ensureDataDirectory(path, workspaceRoot) {
+  try {
+    await lstat3(path);
+    return;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const parent = dirname(path);
+  const parentBefore = await ordinaryDirectory2(parent);
+  const canonicalParent = await realpath2(parent);
+  const validateParent = async () => {
+    const identities = await Promise.all([ordinaryDirectory2(parent), ordinaryDirectory2(canonicalParent)]);
+    if (identities.some((identity2) => !sameObject2(parentBefore, identity2))) throw new Error("unstable-host-parent");
+  };
+  await validateParent();
+  const canonicalLeaf = join3(canonicalParent, basename(path));
+  if (overlaps(canonicalLeaf, workspaceRoot)) throw new Error("overlapping-host-storage");
+  try {
+    await mkdir2(canonicalLeaf, { mode: 448 });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  await validateParent();
+}
+async function resolvePair(rootKey, dataKey, creationRoot) {
   const rootValue = process.env[rootKey];
   const dataValue = process.env[dataKey];
   if (rootValue === void 0 && dataValue === void 0) return void 0;
   if (!isIdentifier2(rootValue) || !isIdentifier2(dataValue) || !isAbsolute3(rootValue) || !isAbsolute3(dataValue)) throw new Error("invalid-host-storage");
+  await ordinaryDirectory2(rootValue);
+  if (creationRoot !== void 0) await ensureDataDirectory(dataValue, creationRoot);
   await Promise.all([ordinaryDirectory2(rootValue), ordinaryDirectory2(dataValue)]);
   const [pluginRoot, dataRoot] = await Promise.all([realpath2(rootValue), realpath2(dataValue)]);
   const [pluginStats, dataStats] = await Promise.all([ordinaryDirectory2(pluginRoot), ordinaryDirectory2(dataRoot)]);
   return { pluginRoot, pluginIdentity: pluginStats, dataRoot, dataIdentity: dataStats };
 }
-async function resolveHookStorage() {
-  const [codex, claude] = await Promise.all([resolvePair("PLUGIN_ROOT", "PLUGIN_DATA"), resolvePair("CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA")]);
+async function resolveHookStorage(creationRoot) {
+  const [codexKeys, claudeKeys] = [["PLUGIN_ROOT", "PLUGIN_DATA"], ["CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA"]];
+  const bothPairs = codexKeys.some((key) => process.env[key] !== void 0) && claudeKeys.some((key) => process.env[key] !== void 0);
+  const spelledAlike = codexKeys.every((key, index) => process.env[key] === process.env[claudeKeys[index]]);
+  const create = bothPairs && !spelledAlike ? void 0 : creationRoot;
+  const [codex, claude] = await Promise.all([resolvePair(...codexKeys, create), resolvePair(...claudeKeys, create)]);
   if (!codex && !claude) throw new Error("missing-host-storage");
   if (codex && claude && (codex.pluginRoot !== claude.pluginRoot || !sameObject2(codex.pluginIdentity, claude.pluginIdentity) || codex.dataRoot !== claude.dataRoot || !sameObject2(codex.dataIdentity, claude.dataIdentity))) {
     throw new Error("conflicting-host-storage");
@@ -822,7 +887,8 @@ function overlaps(left, right) {
   const b = normalize(right);
   const aToB = relative(a, b);
   const bToA = relative(b, a);
-  return a === b || !aToB.startsWith("..") && !isAbsolute3(aToB) || !bToA.startsWith("..") && !isAbsolute3(bToA);
+  const contained = (path) => path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute3(path);
+  return a === b || contained(aToB) || contained(bToA);
 }
 async function validateNonOverlap(storage, workspaceRoot) {
   if (overlaps(storage.dataRoot, workspaceRoot)) throw new Error("overlapping-host-storage");
@@ -1167,8 +1233,8 @@ async function attestSession(input, storage) {
     await validateNonOverlap(storage, root);
     await attestHostWorkspace(storage.pluginRoot, input.session_id, root);
     return {};
-  } catch {
-    return warning("TokenGraph could not establish a safe host workspace attestation; setup was skipped.");
+  } catch (error) {
+    return diagnosticWarning("TokenGraph could not establish a safe host workspace attestation; setup was skipped.", "workspace-attestation", error);
   }
 }
 async function postToolUse(input, storage) {
@@ -1316,18 +1382,38 @@ async function readStdin() {
   }
   return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8"));
 }
+async function creationWorkspace(event, input) {
+  if (event !== "session-start" && event !== "user-prompt-submit") return void 0;
+  if (typeof input.cwd !== "string" || !isAbsolute3(input.cwd)) return void 0;
+  try {
+    const root = await realpath2(input.cwd);
+    await ordinaryDirectory2(root);
+    return root;
+  } catch {
+    return void 0;
+  }
+}
 async function main() {
   let output;
+  let stage = "arguments";
   try {
     if (process.argv.length !== 3) throw new Error("invalid-arguments");
     const event = process.argv[2];
     const expectedEvent = EVENT_PAIRS.get(event);
+    stage = "input-read";
     const input = await readStdin();
-    if (!expectedEvent || !isRecord3(input) || input.hook_event_name !== expectedEvent || !isIdentifier2(input.session_id) || containsConfirmationLikeField(input)) throw new Error("invalid-input");
-    const storage = await resolveHookStorage();
+    stage = "input-validation";
+    if (!expectedEvent) throw new Error("invalid-event");
+    if (!isRecord3(input)) throw new Error("invalid-input-object");
+    if (input.hook_event_name !== expectedEvent) throw new Error("event-mismatch");
+    if (!isIdentifier2(input.session_id)) throw new Error("invalid-session-id");
+    if (containsConfirmationLikeField(input)) throw new Error("confirmation-field");
+    stage = "host-storage";
+    const storage = await resolveHookStorage(await creationWorkspace(event, input));
+    stage = "lifecycle";
     output = event === "session-start" || event === "user-prompt-submit" ? await attestSession(input, storage) : event === "session-end" ? await endSession(input, storage) : event === "post-tool-use" ? await postToolUse(input, storage) : await stop(input, storage);
-  } catch {
-    output = warning("TokenGraph hook state could not be safely processed; lifecycle enforcement was skipped.");
+  } catch (error) {
+    output = diagnosticWarning("TokenGraph hook state could not be safely processed; lifecycle enforcement was skipped.", stage, error);
   }
   const bounded = Object.fromEntries(Object.entries(output).map(([key, value]) => [key, typeof value === "string" ? value.slice(0, DECISION_MAX_CHARACTERS) : value]));
   process.stdout.write(`${JSON.stringify(bounded)}
