@@ -1191,19 +1191,70 @@ function errorShaped(response, payload) {
   return Array.isArray(response.content) && response.content.some((item) => isRecord3(item) && item.type === "error");
 }
 function successfulResponse(response) {
-  if (!isRecord3(response)) return { successful: false };
+  if (!isRecord3(response)) return { successful: false, rejection: "non-object-response" };
   for (const alias of ["isError", "is_error"]) {
-    if (Object.hasOwn(response, alias) && (typeof response[alias] !== "boolean" || response[alias] !== false)) return { successful: false };
+    if (Object.hasOwn(response, alias) && (typeof response[alias] !== "boolean" || response[alias] !== false)) {
+      return { successful: false, rejection: response[alias] === true ? "error-flag" : "invalid-error-flag" };
+    }
   }
   const hasCamel = Object.hasOwn(response, "structuredContent");
   const hasSnake = Object.hasOwn(response, "structured_content");
-  if (hasCamel && !isRecord3(response.structuredContent) || hasSnake && !isRecord3(response.structured_content)) return { successful: false };
+  if (hasCamel && !isRecord3(response.structuredContent) || hasSnake && !isRecord3(response.structured_content)) {
+    return { successful: false, rejection: "invalid-structured-content" };
+  }
   const camel = hasCamel ? response.structuredContent : void 0;
   const snake = hasSnake ? response.structured_content : void 0;
-  if (camel && snake && !sameStructuredValue(camel, snake)) return { successful: false };
+  if (camel && snake && !sameStructuredValue(camel, snake)) return { successful: false, rejection: "conflicting-structured-content" };
   const payload = camel ?? snake;
-  if (errorShaped(response, payload)) return { successful: false };
+  if (errorShaped(response, payload)) return { successful: false, rejection: "error-shaped" };
   return payload ? { successful: true, payload } : { successful: true };
+}
+var DIAGNOSTIC_KEYS = /* @__PURE__ */ new Set(["_meta", "content", "error", "isError", "is_error", "result", "root", "structuredContent", "structured_content", "taskId"]);
+var DIAGNOSTIC_BLOCK_TYPES = /* @__PURE__ */ new Set(["audio", "error", "image", "resource", "resource_link", "text"]);
+var DIAGNOSTIC_TEXT_MAX_CHARACTERS = 16 * 1024;
+var DIAGNOSTIC_BLOCK_SCAN_LIMIT = 64;
+function keyLabels(record) {
+  const keys = Object.keys(record);
+  const listed = keys.filter((key) => DIAGNOSTIC_KEYS.has(key)).sort();
+  return [...listed.length < keys.length ? ["+other"] : [], ...listed].join(",") || "none";
+}
+function valueTypeLabel(value) {
+  return value === void 0 ? "absent" : value === null ? "null" : Array.isArray(value) ? "array" : typeof value === "object" ? "object" : typeof value === "string" ? "string" : typeof value === "number" || typeof value === "boolean" ? typeof value : "other";
+}
+function textLabels(text) {
+  if (text.length > DIAGNOSTIC_TEXT_MAX_CHARACTERS) return ["text=oversized"];
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return ["text=not-json"];
+  }
+  if (!isRecord3(parsed)) return [`text=json-${valueTypeLabel(parsed)}`];
+  const taskId = !Object.hasOwn(parsed, "taskId") ? "absent" : typeof parsed.taskId === "string" && UUID_PATTERN2.test(parsed.taskId) ? "uuid" : "other";
+  return ["text=json-object", `text-keys=${keyLabels(parsed)}`, `text-task-id=${taskId}`];
+}
+function blockLabels(blocks) {
+  const scanned = blocks.slice(0, DIAGNOSTIC_BLOCK_SCAN_LIMIT);
+  const types = new Set(scanned.map((block) => isRecord3(block) && typeof block.type === "string" && DIAGNOSTIC_BLOCK_TYPES.has(block.type) ? block.type : "+other"));
+  const count = blocks.length === 0 ? "0" : blocks.length === 1 ? "1" : "many";
+  const labels = [`blocks=${count}:${[...types].sort().join(",") || "none"}`];
+  const texts = scanned.filter((block) => isRecord3(block) && block.type === "text");
+  if (texts.length === 1 && isRecord3(texts[0]) && typeof texts[0].text === "string") labels.push(...textLabels(texts[0].text));
+  return labels;
+}
+function responseResult(response, verdict) {
+  if (!verdict.successful) return verdict.rejection === "error-flag" || verdict.rejection === "error-shaped" ? "error" : "unrecognized";
+  return verdict.payload || isRecord3(response) && (response.isError === false || response.is_error === false) ? "success" : "unrecognized";
+}
+function trackingSkipped(branch, response) {
+  const labels = ["stage=post-tool-use", `branch=${branch}`, `result=${responseResult(response, successfulResponse(response))}`, `response=${valueTypeLabel(response)}`];
+  if (typeof response === "string") labels.push(...textLabels(response));
+  else if (Array.isArray(response)) labels.push(...blockLabels(response));
+  else if (isRecord3(response)) {
+    labels.push(`keys=${keyLabels(response)}`);
+    if (Array.isArray(response.content)) labels.push(...blockLabels(response.content));
+  }
+  return warning(`TokenGraph found no task authority in the tool response; tracking was skipped. [${labels.join("; ")}]`);
 }
 async function explicitRootsMatch(input, payload, root) {
   const toolInput = isRecord3(input.tool_input) ? input.tool_input : void 0;
@@ -1255,17 +1306,18 @@ async function postToolUse(input, storage) {
   }
   const currentHash = hash2(input.session_id);
   const response = successfulResponse(input.tool_response);
-  if (!response.successful) return {};
+  if (!response.successful) return trackingSkipped(response.rejection, input.tool_response);
   const payload = response.payload;
   if (!await explicitRootsMatch(input, payload, attestation.root)) return warning("TokenGraph lifecycle root did not match the host attestation; tracking was skipped.");
   let taskId;
   let sessions;
   const toolInput = isRecord3(input.tool_input) ? input.tool_input : void 0;
   const hasInputTaskId = toolInput !== void 0 && Object.hasOwn(toolInput, "taskId");
-  if (hasInputTaskId && (typeof toolInput.taskId !== "string" || !UUID_PATTERN2.test(toolInput.taskId))) return {};
+  if (hasInputTaskId && (typeof toolInput.taskId !== "string" || !UUID_PATTERN2.test(toolInput.taskId))) return trackingSkipped("invalid-input-task-id", input.tool_response);
   const inputTaskId = hasInputTaskId ? toolInput.taskId : void 0;
   if (payload && Object.hasOwn(payload, "taskId")) {
-    if (typeof payload.taskId !== "string" || !UUID_PATTERN2.test(payload.taskId) || inputTaskId && inputTaskId !== payload.taskId) return {};
+    if (typeof payload.taskId !== "string" || !UUID_PATTERN2.test(payload.taskId)) return trackingSkipped("invalid-structured-task-id", input.tool_response);
+    if (inputTaskId && inputTaskId !== payload.taskId) return trackingSkipped("input-task-mismatch", input.tool_response);
     taskId = payload.taskId;
   } else if (inputTaskId) {
     try {
@@ -1273,11 +1325,13 @@ async function postToolUse(input, storage) {
     } catch {
       return warning("TokenGraph session storage is unstable; tracking was skipped.");
     }
-    if (!sessions) return {};
+    if (!sessions) return trackingSkipped("continuation-without-sessions", input.tool_response);
     const previous = await readPointer(sessions, currentHash);
     if (previous.status === "valid" && previous.pointer.taskId === inputTaskId) taskId = inputTaskId;
   }
-  if (!taskId) return {};
+  if (!taskId) {
+    return trackingSkipped(inputTaskId ? "continuation-without-pointer" : payload ? "structured-without-task-id" : "no-task-authority", input.tool_response);
+  }
   const ledger = await inspectTaskLedgerReadOnly(attestation.root, taskId);
   if (ledger.status !== "valid") return warning(`TokenGraph task ledger is ${ledger.status}; tracking was skipped.`);
   try {

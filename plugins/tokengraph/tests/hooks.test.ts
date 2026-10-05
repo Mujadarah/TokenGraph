@@ -345,8 +345,11 @@ describe("built lifecycle hook process", () => {
     });
 
     expect(run.code).toBe(0);
-    expect(run.output).toEqual({});
+    expect(run.output).toEqual({ systemMessage: "TokenGraph found no task authority in the tool response; tracking was skipped. " +
+      "[stage=post-tool-use; branch=no-task-authority; result=unrecognized; response=object; keys=content; blocks=1:text; text=json-object; text-keys=+other,root,taskId; text-task-id=uuid]" });
     expect(run.stdout.trim().split(/\r?\n/)).toHaveLength(1);
+    expect(run.stdout).not.toContain(secret);
+    expect(run.stdout).not.toContain(ledger.taskId);
     expect(run.stderr).not.toContain(secret);
     const path = pointerPath(dataRoot, "session-private-value");
     await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
@@ -1061,7 +1064,7 @@ describe("built lifecycle hook process", () => {
     const inputOnly = await runHook("post-tool-use", postInput({
       tool_input: { taskId: first.taskId, root }
     }), pluginEnvironment(dataRoot));
-    expect(inputOnly.output).toEqual({});
+    expect(inputOnly.output).toEqual({ systemMessage: expect.stringContaining("[stage=post-tool-use; branch=continuation-without-sessions; result=unrecognized; response=object; keys=none]") });
     await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
     expect((await attachPointer(root, dataRoot, first.taskId, { attest: false })).output).toEqual({});
@@ -1070,7 +1073,7 @@ describe("built lifecycle hook process", () => {
       turn_id: "turn-mismatch",
       tool_input: { taskId: second.taskId, root }
     }), pluginEnvironment(dataRoot));
-    expect(mismatched.output).toEqual({});
+    expect(mismatched.output).toEqual({ systemMessage: expect.stringContaining("[stage=post-tool-use; branch=continuation-without-pointer; result=unrecognized; response=object; keys=none]") });
     expect(await readFile(path, "utf8")).toBe(before);
 
     const matching = await runHook("post-tool-use", postInput({
@@ -1099,22 +1102,23 @@ describe("built lifecycle hook process", () => {
     expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
     const path = pointerPath(dataRoot, "session-private-value");
 
-    const rejectedResponses = [
-      { isError: true, structuredContent: { taskId: ledger.taskId, root } },
-      { is_error: true, structuredContent: { taskId: ledger.taskId, root } },
-      { isError: "false", structuredContent: { taskId: ledger.taskId, root } },
-      { is_error: 0, structuredContent: { taskId: ledger.taskId, root } },
-      { isError: false, is_error: true, structuredContent: { taskId: ledger.taskId, root } },
-      { error: { message: "failed" }, structuredContent: { taskId: ledger.taskId, root } },
-      {
+    const rejectedResponses: Array<[Record<string, unknown>, string]> = [
+      [{ isError: true, structuredContent: { taskId: ledger.taskId, root } }, "branch=error-flag; result=error"],
+      [{ is_error: true, structuredContent: { taskId: ledger.taskId, root } }, "branch=error-flag; result=error"],
+      [{ isError: "false", structuredContent: { taskId: ledger.taskId, root } }, "branch=invalid-error-flag; result=unrecognized"],
+      [{ is_error: 0, structuredContent: { taskId: ledger.taskId, root } }, "branch=invalid-error-flag; result=unrecognized"],
+      [{ isError: false, is_error: true, structuredContent: { taskId: ledger.taskId, root } }, "branch=error-flag; result=error"],
+      [{ error: { message: "failed" }, structuredContent: { taskId: ledger.taskId, root } }, "branch=error-shaped; result=error"],
+      [{
         isError: false,
         structuredContent: { taskId: ledger.taskId, root },
         structured_content: { taskId: conflicting.taskId, root }
-      }
+      }, "branch=conflicting-structured-content; result=unrecognized"]
     ];
-    for (const [index, toolResponse] of rejectedResponses.entries()) {
+    for (const [index, [toolResponse, labels]] of rejectedResponses.entries()) {
       const run = await runHook("post-tool-use", postInput({ turn_id: `turn-rejected-${index}`, tool_response: toolResponse }), pluginEnvironment(dataRoot));
-      expect(run.output, `response ${index}`).toEqual({});
+      expect(run.output, `response ${index}`).toEqual({ systemMessage: expect.stringContaining(`[stage=post-tool-use; ${labels}; response=object; keys=`) });
+      expect(run.stdout, `response ${index}`).not.toContain(ledger.taskId);
       await expect(readFile(path, "utf8"), `response ${index}`).rejects.toMatchObject({ code: "ENOENT" });
     }
 
@@ -1122,7 +1126,7 @@ describe("built lifecycle hook process", () => {
       tool_input: { taskId: conflicting.taskId, root },
       tool_response: { isError: false, structuredContent: { taskId: ledger.taskId, root } }
     }), pluginEnvironment(dataRoot));
-    expect(taskConflict.output).toEqual({});
+    expect(taskConflict.output).toEqual({ systemMessage: expect.stringContaining("[stage=post-tool-use; branch=input-task-mismatch; result=success; response=object; keys=isError,structuredContent]") });
     await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
     const rootConflict = await runHook("post-tool-use", postInput({
@@ -1151,8 +1155,83 @@ describe("built lifecycle hook process", () => {
       tool_input: { taskId: ledger.taskId, root },
       tool_response: { isError: true }
     }), pluginEnvironment(dataRoot));
-    expect(inputOnlyFailure.output).toEqual({});
+    expect(inputOnlyFailure.output).toEqual({ systemMessage: expect.stringContaining("[stage=post-tool-use; branch=error-flag; result=error; response=object; keys=isError]") });
     expect(await readFile(path, "utf8")).toBe(beforeFailure);
+  });
+
+  // Diagnostic evidence only: these synthetic responses model candidate host
+  // representations so the warning can be checked. None of them is host
+  // evidence, and none of them may become task authority.
+  it("diagnoses a response without task authority using only fixed labels and allowlisted keys", async () => {
+    const root = await makeRoot("tokengraph-hook-diagnostic-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-diagnostic-data-");
+    const ledger = await createTaskLedger(root, { host: "unknown" });
+    const ledgerBefore = await readFile(join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`), "utf8");
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
+    const secret = "raw-diagnostic-secret-that-must-not-leak";
+    const sole = JSON.stringify({ taskId: ledger.taskId });
+    const cases: Array<[string, unknown, string]> = [
+      ["json string", sole,
+        "[stage=post-tool-use; branch=non-object-response; result=unrecognized; response=string; text=json-object; text-keys=taskId; text-task-id=uuid]"],
+      ["bare object", { taskId: ledger.taskId },
+        "[stage=post-tool-use; branch=no-task-authority; result=unrecognized; response=object; keys=taskId]"],
+      ["one text block", [{ type: "text", text: JSON.stringify({ taskId: ledger.taskId, root, secret }) }],
+        "[stage=post-tool-use; branch=non-object-response; result=unrecognized; response=array; blocks=1:text; text=json-object; text-keys=+other,root,taskId; text-task-id=uuid]"],
+      ["unflagged content wrapper", { content: [{ type: "text", text: sole }] },
+        "[stage=post-tool-use; branch=no-task-authority; result=unrecognized; response=object; keys=content; blocks=1:text; text=json-object; text-keys=taskId; text-task-id=uuid]"],
+      ["explicit success without structure", { isError: false, content: [{ type: "text", text: secret }, { type: "image", data: secret }] },
+        "[stage=post-tool-use; branch=no-task-authority; result=success; response=object; keys=content,isError; blocks=many:image,text; text=not-json]"],
+      ["structured payload without task", { isError: false, structuredContent: { root, [secret]: secret } },
+        "[stage=post-tool-use; branch=structured-without-task-id; result=success; response=object; keys=isError,structuredContent]"],
+      ["error flag", { isError: true, content: [{ type: "text", text: secret }] },
+        "[stage=post-tool-use; branch=error-flag; result=error; response=object; keys=content,isError; blocks=1:text; text=not-json]"],
+      ["invalid structure", { structuredContent: sole },
+        "[stage=post-tool-use; branch=invalid-structured-content; result=unrecognized; response=object; keys=structuredContent]"],
+      ["oversized text", JSON.stringify({ taskId: ledger.taskId, padding: secret.repeat(1024) }),
+        "[stage=post-tool-use; branch=non-object-response; result=unrecognized; response=string; text=oversized]"],
+      ["null", null,
+        "[stage=post-tool-use; branch=non-object-response; result=unrecognized; response=null]"]
+    ];
+    for (const [label, toolResponse, expected] of cases) {
+      const run = await runHook("post-tool-use", postInput({ turn_id: `turn-${label}`, tool_input: { mode: "search", query: secret }, tool_response: toolResponse }), pluginEnvironment(dataRoot));
+      expect(run.code, label).toBe(0);
+      expect(run.stdout.trim().split(/\r?\n/), label).toHaveLength(1);
+      expect(run.output, label).toEqual({
+        systemMessage: `TokenGraph found no task authority in the tool response; tracking was skipped. ${expected}`
+      });
+      for (const forbidden of [secret, ledger.taskId, root, dataRoot, "session-private-value", `turn-${label}`, "tool-1"]) {
+        expect(run.stdout, label).not.toContain(forbidden);
+      }
+      await expect(readdir(join(dataRoot, "sessions")), label).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    expect(await readFile(join(root, ".tokengraph", "tasks", `${ledger.taskId}.json`), "utf8")).toBe(ledgerBefore);
+    const stopped = await runHook("stop", stopInput(), pluginEnvironment(dataRoot));
+    expect(stopped.output).toEqual({ systemMessage: "TokenGraph session pointer is missing; lifecycle enforcement was skipped." });
+  });
+
+  it("keeps the worst-case response diagnostic inside the warning bound", async () => {
+    const root = await makeRoot("tokengraph-hook-diagnostic-bound-root-");
+    const dataRoot = await makeRoot("tokengraph-hook-diagnostic-bound-data-");
+    expect((await attestWorkspace(root, dataRoot)).output).toEqual({});
+    const allKeys = ["_meta", "content", "error", "isError", "is_error", "result", "root", "structuredContent", "structured_content", "taskId"];
+    const textObject = Object.fromEntries([...allKeys, "unlisted"].map((key) => [key, key === "taskId" ? "not-a-uuid" : 1]));
+    const response = {
+      ...Object.fromEntries(allKeys.map((key) => [key, 1])),
+      unlisted: 1,
+      content: [
+        { type: "text", text: JSON.stringify(textObject) },
+        ...["audio", "error", "image", "resource", "resource_link", "unlisted-type"].map((type) => ({ type }))
+      ]
+    };
+    const run = await runHook("post-tool-use", postInput({ tool_response: response }), pluginEnvironment(dataRoot));
+    const message = String(run.output.systemMessage);
+    expect(message.length).toBeLessThanOrEqual(512);
+    expect(message).toMatch(/\]$/);
+    expect(message).toContain("keys=+other,_meta,content,error,isError,is_error,result,root,structuredContent,structured_content,taskId");
+    expect(message).toContain("blocks=many:+other,audio,error,image,resource,resource_link,text");
+    expect(message).toContain("text-keys=+other,_meta,content,error,isError,is_error,result,root,structuredContent,structured_content,taskId; text-task-id=other]");
+    expect(message).not.toContain("unlisted");
+    expect(message).not.toContain("not-a-uuid");
   });
 
   it("does not create plugin-data state before root and ledger authority are valid", async () => {
