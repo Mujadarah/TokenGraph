@@ -1,0 +1,32 @@
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+      when: always
+    - when: never
+
+stages:
+  - test
+
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+  - template: Jobs/Dependency-Scanning.v2.gitlab-ci.yml
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+
+variables:
+  AST_ENABLE_MR_PIPELINES: "false"
+  GITLAB_ADVANCED_SAST_ENABLED: "true"
+  DS_MAX_DEPTH: "5"
+
+tokengraph-linux:
+  stage: test
+  image: node:22-bookworm
+  interruptible: true
+  timeout: 20m
+  script:
+    - cd plugins/tokengraph
+    - corepack enable
+    - corepack prepare pnpm@10.14.0 --activate
+    - pnpm install --frozen-lockfile
+    - pnpm typecheck
+    - pnpm build
+    - pnpm smoke -- --root . --json

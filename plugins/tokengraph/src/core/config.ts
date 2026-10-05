@@ -1,10 +1,12 @@
-import { copyFile, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 
 import { configPath, stateDir } from "./persistence.js";
-import { canonicalPersistenceLockKey, quarantineCorruptJson, withFileLock, writeJsonAtomic } from "./storage.js";
-import type { RoutingMode, TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
+import { canonicalPersistenceLock } from "./lockDomain.js";
+import { getLegacyRuntimeActivationStatus } from "./legacyRuntimeActivation.js";
+import { quarantineCorruptJson, withFileLock, writeJsonAtomic, writeTextAtomic } from "./storage.js";
+import type { RoutingMode, StorageWritePolicy, TokenGraphConfig, TokenGraphConfigUpdate, TokenSavingProfile } from "./types.js";
 
-export const CURRENT_CONFIG_SCHEMA_VERSION = 3;
+export const CURRENT_CONFIG_SCHEMA_VERSION = 4;
 
 export const PROFILE_DEFAULTS = {
   conservative: {
@@ -68,6 +70,7 @@ export const DEFAULT_TOKEN_GRAPH_CONFIG: TokenGraphConfig = {
     maxAliases: 500
   },
   storage: {
+    writePolicy: "balanced",
     maxBytes: 64 * 1024 * 1024,
     runsMaxBytes: 16 * 1024 * 1024,
     cacheMaxBytes: 32 * 1024 * 1024,
@@ -87,6 +90,10 @@ function isProfile(value: unknown): value is TokenSavingProfile {
 
 function isRoutingMode(value: unknown): value is RoutingMode {
   return value === "shadow" || value === "enforced" || value === "always-activate" || value === "always-advisory";
+}
+
+function isStorageWritePolicy(value: unknown): value is StorageWritePolicy {
+  return value === "minimal" || value === "balanced" || value === "durable";
 }
 
 function sanitizeNumber(value: unknown, fallback: number, min = 0): number {
@@ -145,6 +152,9 @@ function normalizeConfig(value: unknown, applyEnvironment = true): TokenGraphCon
       maxAliases: integer(nestedParser, "maxAliases", DEFAULT_TOKEN_GRAPH_CONFIG.parser.maxAliases, 0)
     },
     storage: {
+      writePolicy: isStorageWritePolicy((nestedStorage as { writePolicy?: unknown }).writePolicy)
+        ? (nestedStorage as { writePolicy: StorageWritePolicy }).writePolicy
+        : DEFAULT_TOKEN_GRAPH_CONFIG.storage.writePolicy,
       maxBytes: storageMaxBytes,
       runsMaxBytes: integer(nestedStorage, "runsMaxBytes", legacyStorageCaps.runsMaxBytes, 0),
       cacheMaxBytes: integer(nestedStorage, "cacheMaxBytes", legacyStorageCaps.cacheMaxBytes, 0),
@@ -181,59 +191,121 @@ function unwrapPersistedConfig(value: unknown): { config: unknown; needsMigratio
   return { config: value, needsMigration: true };
 }
 
+/** Pure decoder shared by diagnostics; never initializes or migrates state. */
+export function inspectTokenGraphConfig(value: unknown): { config: TokenGraphConfig; valid: boolean } {
+  const unwrapped = unwrapPersistedConfig(value);
+  const persisted = normalizeConfig(unwrapped.config, false);
+  return {
+    config: normalizeConfig(persisted),
+    valid: !unwrapped.needsMigration && JSON.stringify(unwrapped.config) === JSON.stringify(persisted)
+  };
+}
+
 export async function saveTokenGraphConfig(root: string, config: TokenGraphConfig): Promise<TokenGraphConfig> {
   const persisted = normalizeConfig(config, false);
-  const key = await canonicalPersistenceLockKey(root, ".tokengraph", "config.json");
-  await withFileLock(`${key}.lock`, () => writeJsonAtomic(configPath(root), {
+  const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+  await withFileLock(lock, () => writeJsonAtomic(configPath(root), {
     schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
     config: persisted
-  }));
+  }, { telemetry: { root, storageClass: "durable" } }));
   return normalizeConfig(persisted);
 }
 
-export async function loadTokenGraphConfig(root: string): Promise<TokenGraphConfig> {
+type ConfigSnapshot =
+  | { state: "missing"; config: TokenGraphConfig }
+  | { state: "corrupt"; config: TokenGraphConfig }
+  | { state: "valid"; config: TokenGraphConfig; persisted: TokenGraphConfig; rawBytes: string; needsRepair: boolean };
+
+async function readConfigSnapshot(root: string): Promise<ConfigSnapshot> {
+  let rawBytes: string;
   try {
-    const parsed = JSON.parse(await readFile(configPath(root), "utf8")) as unknown;
-    const unwrapped = unwrapPersistedConfig(parsed);
-    const persistedNormalized = normalizeConfig(unwrapped.config, false);
-    const normalized = normalizeConfig(persistedNormalized);
-    if (unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(persistedNormalized)) {
-      await copyFile(configPath(root), `${configPath(root)}.bak`).catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      });
-      await saveTokenGraphConfig(root, persistedNormalized);
-    }
-    return normalized;
+    rawBytes = await readFile(configPath(root), "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
+      return { state: "missing", config: normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG) };
     }
-    if (error instanceof SyntaxError) {
-      await quarantineCorruptJson(configPath(root));
-      return saveTokenGraphConfig(root, DEFAULT_TOKEN_GRAPH_CONFIG);
-    }
+    throw error;
+  }
+  try {
+    const unwrapped = unwrapPersistedConfig(JSON.parse(rawBytes) as unknown);
+    const persisted = normalizeConfig(unwrapped.config, false);
+    return {
+      state: "valid",
+      config: normalizeConfig(persisted),
+      persisted,
+      rawBytes,
+      needsRepair: unwrapped.needsMigration || JSON.stringify(unwrapped.config) !== JSON.stringify(persisted)
+    };
+  } catch (error) {
+    if (error instanceof SyntaxError) return { state: "corrupt", config: normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG) };
     throw error;
   }
 }
 
+async function persistConfigLocked(root: string, persisted: TokenGraphConfig): Promise<void> {
+  await writeJsonAtomic(configPath(root), {
+    schemaVersion: CURRENT_CONFIG_SCHEMA_VERSION,
+    config: persisted
+  }, { telemetry: { root, storageClass: "durable" } });
+}
+
+async function repairConfigSnapshotLocked(root: string, snapshot: ConfigSnapshot): Promise<TokenGraphConfig> {
+  if (snapshot.state === "missing") {
+    const reread = await readConfigSnapshot(root);
+    if (reread.state !== "missing") return repairConfigSnapshotLocked(root, reread);
+    const persisted = normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG, false);
+    await persistConfigLocked(root, persisted);
+    return normalizeConfig(persisted);
+  }
+  if (snapshot.state === "corrupt") {
+    const reread = await readConfigSnapshot(root);
+    if (reread.state !== "corrupt") return repairConfigSnapshotLocked(root, reread);
+    await quarantineCorruptJson(configPath(root));
+    const persisted = normalizeConfig(DEFAULT_TOKEN_GRAPH_CONFIG, false);
+    await persistConfigLocked(root, persisted);
+    return normalizeConfig(persisted);
+  }
+  if (snapshot.needsRepair) {
+    await writeTextAtomic(`${configPath(root)}.bak`, snapshot.rawBytes, { telemetry: { root, storageClass: "durable" } });
+    await persistConfigLocked(root, snapshot.persisted);
+  }
+  return snapshot.config;
+}
+
+export async function loadTokenGraphConfig(root: string): Promise<TokenGraphConfig> {
+  const initial = await readConfigSnapshot(root);
+  if (!getLegacyRuntimeActivationStatus().activated) return initial.config;
+  if (initial.state === "valid" && !initial.needsRepair) return initial.config;
+  const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+  return withFileLock(lock, async () => repairConfigSnapshotLocked(root, await readConfigSnapshot(root)));
+}
+
 export async function setTokenSavingProfile(root: string, profile: TokenSavingProfile): Promise<TokenGraphConfig> {
-  const config = await loadTokenGraphConfig(root);
-  return saveTokenGraphConfig(root, { ...config, tokenSavingProfile: profile });
+  return updateTokenGraphConfig(root, { tokenSavingProfile: profile });
 }
 
 export async function updateTokenGraphConfig(root: string, update: TokenGraphConfigUpdate): Promise<TokenGraphConfig> {
-  const config = await loadTokenGraphConfig(root);
-  const merged = {
-    ...config,
-    ...update,
-    routing: { ...config.routing, ...(update.routing ?? {}) },
-    parser: { ...config.parser, ...(update.parser ?? {}) },
-    storage: { ...config.storage, ...(update.storage ?? {}) },
-    runner: { ...config.runner, ...(update.runner ?? {}) },
-    memory: { ...config.memory, ...(update.memory ?? {}) },
-    responseFormat: { ...config.responseFormat, ...(update.responseFormat ?? {}) },
-    ...(update.routing?.mode === undefined ? {} : { routingMode: update.routing.mode }),
-    ...(update.routing?.killSwitch === undefined ? {} : { routingKillSwitch: update.routing.killSwitch })
-  };
-  return saveTokenGraphConfig(root, merged);
+  const lock = await canonicalPersistenceLock(root, "workspace-state", "config.json");
+  return withFileLock(lock, async () => {
+    const snapshot = await readConfigSnapshot(root);
+    const config = snapshot.config;
+    if (snapshot.state === "corrupt") await quarantineCorruptJson(configPath(root));
+    else if (snapshot.state === "valid" && snapshot.needsRepair) {
+      await writeTextAtomic(`${configPath(root)}.bak`, snapshot.rawBytes, { telemetry: { root, storageClass: "durable" } });
+    }
+    const merged = normalizeConfig({
+      ...config,
+      ...update,
+      routing: { ...config.routing, ...(update.routing ?? {}) },
+      parser: { ...config.parser, ...(update.parser ?? {}) },
+      storage: { ...config.storage, ...(update.storage ?? {}) },
+      runner: { ...config.runner, ...(update.runner ?? {}) },
+      memory: { ...config.memory, ...(update.memory ?? {}) },
+      responseFormat: { ...config.responseFormat, ...(update.responseFormat ?? {}) },
+      ...(update.routing?.mode === undefined ? {} : { routingMode: update.routing.mode }),
+      ...(update.routing?.killSwitch === undefined ? {} : { routingKillSwitch: update.routing.killSwitch })
+    }, false);
+    await persistConfigLocked(root, merged);
+    return normalizeConfig(merged);
+  });
 }

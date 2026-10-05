@@ -512,14 +512,14 @@ function lifecycleWire(
   wire: unknown,
   taskId: string,
   options: { logicalRoot?: string } = {}
-): { content: Array<{ type: "text"; text: string }> } {
+): { content: Array<{ type: "text"; text: string }>; structuredContent: { taskId: string } } {
   if (!isRecord(wire) || !Array.isArray(wire.content) || wire.content.length !== 1 || !isRecord(wire.content[0]) || typeof wire.content[0].text !== "string") {
     throw new Error("A benchmark intent must return exactly one serialized JSON TextContent item.");
   }
   const parsed = JSON.parse(wire.content[0].text) as unknown;
   if (!isRecord(parsed)) throw new Error("A benchmark intent result must serialize a JSON object.");
   const payload = { ...parsed, ...(options.logicalRoot ? { root: options.logicalRoot } : {}), taskId };
-  return compactToolResultEnvelope(payload);
+  return { ...compactToolResultEnvelope(payload), structuredContent: { taskId } };
 }
 
 function normalizePredicate(text: string): string {
@@ -778,7 +778,13 @@ export async function evaluateBenchmark(value: unknown, fixtureRoot: string) {
   const tools = coreToolsListDefinitions();
   const discoveryRequest = { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} };
   const discoveryResponse = { tools };
-  const setupRequest = { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "tokengraph_setup", arguments: {} } };
+  // tokengraph_setup requires the literal confirmation argument, so the modeled
+  // session must carry it or the benchmark accounts for a request the server
+  // would reject.
+  const setupRequest = {
+    jsonrpc: "2.0", id: 2, method: "tools/call",
+    params: { name: "tokengraph_setup", arguments: { confirmNoLegacyProcesses: true } }
+  };
   const setupResponse = compactToolResultEnvelope({
     status: "ready", host: "unknown", trustedWorkspace: { source: "injected", root: "tests/fixtures/evidence-project" },
     blockingReason: null, pluginRootLaunch: false, message: "TokenGraph has a safe host-provided workspace boundary.", nextSteps: [],

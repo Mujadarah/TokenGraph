@@ -7,6 +7,10 @@ import { resolveConfinedPath } from "./storage.js";
 import { classifyTask } from "./taskClassifier.js";
 import type { CodeFile, CodeSymbol, EvidenceStatement, ProjectIndex, TaskType } from "./types.js";
 
+export const EXACT_SLICE_MAX_BYTES = 64 * 1024;
+export const EXACT_SLICE_MAX_SOURCE_BYTES = 512 * 1024;
+export const EXACT_SLICE_MAX_LINES = 500;
+
 type FileStatement = Pick<CodeFile, "path" | "kind" | "language" | "estimatedTokens" | "contentHash"> & EvidenceStatement;
 type SymbolStatement = Pick<CodeSymbol, "name" | "kind" | "filePath" | "exported" | "startLine" | "endLine"> & EvidenceStatement;
 type ReferenceStatement = { path: string } & EvidenceStatement;
@@ -162,8 +166,8 @@ export function capsuleArtifact(capsule: RetrievalCapsule): StableArtifact<Retri
   return createStableArtifact("capsule/retrieval", capsule, 5);
 }
 
-export async function readExactSlice(root: string, path: string, startLine: number, endLine: number, maxBytes = 64 * 1024, expectedContentHash?: string, maxSourceBytes = 512 * 1024): Promise<{ path: string; startLine: number; endLine: number; text: string; hash: string; contentHash: string }> {
-  if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine - startLine > 500) throw new Error("Exact slice line bounds are invalid.");
+export async function readExactSlice(root: string, path: string, startLine: number, endLine: number, maxBytes = EXACT_SLICE_MAX_BYTES, expectedContentHash?: string, maxSourceBytes = EXACT_SLICE_MAX_SOURCE_BYTES): Promise<{ path: string; startLine: number; endLine: number; text: string; hash: string; contentHash: string }> {
+  if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine - startLine > EXACT_SLICE_MAX_LINES) throw new Error("Exact slice line bounds are invalid.");
   if (!Number.isInteger(maxSourceBytes) || maxSourceBytes < 1) throw new Error("Exact slice source byte limit is invalid.");
   const filePath = await resolveConfinedPath(root, path);
   const handle = await open(filePath, "r");

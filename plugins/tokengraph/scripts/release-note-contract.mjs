@@ -14,9 +14,11 @@ export function renderReleaseNotes(version) {
   const resolvedVersion = assertReleaseVersion(version);
   return `TokenGraph ${resolvedVersion} release notes.
 
-Automated release built from the tagged commit. The attached ZIP and SHA-256 checksum were produced by CI.
+Automated release built from the tagged commit. CI produces the installable ZIP, checksum files, SPDX JSON, and keyless Sigstore bundles, verifies the signatures before upload, and records GitHub build-provenance and SBOM attestations.
 
-Reviewed schema-v3 campaigns now cover three repositories, three categories, 15 paired runs, and 30 accepted traces. The multi-repository coverage target is met, but the frozen promotion gates do not all pass.
+Native file locking ships for six Windows, macOS, and glibc Linux targets. Doctor remains read-only, low-write telemetry stays local and content-free, and change capsules derive only from local Git state and bounded target content.
+
+Plugin Eval scenarios and the existing paired-host and deterministic benchmark tracks remain release evidence, not universal quality or token-savings claims.
 
 Current release contract:
 B7 polyglot indexing is active by default and independent of routing promotion.

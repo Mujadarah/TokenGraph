@@ -204,8 +204,8 @@ Status: complete
 Status: complete
 
 - Task ledgers produce one canonical, uncertainty-aware completion footer; cooperative PostToolUse/Stop hooks request missing reports or footers without looping.
-- The default MCP surface is eight intent-level tools, with 42 tools on the opt-in full compatibility surface.
-- JSON-only success results use one serialized JSON text item, while project-map resource links keep their documented structured exception.
+- The default MCP surface is eight intent-level tools, with 43 tools on the opt-in full compatibility surface.
+- JSON-only success results use one serialized JSON text item. Task-creating core calls also expose only their task id as structured lifecycle authority, while project-map resource links keep their documented structured exception.
 - Source-linked wiki and memory proposals require review and explicit approval before application, rechecking provenance and expiry.
 - The v0.20 routing-lifecycle evidence benchmark preserved 100% constraint preservation, zero critical false negatives, and 100% recall; its historical fixture claims are retained as evidence rather than release eligibility.
 - Deterministic v0.20 release packaging includes nine skills, the MCP and hook bundles, both host manifests, and a standalone marketplace archive.
@@ -224,7 +224,7 @@ Status: complete
 - R4.4 is complete as an evidence milestone, not a promotion: the first reviewed real-host run records five successful ON/OFF pairs, but enforcement remains disabled because every frozen gate did not pass. One repository does not satisfy multi-repository B6 validation.
 - The standalone release packages `web-tree-sitter@0.26.11` with pinned Python, Go, Rust, and Java grammar WASM assets and asserts zero workspace execution.
 - v0.21.0 benchmark claims use the checked-in artifact: routing median net savings 5.7 tokens and execution-inclusive median net savings -94.3 tokens, with 19/30 execution-inclusive tasks non-positive. The frozen execution-inclusive release gate failed; no corrective tag or publication was made, and these are measured fixture results rather than universal savings guarantees.
-- The current v0.21.1 fixture artifact passes the deterministic release gate: 27 activated tasks, three unbooked Stage-0 bypasses, a +174.5-token execution-inclusive median, +40.5-token p25, 81.5% non-negative activated tasks, 100% constraint preservation and recall, and zero critical false negatives. The separate reviewed real-host report is non-promoting, so enforced routing and B7 activation remain disabled.
+- The current v0.25.0 fixture artifact passes the deterministic release gate: 27 activated tasks, three unbooked Stage-0 bypasses, a +162.3-token execution-inclusive median, +39.3-token p25, 81.5% non-negative activated tasks, 100% constraint preservation and recall, and zero critical false negatives. The separate reviewed real-host report is non-promoting, so enforced routing remains disabled; B7 polyglot indexing is independently active by default.
 
 ## v0.22 - Evidence And Release Closeout
 
@@ -243,6 +243,28 @@ Status: complete
 - Every active graph, memory, config, wiki, task, and repository record is owned by the opened workspace under `.tokengraph/`. Valid legacy `.git/tokengraph/` JSON records migrate once with workspace data winning conflicts; the legacy directory remains as a recoverable backup.
 - B7 bounded Python, Go, Rust, and Java parsing is active independently of B6 routing promotion. `parser.polyglotEnabled` defaults to `true` and is an explicit project-local kill switch; routing remains shadow-only until its separate evidence gates pass.
 - The implementation tracker and evidence contract are recorded in [`docs/plans/2026-07-28-tokengraph-v023-portability.md`](docs/plans/2026-07-28-tokengraph-v023-portability.md).
+
+## v0.24 - Durable Local Runtime Foundation
+
+Status: implementation complete; release verification deferred to the v0.25 integration
+
+- Six-target native locking, crash recovery, strict identity checks, and the decided POSIX lock-directory mode boundary replace the former process-local persistence lock.
+- Memory-use timestamps coalesce to daily writes, write chains release settled entries, and bounded local aggregates describe logical and measurable physical write amplification without paths or content.
+- Indexes publish immutable generations through an atomic manifest, retain recoverable prior generations, and never weaken Windows or POSIX durability behavior to write in place.
+- A read-only doctor reports workspace trust, activation, native assets, parsers, persistence, hooks, and storage state without granting trust, activating locks, or repairing state.
+- The nine public skills keep their names while delegating shared setup, retrieval, reporting, and fallback behavior to one compact router.
+- The release workflow produces checksums, an SPDX JSON SBOM, keyless Sigstore bundles, and GitHub provenance and SBOM attestations for tagged artifacts.
+
+## v0.25 - Local Change Evidence And Measured Evaluation
+
+Status: source implementation complete; release gates pending
+
+- `tokengraph_analyze` can build bounded, stable risk capsules from local working-tree, staged, commit, range, and pull-request-ref changes without fetching from a remote.
+- Change capsules use target revision bytes for symbols and exact slices, link affected files, routes, SQL, rules, risks, and recommended tests, and enforce aggregate entry, symbol, slice, and byte limits.
+- Six tracked Plugin Eval scenarios cover setup, compact retrieval, local change analysis, SQL architecture, compression, and memory workflows through a deterministic verifier and TokenGraph metric pack.
+- Plugin Eval complements rather than replaces the deterministic 30-task fixture benchmark and paired-host evidence. Routing remains shadow-only because its independent promotion gates have not all passed.
+- The repository has no canonical terms-of-service URL. The v0.25 source integration explicitly accepts the external evaluator warning rather than inventing a URL or repurposing the privacy policy.
+- Merge, tag, and publication remain blocked on the complete generated-release, live evaluation, managed-runtime, ZIP, checksum, SBOM, signature, attestation, and independent-review gates.
 
 ## Later
 

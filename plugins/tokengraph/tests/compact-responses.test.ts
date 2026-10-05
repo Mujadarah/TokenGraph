@@ -6,6 +6,7 @@ import {
   compactCompressionResponse,
   compactFailureResponse,
   compactPlanResponse,
+  compactPrepareEnvelope,
   compactRecallResponse,
   compactRiskResponse,
   compactWikiResponse
@@ -66,7 +67,7 @@ describe("compact MCP response projections", () => {
       ],
       firstReads: [0],
       tests: ["services/patientService.test.ts"],
-      commands: ["pnpm test services/patientService.test.ts"],
+      commands: [],
       confidence: "high",
       warnings: ["One lower-ranked file was excluded."]
     });
@@ -75,6 +76,44 @@ describe("compact MCP response projections", () => {
     expect(JSON.stringify(compact)).not.toContain("src/unrelated.ts");
     const verbatim = ["  Preserve indentation exactly.  "];
     expect(compactPlanResponse(verbose, { constraints: verbatim }).constraints).toEqual(verbatim);
+  });
+
+  it("keeps up to three strongest first reads plus focused tests", () => {
+    const plan = {
+      task: "Change the patient service and its focused test",
+      budget: { allowRawReads: true },
+      relevantFiles: [],
+      relevantTests: [{ path: "services/patientService.test.ts", reason: "Focused test.", score: 9 }],
+      relevantSql: [],
+      recommendedFirstReads: [
+        { path: "services/patientService.ts", reason: "Primary implementation.", score: 20 },
+        { path: "src/audit.ts", reason: "Direct dependency.", score: 15 },
+        { path: "src/unrelated.ts", reason: "Lower ranked.", score: 1 }
+      ],
+      budgetExclusions: ["2 lower-ranked file(s) excluded by profile or explicit file budget."],
+      rawReadPolicy: "Targeted reads."
+    } as never;
+
+    expect(compactPlanResponse(plan)).toMatchObject({
+      files: [
+        { path: "services/patientService.ts" },
+        { path: "src/audit.ts" },
+        { path: "src/unrelated.ts" },
+        { path: "services/patientService.test.ts", reason: "Focused test." }
+      ],
+      warnings: ["2 omitted."]
+    });
+  });
+
+  it("omits an empty artifact-delivery list from compact prepare output", () => {
+    const output = compactPrepareEnvelope({
+      root: "C:/fixture",
+      taskId: "00000000-0000-4000-8000-000000000001",
+      plan: { files: [] },
+      deliveredArtifacts: []
+    });
+    expect(output).not.toHaveProperty("deliveredArtifacts");
+    expect(output).not.toHaveProperty("mode");
   });
 
   it("does not project SQL into a non-database plan and keeps only the strongest SQL file for focused database work", () => {

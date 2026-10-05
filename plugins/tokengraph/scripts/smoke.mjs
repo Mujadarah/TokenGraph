@@ -13,7 +13,7 @@ const coreToolNames = [
 const legacyToolNames = [
   "tokengraph_add_rule", "tokengraph_assess_change_risk", "tokengraph_check_architecture", "tokengraph_compress_context",
   "tokengraph_compress_output", "tokengraph_confirm_memory", "tokengraph_delete_memory", "tokengraph_delete_rule",
-  "tokengraph_deprecate_memory", "tokengraph_explain_symbol", "tokengraph_export_project_map", "tokengraph_find_memory_conflicts",
+  "tokengraph_deprecate_memory", "tokengraph_doctor", "tokengraph_explain_symbol", "tokengraph_export_project_map", "tokengraph_find_memory_conflicts",
   "tokengraph_generate_wiki", "tokengraph_get_config", "tokengraph_index_project", "tokengraph_index_status",
   "tokengraph_link_memory", "tokengraph_list_rules", "tokengraph_plan_context", "tokengraph_project_map",
   "tokengraph_recall_memory", "tokengraph_remember_decision", "tokengraph_reset_project", "tokengraph_review_memories",
@@ -145,13 +145,22 @@ class JsonRpcClient {
 
   async close() {
     if (this.child.exitCode !== null) return;
-    await new Promise((resolveClose) => {
-      const timeout = setTimeout(resolveClose, 1000);
-      this.child.once("exit", () => {
-        clearTimeout(timeout);
-        resolveClose();
-      });
-      this.child.kill();
+    this.child.stdin.end();
+    if (await this.waitForExit(1000)) return;
+    if (!this.child.kill() && this.child.exitCode === null) {
+      throw new Error("Timed out waiting for the MCP server process to exit cleanly.");
+    }
+    if (await this.waitForExit(5000)) return;
+    throw new Error("Timed out waiting for the MCP server process to exit cleanly.");
+  }
+
+  async waitForExit(timeoutMs) {
+    if (this.child.exitCode !== null) return true;
+    return await new Promise((resolveExit) => {
+      const timeout = setTimeout(() => { cleanup(); resolveExit(false); }, timeoutMs);
+      const onExit = () => { cleanup(); resolveExit(true); };
+      const cleanup = () => { clearTimeout(timeout); this.child.off("exit", onExit); };
+      this.child.once("exit", onExit);
     });
   }
 }
@@ -168,9 +177,24 @@ function assertToolResult(result, toolName) {
   if (result?.isError) {
     throw new Error(`${toolName} returned an MCP tool error: ${compactJson(result)}`);
   }
-  if (result?.structuredContent) return result.structuredContent;
-  const text = result?.content?.find((item) => item?.type === "text")?.text;
-  return text ? JSON.parse(text) : {};
+  const texts = result?.content?.filter((item) => item?.type === "text") ?? [];
+  if (texts.length !== 1 || typeof texts[0].text !== "string") {
+    throw new Error(`${toolName} must return one JSON text result.`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(texts[0].text);
+  } catch {
+    throw new Error(`${toolName} returned invalid JSON text.`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${toolName} returned a non-object JSON text result.`);
+  }
+  if (result.structuredContent &&
+      (typeof result.structuredContent.taskId !== "string" || result.structuredContent.taskId !== parsed.taskId)) {
+    throw new Error(`${toolName} structured task authority disagrees with JSON text.`);
+  }
+  return parsed;
 }
 
 async function runSmoke() {
@@ -207,7 +231,7 @@ async function runSmoke() {
     }
 
     const setup = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_setup", arguments: {} }),
+      await client.request("tools/call", { name: "tokengraph_setup", arguments: { confirmNoLegacyProcesses: true } }),
       "tokengraph_setup"
     );
     const prepared = assertToolResult(
@@ -217,6 +241,12 @@ async function runSmoke() {
       }),
       "tokengraph_prepare_context"
     );
+    if (typeof prepared.taskId !== "string" || !prepared.taskId ||
+        typeof prepared.index?.previousStatus !== "string" ||
+        typeof prepared.plan?.profile !== "string" ||
+        !Array.isArray(prepared.plan?.recommendedFirstReads)) {
+      throw new Error("tokengraph_prepare_context returned an incomplete JSON text plan.");
+    }
     const overview = assertToolResult(
       await client.request("tools/call", { name: "tokengraph_query_context", arguments: { root, taskId: prepared.taskId, mode: "overview" } }),
       "tokengraph_query_context"
@@ -244,9 +274,14 @@ async function runSmoke() {
       "tokengraph_propose_knowledge"
     );
     const completed = assertToolResult(
-      await client.request("tools/call", { name: "tokengraph_task_report", arguments: { root, taskId: prepared.taskId, disposition: "complete" } }),
+      await client.request("tools/call", { name: "tokengraph_task_report", arguments: { root, taskId: prepared.taskId, disposition: "complete", responseMode: "verbose" } }),
       "tokengraph_task_report"
     );
+    if (completed.status !== "completed" || completed.taskId !== prepared.taskId ||
+        !/^TokenGraph: ~.+ tokens saved \(estimated, (?:low|medium|high) confidence\); quality .+\.$/u.test(completed.footer) ||
+        !Number.isSafeInteger(completed.report?.eventCount) || completed.report.eventCount < 1) {
+      throw new Error("tokengraph_task_report did not return a valid completion report.");
+    }
 
     return {
       status: "ok",
@@ -264,7 +299,7 @@ async function runSmoke() {
       memoriesReviewed: memoryReview.totalMemories ?? memoryReview.result?.totalMemories ?? 0,
       architectureStatus: analysis.status ?? analysis.result?.status ?? "unknown",
       knowledgeSuggestions: knowledge.suggestions?.length ?? 0,
-      taskEventCount: completed.report?.eventCount ?? 0,
+      taskEventCount: completed.report.eventCount,
       wikiPageSlugs: [],
       wikiStatus: prepared.wikiStatus?.state ?? "missing"
     };

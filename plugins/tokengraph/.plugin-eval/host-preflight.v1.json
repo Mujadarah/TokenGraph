@@ -1,0 +1,10 @@
+{
+  "kind": "tokengraph-plugin-eval-host-preflight",
+  "schemaVersion": 1,
+  "harnessVersion": 1,
+  "pluginEvalVersion": "0.1.2",
+  "provisionerSha256": "ae3a2c8b686cdd6db3d56350629a47e36d83a6818a90ae36f96ef37245ea6d0f",
+  "codexCliVersion": "0.159.2",
+  "marketplaceName": "plugin-eval-benchmark",
+  "pluginId": "tokengraph@plugin-eval-benchmark"
+}

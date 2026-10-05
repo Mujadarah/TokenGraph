@@ -12,7 +12,7 @@ Independent task inputs, raw-baseline files, memories, and reproducible expected
 
 One benchmark session measures the actual eight core `tools/list` definitions and one `tokengraph_setup` request/result exactly once, then amortizes that cost across all 30 tasks. Built-in raw-reader schemas are excluded because the comparison assumes the same host and they cancel on both sides.
 
-Every activated task contains exactly one intent call and one `tokengraph_task_report` call. Planner tasks use `tokengraph_prepare_context`. Debugging uses a real bounded CLI-runner capture followed by `tokengraph_analyze`; compression uses a runner capture followed by `tokengraph_compress`; change-risk uses direct `tokengraph_analyze`; memory/wiki uses one direct review-mode `tokengraph_recall`. Direct intents omit `taskId`, auto-start the ledger, and return the task id consumed by the report. Each JSON-RPC response contains exactly one serialized JSON `TextContent` item. The compact report contains `status`, `taskId`, `footer`, and `reportingStatus`; verbose report internals are not part of the default benchmark path.
+Every activated task contains exactly one intent call and one `tokengraph_task_report` call. Planner tasks use `tokengraph_prepare_context`. Debugging uses a real bounded CLI-runner capture followed by `tokengraph_analyze`; compression uses a runner capture followed by `tokengraph_compress`; change-risk uses direct `tokengraph_analyze`; memory/wiki uses one direct review-mode `tokengraph_recall`. Direct intents omit `taskId`, auto-start the ledger, and return the task id consumed by the report. Each JSON-RPC response contains exactly one serialized JSON `TextContent` item. Task-creating core responses additionally carry minimal `structuredContent: { taskId }` lifecycle authority, which the benchmark charges without duplicating the full result. The compact report contains `status`, `taskId`, `footer`, and `reportingStatus`; verbose report internals are not part of the default benchmark path.
 
 ## Accounting
 
@@ -38,7 +38,7 @@ The frozen release gate uses execution-inclusive savings as the primary metric a
 - nearest-rank execution-inclusive p25 is non-negative; and
 - at least 80% of activated tasks have non-negative execution-inclusive savings.
 
-Task-level failures, bypasses, and the full execution-inclusive distribution remain visible. The current fixture passes with a +174.5-token activated-task median, +40.5-token p25, and 81.5% non-negative activated tasks after charging four hash-validated exact source slices. This deterministic gate does not by itself enable enforced routing; B6 promotion requires schema-v3 host evidence to be reviewed, Stage-0 median latency both below activation median and at most 5 ms, and every other paired-evaluation gate. Schema-v1 and schema-v2 evidence remains historical and non-promoting.
+Task-level failures, bypasses, and the full execution-inclusive distribution remain visible. The current fixture passes with a +162.3-token activated-task median, +39.3-token p25, and 81.5% non-negative activated tasks after charging four hash-validated exact source slices and minimal structured task authority. This deterministic gate does not by itself enable enforced routing; B6 promotion requires schema-v3 host evidence to be reviewed, Stage-0 median latency both below activation median and at most 5 ms, and every other paired-evaluation gate. Schema-v1 and schema-v2 evidence remains historical and non-promoting.
 
 ## Calibration and claim boundary
 

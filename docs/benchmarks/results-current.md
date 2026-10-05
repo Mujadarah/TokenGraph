@@ -9,29 +9,29 @@ pnpm benchmark -- --json
 The current deterministic `evidence-v1` corpus produces:
 
 - Tasks: 30 across seven categories; every category has four or five observations.
-- Exact core discovery plus setup: 2,354 estimated tokens total, or 78.5 amortized per task.
+- Exact core discovery plus setup: 2,572 estimated tokens total, or 85.7 amortized per task.
 - Critical-constraint preservation: 100% under polarity-safe exact normalized predicates.
 - Critical false negatives: 0.
 - Required-file recall: 100% against the checked-in 0.85 baseline.
 - Forbidden false positives: 0; missing expected-test recommendations: 0.
 - Baseline: category-appropriate acquisition. Code, SQL, risk, memory, and release tasks use an already-minimal expert selection of raw reads; debugging and compression use the real noisy command output captured by the runner.
 - Routing: 27 tasks activate TokenGraph and three bounded tasks bypass at Stage 0, including the exact file-and-line debugging task. Against independent fixture truth labels, false-bypass and false-activation rates are both 0/27 and 0/3 respectively. All 30 shadow observations and per-category coverage remain published in `results-current.json`. Bypasses are not booked as savings.
-- Delta delivery: the default no-handshake assumption resends 6,288 estimated tokens and books zero delta savings. When the host explicitly confirms every prior `id@hash`, the same fixture delivers 846 tokens and measures 5,442 estimated tokens saved. The handshake scenario is reported separately and is not part of the release-gate savings.
+- Delta delivery: the default no-handshake assumption resends 5,978 estimated tokens and books zero delta savings. When the host explicitly confirms every prior `id@hash`, the same fixture delivers 846 tokens and measures 5,132 estimated tokens saved. The handshake scenario is reported separately and is not part of the release-gate savings.
 - Exact implementation evidence: four edit/debug tasks perform one hash-validated source slice each, charging four targeted-read calls and 711 estimated tokens in total.
-- Primary execution-inclusive median: +174.5 tokens; nearest-rank 25th percentile: +40.5; 22 of 27 activated tasks are non-negative (81.5%).
+- Primary execution-inclusive median: +162.3 tokens; median before execution overhead: +170.3; nearest-rank 25th percentile: +39.3; 22 of 27 activated tasks are non-negative (81.5%).
 - Frozen execution-inclusive release gate: pass.
 
-Execution-inclusive category results (bypassed tasks remain visible at zero but are excluded from activated-task gates):
+Execution-inclusive category results (bypassed tasks remain visible with their modeled economics but are excluded from activated-task gates):
 
 | Category | Median | Non-positive |
 |---|---:|---:|
-| Code routing | 40.5 | 2/5 (both bypassed) |
-| SQL/security | 236.5 | 0/5 |
-| Debugging | 797.5 | 0/4 |
-| Change risk | 9.0 | 2/4 |
-| Compression | 1035.5 | 0/4 |
-| Memory/wiki | -210.0 | 3/4 |
-| Release packaging | 178.5 | 0/4 |
+| Code routing | 6.3 | 2/5 (both bypassed) |
+| SQL/security | 235.3 | 0/5 |
+| Debugging | 762.8 | 0/4 |
+| Change risk | -15.2 | 2/4 |
+| Compression | 1011.3 | 0/4 |
+| Memory/wiki | -235.2 | 3/4 |
+| Release packaging | 166.3 | 0/4 |
 
 The release gate treats execution-inclusive savings as the primary eligibility metric. Exact source slices are charged only for the four checked-in tasks whose natural implementation outcome requires a hash-bound source span; other tasks do not fabricate reads after compact evidence is sufficient. Negative tails remain visible, especially in memory/wiki and change-risk tasks.
 
@@ -100,12 +100,45 @@ execution p25, and the 80% non-negative threshold. See the checked
 The multi-repository B6 coverage target is now met: three repositories, three
 categories, fifteen pairs, thirty accepted traces, and no retained failure in
 the eligible manifests. The frozen promotion gates still do not all pass, so
-routing remains in shadow mode and B7 polyglot indexing remains dark.
+routing remains in shadow mode. B7 polyglot indexing is independently active
+by default and is not a routing-promotion signal.
 
 Every category remains low-confidence and does not activate calibration. These are repeatable fixture estimates, not exact billed tokens, autonomous-agent patch-quality evidence, or universal Codex/Claude results.
 
 2026-07-19 accounting note: these current results were regenerated after the estimator began charging the category-qualified completion footer. This is a deterministic accounting update; it does not add host evaluation evidence or change the R4 routing-promotion state.
 
 2026-07-19 R4 accounting note: the corpus now charges four exact source slices on edit/debug tasks and treats the explicit file-and-line debugging task as a Stage-0 bypass. The execution-inclusive median moved from +183.5 to +174.5 estimated tokens and p25 from +91.5 to +40.5; 22 of 27 activated tasks remain non-negative. These are deterministic fixture estimates, not real-host promotion evidence.
+
+2026-08-12 setup-request correction: the modeled session previously called
+`tokengraph_setup` with empty arguments even though the tool schema requires
+the literal `confirmNoLegacyProcesses` confirmation, so the published artifact
+accounted for a request the server would reject. The corrected request adds
+sixty-eight amortized estimated tokens per session, moving the
+execution-inclusive median from +174.5 to +172.3, the net-savings median from
++182.5 to +180.3, and p25 from +40.5 to +38.3. Per-category medians in the
+table above were recomputed from the corrected model at the same time; the
+previous table also carried values that predated the current corpus. The
+frozen release gate still passes. The 2026-07-19 note above remains accurate
+as history and is unchanged.
+
+2026-08-12 rollout-warning accounting note: the setup schema now advertises
+the required mixed-runtime boundary in the actual MCP tool definition. The
+compact warning raises exact discovery-plus-setup accounting from 2,354 to
+2,414 estimated tokens, or from 78.5 to 80.5 amortized per task. Recomputing
+the unchanged corpus moves the execution-inclusive median from +172.3 to
++172.5, net-savings median from +180.3 to +180.5, and p25 from +38.3 to +38.5;
+22 of 27 activated tasks remain non-negative and the frozen gate still passes.
+The preceding correction note is retained unchanged as historical evidence.
+
+2026-09-20 task-authority and publication correction: task-creating core
+responses now expose only `{ taskId }` as structured lifecycle authority while
+retaining the complete result in one JSON `TextContent` item. The deterministic
+model charges that response field and the current compact schemas and response
+shapes. A canonical publisher now derives `results-current.json` from the
+fixture run plus checked schema-v3 host manifests instead of relying on manual
+numeric transcription. The current execution-inclusive median is +162.3,
+median before execution overhead is +170.3, p25 is +39.3, and 22 of 27
+activated tasks remain non-negative. The frozen gate still passes. The dated
+July and August notes above remain unchanged as historical evidence.
 
 The checked-in JSON-versus-tabular format experiment is negative: the tabular candidate did not improve token usage and quality simultaneously, so JSON remains the public default. See `docs/benchmarks/format-experiment.json`.

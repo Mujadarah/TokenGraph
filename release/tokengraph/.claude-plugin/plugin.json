@@ -1,6 +1,6 @@
 {
   "name": "tokengraph",
-  "version": "0.23.1",
+  "version": "0.25.0",
   "description": "Reduce wasted coding-agent context with local code, SQL, memory, and log routing.",
   "author": {
     "name": "Mujadarah",
