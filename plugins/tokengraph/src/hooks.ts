@@ -527,20 +527,89 @@ function errorShaped(response: Record<string, unknown>, payload: Record<string, 
   return Array.isArray(response.content) && response.content.some((item) => isRecord(item) && item.type === "error");
 }
 
-function successfulResponse(response: unknown): { successful: boolean; payload?: Record<string, unknown> } {
-  if (!isRecord(response)) return { successful: false };
+type ResponseRejection = "non-object-response" | "error-flag" | "invalid-error-flag" | "invalid-structured-content" | "conflicting-structured-content" | "error-shaped";
+
+function successfulResponse(response: unknown):
+  { successful: true; payload?: Record<string, unknown> } | { successful: false; rejection: ResponseRejection } {
+  if (!isRecord(response)) return { successful: false, rejection: "non-object-response" };
   for (const alias of ["isError", "is_error"] as const) {
-    if (Object.hasOwn(response, alias) && (typeof response[alias] !== "boolean" || response[alias] !== false)) return { successful: false };
+    if (Object.hasOwn(response, alias) && (typeof response[alias] !== "boolean" || response[alias] !== false)) {
+      return { successful: false, rejection: response[alias] === true ? "error-flag" : "invalid-error-flag" };
+    }
   }
   const hasCamel = Object.hasOwn(response, "structuredContent");
   const hasSnake = Object.hasOwn(response, "structured_content");
-  if ((hasCamel && !isRecord(response.structuredContent)) || (hasSnake && !isRecord(response.structured_content))) return { successful: false };
+  if ((hasCamel && !isRecord(response.structuredContent)) || (hasSnake && !isRecord(response.structured_content))) {
+    return { successful: false, rejection: "invalid-structured-content" };
+  }
   const camel = hasCamel ? response.structuredContent as Record<string, unknown> : undefined;
   const snake = hasSnake ? response.structured_content as Record<string, unknown> : undefined;
-  if (camel && snake && !sameStructuredValue(camel, snake)) return { successful: false };
+  if (camel && snake && !sameStructuredValue(camel, snake)) return { successful: false, rejection: "conflicting-structured-content" };
   const payload = camel ?? snake;
-  if (errorShaped(response, payload)) return { successful: false };
+  if (errorShaped(response, payload)) return { successful: false, rejection: "error-shaped" };
   return payload ? { successful: true, payload } : { successful: true };
+}
+
+// Observational only: describes a PostToolUse response that yielded no task
+// authority so a host's real representation can be identified. It accepts
+// nothing and changes no trust rule. Only fixed labels and allowlisted key
+// names leave this boundary: never values, paths, identifiers, prompts, or
+// response text. Text is length-checked before it is parsed.
+type TrackingSkipBranch = ResponseRejection | "invalid-input-task-id" | "invalid-structured-task-id" | "input-task-mismatch"
+  | "structured-without-task-id" | "no-task-authority" | "continuation-without-sessions" | "continuation-without-pointer";
+const DIAGNOSTIC_KEYS = new Set(["_meta", "content", "error", "isError", "is_error", "result", "root", "structuredContent", "structured_content", "taskId"]);
+const DIAGNOSTIC_BLOCK_TYPES = new Set(["audio", "error", "image", "resource", "resource_link", "text"]);
+const DIAGNOSTIC_TEXT_MAX_CHARACTERS = 16 * 1024;
+const DIAGNOSTIC_BLOCK_SCAN_LIMIT = 64;
+
+function keyLabels(record: Record<string, unknown>): string {
+  const keys = Object.keys(record);
+  const listed = keys.filter((key) => DIAGNOSTIC_KEYS.has(key)).sort();
+  return [...(listed.length < keys.length ? ["+other"] : []), ...listed].join(",") || "none";
+}
+
+function valueTypeLabel(value: unknown): string {
+  return value === undefined ? "absent" : value === null ? "null" : Array.isArray(value) ? "array" : typeof value === "object" ? "object"
+    : typeof value === "string" ? "string" : typeof value === "number" || typeof value === "boolean" ? typeof value : "other";
+}
+
+function textLabels(text: string): string[] {
+  if (text.length > DIAGNOSTIC_TEXT_MAX_CHARACTERS) return ["text=oversized"];
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return ["text=not-json"]; }
+  if (!isRecord(parsed)) return [`text=json-${valueTypeLabel(parsed)}`];
+  const taskId = !Object.hasOwn(parsed, "taskId") ? "absent" : typeof parsed.taskId === "string" && UUID_PATTERN.test(parsed.taskId) ? "uuid" : "other";
+  return ["text=json-object", `text-keys=${keyLabels(parsed)}`, `text-task-id=${taskId}`];
+}
+
+function blockLabels(blocks: unknown[]): string[] {
+  const scanned = blocks.slice(0, DIAGNOSTIC_BLOCK_SCAN_LIMIT);
+  const types = new Set(scanned.map((block) =>
+    isRecord(block) && typeof block.type === "string" && DIAGNOSTIC_BLOCK_TYPES.has(block.type) ? block.type : "+other"));
+  const count = blocks.length === 0 ? "0" : blocks.length === 1 ? "1" : "many";
+  const labels = [`blocks=${count}:${[...types].sort().join(",") || "none"}`];
+  const texts = scanned.filter((block) => isRecord(block) && block.type === "text");
+  if (texts.length === 1 && isRecord(texts[0]) && typeof texts[0].text === "string") labels.push(...textLabels(texts[0].text));
+  return labels;
+}
+
+function responseResult(response: unknown, verdict: ReturnType<typeof successfulResponse>): "success" | "error" | "unrecognized" {
+  if (!verdict.successful) return verdict.rejection === "error-flag" || verdict.rejection === "error-shaped" ? "error" : "unrecognized";
+  // Success needs positive protocol evidence: a valid structured payload or an
+  // explicit false error flag. A record that merely lacks an error flag is not
+  // proof that the tool succeeded.
+  return verdict.payload || (isRecord(response) && (response.isError === false || response.is_error === false)) ? "success" : "unrecognized";
+}
+
+function trackingSkipped(branch: TrackingSkipBranch, response: unknown): HookOutput {
+  const labels = ["stage=post-tool-use", `branch=${branch}`, `result=${responseResult(response, successfulResponse(response))}`, `response=${valueTypeLabel(response)}`];
+  if (typeof response === "string") labels.push(...textLabels(response));
+  else if (Array.isArray(response)) labels.push(...blockLabels(response));
+  else if (isRecord(response)) {
+    labels.push(`keys=${keyLabels(response)}`);
+    if (Array.isArray(response.content)) labels.push(...blockLabels(response.content));
+  }
+  return warning(`TokenGraph found no task authority in the tool response; tracking was skipped. [${labels.join("; ")}]`);
 }
 
 async function explicitRootsMatch(input: Record<string, unknown>, payload: Record<string, unknown> | undefined, root: string): Promise<boolean> {
@@ -582,25 +651,28 @@ async function postToolUse(input: Record<string, unknown>, storage: HookStorage)
   try { await validateNonOverlap(storage, attestation.root); } catch { return warning("TokenGraph host storage overlaps the workspace; tracking was skipped."); }
   const currentHash = hash(input.session_id as string);
   const response = successfulResponse(input.tool_response);
-  if (!response.successful) return {};
+  if (!response.successful) return trackingSkipped(response.rejection, input.tool_response);
   const payload = response.payload;
   if (!await explicitRootsMatch(input, payload, attestation.root)) return warning("TokenGraph lifecycle root did not match the host attestation; tracking was skipped.");
   let taskId: string | undefined;
   let sessions: SessionStorage | undefined;
   const toolInput = isRecord(input.tool_input) ? input.tool_input : undefined;
   const hasInputTaskId = toolInput !== undefined && Object.hasOwn(toolInput, "taskId");
-  if (hasInputTaskId && (typeof toolInput.taskId !== "string" || !UUID_PATTERN.test(toolInput.taskId))) return {};
+  if (hasInputTaskId && (typeof toolInput.taskId !== "string" || !UUID_PATTERN.test(toolInput.taskId))) return trackingSkipped("invalid-input-task-id", input.tool_response);
   const inputTaskId = hasInputTaskId ? toolInput.taskId as string : undefined;
   if (payload && Object.hasOwn(payload, "taskId")) {
-    if (typeof payload.taskId !== "string" || !UUID_PATTERN.test(payload.taskId) || (inputTaskId && inputTaskId !== payload.taskId)) return {};
+    if (typeof payload.taskId !== "string" || !UUID_PATTERN.test(payload.taskId)) return trackingSkipped("invalid-structured-task-id", input.tool_response);
+    if (inputTaskId && inputTaskId !== payload.taskId) return trackingSkipped("input-task-mismatch", input.tool_response);
     taskId = payload.taskId;
   } else if (inputTaskId) {
     try { sessions = await bindSessions(storage, false); } catch { return warning("TokenGraph session storage is unstable; tracking was skipped."); }
-    if (!sessions) return {};
+    if (!sessions) return trackingSkipped("continuation-without-sessions", input.tool_response);
     const previous = await readPointer(sessions, currentHash);
     if (previous.status === "valid" && previous.pointer.taskId === inputTaskId) taskId = inputTaskId;
   }
-  if (!taskId) return {};
+  if (!taskId) {
+    return trackingSkipped(inputTaskId ? "continuation-without-pointer" : payload ? "structured-without-task-id" : "no-task-authority", input.tool_response);
+  }
   const ledger = await inspectTaskLedgerReadOnly(attestation.root, taskId);
   if (ledger.status !== "valid") return warning(`TokenGraph task ledger is ${ledger.status}; tracking was skipped.`);
   try {
